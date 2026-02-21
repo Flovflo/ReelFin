@@ -17,6 +17,14 @@ struct PlayerView: View {
                 .ignoresSafeArea()
 
             topBar
+                .zIndex(20)
+
+            if let error = session.playbackErrorMessage {
+                errorBanner(error)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 118)
+                    .zIndex(21)
+            }
 
             if showDebug {
                 debugOverlay
@@ -38,7 +46,7 @@ struct PlayerView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(width: 34, height: 34)
-                    .background(.ultraThinMaterial)
+                    .background(.black.opacity(0.55))
                     .clipShape(Circle())
             }
 
@@ -62,13 +70,34 @@ struct PlayerView: View {
                 Image(systemName: showDebug ? "ladybug.fill" : "ladybug")
                     .font(.system(size: 14, weight: .semibold))
                     .frame(width: 34, height: 34)
-                    .background(.ultraThinMaterial)
+                    .background(.black.opacity(0.55))
                     .clipShape(Circle())
             }
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
         .foregroundStyle(.white)
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Playback error")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.red)
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white)
+                .lineLimit(3)
+            Button("Close Player") {
+                onDismiss()
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var debugOverlay: some View {

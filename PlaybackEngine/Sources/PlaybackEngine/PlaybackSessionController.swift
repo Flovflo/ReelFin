@@ -31,6 +31,7 @@ public final class PlaybackSessionController: ObservableObject {
     @Published public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
     @Published public private(set) var metrics = PlaybackPerformanceMetrics()
     @Published public private(set) var isExternalPlaybackActive = false
+    @Published public private(set) var playbackErrorMessage: String?
 
     public let player = AVPlayer()
 
@@ -92,6 +93,7 @@ public final class PlaybackSessionController: ObservableObject {
         startDate = Date()
         hasMarkedFirstFrame = false
         metrics = PlaybackPerformanceMetrics()
+        playbackErrorMessage = nil
 
         let selection = try await coordinator.resolvePlayback(itemID: item.id, mode: .performance)
         currentSource = selection.source
@@ -311,6 +313,13 @@ public final class PlaybackSessionController: ObservableObject {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_to_play")
                     self.readyInterval = nil
                     self.runtimeHDRMode = self.detectHDRMode(from: observedItem, fallback: self.debugInfo?.hdrMode ?? .unknown)
+                } else if observedItem.status == .failed {
+                    self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_failed")
+                    self.firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_failed")
+                    let message = observedItem.error?.localizedDescription ?? "Playback failed."
+                    self.playbackErrorMessage = message
+                    self.isPlaying = false
+                    AppLog.playback.error("AVPlayerItem failed: \(message, privacy: .public)")
                 }
             }
         }

@@ -147,11 +147,14 @@ public actor PlaybackCoordinator {
             return nil
         }
 
-        let assetURL: URL
+        var assetURL: URL
         switch decision.route {
         case let .directPlay(url), let .remux(url), let .transcode(url):
             assetURL = url
         }
+
+        // HLS segment/key fetches are more reliable when auth is present in URL query.
+        assetURL = injectingAPIKeyIfNeeded(assetURL, token: session.token)
 
         var headers = source.requiredHTTPHeaders
         headers["X-Emby-Token"] = session.token
@@ -177,6 +180,21 @@ public actor PlaybackCoordinator {
             headers: headers,
             debugInfo: debug
         )
+    }
+
+    private func injectingAPIKeyIfNeeded(_ url: URL, token: String) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+
+        var queryItems = components.queryItems ?? []
+        if queryItems.contains(where: { $0.name.caseInsensitiveCompare("api_key") == .orderedSame }) {
+            return url
+        }
+
+        queryItems.append(URLQueryItem(name: "api_key", value: token))
+        components.queryItems = queryItems
+        return components.url ?? url
     }
 
     private func classifyHDRMode(for source: MediaSource) -> HDRPlaybackMode {

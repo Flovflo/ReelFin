@@ -82,7 +82,6 @@ struct DetailView: View {
             if let playerSession {
                 PlayerView(session: playerSession, item: viewModel.detail.item) {
                     showPlayer = false
-                    onDismiss()
                 }
             }
         }
@@ -169,7 +168,7 @@ struct DetailView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(viewModel.detail.cast) { person in
+                    ForEach(Array(viewModel.detail.cast.enumerated()), id: \.offset) { _, person in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(person.name)
                                 .font(.system(size: 13, weight: .semibold, design: .rounded))

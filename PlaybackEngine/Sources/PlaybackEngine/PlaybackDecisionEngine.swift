@@ -252,9 +252,11 @@ public struct PlaybackDecisionEngine {
         )!
 
         components.queryItems = [
-            URLQueryItem(name: "VideoCodec", value: "hevc,h264"),
-            URLQueryItem(name: "AudioCodec", value: "aac,ac3,eac3,mp3"),
+            // Force the most compatible fallback profile for AVPlayer.
+            URLQueryItem(name: "VideoCodec", value: "h264"),
+            URLQueryItem(name: "AudioCodec", value: "aac,ac3"),
             URLQueryItem(name: "Container", value: "ts"),
+            URLQueryItem(name: "SegmentContainer", value: "ts"),
             URLQueryItem(name: "MaxStreamingBitrate", value: String(configuration.preferredQuality.maxStreamingBitrate)),
             URLQueryItem(name: "MediaSourceId", value: sourceID),
             URLQueryItem(name: "TranscodeReasons", value: "ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported")
