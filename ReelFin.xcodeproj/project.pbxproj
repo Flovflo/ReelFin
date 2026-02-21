@@ -14,6 +14,7 @@
 		0F980CB7D195417595E34048 /* Shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; };
 		10C03DED85BAF574B4027A9E /* ReelFinUI.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1337AF93A201060033676C74 /* PlaybackEngine.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B401679A75C0322BF1EC2E0D /* PlaybackEngine.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		135105D1561BD549A144DAC5 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C9AE4A0724FEDF4FE5F86E /* PlaybackCoordinator.swift */; };
 		185C2774FE38A3EF7D27C8D3 /* DataStore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CBE87E846E1375DE69C99A6B /* DataStore.framework */; };
 		1B38ECD5E598971F1EE2FE73 /* ReelFinApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6F24B53C7764E6BEEC84610 /* ReelFinApp.swift */; };
 		1EAC50B3D32749A37A523E86 /* DefaultSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102FF4EAEF0063502203BF54 /* DefaultSyncEngine.swift */; };
@@ -76,6 +77,7 @@
 		C1E078667D344FA90231A719 /* JellyfinAPI.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		C7AAC1072CA9CC42EB784829 /* ReelFinDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423061893D83BA407DCA4E7F /* ReelFinDependencies.swift */; };
 		C88B27C3A245B5688B619071 /* CachedRemoteImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01249E8039C24C249302DDF3 /* CachedRemoteImage.swift */; };
+		C922E04478FF4FFE507CAD18 /* NativePlayerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17D215E9FDB3612A8E87031C /* NativePlayerViewController.swift */; };
 		C96CBAB54F663041DF099B55 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2E8B72B1F0F3CC9924DF8B /* HomeView.swift */; };
 		C9E4D89709CC9C5FD4C5C8BF /* JellyfinAPI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; };
 		D21215B67F94EB39BC7C5F8F /* PlaybackSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */; };
@@ -368,6 +370,7 @@
 		1178F490712C59598B44CF6B /* ShimmerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShimmerView.swift; sourceTree = "<group>"; };
 		11A3F6A208F49DB98E159AD5 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		15DE2D104F921BBEE9E36D05 /* DetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailView.swift; sourceTree = "<group>"; };
+		17D215E9FDB3612A8E87031C /* NativePlayerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerViewController.swift; sourceTree = "<group>"; };
 		1A0E370A1B8DDD9E94B1F167 /* DefaultImagePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultImagePipeline.swift; sourceTree = "<group>"; };
 		1CD64F7FC44A0E3E4CCA8AB0 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
 		1F83CBA96B4D8E249D2882AE /* SyncEngine.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SyncEngine.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -379,6 +382,7 @@
 		3B7A4C3B018207E57E97039A /* RequestDeduplicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestDeduplicator.swift; sourceTree = "<group>"; };
 		423061893D83BA407DCA4E7F /* ReelFinDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinDependencies.swift; sourceTree = "<group>"; };
 		43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSessionController.swift; sourceTree = "<group>"; };
+		49C9AE4A0724FEDF4FE5F86E /* PlaybackCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinator.swift; sourceTree = "<group>"; };
 		4DC61363CEB8253845567E5D /* ServerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSettingsView.swift; sourceTree = "<group>"; };
 		55B0F5407FF15D3F4D62D5BE /* ImageCacheTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ImageCacheTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5BABF83B5B28D68BB525CFA0 /* DatabaseMigrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseMigrator.swift; sourceTree = "<group>"; };
@@ -586,6 +590,7 @@
 		29DCBD8465E7812BE5E0F1F9 /* Player */ = {
 			isa = PBXGroup;
 			children = (
+				17D215E9FDB3612A8E87031C /* NativePlayerViewController.swift */,
 				DDAC4C8B5042AE3BD2EE76F4 /* PlayerView.swift */,
 			);
 			path = Player;
@@ -772,6 +777,7 @@
 		C04F5633F2E4936F51AC1A55 /* PlaybackEngine */ = {
 			isa = PBXGroup;
 			children = (
+				49C9AE4A0724FEDF4FE5F86E /* PlaybackCoordinator.swift */,
 				0F46167E03AF4E373161BF10 /* PlaybackDecisionEngine.swift */,
 				43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */,
 			);
@@ -1229,6 +1235,7 @@
 				F4202E229EB0B43D507F2027 /* LibraryViewModel.swift in Sources */,
 				3BE0498061619C34A3DF8D5F /* LoginView.swift in Sources */,
 				81C9483C21E19F58BB7915FB /* LoginViewModel.swift in Sources */,
+				C922E04478FF4FFE507CAD18 /* NativePlayerViewController.swift in Sources */,
 				E16FF48842A50E1B6B748D13 /* PlayerView.swift in Sources */,
 				4C7D4C81794A550498C26FA3 /* PosterCardView.swift in Sources */,
 				3A12A27899E2CD383AF35A39 /* PreviewMocks.swift in Sources */,
@@ -1272,6 +1279,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				135105D1561BD549A144DAC5 /* PlaybackCoordinator.swift in Sources */,
 				B7E0ED55EDB6C1A598EEDA4B /* PlaybackDecisionEngine.swift in Sources */,
 				D21215B67F94EB39BC7C5F8F /* PlaybackSessionController.swift in Sources */,
 			);

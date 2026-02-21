@@ -1,13 +1,13 @@
 import Foundation
 import Shared
 
-public enum PlaybackRoute: Equatable {
+public enum PlaybackRoute: Equatable, Sendable {
     case directPlay(URL)
     case remux(URL)
     case transcode(URL)
 }
 
-public struct PlaybackDecision: Equatable {
+public struct PlaybackDecision: Equatable, Sendable {
     public var sourceID: String
     public var route: PlaybackRoute
 
@@ -15,19 +15,30 @@ public struct PlaybackDecision: Equatable {
         self.sourceID = sourceID
         self.route = route
     }
+
+    public var playMethod: String {
+        switch route {
+        case .directPlay:
+            return "DirectPlay"
+        case .remux:
+            return "DirectStream"
+        case .transcode:
+            return "Transcode"
+        }
+    }
 }
 
 public struct DeviceCapabilities: Sendable {
-    public var containers: Set<String>
+    public var directPlayableContainers: Set<String>
     public var videoCodecs: Set<String>
     public var audioCodecs: Set<String>
 
     public init(
-        containers: Set<String> = ["mp4", "mkv", "mov", "ts", "m4v"],
-        videoCodecs: Set<String> = ["h264", "hevc", "av1"],
-        audioCodecs: Set<String> = ["aac", "ac3", "eac3", "mp3", "flac"]
+        directPlayableContainers: Set<String> = ["mp4", "m4v", "mov"],
+        videoCodecs: Set<String> = ["h264", "avc1", "hevc", "h265", "dvh1", "dvhe", "av1"],
+        audioCodecs: Set<String> = ["aac", "ac3", "eac3", "mp3", "flac", "alac"]
     ) {
-        self.containers = containers
+        self.directPlayableContainers = directPlayableContainers
         self.videoCodecs = videoCodecs
         self.audioCodecs = audioCodecs
     }
@@ -46,48 +57,187 @@ public struct PlaybackDecisionEngine {
         configuration: ServerConfiguration,
         token: String?
     ) -> PlaybackDecision? {
-        for source in sources {
-            if let directURL = source.directPlayURL, source.supportsDirectPlay, isCompatible(source: source) {
-                return PlaybackDecision(sourceID: source.id, route: .directPlay(directURL))
-            }
+        decide(
+            itemID: itemID,
+            sources: sources,
+            configuration: configuration,
+            token: token,
+            allowTranscoding: true
+        )
+    }
+
+    public func decide(
+        itemID: String,
+        sources: [MediaSource],
+        configuration: ServerConfiguration,
+        token: String?,
+        allowTranscoding: Bool
+    ) -> PlaybackDecision? {
+        let directBest = sources
+            .compactMap { directPlayCandidate(for: $0) }
+            .max(by: { $0.score < $1.score })
+
+        if let directBest {
+            return PlaybackDecision(sourceID: directBest.source.id, route: .directPlay(directBest.url))
         }
 
-        for source in sources {
-            if let remuxURL = source.directStreamURL, source.supportsDirectStream {
-                return PlaybackDecision(sourceID: source.id, route: .remux(remuxURL))
-            }
+        let remuxBest = sources
+            .compactMap { remuxCandidate(for: $0) }
+            .max(by: { $0.score < $1.score })
+
+        if let remuxBest {
+            return PlaybackDecision(sourceID: remuxBest.source.id, route: .remux(remuxBest.url))
         }
 
-        guard let firstSource = sources.first else { return nil }
-
-        if let transcodeURL = firstSource.transcodeURL {
-            return PlaybackDecision(sourceID: firstSource.id, route: .transcode(transcodeURL))
+        guard allowTranscoding else {
+            return nil
         }
 
+        let transcodeBest = sources
+            .compactMap { transcodeCandidate(for: $0) }
+            .max(by: { $0.score < $1.score })
+
+        if let transcodeBest {
+            return PlaybackDecision(sourceID: transcodeBest.source.id, route: .transcode(transcodeBest.url))
+        }
+
+        guard let fallbackSource = bestFallbackSource(from: sources) else { return nil }
         let fallbackURL = buildTranscodeURL(
             itemID: itemID,
-            sourceID: firstSource.id,
+            sourceID: fallbackSource.id,
             configuration: configuration,
             token: token
         )
 
-        return PlaybackDecision(sourceID: firstSource.id, route: .transcode(fallbackURL))
+        return PlaybackDecision(sourceID: fallbackSource.id, route: .transcode(fallbackURL))
     }
 
-    private func isCompatible(source: MediaSource) -> Bool {
-        if let container = source.container?.lowercased(), !capabilities.containers.contains(container) {
+    private func directPlayCandidate(for source: MediaSource) -> Candidate? {
+        guard source.supportsDirectPlay, let url = source.directPlayURL else { return nil }
+        guard isDirectPlayable(source: source, url: url) else { return nil }
+
+        var score = 1_000
+        score += qualityBoost(for: source)
+        score += 20
+
+        return Candidate(source: source, url: url, score: score)
+    }
+
+    private func remuxCandidate(for source: MediaSource) -> Candidate? {
+        guard source.supportsDirectStream, let url = source.directStreamURL else { return nil }
+        guard isRemuxPlayable(source: source, url: url) else { return nil }
+
+        var score = 700
+        score += qualityBoost(for: source)
+        if isHLS(url: url) {
+            score += 80
+        }
+        return Candidate(source: source, url: url, score: score)
+    }
+
+    private func transcodeCandidate(for source: MediaSource) -> Candidate? {
+        guard let url = source.transcodeURL else { return nil }
+        var score = 300
+        if isHLS(url: url) {
+            score += 40
+        }
+        return Candidate(source: source, url: url, score: score)
+    }
+
+    private func bestFallbackSource(from sources: [MediaSource]) -> MediaSource? {
+        sources.max { lhs, rhs in
+            qualityBoost(for: lhs) < qualityBoost(for: rhs)
+        }
+    }
+
+    private func isDirectPlayable(source: MediaSource, url: URL) -> Bool {
+        let container = normalizedContainer(source.container, fallbackURL: url)
+        guard capabilities.directPlayableContainers.contains(container) else {
             return false
         }
 
-        if let videoCodec = source.videoCodec?.lowercased(), !capabilities.videoCodecs.contains(videoCodec) {
+        if !source.normalizedVideoCodec.isEmpty, !capabilities.videoCodecs.contains(source.normalizedVideoCodec) {
             return false
         }
 
-        if let audioCodec = source.audioCodec?.lowercased(), !capabilities.audioCodecs.contains(audioCodec) {
+        if !source.normalizedAudioCodec.isEmpty, !capabilities.audioCodecs.contains(source.normalizedAudioCodec) {
             return false
         }
 
         return true
+    }
+
+    private func isRemuxPlayable(source: MediaSource, url: URL) -> Bool {
+        if isHLS(url: url) {
+            return true
+        }
+
+        let container = normalizedContainer(source.container, fallbackURL: url)
+        if capabilities.directPlayableContainers.contains(container) {
+            return true
+        }
+
+        // MKV is not a first-class AVPlayer container. Accept only when remuxed to HLS.
+        if container == "mkv" {
+            return false
+        }
+
+        return container == "ts" || container == "m2ts"
+    }
+
+    private func normalizedContainer(_ rawContainer: String?, fallbackURL: URL) -> String {
+        if let rawContainer, !rawContainer.isEmpty {
+            return rawContainer.lowercased()
+        }
+
+        let ext = fallbackURL.pathExtension.lowercased()
+        if ext == "m3u8" {
+            return "hls"
+        }
+        return ext
+    }
+
+    private func isHLS(url: URL) -> Bool {
+        url.pathExtension.lowercased() == "m3u8"
+    }
+
+    private func qualityBoost(for source: MediaSource) -> Int {
+        var score = 0
+
+        let videoCodec = source.normalizedVideoCodec
+        if videoCodec.contains("dvh1") || videoCodec.contains("dvhe") {
+            score += 90
+        } else if videoCodec.contains("hevc") || videoCodec.contains("h265") {
+            score += 60
+        } else if videoCodec.contains("h264") {
+            score += 30
+        }
+
+        if (source.videoBitDepth ?? 8) >= 10 {
+            score += 25
+        }
+
+        let range = source.videoRange?.lowercased() ?? ""
+        if range.contains("dolby") || range.contains("vision") {
+            score += 70
+        } else if range.contains("hdr") {
+            score += 35
+        }
+
+        let audioCodec = source.normalizedAudioCodec
+        if audioCodec.contains("eac3") {
+            score += 35
+        } else if audioCodec.contains("ac3") {
+            score += 25
+        } else if audioCodec.contains("aac") {
+            score += 18
+        }
+
+        if let layout = source.audioChannelLayout?.lowercased(), layout.contains("atmos") {
+            score += 40
+        }
+
+        return score
     }
 
     private func buildTranscodeURL(
@@ -102,8 +252,9 @@ public struct PlaybackDecisionEngine {
         )!
 
         components.queryItems = [
-            URLQueryItem(name: "VideoCodec", value: "h264,hevc"),
-            URLQueryItem(name: "AudioCodec", value: "aac,mp3,ac3,eac3"),
+            URLQueryItem(name: "VideoCodec", value: "hevc,h264"),
+            URLQueryItem(name: "AudioCodec", value: "aac,ac3,eac3,mp3"),
+            URLQueryItem(name: "Container", value: "ts"),
             URLQueryItem(name: "MaxStreamingBitrate", value: String(configuration.preferredQuality.maxStreamingBitrate)),
             URLQueryItem(name: "MediaSourceId", value: sourceID),
             URLQueryItem(name: "TranscodeReasons", value: "ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported")
@@ -115,4 +266,10 @@ public struct PlaybackDecisionEngine {
 
         return components.url ?? configuration.serverURL
     }
+}
+
+private struct Candidate {
+    let source: MediaSource
+    let url: URL
+    let score: Int
 }

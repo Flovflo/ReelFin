@@ -152,11 +152,47 @@ struct MediaSourceDTO: Decodable {
     let container: String?
     let videoCodec: String?
     let audioCodec: String?
+    let bitrate: Int?
+    let videoBitDepth: Int?
+    let videoRangeType: String?
     let supportsDirectPlay: Bool?
     let supportsDirectStream: Bool?
     let directStreamURL: String?
     let transcodingURL: String?
+    let requiredHTTPHeaders: [String: String]?
     let mediaStreams: [MediaStreamDTO]?
+
+    init(
+        id: String,
+        name: String?,
+        container: String?,
+        videoCodec: String?,
+        audioCodec: String?,
+        bitrate: Int? = nil,
+        videoBitDepth: Int? = nil,
+        videoRangeType: String? = nil,
+        supportsDirectPlay: Bool?,
+        supportsDirectStream: Bool?,
+        directStreamURL: String?,
+        transcodingURL: String?,
+        requiredHTTPHeaders: [String: String]? = nil,
+        mediaStreams: [MediaStreamDTO]?
+    ) {
+        self.id = id
+        self.name = name
+        self.container = container
+        self.videoCodec = videoCodec
+        self.audioCodec = audioCodec
+        self.bitrate = bitrate
+        self.videoBitDepth = videoBitDepth
+        self.videoRangeType = videoRangeType
+        self.supportsDirectPlay = supportsDirectPlay
+        self.supportsDirectStream = supportsDirectStream
+        self.directStreamURL = directStreamURL
+        self.transcodingURL = transcodingURL
+        self.requiredHTTPHeaders = requiredHTTPHeaders
+        self.mediaStreams = mediaStreams
+    }
 
     enum CodingKeys: String, CodingKey {
         case id = "Id"
@@ -164,10 +200,14 @@ struct MediaSourceDTO: Decodable {
         case container = "Container"
         case videoCodec = "VideoCodec"
         case audioCodec = "AudioCodec"
+        case bitrate = "Bitrate"
+        case videoBitDepth = "VideoBitDepth"
+        case videoRangeType = "VideoRangeType"
         case supportsDirectPlay = "SupportsDirectPlay"
         case supportsDirectStream = "SupportsDirectStream"
         case directStreamURL = "DirectStreamUrl"
         case transcodingURL = "TranscodingUrl"
+        case requiredHTTPHeaders = "RequiredHttpHeaders"
         case mediaStreams = "MediaStreams"
     }
 
@@ -175,6 +215,8 @@ struct MediaSourceDTO: Decodable {
         let tracks = mediaStreams ?? []
         let audioTracks = tracks.filter { $0.type?.lowercased() == "audio" }.map { $0.toTrack() }
         let subtitleTracks = tracks.filter { $0.type?.lowercased() == "subtitle" }.map { $0.toTrack() }
+        let videoStream = tracks.first(where: { $0.type?.lowercased() == "video" })
+        let audioStream = tracks.first(where: { $0.type?.lowercased() == "audio" })
 
         let streamURL = directStreamURL.flatMap { resolvePlaybackURL($0, serverURL: serverURL) }
         let transcode = transcodingURL.flatMap { resolvePlaybackURL($0, serverURL: serverURL) }
@@ -184,13 +226,21 @@ struct MediaSourceDTO: Decodable {
             itemID: itemID,
             name: name ?? "Source",
             container: container,
-            videoCodec: videoCodec,
-            audioCodec: audioCodec,
+            videoCodec: videoCodec ?? videoStream?.codec,
+            audioCodec: audioCodec ?? audioStream?.codec,
+            bitrate: bitrate ?? videoStream?.bitrate,
+            videoBitDepth: videoBitDepth ?? videoStream?.bitDepth,
+            videoRange: videoRangeType ?? videoStream?.videoRangeType,
+            videoProfile: videoStream?.profile,
+            audioChannels: audioStream?.channels,
+            audioChannelLayout: audioStream?.channelLayout,
+            audioProfile: audioStream?.profile,
             supportsDirectPlay: supportsDirectPlay ?? false,
             supportsDirectStream: supportsDirectStream ?? false,
             directStreamURL: streamURL,
             directPlayURL: streamURL,
             transcodeURL: transcode,
+            requiredHTTPHeaders: requiredHTTPHeaders ?? [:],
             audioTracks: audioTracks,
             subtitleTracks: subtitleTracks
         )
@@ -227,6 +277,13 @@ struct MediaStreamDTO: Decodable {
     let displayTitle: String?
     let language: String?
     let isDefault: Bool?
+    let codec: String?
+    let profile: String?
+    let bitDepth: Int?
+    let videoRangeType: String?
+    let channels: Int?
+    let channelLayout: String?
+    let bitrate: Int?
 
     enum CodingKeys: String, CodingKey {
         case index = "Index"
@@ -235,6 +292,13 @@ struct MediaStreamDTO: Decodable {
         case displayTitle = "DisplayTitle"
         case language = "Language"
         case isDefault = "IsDefault"
+        case codec = "Codec"
+        case profile = "Profile"
+        case bitDepth = "BitDepth"
+        case videoRangeType = "VideoRangeType"
+        case channels = "Channels"
+        case channelLayout = "ChannelLayout"
+        case bitrate = "BitRate"
     }
 
     func toTrack() -> MediaTrack {
@@ -246,6 +310,24 @@ struct MediaStreamDTO: Decodable {
             isDefault: isDefault ?? false,
             index: trackIndex
         )
+    }
+}
+
+struct PlaybackInfoRequestDTO: Encodable {
+    let userID: String?
+    let enableDirectPlay: Bool
+    let enableDirectStream: Bool
+    let enableTranscoding: Bool
+    let maxStreamingBitrate: Int?
+    let startTimeTicks: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "UserId"
+        case enableDirectPlay = "EnableDirectPlay"
+        case enableDirectStream = "EnableDirectStream"
+        case enableTranscoding = "EnableTranscoding"
+        case maxStreamingBitrate = "MaxStreamingBitrate"
+        case startTimeTicks = "StartTimeTicks"
     }
 }
 

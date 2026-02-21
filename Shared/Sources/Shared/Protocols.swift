@@ -59,6 +59,7 @@ public protocol JellyfinAPIClientProtocol: AnyObject {
     func fetchItemDetail(id: String) async throws -> MediaDetail
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem]
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource]
+    func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource]
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
     func reportPlayback(progress: PlaybackProgressUpdate) async throws
@@ -93,4 +94,11 @@ public protocol ImagePipelineProtocol: AnyObject {
 
 public protocol SyncEngineProtocol: AnyObject {
     func sync(reason: SyncReason) async
+}
+
+public extension JellyfinAPIClientProtocol {
+    func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        _ = options
+        return try await fetchPlaybackSources(itemID: itemID)
+    }
 }

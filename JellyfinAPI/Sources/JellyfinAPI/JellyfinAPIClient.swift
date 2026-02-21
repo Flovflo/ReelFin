@@ -250,9 +250,28 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
+        guard let configuration else {
+            throw AppError.invalidServerURL
+        }
+
+        let options = PlaybackInfoOptions.balanced(maxStreamingBitrate: configuration.preferredQuality.maxStreamingBitrate)
+        return try await fetchPlaybackSources(itemID: itemID, options: options)
+    }
+
+    public func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        let body = PlaybackInfoRequestDTO(
+            userID: activeSession?.userID,
+            enableDirectPlay: options.enableDirectPlay,
+            enableDirectStream: options.enableDirectStream,
+            enableTranscoding: options.allowTranscoding,
+            maxStreamingBitrate: options.maxStreamingBitrate ?? configuration?.preferredQuality.maxStreamingBitrate,
+            startTimeTicks: options.startTimeTicks
+        )
+
         let response: PlaybackInfoResponseDTO = try await request(
             path: "Items/\(itemID)/PlaybackInfo",
             method: "POST",
+            body: body,
             dedupe: false
         )
 
@@ -298,7 +317,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             canSeek: true,
             isPaused: progress.isPaused,
             isMuted: false,
-            playMethod: "Transcode"
+            playMethod: progress.playMethod ?? "Transcode"
         )
 
         let _: EmptyResponse = try await request(

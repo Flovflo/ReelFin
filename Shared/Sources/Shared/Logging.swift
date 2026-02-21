@@ -33,4 +33,8 @@ public enum Signpost {
     public static let imageLoading = OSSignposter(subsystem: AppLog.subsystem, category: "image_loading")
     public static let homeScroll = OSSignposter(subsystem: AppLog.subsystem, category: "home_scroll")
     public static let sync = OSSignposter(subsystem: AppLog.subsystem, category: "sync")
+    public static let playbackInfo = OSSignposter(subsystem: AppLog.subsystem, category: "playback_info")
+    public static let playbackSelection = OSSignposter(subsystem: AppLog.subsystem, category: "playback_selection")
+    public static let playerLifecycle = OSSignposter(subsystem: AppLog.subsystem, category: "player_lifecycle")
+    public static let playbackStalls = OSSignposter(subsystem: AppLog.subsystem, category: "playback_stalls")
 }

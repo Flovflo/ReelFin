@@ -1,4 +1,3 @@
-import AVKit
 import PlaybackEngine
 import Shared
 import SwiftUI
@@ -8,31 +7,22 @@ struct PlayerView: View {
     let item: MediaItem
     let onDismiss: () -> Void
 
-    @State private var isSliding = false
-    @State private var sliderValue: Double = 0
+    @State private var showDebug = false
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             Color.black.ignoresSafeArea()
 
-            VideoPlayer(player: session.player)
+            NativePlayerViewController(player: session.player)
                 .ignoresSafeArea()
 
-            VStack {
-                topBar
-                Spacer()
-                controls
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 24)
-        }
-        .onAppear {
-            sliderValue = session.currentTime
-        }
-        .onChange(of: session.currentTime) { newValue in
-            if !isSliding {
-                sliderValue = newValue
+            topBar
+
+            if showDebug {
+                debugOverlay
+                    .padding(.top, 72)
+                    .padding(.horizontal, 16)
+                    .transition(.opacity)
             }
         }
         .onDisappear {
@@ -41,13 +31,13 @@ struct PlayerView: View {
     }
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 12) {
             Button {
                 onDismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .semibold))
-                    .padding(10)
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 34, height: 34)
                     .background(.ultraThinMaterial)
                     .clipShape(Circle())
             }
@@ -56,100 +46,69 @@ struct PlayerView: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(item.name)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
                     .lineLimit(1)
                 Text(session.routeDescription)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.75))
             }
-            .foregroundStyle(.white)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showDebug.toggle()
+                }
+            } label: {
+                Image(systemName: showDebug ? "ladybug.fill" : "ladybug")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Circle())
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .foregroundStyle(.white)
     }
 
-    private var controls: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 18) {
-                Button {
-                    session.seek(by: -10)
-                } label: {
-                    Image(systemName: "gobackward.10")
-                }
+    private var debugOverlay: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Playback Debug")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
 
-                Button {
-                    session.togglePlayback()
-                } label: {
-                    Image(systemName: session.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 24))
-                }
-
-                Button {
-                    session.seek(by: 30)
-                } label: {
-                    Image(systemName: "goforward.30")
-                }
-
-                Menu {
-                    ForEach(session.availableAudioTracks) { track in
-                        Button(track.title) {
-                            session.selectAudioTrack(id: track.id)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "waveform")
-                }
-
-                Menu {
-                    Button("Off") {
-                        session.selectSubtitleTrack(id: nil)
-                    }
-
-                    ForEach(session.availableSubtitleTracks) { track in
-                        Button(track.title) {
-                            session.selectSubtitleTrack(id: track.id)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "captions.bubble")
-                }
+            if let info = session.debugInfo {
+                debugRow("Container", info.container)
+                debugRow("Video", info.videoCodec.uppercased())
+                debugRow("Bit depth", info.videoBitDepth.map(String.init) ?? "Unknown")
+                debugRow("HDR", session.runtimeHDRMode.rawValue)
+                debugRow("Audio", info.audioMode)
+                debugRow("Bitrate", info.bitrate.map { "\($0 / 1_000_000) Mbps" } ?? "Unknown")
+                debugRow("Method", info.playMethod)
+            } else {
+                debugRow("Source", "Loading…")
             }
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(.white)
 
-            VStack(spacing: 6) {
-                Slider(
-                    value: Binding(
-                        get: { sliderValue },
-                        set: { sliderValue = $0 }
-                    ),
-                    in: 0 ... max(session.duration, 1),
-                    onEditingChanged: { editing in
-                        isSliding = editing
-                        if !editing {
-                            session.seek(to: sliderValue)
-                        }
-                    }
-                )
-                .tint(ReelFinTheme.accent)
-
-                HStack {
-                    Text(formatTime(sliderValue))
-                    Spacer()
-                    Text(formatTime(session.duration))
-                }
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.82))
-            }
+            debugRow("TTFF", session.metrics.timeToFirstFrameMs.map { String(format: "%.0f ms", $0) } ?? "Pending")
+            debugRow("Stalls", "\(session.metrics.stallCount)")
+            debugRow("Dropped", "\(session.metrics.droppedFrames)")
+            debugRow("AirPlay", session.isExternalPlaybackActive ? "Active" : "Off")
         }
-        .padding(14)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func formatTime(_ seconds: Double) -> String {
-        guard seconds.isFinite else { return "00:00" }
-        let value = Int(seconds)
-        let minutes = value / 60
-        let remaining = value % 60
-        return String(format: "%02d:%02d", minutes, remaining)
+    private func debugRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 6) {
+            Text(label + ":")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+            Text(value)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white)
+            Spacer(minLength: 0)
+        }
     }
 }

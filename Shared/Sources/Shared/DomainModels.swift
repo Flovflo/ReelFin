@@ -196,11 +196,19 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
     public var container: String?
     public var videoCodec: String?
     public var audioCodec: String?
+    public var bitrate: Int?
+    public var videoBitDepth: Int?
+    public var videoRange: String?
+    public var videoProfile: String?
+    public var audioChannels: Int?
+    public var audioChannelLayout: String?
+    public var audioProfile: String?
     public var supportsDirectPlay: Bool
     public var supportsDirectStream: Bool
     public var directStreamURL: URL?
     public var directPlayURL: URL?
     public var transcodeURL: URL?
+    public var requiredHTTPHeaders: [String: String]
     public var audioTracks: [MediaTrack]
     public var subtitleTracks: [MediaTrack]
 
@@ -211,11 +219,19 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         container: String? = nil,
         videoCodec: String? = nil,
         audioCodec: String? = nil,
+        bitrate: Int? = nil,
+        videoBitDepth: Int? = nil,
+        videoRange: String? = nil,
+        videoProfile: String? = nil,
+        audioChannels: Int? = nil,
+        audioChannelLayout: String? = nil,
+        audioProfile: String? = nil,
         supportsDirectPlay: Bool,
         supportsDirectStream: Bool,
         directStreamURL: URL? = nil,
         directPlayURL: URL? = nil,
         transcodeURL: URL? = nil,
+        requiredHTTPHeaders: [String: String] = [:],
         audioTracks: [MediaTrack] = [],
         subtitleTracks: [MediaTrack] = []
     ) {
@@ -225,13 +241,83 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
+        self.bitrate = bitrate
+        self.videoBitDepth = videoBitDepth
+        self.videoRange = videoRange
+        self.videoProfile = videoProfile
+        self.audioChannels = audioChannels
+        self.audioChannelLayout = audioChannelLayout
+        self.audioProfile = audioProfile
         self.supportsDirectPlay = supportsDirectPlay
         self.supportsDirectStream = supportsDirectStream
         self.directStreamURL = directStreamURL
         self.directPlayURL = directPlayURL
         self.transcodeURL = transcodeURL
+        self.requiredHTTPHeaders = requiredHTTPHeaders
         self.audioTracks = audioTracks
         self.subtitleTracks = subtitleTracks
+    }
+
+    public var normalizedContainer: String {
+        container?.lowercased() ?? ""
+    }
+
+    public var normalizedVideoCodec: String {
+        videoCodec?.lowercased() ?? ""
+    }
+
+    public var normalizedAudioCodec: String {
+        audioCodec?.lowercased() ?? ""
+    }
+}
+
+public enum PlaybackMode: String, Codable, CaseIterable, Sendable {
+    case performance
+    case balanced
+}
+
+public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
+    public var mode: PlaybackMode
+    public var enableDirectPlay: Bool
+    public var enableDirectStream: Bool
+    public var allowTranscoding: Bool
+    public var maxStreamingBitrate: Int?
+    public var startTimeTicks: Int64?
+
+    public init(
+        mode: PlaybackMode = .balanced,
+        enableDirectPlay: Bool = true,
+        enableDirectStream: Bool = true,
+        allowTranscoding: Bool = true,
+        maxStreamingBitrate: Int? = nil,
+        startTimeTicks: Int64? = nil
+    ) {
+        self.mode = mode
+        self.enableDirectPlay = enableDirectPlay
+        self.enableDirectStream = enableDirectStream
+        self.allowTranscoding = allowTranscoding
+        self.maxStreamingBitrate = maxStreamingBitrate
+        self.startTimeTicks = startTimeTicks
+    }
+
+    public static func performance(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
+        PlaybackInfoOptions(
+            mode: .performance,
+            enableDirectPlay: true,
+            enableDirectStream: true,
+            allowTranscoding: false,
+            maxStreamingBitrate: maxStreamingBitrate
+        )
+    }
+
+    public static func balanced(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
+        PlaybackInfoOptions(
+            mode: .balanced,
+            enableDirectPlay: true,
+            enableDirectStream: true,
+            allowTranscoding: true,
+            maxStreamingBitrate: maxStreamingBitrate
+        )
     }
 }
 
@@ -260,6 +346,7 @@ public struct PlaybackProgressUpdate: Codable, Hashable, Sendable {
     public var isPaused: Bool
     public var isPlaying: Bool
     public var didFinish: Bool
+    public var playMethod: String?
 
     public init(
         itemID: String,
@@ -267,7 +354,8 @@ public struct PlaybackProgressUpdate: Codable, Hashable, Sendable {
         totalTicks: Int64,
         isPaused: Bool,
         isPlaying: Bool,
-        didFinish: Bool
+        didFinish: Bool,
+        playMethod: String? = nil
     ) {
         self.itemID = itemID
         self.positionTicks = positionTicks
@@ -275,6 +363,7 @@ public struct PlaybackProgressUpdate: Codable, Hashable, Sendable {
         self.isPaused = isPaused
         self.isPlaying = isPlaying
         self.didFinish = didFinish
+        self.playMethod = playMethod
     }
 }
 
