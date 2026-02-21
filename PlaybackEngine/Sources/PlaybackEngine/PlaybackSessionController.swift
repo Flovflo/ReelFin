@@ -60,6 +60,7 @@ public final class PlaybackSessionController: ObservableObject {
     private var readyInterval: SignpostInterval?
     private var firstFrameInterval: SignpostInterval?
     private var activeStallInterval: SignpostInterval?
+    private var startupWatchdogTask: Task<Void, Never>?
 
     public init(
         apiClient: JellyfinAPIClientProtocol,
@@ -87,6 +88,7 @@ public final class PlaybackSessionController: ObservableObject {
         lifecycleObservers.forEach {
             NotificationCenter.default.removeObserver($0)
         }
+        startupWatchdogTask?.cancel()
     }
 
     public func load(item: MediaItem, autoPlay: Bool = true) async throws {
@@ -96,6 +98,7 @@ public final class PlaybackSessionController: ObservableObject {
         didAttemptConservativeRecovery = false
         metrics = PlaybackPerformanceMetrics()
         playbackErrorMessage = nil
+        startupWatchdogTask?.cancel()
 
         let selection = try await coordinator.resolvePlayback(itemID: item.id, mode: .performance)
         currentSource = selection.source
@@ -134,6 +137,7 @@ public final class PlaybackSessionController: ObservableObject {
         if autoPlay {
             play()
         }
+        scheduleStartupWatchdog()
     }
 
     public func play() {
@@ -352,6 +356,7 @@ public final class PlaybackSessionController: ObservableObject {
         let size = currentItem.presentationSize
         guard size.width > 1, size.height > 1 else { return }
         hasMarkedFirstFrame = true
+        startupWatchdogTask?.cancel()
         let elapsedMs = Date().timeIntervalSince(startDate) * 1000
         metrics.timeToFirstFrameMs = elapsedMs
         firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
@@ -375,6 +380,24 @@ public final class PlaybackSessionController: ObservableObject {
                 await self.reloadConservativeTranscode()
             } else {
                 self.playbackErrorMessage = "Audio plays but no video frame is decodable for this source."
+            }
+        }
+    }
+
+    private func scheduleStartupWatchdog() {
+        startupWatchdogTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard !self.hasMarkedFirstFrame else { return }
+            guard self.player.currentItem != nil else { return }
+
+            AppLog.playback.warning("Startup watchdog fired: no first frame after 8s.")
+            if !self.didAttemptConservativeRecovery {
+                self.didAttemptConservativeRecovery = true
+                await self.reloadConservativeTranscode()
+            } else if self.playbackErrorMessage == nil {
+                self.playbackErrorMessage = "No video frame received. Try changing quality or source."
             }
         }
     }
