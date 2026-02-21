@@ -153,6 +153,10 @@ public actor PlaybackCoordinator {
             assetURL = url
         }
 
+        if case .transcode = decision.route {
+            assetURL = normalizeTranscodeURL(assetURL, maxBitrate: configuration.preferredQuality.maxStreamingBitrate)
+        }
+
         // HLS segment/key fetches are more reliable when auth is present in URL query.
         assetURL = injectingAPIKeyIfNeeded(assetURL, token: session.token)
 
@@ -194,6 +198,32 @@ public actor PlaybackCoordinator {
 
         queryItems.append(URLQueryItem(name: "api_key", value: token))
         components.queryItems = queryItems
+        return components.url ?? url
+    }
+
+    private func normalizeTranscodeURL(_ url: URL, maxBitrate: Int) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+
+        var map: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            if let value = item.value {
+                map[item.name] = value
+            }
+        }
+
+        // Conservative AVPlayer-compatible fallback profile.
+        map["VideoCodec"] = "h264"
+        map["AudioCodec"] = "aac,ac3"
+        map["Container"] = "ts"
+        map["SegmentContainer"] = "ts"
+        map["MaxStreamingBitrate"] = String(maxBitrate)
+        map["BreakOnNonKeyFrames"] = "True"
+
+        components.queryItems = map.keys.sorted().map { key in
+            URLQueryItem(name: key, value: map[key])
+        }
         return components.url ?? url
     }
 

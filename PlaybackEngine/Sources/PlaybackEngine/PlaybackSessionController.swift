@@ -54,6 +54,7 @@ public final class PlaybackSessionController: ObservableObject {
     private var playMethodForReporting = "Transcode"
     private var didResumeAfterForeground = false
     private var hasMarkedFirstFrame = false
+    private var didAttemptConservativeRecovery = false
     private var startDate = Date()
 
     private var readyInterval: SignpostInterval?
@@ -92,6 +93,7 @@ public final class PlaybackSessionController: ObservableObject {
         currentItemID = item.id
         startDate = Date()
         hasMarkedFirstFrame = false
+        didAttemptConservativeRecovery = false
         metrics = PlaybackPerformanceMetrics()
         playbackErrorMessage = nil
 
@@ -313,6 +315,7 @@ public final class PlaybackSessionController: ObservableObject {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_to_play")
                     self.readyInterval = nil
                     self.runtimeHDRMode = self.detectHDRMode(from: observedItem, fallback: self.debugInfo?.hdrMode ?? .unknown)
+                    self.scheduleVideoValidation(for: observedItem)
                 } else if observedItem.status == .failed {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_failed")
                     self.firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_failed")
@@ -345,12 +348,87 @@ public final class PlaybackSessionController: ObservableObject {
 
     private func markFirstFrameIfNeeded(currentSeconds: Double) {
         guard !hasMarkedFirstFrame, currentSeconds > 0 else { return }
+        guard let currentItem = player.currentItem else { return }
+        let size = currentItem.presentationSize
+        guard size.width > 1, size.height > 1 else { return }
         hasMarkedFirstFrame = true
         let elapsedMs = Date().timeIntervalSince(startDate) * 1000
         metrics.timeToFirstFrameMs = elapsedMs
         firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
         firstFrameInterval = nil
         AppLog.playback.info("TTFF \(elapsedMs, format: .fixed(precision: 1))ms")
+    }
+
+    private func scheduleVideoValidation(for item: AVPlayerItem) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard self.player.currentItem === item else { return }
+            guard !self.hasMarkedFirstFrame else { return }
+
+            let size = item.presentationSize
+            guard size.width <= 1 || size.height <= 1 else { return }
+
+            AppLog.playback.error("Ready item has no video presentation size. Trying compatibility transcode.")
+            if !self.didAttemptConservativeRecovery {
+                self.didAttemptConservativeRecovery = true
+                await self.reloadConservativeTranscode()
+            } else {
+                self.playbackErrorMessage = "Audio plays but no video frame is decodable for this source."
+            }
+        }
+    }
+
+    private func reloadConservativeTranscode() async {
+        guard
+            let itemID = currentItemID,
+            let source = currentSource,
+            let configuration = await apiClient.currentConfiguration(),
+            let session = await apiClient.currentSession()
+        else {
+            return
+        }
+
+        let resumeSeconds = max(0, player.currentTime().seconds)
+        var components = URLComponents(
+            url: configuration.serverURL.appendingPathComponent("Videos/\(itemID)/master.m3u8"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "VideoCodec", value: "h264"),
+            URLQueryItem(name: "AudioCodec", value: "aac,ac3"),
+            URLQueryItem(name: "Container", value: "ts"),
+            URLQueryItem(name: "SegmentContainer", value: "ts"),
+            URLQueryItem(name: "MediaSourceId", value: source.id),
+            URLQueryItem(name: "MaxStreamingBitrate", value: String(configuration.preferredQuality.maxStreamingBitrate)),
+            URLQueryItem(name: "api_key", value: session.token)
+        ]
+        guard let recoveryURL = components?.url else { return }
+
+        var headers = source.requiredHTTPHeaders
+        headers["X-Emby-Token"] = session.token
+
+        let asset = AVURLAsset(url: recoveryURL, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        let recoveryItem = AVPlayerItem(asset: asset)
+        recoveryItem.preferredForwardBufferDuration = 12
+        recoveryItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+
+        readyInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_item_ready")
+        firstFrameInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_first_frame")
+        hasMarkedFirstFrame = false
+        startDate = Date()
+
+        player.replaceCurrentItem(with: recoveryItem)
+        configureObservers(for: recoveryItem)
+        if resumeSeconds > 0 {
+            let seek = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
+            _ = await player.seek(to: seek, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+
+        routeDescription = "Transcode (Recovery)"
+        playMethodForReporting = "Transcode"
+        playbackErrorMessage = "Primary stream failed. Compatibility stream loaded."
+        player.play()
     }
 
     private func persistProgress(isPaused: Bool, didFinish: Bool) async {

@@ -50,6 +50,7 @@
 		700EAE9F14DEFB08A2470960 /* Shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; };
 		727793DD9CD7E9EA922651C8 /* JellyfinAPI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; };
 		750B4D05F9E3760AD34A5A7C /* RetryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA00058358D2298F6ADE8A19 /* RetryPolicy.swift */; };
+		753A9FD491EB70FE54341309 /* NativePlayerLayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620AFC1D5E1424A981F31245 /* NativePlayerLayerView.swift */; };
 		7ABB08841E5F6E075C816ED0 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11A3F6A208F49DB98E159AD5 /* AppContainer.swift */; };
 		814B01A99F9C01D29B0F5B84 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD64F7FC44A0E3E4CCA8AB0 /* KeychainTokenStore.swift */; };
 		81C9483C21E19F58BB7915FB /* LoginViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68853A66EE574A91E1CEABE1 /* LoginViewModel.swift */; };
@@ -388,6 +389,7 @@
 		5BABF83B5B28D68BB525CFA0 /* DatabaseMigrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseMigrator.swift; sourceTree = "<group>"; };
 		5E687C50C88B01A739B36062 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		612DF7C0B11D453DFED1600E /* ImageCache.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ImageCache.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		620AFC1D5E1424A981F31245 /* NativePlayerLayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerLayerView.swift; sourceTree = "<group>"; };
 		68853A66EE574A91E1CEABE1 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
 		6A130C98F66989CB1662E30C /* ReelFinWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinWidgets.swift; sourceTree = "<group>"; };
 		7B233DF87AF6E0167EA771DA /* ReelFinRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinRootView.swift; sourceTree = "<group>"; };
@@ -590,6 +592,7 @@
 		29DCBD8465E7812BE5E0F1F9 /* Player */ = {
 			isa = PBXGroup;
 			children = (
+				620AFC1D5E1424A981F31245 /* NativePlayerLayerView.swift */,
 				17D215E9FDB3612A8E87031C /* NativePlayerViewController.swift */,
 				DDAC4C8B5042AE3BD2EE76F4 /* PlayerView.swift */,
 			);
@@ -1235,6 +1238,7 @@
 				F4202E229EB0B43D507F2027 /* LibraryViewModel.swift in Sources */,
 				3BE0498061619C34A3DF8D5F /* LoginView.swift in Sources */,
 				81C9483C21E19F58BB7915FB /* LoginViewModel.swift in Sources */,
+				753A9FD491EB70FE54341309 /* NativePlayerLayerView.swift in Sources */,
 				C922E04478FF4FFE507CAD18 /* NativePlayerViewController.swift in Sources */,
 				E16FF48842A50E1B6B748D13 /* PlayerView.swift in Sources */,
 				4C7D4C81794A550498C26FA3 /* PosterCardView.swift in Sources */,

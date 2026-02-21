@@ -10,26 +10,30 @@ struct PlayerView: View {
     @State private var showDebug = false
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        ZStack {
             Color.black.ignoresSafeArea()
-
-            NativePlayerViewController(player: session.player)
+            NativePlayerLayerView(player: session.player)
                 .ignoresSafeArea()
-
-            topBar
-                .zIndex(20)
-
-            if let error = session.playbackErrorMessage {
-                errorBanner(error)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 118)
-                    .zIndex(21)
+        }
+        .safeAreaInset(edge: .top, spacing: 8) {
+            VStack(spacing: 8) {
+                topBar
+                if let error = session.playbackErrorMessage {
+                    errorBanner(error)
+                }
             }
-
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 10) {
+            fallbackControls
+                .padding(.horizontal, 12)
+        }
+        .overlay(alignment: .topLeading) {
             if showDebug {
                 debugOverlay
-                    .padding(.top, 72)
                     .padding(.horizontal, 16)
+                    .padding(.top, 108)
                     .transition(.opacity)
             }
         }
@@ -45,22 +49,21 @@ struct PlayerView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(.black.opacity(0.55))
+                    .frame(width: 36, height: 36)
+                    .background(Color.black.opacity(0.65))
                     .clipShape(Circle())
             }
 
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
                     .lineLimit(1)
                 Text(session.routeDescription)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(0.75))
             }
+
+            Spacer(minLength: 8)
 
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -69,14 +72,55 @@ struct PlayerView: View {
             } label: {
                 Image(systemName: showDebug ? "ladybug.fill" : "ladybug")
                     .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(.black.opacity(0.55))
+                    .frame(width: 36, height: 36)
+                    .background(Color.black.opacity(0.65))
                     .clipShape(Circle())
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.38))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .foregroundStyle(.white)
+    }
+
+    private var fallbackControls: some View {
+        HStack(spacing: 12) {
+            Button {
+                onDismiss()
+            } label: {
+                Label("Close", systemImage: "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                session.seek(by: -15)
+            } label: {
+                Image(systemName: "gobackward.15")
+                    .font(.system(size: 17, weight: .semibold))
+            }
+
+            Button {
+                session.togglePlayback()
+            } label: {
+                Image(systemName: session.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 19, weight: .semibold))
+            }
+
+            Button {
+                session.seek(by: 30)
+            } label: {
+                Image(systemName: "goforward.30")
+                    .font(.system(size: 17, weight: .semibold))
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.black.opacity(0.62))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func errorBanner(_ message: String) -> some View {
@@ -88,11 +132,6 @@ struct PlayerView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white)
                 .lineLimit(3)
-            Button("Close Player") {
-                onDismiss()
-            }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.white)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -125,7 +164,7 @@ struct PlayerView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial)
+        .background(Color.black.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
