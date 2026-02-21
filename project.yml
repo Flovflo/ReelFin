@@ -1,0 +1,172 @@
+name: ReelFin
+options:
+  bundleIdPrefix: com.reelfin
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: 5.9
+    IPHONEOS_DEPLOYMENT_TARGET: 16.0
+    TARGETED_DEVICE_FAMILY: "1,2"
+    GENERATE_INFOPLIST_FILE: YES
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 1.0
+    CLANG_WARN_DOCUMENTATION_COMMENTS: YES
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: 6.29.3
+targets:
+  ReelFinApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: ReelFinApp/App
+      - path: ReelFinApp/Resources
+        buildPhase: resources
+    dependencies:
+      - target: ReelFinUI
+      - target: Shared
+      - target: SyncEngine
+      - target: JellyfinAPI
+      - target: DataStore
+      - target: ImageCache
+      - target: PlaybackEngine
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.app
+        PRODUCT_NAME: ReelFin
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        INFOPLIST_KEY_CFBundleDisplayName: ReelFin
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
+        INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+  Shared:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Shared/Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.shared
+  JellyfinAPI:
+    type: framework
+    platform: iOS
+    sources:
+      - path: JellyfinAPI/Sources/JellyfinAPI
+    dependencies:
+      - target: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.jellyfinapi
+  DataStore:
+    type: framework
+    platform: iOS
+    sources:
+      - path: DataStore/Sources/DataStore
+    dependencies:
+      - target: Shared
+      - target: JellyfinAPI
+      - package: GRDB
+        product: GRDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.datastore
+  ImageCache:
+    type: framework
+    platform: iOS
+    sources:
+      - path: ImageCache/Sources/ImageCache
+    dependencies:
+      - target: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.imagecache
+  SyncEngine:
+    type: framework
+    platform: iOS
+    sources:
+      - path: SyncEngine/Sources/SyncEngine
+    dependencies:
+      - target: Shared
+      - target: JellyfinAPI
+      - target: DataStore
+      - target: ImageCache
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.sync
+  PlaybackEngine:
+    type: framework
+    platform: iOS
+    sources:
+      - path: PlaybackEngine/Sources/PlaybackEngine
+    dependencies:
+      - target: Shared
+      - target: JellyfinAPI
+      - target: DataStore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback
+  ReelFinUI:
+    type: framework
+    platform: iOS
+    sources:
+      - path: ReelFinUI/Sources/ReelFinUI
+    dependencies:
+      - target: Shared
+      - target: JellyfinAPI
+      - target: DataStore
+      - target: ImageCache
+      - target: SyncEngine
+      - target: PlaybackEngine
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.ui
+  ReelFinWidgetsExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widgets/Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.widgets
+        INFOPLIST_KEY_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        INFOPLIST_KEY_CFBundleDisplayName: ReelFin Widgets
+    dependencies:
+      - target: Shared
+      - target: PlaybackEngine
+      - target: JellyfinAPI
+      - target: DataStore
+  PlaybackEngineTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/PlaybackEngineTests
+    dependencies:
+      - target: PlaybackEngine
+      - target: JellyfinAPI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback.tests
+  ImageCacheTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/ImageCacheTests
+    dependencies:
+      - target: ImageCache
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.imagecache.tests
+schemes:
+  ReelFin:
+    build:
+      targets:
+        ReelFinApp: all
+        ReelFinWidgetsExtension: all
+    test:
+      targets:
+        - PlaybackEngineTests
+        - ImageCacheTests

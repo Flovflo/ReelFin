@@ -1,0 +1,96 @@
+import Foundation
+import UIKit
+
+public enum SyncReason: String, Sendable {
+    case appLaunch
+    case appForeground
+    case manualRefresh
+    case backgroundRefresh
+}
+
+public enum AppError: LocalizedError, Sendable {
+    case invalidServerURL
+    case unauthenticated
+    case network(String)
+    case decoding(String)
+    case persistence(String)
+    case unknown
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidServerURL:
+            return "The server URL is invalid."
+        case .unauthenticated:
+            return "Please login first."
+        case let .network(message):
+            return message
+        case let .decoding(message):
+            return message
+        case let .persistence(message):
+            return message
+        case .unknown:
+            return "An unknown error occurred."
+        }
+    }
+}
+
+public protocol TokenStoreProtocol: AnyObject {
+    func saveToken(_ token: String) throws
+    func fetchToken() throws -> String?
+    func clearToken() throws
+}
+
+public protocol SettingsStoreProtocol: AnyObject {
+    var serverConfiguration: ServerConfiguration? { get set }
+    var lastSession: UserSession? { get set }
+}
+
+public protocol JellyfinAPIClientProtocol: AnyObject {
+    func currentConfiguration() async -> ServerConfiguration?
+    func currentSession() async -> UserSession?
+
+    func configure(server: ServerConfiguration) async throws
+    func testConnection(serverURL: URL) async throws
+    func authenticate(credentials: UserCredentials) async throws -> UserSession
+    func signOut() async
+
+    func fetchUserViews() async throws -> [LibraryView]
+    func fetchHomeFeed(since: Date?) async throws -> HomeFeed
+    func fetchItemDetail(id: String) async throws -> MediaDetail
+    func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem]
+    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource]
+
+    func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
+    func reportPlayback(progress: PlaybackProgressUpdate) async throws
+    func reportPlayed(itemID: String) async throws
+}
+
+public protocol MetadataRepositoryProtocol: AnyObject {
+    func saveLibraryViews(_ views: [LibraryView]) async throws
+    func fetchLibraryViews() async throws -> [LibraryView]
+
+    func saveHomeFeed(_ feed: HomeFeed) async throws
+    func fetchHomeFeed() async throws -> HomeFeed
+
+    func upsertItems(_ items: [MediaItem]) async throws
+    func fetchItem(id: String) async throws -> MediaItem?
+    func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem]
+    func searchItems(query: String, limit: Int) async throws -> [MediaItem]
+
+    func savePlaybackProgress(_ progress: PlaybackProgress) async throws
+    func fetchPlaybackProgress(itemID: String) async throws -> PlaybackProgress?
+
+    func fetchLastSyncDate() async throws -> Date?
+    func setLastSyncDate(_ date: Date) async throws
+}
+
+public protocol ImagePipelineProtocol: AnyObject {
+    func image(for url: URL) async throws -> UIImage
+    func cachedImage(for url: URL) async -> UIImage?
+    func prefetch(urls: [URL]) async
+    func cancel(url: URL)
+}
+
+public protocol SyncEngineProtocol: AnyObject {
+    func sync(reason: SyncReason) async
+}
