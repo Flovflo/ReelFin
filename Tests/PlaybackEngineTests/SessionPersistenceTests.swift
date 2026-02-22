@@ -36,7 +36,7 @@ final class SessionPersistenceTests: XCTestCase {
     }
 }
 
-private final class MockSettingsStore: SettingsStoreProtocol {
+private final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
 
@@ -46,7 +46,7 @@ private final class MockSettingsStore: SettingsStoreProtocol {
     }
 }
 
-private final class MockTokenStore: TokenStoreProtocol {
+private final class MockTokenStore: TokenStoreProtocol, @unchecked Sendable {
     var storedToken: String?
 
     init(storedToken: String?) {

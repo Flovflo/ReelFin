@@ -34,18 +34,18 @@ public enum AppError: LocalizedError, Sendable {
     }
 }
 
-public protocol TokenStoreProtocol: AnyObject {
+public protocol TokenStoreProtocol: AnyObject, Sendable {
     func saveToken(_ token: String) throws
     func fetchToken() throws -> String?
     func clearToken() throws
 }
 
-public protocol SettingsStoreProtocol: AnyObject {
+public protocol SettingsStoreProtocol: AnyObject, Sendable {
     var serverConfiguration: ServerConfiguration? { get set }
     var lastSession: UserSession? { get set }
 }
 
-public protocol JellyfinAPIClientProtocol: AnyObject {
+public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func currentConfiguration() async -> ServerConfiguration?
     func currentSession() async -> UserSession?
 
@@ -70,7 +70,7 @@ public protocol JellyfinAPIClientProtocol: AnyObject {
     func reportPlayed(itemID: String) async throws
 }
 
-public protocol MetadataRepositoryProtocol: AnyObject {
+public protocol MetadataRepositoryProtocol: AnyObject, Sendable {
     func saveLibraryViews(_ views: [LibraryView]) async throws
     func fetchLibraryViews() async throws -> [LibraryView]
 
@@ -89,14 +89,14 @@ public protocol MetadataRepositoryProtocol: AnyObject {
     func setLastSyncDate(_ date: Date) async throws
 }
 
-public protocol ImagePipelineProtocol: AnyObject {
+public protocol ImagePipelineProtocol: AnyObject, Sendable {
     func image(for url: URL) async throws -> UIImage
     func cachedImage(for url: URL) async -> UIImage?
     func prefetch(urls: [URL]) async
     func cancel(url: URL)
 }
 
-public protocol SyncEngineProtocol: AnyObject {
+public protocol SyncEngineProtocol: AnyObject, Sendable {
     func sync(reason: SyncReason) async
 }
 

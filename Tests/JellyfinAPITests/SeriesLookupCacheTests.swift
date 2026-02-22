@@ -2,7 +2,7 @@ import XCTest
 @testable import JellyfinAPI
 import Shared
 
-final class MockJellyfinAPIClient: JellyfinAPIClientProtocol {
+final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
     var mockedItem: MediaItem?
     var fetchItemCallCount = 0
 

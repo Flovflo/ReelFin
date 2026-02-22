@@ -83,9 +83,10 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         private func reattachIfNeeded(player: AVPlayer) {
             guard !didReattachForCurrentItem else { return }
             didReattachForCurrentItem = true
+            let controller = self.controller
 
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let controller = self.controller else { return }
+            DispatchQueue.main.async {
+                guard let controller else { return }
                 // Detach and re-attach the player to force AVPlayerViewController
                 // to fully re-initialize its internal video rendering pipeline (XPC).
                 let rate = player.rate

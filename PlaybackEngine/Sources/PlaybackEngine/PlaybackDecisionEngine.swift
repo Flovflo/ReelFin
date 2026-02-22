@@ -44,7 +44,7 @@ public struct DeviceCapabilities: Sendable {
     }
 }
 
-public struct PlaybackDecisionEngine {
+public struct PlaybackDecisionEngine: Sendable {
     private let capabilities: DeviceCapabilities
 
     public init(capabilities: DeviceCapabilities = DeviceCapabilities()) {

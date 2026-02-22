@@ -26,10 +26,10 @@ public struct RetryPolicy: Sendable {
     }
 }
 
-public func retrying<T>(
+public func retrying<T: Sendable>(
     policy: RetryPolicy,
-    shouldRetry: @escaping (Error) -> Bool = { _ in true },
-    operation: @escaping () async throws -> T
+    shouldRetry: @Sendable @escaping (Error) -> Bool = { _ in true },
+    operation: @Sendable @escaping () async throws -> T
 ) async throws -> T {
     var currentAttempt = 0
     while true {

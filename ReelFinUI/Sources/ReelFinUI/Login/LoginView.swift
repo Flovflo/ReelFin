@@ -111,7 +111,7 @@ struct LoginView: View {
                 .fill(ReelFinTheme.surface.opacity(0.88))
                 .overlay {
                     RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous)
-                        .stroke(ReelFinTheme.panelStroke, lineWidth: 1)
+                        .stroke(ReelFinTheme.glassStrokeColor, lineWidth: ReelFinTheme.glassStrokeWidth)
                 }
         )
         .overlay(alignment: .topLeading) {

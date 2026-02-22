@@ -2,18 +2,18 @@ import Foundation
 import Shared
 
 public actor DefaultSyncEngine: SyncEngineProtocol {
-    private let apiClient: JellyfinAPIClientProtocol
-    private let repository: MetadataRepositoryProtocol
-    private let imagePipeline: ImagePipelineProtocol
+    private let apiClient: any JellyfinAPIClientProtocol & Sendable
+    private let repository: any MetadataRepositoryProtocol & Sendable
+    private let imagePipeline: any ImagePipelineProtocol & Sendable
 
     private var isSyncing = false
     private var lastForegroundLikeSyncAt: Date?
     private let foregroundLikeCooldown: TimeInterval = 45
 
     public init(
-        apiClient: JellyfinAPIClientProtocol,
-        repository: MetadataRepositoryProtocol,
-        imagePipeline: ImagePipelineProtocol
+        apiClient: any JellyfinAPIClientProtocol & Sendable,
+        repository: any MetadataRepositoryProtocol & Sendable,
+        imagePipeline: any ImagePipelineProtocol & Sendable
     ) {
         self.apiClient = apiClient
         self.repository = repository

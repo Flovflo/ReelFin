@@ -1,6 +1,6 @@
 import Foundation
 
-public final class DefaultSettingsStore: SettingsStoreProtocol {
+public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     private enum Keys {
         static let serverConfiguration = "settings.serverConfiguration"
         static let lastSession = "settings.lastSession"

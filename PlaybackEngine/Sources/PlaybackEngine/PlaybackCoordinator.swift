@@ -66,11 +66,11 @@ public enum TranscodeURLProfile: String, Sendable {
 }
 
 public actor PlaybackCoordinator {
-    private let apiClient: JellyfinAPIClientProtocol
+    private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let decisionEngine: PlaybackDecisionEngine
 
     public init(
-        apiClient: JellyfinAPIClientProtocol,
+        apiClient: any JellyfinAPIClientProtocol & Sendable,
         decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
     ) {
         self.apiClient = apiClient

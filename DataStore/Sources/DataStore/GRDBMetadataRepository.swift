@@ -324,7 +324,7 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
         return decoded
     }
 
-    private func write<T>(_ block: (Database) throws -> T) async throws -> T {
+    private func write<T: Sendable>(_ block: (Database) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             do {
                 let value = try dbPool.write(block)
@@ -336,7 +336,7 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
         }
     }
 
-    private func read<T>(_ block: (Database) throws -> T) async throws -> T {
+    private func read<T: Sendable>(_ block: (Database) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             do {
                 let value = try dbPool.read(block)

@@ -404,7 +404,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
     }
 }
 
-private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol {
+private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
     private let configuration: ServerConfiguration
     private let session: UserSession
     private let sources: [String: [MediaSource]]

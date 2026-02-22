@@ -534,7 +534,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         return data
     }
 
-    private func isRetryable(error: Error) -> Bool {
+    nonisolated private func isRetryable(error: Error) -> Bool {
         if let statusError = error as? HTTPStatusError {
             return statusError.statusCode >= 500
         }

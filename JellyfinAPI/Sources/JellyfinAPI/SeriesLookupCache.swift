@@ -4,11 +4,11 @@ import Shared
 /// Caches series lookups for episodes to avoid hammering the Jellyfin API
 /// when resolving series displaying information on the Home rails.
 public actor SeriesLookupCache {
-    private let apiClient: JellyfinAPIClientProtocol
+    private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private var cache: [String: MediaItem] = [:]
-    private var inFlightTasks: [String: Task<MediaItem, Error>] = [:]
+    private var inFlightContinuations: [String: [CheckedContinuation<MediaItem, Error>]] = [:]
 
-    public init(apiClient: JellyfinAPIClientProtocol) {
+    public init(apiClient: any JellyfinAPIClientProtocol & Sendable) {
         self.apiClient = apiClient
     }
 
@@ -17,30 +17,33 @@ public actor SeriesLookupCache {
             return cached
         }
 
-        if let inFlight = inFlightTasks[id] {
-            return try await inFlight.value
+        if inFlightContinuations[id] != nil {
+            return try await withCheckedThrowingContinuation { continuation in
+                inFlightContinuations[id, default: []].append(continuation)
+            }
         }
 
-        let task = Task<MediaItem, Error> {
-            let item = try await apiClient.fetchItem(id: id)
-            return item
-        }
-
-        inFlightTasks[id] = task
+        inFlightContinuations[id] = []
 
         do {
-            let item = try await task.value
+            let item = try await apiClient.fetchItem(id: id)
             cache[id] = item
-            inFlightTasks[id] = nil
+            let continuations = inFlightContinuations.removeValue(forKey: id) ?? []
+            for continuation in continuations {
+                continuation.resume(returning: item)
+            }
             return item
         } catch {
-            inFlightTasks[id] = nil
+            let continuations = inFlightContinuations.removeValue(forKey: id) ?? []
+            for continuation in continuations {
+                continuation.resume(throwing: error)
+            }
             throw error
         }
     }
 
     public func clear() {
         cache.removeAll()
-        inFlightTasks.removeAll()
+        inFlightContinuations.removeAll()
     }
 }

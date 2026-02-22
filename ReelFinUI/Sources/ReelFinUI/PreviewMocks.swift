@@ -4,7 +4,7 @@ import Shared
 import SwiftUI
 import UIKit
 
-final class MockJellyfinAPIClient: JellyfinAPIClientProtocol {
+final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
     private var config: ServerConfiguration?
     private var session: UserSession? = UserSession(userID: "preview-user", username: "Preview", token: "token")
 
@@ -139,7 +139,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 }
 
-final class MockMetadataRepository: MetadataRepositoryProtocol {
+final class MockMetadataRepository: MetadataRepositoryProtocol, @unchecked Sendable {
     private var homeFeed: HomeFeed = HomeFeed.empty
     private var itemsByID: [String: MediaItem] = [:]
 
@@ -186,7 +186,7 @@ final class MockMetadataRepository: MetadataRepositoryProtocol {
     func setLastSyncDate(_ date: Date) async throws {}
 }
 
-final class MockImagePipeline: ImagePipelineProtocol {
+final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     func image(for url: URL) async throws -> UIImage {
         UIImage(systemName: "film.fill") ?? UIImage()
     }
@@ -200,7 +200,7 @@ final class MockImagePipeline: ImagePipelineProtocol {
     func cancel(url: URL) {}
 }
 
-final class MockSyncEngine: SyncEngineProtocol {
+final class MockSyncEngine: SyncEngineProtocol, @unchecked Sendable {
     func sync(reason: SyncReason) async {}
 }
 

@@ -36,7 +36,7 @@ public final class PlaybackSessionController: ObservableObject {
 
     public let player = AVPlayer()
 
-    private let apiClient: JellyfinAPIClientProtocol
+    private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let repository: MetadataRepositoryProtocol
     private let coordinator: PlaybackCoordinator
 
@@ -72,7 +72,7 @@ public final class PlaybackSessionController: ObservableObject {
     private static let preferredProfileStorageKey = "reelfin.playback.preferredTranscodeProfileByItemID.v2"
 
     public init(
-        apiClient: JellyfinAPIClientProtocol,
+        apiClient: any JellyfinAPIClientProtocol & Sendable,
         repository: MetadataRepositoryProtocol,
         decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
     ) {
@@ -84,6 +84,7 @@ public final class PlaybackSessionController: ObservableObject {
         setupLifecycleObservers()
     }
 
+    @MainActor
     deinit {
         if let periodicObserver {
             player.removeTimeObserver(periodicObserver)

@@ -48,9 +48,10 @@ final class DetailViewModel: ObservableObject {
     }
 
     private func prefetchPlaybackInfo(for itemID: String) {
-        Task.detached(priority: .background) { [dependencies] in
+        let apiClient = dependencies.apiClient
+        Task.detached(priority: .background) {
             // This warms up the Jellyfin transcode decision and any potential fMP4 manifest generation.
-            _ = try? await dependencies.apiClient.fetchPlaybackSources(itemID: itemID)
+            _ = try? await apiClient.fetchPlaybackSources(itemID: itemID)
         }
     }
 

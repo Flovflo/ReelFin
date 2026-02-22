@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-public final class KeychainTokenStore: TokenStoreProtocol {
+public final class KeychainTokenStore: TokenStoreProtocol, @unchecked Sendable {
     private let service: String
     private let account: String
 

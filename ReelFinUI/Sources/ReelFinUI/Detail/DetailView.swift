@@ -4,6 +4,8 @@ import SwiftUI
 
 struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
     private let namespace: Namespace.ID?
@@ -23,51 +25,58 @@ struct DetailView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.opacity(0.92).ignoresSafeArea()
-
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 32) {
+                // Hero Banner
+                ZStack(alignment: .bottomLeading) {
                     poster
+                        .frame(maxWidth: .infinity)
+                        .frame(height: heroHeight)
+                        .clipped()
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(viewModel.detail.item.name)
-                            .font(.system(size: horizontalSizeClass == .compact ? 32 : 44, weight: .heavy, design: .rounded))
-                            .minimumScaleFactor(0.7)
-                            .lineLimit(3)
-                            .foregroundStyle(.white)
+                    Rectangle()
+                        .fill(ReelFinTheme.heroGradientScrim)
+                        .frame(height: heroHeight)
 
-                        metadataLine
-
-                        if let overview = viewModel.detail.item.overview {
-                            Text(overview)
-                                .font(.system(size: 15, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .lineLimit(6)
-                                .lineSpacing(4)
-                        }
-                    }
-                    .padding(.horizontal, horizontalPadding)
-
-                    actionButtons
-                        .padding(.horizontal, horizontalPadding)
-
-                    if viewModel.detail.item.mediaType == .series {
-                        seasonSection
-                        episodeSection
-                    }
-
-                    if !viewModel.detail.cast.isEmpty {
-                        castSection
-                    }
-
-                    if !viewModel.detail.similar.isEmpty {
-                        similarSection
-                    }
+                    detailPanel
+                        .padding(.bottom, 24)
                 }
-                .padding(.bottom, 30)
+
+                if viewModel.detail.item.mediaType == .series {
+                    seasonSection
+                    episodeSection
+                }
+
+                if !viewModel.detail.cast.isEmpty {
+                    castSection
+                }
+
+                if !viewModel.detail.similar.isEmpty {
+                    similarSection
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 64)
+        }
+        .background(ReelFinTheme.background.ignoresSafeArea())
+        .ignoresSafeArea(edges: .top)
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
             }
         }
+        .toolbarBackground(.hidden, for: .navigationBar)
         .task {
             await viewModel.load()
         }
@@ -85,104 +94,131 @@ struct DetailView: View {
             itemID: viewModel.detail.item.id,
             type: .backdrop,
             width: 1300,
-            quality: 82,
+            quality: 85,
             apiClient: dependencies.apiClient,
             imagePipeline: dependencies.imagePipeline
         )
-        .overlay(ReelFinTheme.heroGradient)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .frame(height: heroHeight)
-        .padding(.horizontal, horizontalPadding)
         .modifier(MatchedPosterModifier(itemID: viewModel.detail.item.id, namespace: namespace))
     }
 
-    private var metadataLine: some View {
-        HStack(spacing: 8) {
-            if let year = viewModel.detail.item.year {
-                Text(String(year))
+    private var detailPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(viewModel.detail.item.name)
+                .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 32 : 44, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+                .minimumScaleFactor(0.85)
+                .shadow(color: .black.opacity(0.4), radius: 4)
+                .accessibilityAddTraits(.isHeader)
+
+            if !metadataText.isEmpty {
+                Text(metadataText)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .multilineTextAlignment(.leading)
             }
-            if let runtime = viewModel.detail.item.runtimeMinutes {
-                Text("• \(runtime)m")
+
+            if let overview = viewModel.detail.item.overview, !overview.isEmpty {
+                Text(overview)
+                    .font(.body)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(4)
+                    .accessibilityIdentifier("detail_overview")
             }
-            if !viewModel.detail.item.genres.isEmpty {
-                Text("• \(viewModel.detail.item.genres.prefix(2).joined(separator: ", "))")
-                    .lineLimit(1)
-            }
+
+            actionButtons
+                .padding(.top, 12)
         }
-        .font(.system(size: 13, weight: .medium, design: .rounded))
-        .foregroundStyle(.white.opacity(0.75))
+        .padding(.horizontal, horizontalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var actionButtons: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                Button {
-                    startPlayback()
-                } label: {
-                    if isLoadingPlayback {
-                        ProgressView()
-                            .tint(.white)
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Label("Play", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
-                    }
+        LazyVGrid(columns: actionColumns, spacing: 12) {
+            Button {
+                startPlayback()
+            } label: {
+                if isLoadingPlayback {
+                    ProgressView()
+                        .tint(.black)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                } else {
+                    Label("Play", systemImage: "play.fill")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
                 }
-                .buttonStyle(PrimaryCapsuleButtonStyle())
-                .disabled(isLoadingPlayback)
-
-                Button {
-                    startPlayback()
-                } label: {
-                    Label(viewModel.shouldShowResume ? "Resume" : "Start Over", systemImage: "goforward")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryCapsuleButtonStyle())
             }
+            .buttonStyle(.plain)
+            .disabled(isLoadingPlayback)
+            .sensoryFeedback(.impact(weight: .medium), trigger: isLoadingPlayback)
 
-            HStack(spacing: 10) {
-                Button {
-                    viewModel.toggleWatchlist()
-                } label: {
-                    Label(viewModel.isInWatchlist ? "In Watchlist" : "Watchlist", systemImage: "plus")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryCapsuleButtonStyle())
-
-                Button {
-                    viewModel.toggleWatched()
-                } label: {
-                    Label(viewModel.isWatched ? "Watched" : "Mark Watched", systemImage: "checkmark")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryCapsuleButtonStyle())
+            Button {
+                startPlayback()
+            } label: {
+                Label(viewModel.shouldShowResume ? "Resume" : "Start Over", systemImage: "goforward")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .glassPanelStyle(cornerRadius: 28)
             }
+            .buttonStyle(.plain)
+
+            Button {
+                viewModel.toggleWatchlist()
+            } label: {
+                Label(viewModel.isInWatchlist ? "In Watchlist" : "Watchlist", systemImage: "plus")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .glassPanelStyle(cornerRadius: 28)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                viewModel.toggleWatched()
+            } label: {
+                Label(viewModel.isWatched ? "Watched" : "Mark Watched", systemImage: "checkmark")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .glassPanelStyle(cornerRadius: 28)
+            }
+            .buttonStyle(.plain)
         }
     }
 
     private var castSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Cast")
                 .reelFinSectionStyle()
                 .padding(.horizontal, horizontalPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                LazyHStack(spacing: 12) {
                     ForEach(Array(viewModel.detail.cast.enumerated()), id: \.offset) { _, person in
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(person.name)
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
                                 .foregroundStyle(.white)
+                                .lineLimit(1)
                             if let role = person.role {
                                 Text(role)
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.65))
+                                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .lineLimit(1)
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(ReelFinTheme.card.opacity(0.88))
-                        .clipShape(Capsule())
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .glassPanelStyle(cornerRadius: 16)
                     }
                 }
                 .padding(.horizontal, horizontalPadding)
@@ -191,13 +227,13 @@ struct DetailView: View {
     }
 
     private var similarSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Similar")
                 .reelFinSectionStyle()
                 .padding(.horizontal, horizontalPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
+                LazyHStack(spacing: 16) {
                     ForEach(viewModel.detail.similar) { item in
                         Button {
                             viewModel.detail = MediaDetail(item: item)
@@ -222,13 +258,13 @@ struct DetailView: View {
     @ViewBuilder
     private var seasonSection: some View {
         if !viewModel.seasons.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("Seasons")
                     .reelFinSectionStyle()
                     .padding(.horizontal, horizontalPadding)
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+                    LazyHStack(spacing: 12) {
                         ForEach(viewModel.seasons) { season in
                             Button {
                                 Task {
@@ -236,12 +272,22 @@ struct DetailView: View {
                                 }
                             } label: {
                                 Text(season.name)
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                                    .background(viewModel.selectedSeason?.id == season.id ? Color.white : ReelFinTheme.card.opacity(0.88))
-                                    .foregroundStyle(viewModel.selectedSeason?.id == season.id ? Color.black : Color.white)
+                                    .font(.headline.weight(.semibold))
+                                    .foregroundStyle(viewModel.selectedSeason?.id == season.id ? .black : .white)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        viewModel.selectedSeason?.id == season.id
+                                            ? AnyShapeStyle(Color.white)
+                                            : AnyShapeStyle(.ultraThinMaterial)
+                                    )
                                     .clipShape(Capsule())
+                                    .overlay {
+                                        if viewModel.selectedSeason?.id != season.id {
+                                            Capsule()
+                                                .stroke(ReelFinTheme.glassStrokeColor, lineWidth: ReelFinTheme.glassStrokeWidth)
+                                        }
+                                    }
                             }
                             .buttonStyle(.plain)
                         }
@@ -260,13 +306,13 @@ struct DetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
         } else if !viewModel.episodes.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("Episodes")
                     .reelFinSectionStyle()
                     .padding(.horizontal, horizontalPadding)
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
+                    LazyHStack(spacing: 16) {
                         ForEach(viewModel.episodes) { episode in
                             episodeCard(for: episode)
                             .buttonStyle(.plain)
@@ -293,15 +339,19 @@ struct DetailView: View {
                     apiClient: dependencies.apiClient,
                     imagePipeline: dependencies.imagePipeline
                 )
-                .frame(width: 260, height: 146) // 16:9 ratio
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+                .frame(width: episodeCardWidth, height: episodeCardWidth * (9.0 / 16.0))
+                .clipShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
+                        .stroke(ReelFinTheme.glassStrokeColor, lineWidth: ReelFinTheme.glassStrokeWidth)
+                }
+                .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 4)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(episode.indexNumber.map { "\($0). " } ?? "")\(episode.name)")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
-                        .lineLimit(1)
+                        .lineLimit(2)
 
                     if let runtime = episode.runtimeMinutes {
                         Text("\(runtime)m")
@@ -311,17 +361,16 @@ struct DetailView: View {
 
                     if let overview = episode.overview, !overview.isEmpty {
                         Text(overview)
-                            .font(.system(size: 13, weight: .regular, design: .rounded))
+                            .font(.footnote)
                             .foregroundStyle(.white.opacity(0.75))
                             .lineLimit(3)
                             .lineSpacing(2)
                             .padding(.top, 2)
                     }
                 }
-                .frame(width: 260, alignment: .leading)
+                .frame(width: episodeCardWidth, alignment: .leading)
             }
         }
-        .buttonStyle(.plain)
     }
 
     private func startPlayback() {
@@ -333,10 +382,6 @@ struct DetailView: View {
         Task {
             do {
                 try await session.load(item: viewModel.detail.item)
-                // Show the player AFTER the item is loaded on the AVPlayer.
-                // This ensures AVPlayerViewController is created with a player
-                // that already has a current item, avoiding the XPC race condition
-                // that causes black screen with audio on slow transcodes.
                 isLoadingPlayback = false
                 showPlayer = true
             } catch {
@@ -350,11 +395,43 @@ struct DetailView: View {
     }
 
     private var horizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 16 : 24
+        horizontalSizeClass == .compact ? 24 : 40
     }
 
     private var heroHeight: CGFloat {
-        horizontalSizeClass == .compact ? 320 : 420
+        if horizontalSizeClass == .compact {
+            return dynamicTypeSize.isAccessibilitySize ? 560 : 500
+        }
+        return dynamicTypeSize.isAccessibilitySize ? 700 : 640
+    }
+
+    private var metadataText: String {
+        var entries: [String] = []
+        if let year = viewModel.detail.item.year {
+            entries.append(String(year))
+        }
+        if let runtime = viewModel.detail.item.runtimeMinutes {
+            entries.append("\(runtime)m")
+        }
+        if !viewModel.detail.item.genres.isEmpty {
+            entries.append(viewModel.detail.item.genres.prefix(2).joined(separator: ", "))
+        }
+        return entries.joined(separator: " • ")
+    }
+
+    private var actionColumns: [GridItem] {
+        if dynamicTypeSize.isAccessibilitySize {
+            return [GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 12)]
+        }
+
+        return [
+            GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 12),
+            GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 12)
+        ]
+    }
+
+    private var episodeCardWidth: CGFloat {
+        horizontalSizeClass == .compact ? 280 : 340
     }
 }
 
@@ -371,31 +448,53 @@ private struct MatchedPosterModifier: ViewModifier {
     }
 }
 
-private struct PrimaryCapsuleButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 14, weight: .semibold, design: .rounded))
-            .padding(.vertical, 12)
-            .foregroundStyle(.white)
-            .background(
-                LinearGradient(
-                    colors: [ReelFinTheme.accent, ReelFinTheme.accentSecondary],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .opacity(configuration.isPressed ? 0.8 : 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+private extension MediaItem {
+    static var detailPreviewSample: MediaItem {
+        MediaItem(
+            id: "detail-preview",
+            name: "A Very Long Movie Title Designed To Validate Wrapping Across Small Screens",
+            overview: """
+            This overview intentionally contains enough text to validate wrapping behavior on compact devices and large Dynamic Type sizes. It should remain fully readable, never clipped on the left or right, and naturally scroll when the content is taller than the viewport.
+            """,
+            mediaType: .movie,
+            year: 2026,
+            runtimeTicks: Int64(130 * 60 * 10_000_000),
+            genres: ["Sci-Fi", "Drama"],
+            communityRating: 8.4,
+            posterTag: "poster",
+            backdropTag: "backdrop",
+            libraryID: "movies"
+        )
     }
 }
 
-private struct SecondaryCapsuleButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 14, weight: .semibold, design: .rounded))
-            .padding(.vertical, 12)
-            .foregroundStyle(.white)
-            .background(ReelFinTheme.card.opacity(configuration.isPressed ? 0.7 : 0.92))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+#Preview("Detail - iPhone SE") {
+    NavigationStack {
+        DetailView(
+            dependencies: ReelFinPreviewFactory.dependencies(),
+            item: .detailPreviewSample
+        )
     }
+    .previewDevice("iPhone SE (3rd generation)")
+}
+
+#Preview("Detail - iPhone Pro Max") {
+    NavigationStack {
+        DetailView(
+            dependencies: ReelFinPreviewFactory.dependencies(),
+            item: .detailPreviewSample
+        )
+    }
+    .previewDevice("iPhone 15 Pro Max")
+}
+
+#Preview("Detail - Accessibility XXXL") {
+    NavigationStack {
+        DetailView(
+            dependencies: ReelFinPreviewFactory.dependencies(),
+            item: .detailPreviewSample
+        )
+    }
+    .environment(\.dynamicTypeSize, .accessibility5)
+    .previewDevice("iPhone SE (3rd generation)")
 }

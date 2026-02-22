@@ -23,7 +23,7 @@ actor ImageTaskRegistry {
     }
 }
 
-public final class DefaultImagePipeline: ImagePipelineProtocol {
+public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     private let memoryCache = NSCache<NSURL, UIImage>()
     private let diskCache: LRUDiskCache
     private let urlSession: URLSession
@@ -150,8 +150,9 @@ public final class DefaultImagePipeline: ImagePipelineProtocol {
     }
 
     public func cancel(url: URL) {
+        let taskRegistry = registry
         Task {
-            await registry.cancel(url: url)
+            await taskRegistry.cancel(url: url)
         }
     }
 }

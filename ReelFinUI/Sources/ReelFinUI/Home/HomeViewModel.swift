@@ -112,8 +112,9 @@ final class HomeViewModel: ObservableObject {
 
     private func prefetchImages(for feed: HomeFeed) {
         let allItems = feed.featured + feed.rows.flatMap { $0.items }
+        let apiClient = dependencies.apiClient
         Task.detached(priority: .background) {
-            await self.dependencies.apiClient.prefetchImages(for: allItems)
+            await apiClient.prefetchImages(for: allItems)
         }
     }
 }

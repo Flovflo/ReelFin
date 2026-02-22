@@ -42,7 +42,16 @@ public actor LRUDiskCache {
             try fileManager.createDirectory(at: self.directoryURL, withIntermediateDirectories: true)
         }
 
-        loadIndex()
+        if
+            let data = try? Data(contentsOf: indexURL),
+            let decoded = try? JSONDecoder().decode([String: Entry].self, from: data)
+        {
+            entries = decoded
+            currentSizeBytes = decoded.values.reduce(0) { $0 + $1.size }
+        } else {
+            entries = [:]
+            currentSizeBytes = 0
+        }
     }
 
     public func data(forKey key: String) -> Data? {
@@ -122,20 +131,6 @@ public actor LRUDiskCache {
             currentSizeBytes -= entry.size
             entries[key] = nil
         }
-    }
-
-    private func loadIndex() {
-        guard
-            let data = try? Data(contentsOf: indexURL),
-            let decoded = try? JSONDecoder().decode([String: Entry].self, from: data)
-        else {
-            entries = [:]
-            currentSizeBytes = 0
-            return
-        }
-
-        entries = decoded
-        currentSizeBytes = decoded.values.reduce(0) { $0 + $1.size }
     }
 
     private func persistIndex() {
