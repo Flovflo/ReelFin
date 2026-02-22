@@ -342,6 +342,9 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         guard let configuration else { return nil }
 
         var queryItems = [URLQueryItem]()
+        // Request WebP for better compression and faster transit on Apple devices.
+        queryItems.append(URLQueryItem(name: "format", value: "webp"))
+
         if let width {
             queryItems.append(URLQueryItem(name: "maxWidth", value: String(width)))
         }
@@ -364,6 +367,17 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             path: imagePath,
             query: queryItems
         )
+    }
+
+    public func prefetchImages(for items: [MediaItem]) async {
+        // Speculative prefetching: Generate URLs and trigger URLSession tasks.
+        // This warms up the server-side image cache and local CDN.
+        for item in items {
+            if let posterURL = await imageURL(for: item.id, type: .primary, width: 400, quality: 80) {
+                let request = URLRequest(url: posterURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
+                _ = try? await urlSession.data(for: request)
+            }
+        }
     }
 
     public func reportPlayback(progress: PlaybackProgressUpdate) async throws {

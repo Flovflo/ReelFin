@@ -249,6 +249,8 @@ public final class PlaybackSessionController: ObservableObject {
 
         let playerItem = AVPlayerItem(asset: asset)
         playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+        // Tune forward buffer for faster startup while maintaining stability on weak networks.
+        playerItem.preferredForwardBufferDuration = 10.0 // 10 seconds buffer goal
 
         readyInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_item_ready")
         firstFrameInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_first_frame")

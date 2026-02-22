@@ -36,7 +36,7 @@ public struct DeviceCapabilities: Sendable {
     public init(
         directPlayableContainers: Set<String> = ["mp4", "m4v", "mov"],
         videoCodecs: Set<String> = ["h264", "avc1", "hevc", "h265", "dvh1", "dvhe", "av1"],
-        audioCodecs: Set<String> = ["aac", "ac3", "eac3", "mp3", "flac", "alac"]
+        audioCodecs: Set<String> = ["aac", "ac3", "eac3", "mp3", "flac", "alac", "opus"]
     ) {
         self.directPlayableContainers = directPlayableContainers
         self.videoCodecs = videoCodecs
@@ -140,6 +140,9 @@ public struct PlaybackDecisionEngine {
         var score = 300
         if isHLS(url: url) {
             score += 40
+            if url.absoluteString.contains("Container=fmp4") {
+                score += 50
+            }
         }
         return Candidate(source: source, url: url, score: score)
     }
@@ -225,8 +228,8 @@ public struct PlaybackDecisionEngine {
         }
 
         let audioCodec = source.normalizedAudioCodec
-        if audioCodec.contains("eac3") {
-            score += 35
+        if audioCodec.contains("eac3") || audioCodec.contains("atmos") {
+            score += 50
         } else if audioCodec.contains("ac3") {
             score += 25
         } else if audioCodec.contains("aac") {

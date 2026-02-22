@@ -65,6 +65,7 @@ public protocol JellyfinAPIClientProtocol: AnyObject {
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource]
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
+    func prefetchImages(for items: [MediaItem]) async
     func reportPlayback(progress: PlaybackProgressUpdate) async throws
     func reportPlayed(itemID: String) async throws
 }
@@ -104,4 +105,7 @@ public extension JellyfinAPIClientProtocol {
         _ = options
         return try await fetchPlaybackSources(itemID: itemID)
     }
+
+    // Default no-op: concrete clients may provide a real implementation.
+    func prefetchImages(for items: [MediaItem]) async {}
 }

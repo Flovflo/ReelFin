@@ -481,4 +481,11 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol {
     func reportPlayed(itemID: String) async throws {
         _ = itemID
     }
+
+    func fetchItem(id: String) async throws -> MediaItem {
+        throw AppError.network("Not implemented for tests.")
+    }
+
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
 }

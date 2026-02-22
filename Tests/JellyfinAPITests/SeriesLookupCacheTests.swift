@@ -30,6 +30,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol {
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? { nil }
     func reportPlayback(progress: PlaybackProgressUpdate) async throws {}
     func reportPlayed(itemID: String) async throws {}
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
 }
 
 final class SeriesLookupCacheTests: XCTestCase {

@@ -38,9 +38,19 @@ final class DetailViewModel: ObservableObject {
             
             if freshDetail.item.mediaType == .series {
                 await loadSeasons()
+            } else {
+                // Speculative loading: fetch playback info early to warm up the transcode engine.
+                prefetchPlaybackInfo(for: freshDetail.item.id)
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func prefetchPlaybackInfo(for itemID: String) {
+        Task.detached(priority: .background) { [dependencies] in
+            // This warms up the Jellyfin transcode decision and any potential fMP4 manifest generation.
+            _ = try? await dependencies.apiClient.fetchPlaybackSources(itemID: itemID)
         }
     }
 

@@ -105,6 +105,15 @@ final class HomeViewModel: ObservableObject {
             }
             newRows[i].items = newItems
         }
-        return HomeFeed(featured: feed.featured, rows: newRows)
+        let feed = HomeFeed(featured: feed.featured, rows: newRows)
+        prefetchImages(for: feed)
+        return feed
+    }
+
+    private func prefetchImages(for feed: HomeFeed) {
+        let allItems = feed.featured + feed.rows.flatMap { $0.items }
+        Task.detached(priority: .background) {
+            await self.dependencies.apiClient.prefetchImages(for: allItems)
+        }
     }
 }

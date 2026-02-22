@@ -385,6 +385,7 @@ struct DeviceProfileRequestDTO: Encodable {
     let directPlayProfiles: [DirectPlayProfileRequestDTO]
     let transcodingProfiles: [TranscodingProfileRequestDTO]
     let subtitleProfiles: [SubtitleProfileRequestDTO]
+    let responseProfiles: [ResponseProfileRequestDTO]?
 
     enum CodingKeys: String, CodingKey {
         case name = "Name"
@@ -394,11 +395,12 @@ struct DeviceProfileRequestDTO: Encodable {
         case directPlayProfiles = "DirectPlayProfiles"
         case transcodingProfiles = "TranscodingProfiles"
         case subtitleProfiles = "SubtitleProfiles"
+        case responseProfiles = "ResponseProfiles"
     }
 
     static func iosCompatibilityH264(maxStreamingBitrate: Int, maxAudioChannels: Int) -> DeviceProfileRequestDTO {
         DeviceProfileRequestDTO(
-            name: "ReelFin iOS Compatibility",
+            name: "ReelFin iOS H264",
             id: "5f9f5b0d-4e24-4c24-96e9-4d9eb7221d2e",
             maxStreamingBitrate: maxStreamingBitrate,
             musicStreamingTranscodingBitrate: 192_000,
@@ -429,6 +431,17 @@ struct DeviceProfileRequestDTO: Encodable {
                 SubtitleProfileRequestDTO(
                     format: "srt",
                     method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "vtt",
+                    method: .external
+                )
+            ],
+            responseProfiles: [
+                ResponseProfileRequestDTO(
+                    type: .video,
+                    container: "m4v",
+                    mimeType: "video/mp4"
                 )
             ]
         )
@@ -436,14 +449,14 @@ struct DeviceProfileRequestDTO: Encodable {
 
     static func iosOptimizedHEVC(maxStreamingBitrate: Int, maxAudioChannels: Int) -> DeviceProfileRequestDTO {
         DeviceProfileRequestDTO(
-            name: "ReelFin Apple Optimized",
+            name: "ReelFin Apple Optimized (DV/HDR/Atmos)",
             id: "7d0410cb-260f-4f7c-82cb-0d3ed7a5de38",
             maxStreamingBitrate: maxStreamingBitrate,
             musicStreamingTranscodingBitrate: 192_000,
             directPlayProfiles: [
                 DirectPlayProfileRequestDTO(
                     container: "mp4,m4v,mov",
-                    audioCodec: "aac,ac3,eac3,mp3,alac",
+                    audioCodec: "aac,ac3,eac3,mp3,alac,flac",
                     videoCodec: "hevc,h265,hvc1,dvh1,dvhe,h264,avc1",
                     type: .video
                 )
@@ -453,7 +466,7 @@ struct DeviceProfileRequestDTO: Encodable {
                     container: "fmp4",
                     type: .video,
                     videoCodec: "hevc",
-                    audioCodec: "aac",
+                    audioCodec: "eac3,aac",
                     protocolValue: .hls,
                     context: .streaming,
                     maxAudioChannels: String(maxAudioChannels),
@@ -467,6 +480,17 @@ struct DeviceProfileRequestDTO: Encodable {
                 SubtitleProfileRequestDTO(
                     format: "srt",
                     method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "vtt",
+                    method: .external
+                )
+            ],
+            responseProfiles: [
+                ResponseProfileRequestDTO(
+                    type: .video,
+                    container: "mp4,m4v",
+                    mimeType: "video/mp4"
                 )
             ]
         )
@@ -522,6 +546,18 @@ struct SubtitleProfileRequestDTO: Encodable {
     enum CodingKeys: String, CodingKey {
         case format = "Format"
         case method = "Method"
+    }
+}
+
+struct ResponseProfileRequestDTO: Encodable {
+    let type: DlnaProfileTypeDTO
+    let container: String
+    let mimeType: String
+
+    enum CodingKeys: String, CodingKey {
+        case type = "Type"
+        case container = "Container"
+        case mimeType = "MimeType"
     }
 }
 
