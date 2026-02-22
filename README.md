@@ -1,6 +1,9 @@
 # ReelFin iOS 🎬
 
 ReelFin is a native iOS streaming client for Jellyfin, meticulously built with pure Swift and SwiftUI. It prioritizes Apple's native frameworks to deliver the fastest, most battery-efficient media playback experience possible.
+<img width="380" height="568" alt="image" src="https://github.com/user-attachments/assets/f158ee58-b9f8-47bd-9122-058d9f446469" />
+<img width="380" height="568" alt="image" src="https://github.com/user-attachments/assets/7b1f296b-1b21-407b-b048-97a04f737280" />
+
 
 ## Release: Beta 0.1
 
