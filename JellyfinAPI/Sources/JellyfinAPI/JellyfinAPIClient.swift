@@ -192,7 +192,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         let item: ItemDTO = try await request(
             path: "Users/\(userID)/Items/\(id)",
             query: [
-                URLQueryItem(name: "Fields", value: "Genres,Overview,PrimaryImageAspectRatio,RunTimeTicks,People")
+                URLQueryItem(name: "Fields", value: "Genres,Overview,PrimaryImageAspectRatio,RunTimeTicks,People,MediaStreams,AirDays")
             ]
         )
         return item.toDomain()
@@ -203,7 +203,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         let item: ItemDTO = try await request(
             path: "Users/\(userID)/Items/\(id)",
             query: [
-                URLQueryItem(name: "Fields", value: "Genres,Overview,PrimaryImageAspectRatio,RunTimeTicks,People")
+                URLQueryItem(name: "Fields", value: "Genres,Overview,PrimaryImageAspectRatio,RunTimeTicks,People,MediaStreams,AirDays")
             ]
         )
 

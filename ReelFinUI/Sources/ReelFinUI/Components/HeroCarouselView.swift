@@ -1,3 +1,4 @@
+import Combine
 import Shared
 import SwiftUI
 
@@ -11,6 +12,7 @@ public struct HeroCarouselView: View {
     private let onTap: (MediaItem) -> Void
 
     @State private var currentIndex: Int = 0
+    private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     public init(
         items: [MediaItem],
@@ -36,8 +38,8 @@ public struct HeroCarouselView: View {
                                 .containerRelativeFrame(.horizontal)
                                 .scrollTransition(axis: .horizontal) { content, phase in
                                     content
-                                        .scaleEffect(phase.isIdentity ? 1 : 0.98)
-                                        .opacity(phase.isIdentity ? 1 : 0.8)
+                                        .scaleEffect(phase.isIdentity ? 1.0 : 0.95)
+                                        .opacity(phase.isIdentity ? 1.0 : 0.6)
                                 }
                                 .id(index)
                                 .onTapGesture {
@@ -69,12 +71,19 @@ public struct HeroCarouselView: View {
                 }
             }
             .frame(height: heroHeight)
+            .onReceive(timer) { _ in
+                if items.count > 1 {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                        currentIndex = (currentIndex + 1) % items.count
+                    }
+                }
+            }
         }
     }
 
     @ViewBuilder
     private func heroContent(for item: MediaItem) -> some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .bottom) {
             // Background Image
             CachedRemoteImage(
                 itemID: item.id,
@@ -86,16 +95,26 @@ public struct HeroCarouselView: View {
             )
             .clipped()
             
-            // Dark scrim to ensure text readability
+            // Dark scrim to ensure text readability (gradient blur)
             Rectangle()
-                .fill(ReelFinTheme.heroGradientScrim)
+                .fill(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black.opacity(0.3), location: 0.5),
+                            .init(color: .black.opacity(0.85), location: 0.8),
+                            .init(color: ReelFinTheme.background, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             
             // Text & Buttons overlay
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .center, spacing: 12) {
                 if let badgeText = promoBadge(for: item) {
                     Text(badgeText)
                         .font(.caption.weight(.bold))
-                        .textCase(.uppercase)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
@@ -103,34 +122,30 @@ public struct HeroCarouselView: View {
                 }
 
                 Text(item.name)
-                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 36 : 48, weight: .black, design: .rounded))
+                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 32 : 44, weight: .heavy, design: .rounded))
+                    .textCase(.uppercase)
                     .foregroundStyle(.white)
-                    .multilineTextAlignment(.leading)
+                    .multilineTextAlignment(.center)
                     .lineLimit(2)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.6)
+                    .truncationMode(.tail)
                     .shadow(color: .black.opacity(0.5), radius: 4)
                     .accessibilityAddTraits(.isHeader)
 
-                if !heroSubtitle(for: item).isEmpty {
-                    Text(heroSubtitle(for: item))
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .lineLimit(1)
-                }
-
                 Text(heroMetadataText(for: item))
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .multilineTextAlignment(.center)
                     .lineLimit(1)
 
                 heroActionButtons(for: item)
-                    .padding(.top, 8)
+                    .padding(.top, 12)
             }
             .padding(.horizontal, horizontalPadding)
             .padding(.bottom, 60)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: UIScreen.main.bounds.width - (horizontalPadding * 2), alignment: .center)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: UIScreen.main.bounds.width)
     }
 
     private func heroActionButtons(for item: MediaItem) -> some View {
@@ -181,17 +196,19 @@ public struct HeroCarouselView: View {
 
     private func heroMetadataText(for item: MediaItem) -> String {
         var entries: [String] = []
-        if let year = item.year {
-            entries.append(String(year))
+        
+        let typeStr = item.mediaType == .series ? "TV Show" : "Movie"
+        entries.append(typeStr)
+
+        if !item.genres.isEmpty {
+            entries.append(item.genres.prefix(2).joined(separator: " • "))
         }
-        if let runtime = item.runtimeMinutes {
-            entries.append("\(runtime)m")
-        }
+        
         return entries.joined(separator: " • ")
     }
 
     private var horizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 24 : 40
+        horizontalSizeClass == .compact ? 32 : 48
     }
 
     private var heroHeight: CGFloat {

@@ -135,6 +135,10 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     public var seriesPosterTag: String?
     public var indexNumber: Int?
     public var parentIndexNumber: Int?
+    public var has4K: Bool
+    public var hasDolbyVision: Bool
+    public var hasClosedCaptions: Bool
+    public var airDays: [String]?
 
     public init(
         id: String,
@@ -152,7 +156,11 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         seriesName: String? = nil,
         seriesPosterTag: String? = nil,
         indexNumber: Int? = nil,
-        parentIndexNumber: Int? = nil
+        parentIndexNumber: Int? = nil,
+        has4K: Bool = false,
+        hasDolbyVision: Bool = false,
+        hasClosedCaptions: Bool = false,
+        airDays: [String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -170,6 +178,10 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         self.seriesPosterTag = seriesPosterTag
         self.indexNumber = indexNumber
         self.parentIndexNumber = parentIndexNumber
+        self.has4K = has4K
+        self.hasDolbyVision = hasDolbyVision
+        self.hasClosedCaptions = hasClosedCaptions
+        self.airDays = airDays
     }
 
     public var runtimeMinutes: Int? {

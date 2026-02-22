@@ -1,6 +1,8 @@
 import PlaybackEngine
 import Shared
 import SwiftUI
+import ImageCache
+import JellyfinAPI
 
 struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -13,6 +15,7 @@ struct DetailView: View {
     @State private var playerSession: PlaybackSessionController?
     @State private var showPlayer = false
     @State private var isLoadingPlayback = false
+    @State private var isDescriptionExpanded = false
 
     init(
         dependencies: ReelFinDependencies,
@@ -28,19 +31,19 @@ struct DetailView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 32) {
                 // Hero Banner
-                ZStack(alignment: .bottomLeading) {
-                    poster
-                        .frame(maxWidth: .infinity)
-                        .frame(height: heroHeight)
-                        .clipped()
-
-                    Rectangle()
-                        .fill(ReelFinTheme.heroGradientScrim)
-                        .frame(height: heroHeight)
-
-                    detailPanel
-                        .padding(.bottom, 24)
-                }
+                MediaHeroHeaderView(
+                    item: viewModel.detail.item,
+                    heroHeight: heroHeight,
+                    isLoadingPlayback: isLoadingPlayback,
+                    isInWatchlist: viewModel.isInWatchlist,
+                    isDescriptionExpanded: $isDescriptionExpanded,
+                    onPlay: startPlayback,
+                    onToggleWatchlist: { viewModel.toggleWatchlist() },
+                    onMoreActions: { /* More actions */ },
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline,
+                    namespace: namespace
+                )
 
                 if viewModel.detail.item.mediaType == .series {
                     seasonSection
@@ -48,11 +51,21 @@ struct DetailView: View {
                 }
 
                 if !viewModel.detail.cast.isEmpty {
-                    castSection
+                    CastRow(cast: viewModel.detail.cast)
                 }
 
                 if !viewModel.detail.similar.isEmpty {
-                    similarSection
+                    SimilarRow(
+                        similar: viewModel.detail.similar,
+                        onSelect: { item in
+                            viewModel.detail = MediaDetail(item: item)
+                            Task {
+                                await viewModel.load()
+                            }
+                        },
+                        apiClient: dependencies.apiClient,
+                        imagePipeline: dependencies.imagePipeline
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -89,171 +102,7 @@ struct DetailView: View {
         }
     }
 
-    private var poster: some View {
-        CachedRemoteImage(
-            itemID: viewModel.detail.item.id,
-            type: .backdrop,
-            width: 1300,
-            quality: 85,
-            apiClient: dependencies.apiClient,
-            imagePipeline: dependencies.imagePipeline
-        )
-        .modifier(MatchedPosterModifier(itemID: viewModel.detail.item.id, namespace: namespace))
-    }
 
-    private var detailPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(viewModel.detail.item.name)
-                .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 32 : 44, weight: .black, design: .rounded))
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.leading)
-                .lineLimit(3)
-                .minimumScaleFactor(0.85)
-                .shadow(color: .black.opacity(0.4), radius: 4)
-                .accessibilityAddTraits(.isHeader)
-
-            if !metadataText.isEmpty {
-                Text(metadataText)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .multilineTextAlignment(.leading)
-            }
-
-            if let overview = viewModel.detail.item.overview, !overview.isEmpty {
-                Text(overview)
-                    .font(.body)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(4)
-                    .accessibilityIdentifier("detail_overview")
-            }
-
-            actionButtons
-                .padding(.top, 12)
-        }
-        .padding(.horizontal, horizontalPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var actionButtons: some View {
-        LazyVGrid(columns: actionColumns, spacing: 12) {
-            Button {
-                startPlayback()
-            } label: {
-                if isLoadingPlayback {
-                    ProgressView()
-                        .tint(.black)
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                        .background(Color.white)
-                        .clipShape(Capsule())
-                } else {
-                    Label("Play", systemImage: "play.fill")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                        .background(Color.white)
-                        .clipShape(Capsule())
-                        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isLoadingPlayback)
-            .sensoryFeedback(.impact(weight: .medium), trigger: isLoadingPlayback)
-
-            Button {
-                startPlayback()
-            } label: {
-                Label(viewModel.shouldShowResume ? "Resume" : "Start Over", systemImage: "goforward")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 56)
-                    .glassPanelStyle(cornerRadius: 28)
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                viewModel.toggleWatchlist()
-            } label: {
-                Label(viewModel.isInWatchlist ? "In Watchlist" : "Watchlist", systemImage: "plus")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 56)
-                    .glassPanelStyle(cornerRadius: 28)
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                viewModel.toggleWatched()
-            } label: {
-                Label(viewModel.isWatched ? "Watched" : "Mark Watched", systemImage: "checkmark")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 56)
-                    .glassPanelStyle(cornerRadius: 28)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private var castSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Cast")
-                .reelFinSectionStyle()
-                .padding(.horizontal, horizontalPadding)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
-                    ForEach(Array(viewModel.detail.cast.enumerated()), id: \.offset) { _, person in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(person.name)
-                                .font(.system(size: 15, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                            if let role = person.role {
-                                Text(role)
-                                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.6))
-                                    .lineLimit(1)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .glassPanelStyle(cornerRadius: 16)
-                    }
-                }
-                .padding(.horizontal, horizontalPadding)
-            }
-        }
-    }
-
-    private var similarSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Similar")
-                .reelFinSectionStyle()
-                .padding(.horizontal, horizontalPadding)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 16) {
-                    ForEach(viewModel.detail.similar) { item in
-                        Button {
-                            viewModel.detail = MediaDetail(item: item)
-                            Task {
-                                await viewModel.load()
-                            }
-                        } label: {
-                            PosterCardView(
-                                item: item,
-                                apiClient: dependencies.apiClient,
-                                imagePipeline: dependencies.imagePipeline
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, horizontalPadding)
-            }
-        }
-    }
 
     @ViewBuilder
     private var seasonSection: some View {
@@ -307,68 +156,28 @@ struct DetailView: View {
                 .padding(.vertical, 40)
         } else if !viewModel.episodes.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Episodes")
-                    .reelFinSectionStyle()
-                    .padding(.horizontal, horizontalPadding)
+                let seasonText = viewModel.episodes.first?.parentIndexNumber.map { "Season \($0)" } ?? "Episodes"
+                
+                SeasonHeaderView(title: seasonText)
+                    .padding(.bottom, 8)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 16) {
                         ForEach(viewModel.episodes) { episode in
-                            episodeCard(for: episode)
-                            .buttonStyle(.plain)
+                            EpisodeCardView(
+                                episode: episode,
+                                width: episodeCardWidth,
+                                onSelect: {
+                                    viewModel.detail = MediaDetail(item: episode)
+                                    Task { await viewModel.load() }
+                                },
+                                apiClient: dependencies.apiClient,
+                                imagePipeline: dependencies.imagePipeline
+                            )
                         }
                     }
                     .padding(.horizontal, horizontalPadding)
                 }
-            }
-        }
-    }
-
-    private func episodeCard(for episode: MediaItem) -> some View {
-        Button {
-            viewModel.detail = MediaDetail(item: episode)
-            Task {
-                await viewModel.load()
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                CachedRemoteImage(
-                    itemID: episode.id,
-                    type: .primary,
-                    width: 400,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline
-                )
-                .frame(width: episodeCardWidth, height: episodeCardWidth * (9.0 / 16.0))
-                .clipShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
-                        .stroke(ReelFinTheme.glassStrokeColor, lineWidth: ReelFinTheme.glassStrokeWidth)
-                }
-                .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 4)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(episode.indexNumber.map { "\($0). " } ?? "")\(episode.name)")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-
-                    if let runtime = episode.runtimeMinutes {
-                        Text("\(runtime)m")
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
-
-                    if let overview = episode.overview, !overview.isEmpty {
-                        Text(overview)
-                            .font(.footnote)
-                            .foregroundStyle(.white.opacity(0.75))
-                            .lineLimit(3)
-                            .lineSpacing(2)
-                            .padding(.top, 2)
-                    }
-                }
-                .frame(width: episodeCardWidth, alignment: .leading)
             }
         }
     }
@@ -405,37 +214,246 @@ struct DetailView: View {
         return dynamicTypeSize.isAccessibilitySize ? 700 : 640
     }
 
-    private var metadataText: String {
-        var entries: [String] = []
-        if let year = viewModel.detail.item.year {
-            entries.append(String(year))
-        }
-        if let runtime = viewModel.detail.item.runtimeMinutes {
-            entries.append("\(runtime)m")
-        }
-        if !viewModel.detail.item.genres.isEmpty {
-            entries.append(viewModel.detail.item.genres.prefix(2).joined(separator: ", "))
-        }
-        return entries.joined(separator: " • ")
-    }
 
-    private var actionColumns: [GridItem] {
-        if dynamicTypeSize.isAccessibilitySize {
-            return [GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 12)]
-        }
-
-        return [
-            GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 12),
-            GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 12)
-        ]
-    }
 
     private var episodeCardWidth: CGFloat {
-        horizontalSizeClass == .compact ? 280 : 340
+        horizontalSizeClass == .compact ? 320 : 400
     }
 }
 
-private struct MatchedPosterModifier: ViewModifier {
+// MARK: - Apple TV Aesthetic Detail Components
+
+public struct HeroScrimView: View {
+    public init() {}
+    
+    public var body: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black.opacity(0.8), location: 0),
+                .init(color: .clear, location: 0.25),
+                .init(color: .clear, location: 0.5),
+                .init(color: .black.opacity(0.7), location: 0.8),
+                .init(color: .black, location: 1.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
+
+public struct BadgePill: View {
+    let text: String
+
+    public init(text: String) {
+        self.text = text
+    }
+
+    public var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color(white: 0.2))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
+            }
+    }
+}
+
+public struct PrimaryPlayButton: View {
+    let title: String
+    let isLoading: Bool
+    let action: () -> Void
+
+    public init(title: String, isLoading: Bool, action: @escaping () -> Void) {
+        self.title = title
+        self.isLoading = isLoading
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if isLoading {
+                    ProgressView()
+                        .tint(.black)
+                } else {
+                    Image(systemName: "play.fill")
+                        .font(.headline)
+                    Text(title)
+                        .font(.headline.weight(.semibold))
+                }
+            }
+            .foregroundStyle(.black)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(Color.white)
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
+        .sensoryFeedback(.impact(weight: .medium), trigger: isLoading)
+    }
+}
+
+public struct GlassCircleButton: View {
+    let systemImage: String
+    let action: () -> Void
+
+    public init(systemImage: String, action: @escaping () -> Void) {
+        self.systemImage = systemImage
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.medium))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+public struct SeasonHeaderView: View {
+    let title: String
+    
+    public init(title: String) {
+        self.title = title
+    }
+    
+    public var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.white)
+            
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.6))
+        }
+        .padding(.horizontal, 40)
+    }
+}
+
+public struct EpisodeCardView: View {
+    let episode: MediaItem
+    let width: CGFloat
+    let onSelect: () -> Void
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+
+    public init(
+        episode: MediaItem, 
+        width: CGFloat, 
+        onSelect: @escaping () -> Void,
+        apiClient: any JellyfinAPIClientProtocol,
+        imagePipeline: any ImagePipelineProtocol
+    ) {
+        self.episode = episode
+        self.width = width
+        self.onSelect = onSelect
+        self.apiClient = apiClient
+        self.imagePipeline = imagePipeline
+    }
+
+    public var body: some View {
+        Button(action: onSelect) {
+            ZStack(alignment: .bottomLeading) {
+                // Background Image
+                Color.clear
+                    .frame(width: width, height: width * (9.0 / 16.0))
+                    .overlay(alignment: .center) {
+                        CachedRemoteImage(
+                            itemID: episode.id,
+                            type: .primary,
+                            width: 600,
+                            apiClient: apiClient,
+                            imagePipeline: imagePipeline
+                        )
+                        .frame(width: width, height: width * (9.0 / 16.0))
+                        .clipped()
+                    }
+                
+                // Dark bottom gradient overlay
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.0),
+                                .init(color: .black.opacity(0.4), location: 0.5),
+                                .init(color: .black.opacity(0.85), location: 1.0)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                
+                // Content
+                VStack(alignment: .leading, spacing: 4) {
+                    Spacer()
+                    
+                    Text("EPISODE \(episode.indexNumber ?? 0)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.8))
+                    
+                    Text(episode.name)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    
+                    if let overview = episode.overview, !overview.isEmpty {
+                        Text(overview)
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(2)
+                            .lineSpacing(2)
+                            .padding(.bottom, 4)
+                    }
+                    
+                    HStack {
+                        if let runtime = episode.runtimeMinutes {
+                            Label("\(runtime)m", systemImage: "play.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "ellipsis")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                }
+                .padding(20)
+                .frame(width: width, height: width * (9.0 / 16.0), alignment: .bottomLeading)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .shadow(color: .black.opacity(0.4), radius: 10, x: 0, y: 5)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct MatchedPosterModifier: ViewModifier {
     let itemID: String
     let namespace: Namespace.ID?
 
@@ -445,6 +463,260 @@ private struct MatchedPosterModifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+public struct MediaHeroHeaderView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    let item: MediaItem
+    let heroHeight: CGFloat
+    let isLoadingPlayback: Bool
+    let isInWatchlist: Bool
+    @Binding var isDescriptionExpanded: Bool
+    let onPlay: () -> Void
+    let onToggleWatchlist: () -> Void
+    let onMoreActions: () -> Void
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let namespace: Namespace.ID?
+    
+    public init(item: MediaItem, heroHeight: CGFloat, isLoadingPlayback: Bool, isInWatchlist: Bool, isDescriptionExpanded: Binding<Bool>, onPlay: @escaping () -> Void, onToggleWatchlist: @escaping () -> Void, onMoreActions: @escaping () -> Void, apiClient: any JellyfinAPIClientProtocol, imagePipeline: any ImagePipelineProtocol, namespace: Namespace.ID? = nil) {
+        self.item = item
+        self.heroHeight = heroHeight
+        self.isLoadingPlayback = isLoadingPlayback
+        self.isInWatchlist = isInWatchlist
+        self._isDescriptionExpanded = isDescriptionExpanded
+        self.onPlay = onPlay
+        self.onToggleWatchlist = onToggleWatchlist
+        self.onMoreActions = onMoreActions
+        self.apiClient = apiClient
+        self.imagePipeline = imagePipeline
+        self.namespace = namespace
+    }
+    
+    public var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.clear
+                .frame(height: heroHeight)
+                .overlay(alignment: .center) {
+                    CachedRemoteImage(
+                        itemID: item.id,
+                        type: .backdrop,
+                        width: 1300,
+                        quality: 85,
+                        apiClient: apiClient,
+                        imagePipeline: imagePipeline
+                    )
+                    .modifier(MatchedPosterModifier(itemID: item.id, namespace: namespace))
+                    .frame(height: heroHeight)
+                    .clipped()
+                }
+                .clipped()
+
+            HeroScrimView()
+                .frame(height: heroHeight)
+            
+            VStack(alignment: .center, spacing: 12) {
+                if let airDays = item.airDays, !airDays.isEmpty {
+                    if airDays.count == 1 {
+                        BadgePill(text: "New Episode Every \(airDays[0])")
+                    } else {
+                        BadgePill(text: "New Episodes on \(airDays.joined(separator: ", "))")
+                    }
+                }
+                
+                Text(item.name)
+                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 36 : 56, weight: .heavy, design: .rounded))
+                    .tracking(1.5)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+                    .textSelection(.disabled)
+                    .shadow(color: .black.opacity(0.4), radius: 6)
+                    .accessibilityAddTraits(.isHeader)
+                
+                if !metadataText.isEmpty {
+                    Text(metadataText)
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                }
+                
+                HStack(spacing: 12) {
+                    PrimaryPlayButton(
+                        title: item.mediaType == .series ? "Play First Episode" : "Play",
+                        isLoading: isLoadingPlayback,
+                        action: onPlay
+                    )
+                    .frame(maxWidth: 320)
+                    
+                    GlassCircleButton(
+                        systemImage: isInWatchlist ? "checkmark" : "plus",
+                        action: onToggleWatchlist
+                    )
+                    
+                    GlassCircleButton(
+                        systemImage: "ellipsis",
+                        action: onMoreActions
+                    )
+                }
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+                
+                if let overview = item.overview, !overview.isEmpty {
+                    VStack(spacing: 8) {
+                        Text(overview)
+                            .font(.body)
+                            .foregroundStyle(.white.opacity(0.75))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(isDescriptionExpanded ? nil : 2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                isDescriptionExpanded.toggle()
+                            }
+                        }) {
+                            Text(isDescriptionExpanded ? "LESS" : "MORE")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(Color(white: 0.2))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                HStack(spacing: 8) {
+                    if item.has4K {
+                        BadgePill(text: "4K")
+                    }
+                    if item.hasDolbyVision {
+                        BadgePill(text: "Dolby Vision")
+                    }
+                    if item.hasClosedCaptions {
+                        BadgePill(text: "CC")
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+    
+    private var metadataText: String {
+        var entries: [String] = []
+        if let year = item.year {
+            entries.append(String(year))
+        }
+        if let runtime = item.runtimeMinutes {
+            entries.append("\(runtime)m")
+        }
+        if !item.genres.isEmpty {
+            entries.append(item.genres.prefix(2).joined(separator: ", "))
+        }
+        return entries.joined(separator: " • ")
+    }
+    
+    private var horizontalPadding: CGFloat {
+        horizontalSizeClass == .compact ? 24 : 40
+    }
+}
+
+public struct CastRow: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    let cast: [PersonCredit]
+    
+    public init(cast: [PersonCredit]) {
+        self.cast = cast
+    }
+    
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Cast")
+                .reelFinSectionStyle()
+                .padding(.horizontal, horizontalPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(Array(cast.enumerated()), id: \.offset) { _, person in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(person.name)
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                            if let role = person.role {
+                                Text(role)
+                                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .lineLimit(1)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .glassPanelStyle(cornerRadius: 16)
+                    }
+                }
+                .padding(.horizontal, horizontalPadding)
+            }
+        }
+    }
+    
+    private var horizontalPadding: CGFloat {
+        horizontalSizeClass == .compact ? 24 : 40
+    }
+}
+
+public struct SimilarRow: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    let similar: [MediaItem]
+    let onSelect: (MediaItem) -> Void
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+
+    public init(similar: [MediaItem], onSelect: @escaping (MediaItem) -> Void, apiClient: any JellyfinAPIClientProtocol, imagePipeline: any ImagePipelineProtocol) {
+        self.similar = similar
+        self.onSelect = onSelect
+        self.apiClient = apiClient
+        self.imagePipeline = imagePipeline
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Similar")
+                .reelFinSectionStyle()
+                .padding(.horizontal, horizontalPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 16) {
+                    ForEach(similar) { item in
+                        Button {
+                            onSelect(item)
+                        } label: {
+                            PosterCardView(
+                                item: item,
+                                apiClient: apiClient,
+                                imagePipeline: imagePipeline
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, horizontalPadding)
+            }
+        }
+    }
+
+    private var horizontalPadding: CGFloat {
+        horizontalSizeClass == .compact ? 24 : 40
     }
 }
 

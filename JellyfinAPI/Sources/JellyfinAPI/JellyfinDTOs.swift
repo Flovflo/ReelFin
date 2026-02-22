@@ -77,6 +77,8 @@ struct ItemDTO: Decodable {
     let indexNumber: Int?
     let parentIndexNumber: Int?
     let people: [PersonDTO]?
+    let mediaStreams: [MediaStreamDTO]?
+    let airDays: [String]?
 
     enum CodingKeys: String, CodingKey {
         case id = "Id"
@@ -96,6 +98,8 @@ struct ItemDTO: Decodable {
         case indexNumber = "IndexNumber"
         case parentIndexNumber = "ParentIndexNumber"
         case people = "People"
+        case mediaStreams = "MediaStreams"
+        case airDays = "AirDays"
     }
 
     func toDomain(libraryID: String? = nil) -> MediaItem {
@@ -111,6 +115,22 @@ struct ItemDTO: Decodable {
             mediaType = .season
         default:
             mediaType = .unknown
+        }
+
+        var has4K = false
+        var hasDolbyVision = false
+        var hasClosedCaptions = false
+
+        if let streams = mediaStreams {
+            has4K = streams.contains { 
+                $0.type?.lowercased() == "video" && 
+                (($0.width ?? 0) >= 3840 || ($0.height ?? 0) >= 2160 || ($0.displayTitle?.lowercased().contains("4k") == true)) 
+            }
+            hasDolbyVision = streams.contains { 
+                $0.type?.lowercased() == "video" && 
+                ($0.videoRangeType?.lowercased() == "dovi" || $0.videoRangeType?.lowercased() == "hdr10" || $0.videoRangeType?.lowercased() == "hdr" || $0.profile?.lowercased().contains("dolby vision") == true || ($0.displayTitle?.lowercased().contains("dolby vision") == true)) 
+            }
+            hasClosedCaptions = streams.contains { $0.type?.lowercased() == "subtitle" }
         }
 
         return MediaItem(
@@ -129,7 +149,11 @@ struct ItemDTO: Decodable {
             seriesName: seriesName,
             seriesPosterTag: seriesPrimaryImageTag,
             indexNumber: indexNumber,
-            parentIndexNumber: parentIndexNumber
+            parentIndexNumber: parentIndexNumber,
+            has4K: has4K,
+            hasDolbyVision: hasDolbyVision,
+            hasClosedCaptions: hasClosedCaptions,
+            airDays: airDays
         )
     }
 }
@@ -296,6 +320,8 @@ struct MediaStreamDTO: Decodable {
     let channels: Int?
     let channelLayout: String?
     let bitrate: Int?
+    let width: Int?
+    let height: Int?
 
     enum CodingKeys: String, CodingKey {
         case index = "Index"
@@ -311,6 +337,8 @@ struct MediaStreamDTO: Decodable {
         case channels = "Channels"
         case channelLayout = "ChannelLayout"
         case bitrate = "BitRate"
+        case width = "Width"
+        case height = "Height"
     }
 
     func toTrack() -> MediaTrack {
