@@ -4,6 +4,7 @@ import SwiftUI
 public enum PosterCardLayoutStyle: Sendable {
     case row
     case grid
+    case landscape
 }
 
 public struct PosterCardView: View {
@@ -32,23 +33,32 @@ public struct PosterCardView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             CachedRemoteImage(
-                itemID: item.id,
-                type: .primary,
-                width: 360,
+                itemID: (item.mediaType == .episode && item.parentID != nil && layoutStyle != .landscape) ? item.parentID! : item.id,
+                type: layoutStyle == .landscape ? .backdrop : .primary,
+                width: layoutStyle == .landscape ? 400 : 360,
                 apiClient: apiClient,
                 imagePipeline: imagePipeline
             )
             .frame(width: posterWidth, height: posterHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: layoutStyle == .landscape ? 20 : 16, style: .continuous))
             .shadow(color: .black.opacity(0.35), radius: 14, x: 0, y: 8)
             .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
 
-            Text(item.name)
+            Text(item.seriesName ?? item.name)
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
                 .lineLimit(1)
 
-            if let year = item.year {
+            if item.mediaType == .episode, let index = item.indexNumber {
+                let seasonText = item.parentIndexNumber.map { "S\($0)" } ?? ""
+                Text("\(seasonText) E\(index)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.white.opacity(0.15))
+                    .clipShape(Capsule())
+            } else if let year = item.year {
                 Text(String(year))
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.65))
@@ -60,14 +70,21 @@ public struct PosterCardView: View {
     private var posterWidth: CGFloat {
         switch layoutStyle {
         case .row:
-            return horizontalSizeClass == .compact ? 168 : 210
+            return horizontalSizeClass == .compact ? 134 : 160 // Shrink slightly to match TV app feel
         case .grid:
             return horizontalSizeClass == .compact ? 158 : 206
+        case .landscape:
+            return horizontalSizeClass == .compact ? 240 : 300
         }
     }
 
     private var posterHeight: CGFloat {
-        posterWidth * 1.5
+        switch layoutStyle {
+        case .landscape:
+            return posterWidth * (9.0 / 16.0)
+        default:
+            return posterWidth * 1.55
+        }
     }
 }
 

@@ -10,6 +10,11 @@ final class DetailViewModel: ObservableObject {
     @Published var isInWatchlist = false
     @Published var isWatched = false
 
+    @Published var seasons: [MediaItem] = []
+    @Published var episodes: [MediaItem] = []
+    @Published var selectedSeason: MediaItem?
+    @Published var isLoadingEpisodes = false
+
     private let dependencies: ReelFinDependencies
 
     init(item: MediaItem, dependencies: ReelFinDependencies) {
@@ -30,8 +35,38 @@ final class DetailViewModel: ObservableObject {
             let freshDetail = try await dependencies.apiClient.fetchItemDetail(id: detail.item.id)
             detail = freshDetail
             try await dependencies.repository.upsertItems([freshDetail.item] + freshDetail.similar)
+            
+            if freshDetail.item.mediaType == .series {
+                await loadSeasons()
+            }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadSeasons() async {
+        do {
+            let fetchedSeasons = try await dependencies.apiClient.fetchSeasons(seriesID: detail.item.id)
+            self.seasons = fetchedSeasons
+            
+            if let firstSeason = fetchedSeasons.first {
+                await select(season: firstSeason)
+            }
+        } catch {
+            print("Failed to load seasons: \(error)")
+        }
+    }
+
+    func select(season: MediaItem) async {
+        selectedSeason = season
+        isLoadingEpisodes = true
+        defer { isLoadingEpisodes = false }
+        
+        do {
+            let fetchedEpisodes = try await dependencies.apiClient.fetchEpisodes(seriesID: detail.item.id, seasonID: season.id)
+            self.episodes = fetchedEpisodes
+        } catch {
+            print("Failed to load episodes: \(error)")
         }
     }
 

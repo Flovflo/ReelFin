@@ -4,6 +4,7 @@ import UIKit
 
 struct HomeView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel: HomeViewModel
     @Namespace private var posterNamespace
 
@@ -16,17 +17,14 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ZStack {
-            ReelFinTheme.pageGradient.ignoresSafeArea()
-
-            ScrollView(showsIndicators: false) {
+        ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 26) {
-                    header
-
                     if viewModel.isInitialLoading && viewModel.feed.rows.isEmpty {
                         loadingSkeleton
+                            .padding(.top, 100)
                     } else if viewModel.feed.rows.allSatisfy({ $0.items.isEmpty }) && viewModel.feed.featured.isEmpty {
                         emptyState
+                            .padding(.top, 100)
                     } else {
                         featuredSection
 
@@ -36,9 +34,9 @@ struct HomeView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 10)
-                .padding(.bottom, 36)
+                .padding(.bottom, 60) // Safety padding for the floating tab bar
             }
+            .ignoresSafeArea(.container, edges: .top) // Let hero bleed to top edge
             .refreshable {
                 await viewModel.manualRefresh()
             }
@@ -55,130 +53,103 @@ struct HomeView: View {
                     }
             )
 
-            if let selectedItem = viewModel.selectedItem {
-                DetailView(
-                    dependencies: dependencies,
-                    item: selectedItem,
-                    namespace: posterNamespace,
-                    onDismiss: {
-                        viewModel.dismissDetail()
-                    }
+            .navigationDestination(
+                isPresented: Binding(
+                    get: { viewModel.selectedItem != nil },
+                    set: { if !$0 { viewModel.selectedItem = nil } }
                 )
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .zIndex(3)
+            ) {
+                if let item = viewModel.selectedItem {
+                    DetailView(
+                        dependencies: dependencies,
+                        item: item,
+                        namespace: posterNamespace
+                    )
+                }
             }
-        }
+        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .task {
             await viewModel.load()
         }
         .toolbar(.hidden, for: .navigationBar)
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Discover")
-                    .font(.system(size: 42, weight: .bold))
-                    .foregroundStyle(.white)
-
-                Spacer()
-
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 34, height: 34)
-                        .overlay {
-                            Image(systemName: "slider.horizontal.3")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.92))
-                        }
-
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 34, height: 34)
-                        .overlay {
-                            Image(systemName: "person.crop.circle")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.92))
-                        }
-                }
-
-                if viewModel.isRefreshing || viewModel.isInitialLoading {
-                    ProgressView()
-                        .tint(.white)
-                        .padding(.leading, 6)
-                }
-            }
-
-            Text("Featured")
-                .font(.system(size: 40, weight: .bold))
-                .foregroundStyle(.white)
-
-            Text("Popular and trending movies")
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
-        }
-        .padding(.horizontal, horizontalPadding)
-    }
-
     @ViewBuilder
     private var featuredSection: some View {
         if !viewModel.feed.featured.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 14) {
-                    ForEach(viewModel.feed.featured.prefix(10)) { item in
-                        featuredCard(for: item)
+            ZStack(alignment: .top) {
+                HeroCarouselView(
+                    items: Array(viewModel.feed.featured.prefix(10)),
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline,
+                    onTap: { item in
+                        viewModel.select(item: item)
                     }
-                }
-                .padding(.horizontal, horizontalPadding)
+                )
+
+                // Top Chrome overlay (Home, Profile, Settings)
+                topChrome
             }
+        } else {
+            topChrome
         }
     }
 
-    private func featuredCard(for item: MediaItem) -> some View {
-        Button {
-            viewModel.select(item: item)
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                CachedRemoteImage(
-                    itemID: item.id,
-                    type: .primary,
-                    width: 460,
-                    quality: 82,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline
-                )
-                .frame(width: featuredCardWidth, height: featuredCardHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .shadow(color: .black.opacity(0.36), radius: 16, x: 0, y: 9)
-                .overlay(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+    private var topChrome: some View {
+        HStack(alignment: .top) {
+            Text("Home")
+                .font(.system(size: 38, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+
+            Spacer()
+
+            HStack(spacing: 12) {
+                if viewModel.isRefreshing || viewModel.isInitialLoading {
+                    ProgressView()
+                        .tint(.white)
+                        .padding(.trailing, 4)
                 }
 
-                Text(item.name)
-                    .font(.system(size: 33, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+                    .frame(width: 40, height: 40)
+                    .overlay {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
 
-                if let overview = item.overview, !overview.isEmpty {
-                    Text(overview)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .lineLimit(2)
-                }
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+                    .frame(width: 40, height: 40)
+                    .overlay {
+                        Image(systemName: "person.crop.circle")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
             }
-            .frame(width: featuredCardWidth, alignment: .leading)
+            .padding(.top, 4)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, horizontalPadding)
+        // Add fixed top padding to account for dynamic island/safe area since we ignored it on the scroll container
+        .padding(.top, 56)
     }
 
     private func homeRowView(_ row: HomeRow) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(row.title)
-                .font(.system(size: 30, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, horizontalPadding)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(row.title)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .padding(.horizontal, horizontalPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 14) {
@@ -190,6 +161,7 @@ struct HomeView: View {
                                 item: item,
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline,
+                                layoutStyle: row.kind == .continueWatching ? .landscape : .row,
                                 namespace: namespaceForCard(itemID: item.id, rowID: row.id)
                             )
                         }
@@ -295,16 +267,10 @@ struct HomeView: View {
         UIDevice.current.userInterfaceIdiom == .phone
     }
 
-    private var featuredCardWidth: CGFloat {
-        isCompact ? 270 : 350
-    }
 
-    private var featuredCardHeight: CGFloat {
-        featuredCardWidth * 1.45
-    }
 
     private var heroSkeletonHeight: CGFloat {
-        featuredCardHeight
+        horizontalSizeClass == .compact ? 310 : 350
     }
 
     private var rowCardWidth: CGFloat {

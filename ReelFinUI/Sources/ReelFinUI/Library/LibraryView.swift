@@ -12,13 +12,10 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        ZStack {
-            ReelFinTheme.pageGradient.ignoresSafeArea()
+        VStack(spacing: 14) {
+            topBar
 
-            VStack(spacing: 14) {
-                topBar
-
-                ScrollView(showsIndicators: false) {
+            ScrollView(showsIndicators: false) {
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(viewModel.items) { item in
                             Button {
@@ -46,16 +43,19 @@ struct LibraryView: View {
                             .padding(.bottom, 16)
                     }
                 }
-            }
-
-            if let selectedItem = viewModel.selectedItem {
+        }
+        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+        .navigationDestination(
+            isPresented: Binding(
+                get: { viewModel.selectedItem != nil },
+                set: { if !$0 { viewModel.selectedItem = nil } }
+            )
+        ) {
+            if let item = viewModel.selectedItem {
                 DetailView(
                     dependencies: dependencies,
-                    item: selectedItem,
-                    onDismiss: { viewModel.dismissDetail() }
+                    item: item
                 )
-                .transition(.opacity)
-                .zIndex(5)
             }
         }
         .task {

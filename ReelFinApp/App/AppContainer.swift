@@ -14,6 +14,7 @@ final class AppContainer {
     let repository: GRDBMetadataRepository
     let imagePipeline: DefaultImagePipeline
     let syncEngine: DefaultSyncEngine
+    let seriesCache: SeriesLookupCache
 
     init() {
         settingsStore = DefaultSettingsStore()
@@ -37,6 +38,7 @@ final class AppContainer {
             repository: repository,
             imagePipeline: imagePipeline
         )
+        seriesCache = SeriesLookupCache(apiClient: apiClient)
     }
 
     @MainActor
@@ -47,6 +49,7 @@ final class AppContainer {
             imagePipeline: imagePipeline,
             syncEngine: syncEngine,
             settingsStore: settingsStore,
+            seriesCache: seriesCache,
             makePlaybackSession: {
                 PlaybackSessionController(apiClient: self.apiClient, repository: self.repository)
             }

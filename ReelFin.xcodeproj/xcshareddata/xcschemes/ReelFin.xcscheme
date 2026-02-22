@@ -73,6 +73,27 @@
                ReferencedContainer = "container:ReelFin.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "533575B0D765DD2DA6B80EA5"
+               BuildableName = "JellyfinAPITests.xctest"
+               BlueprintName = "JellyfinAPITests"
+               ReferencedContainer = "container:ReelFin.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "040F7A64882C8A34BAFEFE6C"
+               BuildableName = "ReelFinUITests.xctest"
+               BlueprintName = "ReelFinUITests"
+               ReferencedContainer = "container:ReelFin.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

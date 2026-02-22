@@ -30,8 +30,27 @@ final class HomeViewModel: ObservableObject {
     }
 
     func select(item: MediaItem) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-            selectedItem = item
+        if item.mediaType == .episode, let seriesId = item.parentID {
+            Task {
+                do {
+                    let series = try await dependencies.seriesCache.getSeries(id: seriesId)
+                    await MainActor.run {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            selectedItem = series
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            selectedItem = item
+                        }
+                    }
+                }
+            }
+        } else {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                selectedItem = item
+            }
         }
     }
 
@@ -53,10 +72,39 @@ final class HomeViewModel: ObservableObject {
         do {
             let cached = try await dependencies.repository.fetchHomeFeed()
             if !cached.rows.isEmpty || !cached.featured.isEmpty {
-                feed = cached
+                feed = await processFeed(cached)
             }
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func processFeed(_ feed: HomeFeed) async -> HomeFeed {
+        var newRows = feed.rows
+        for i in newRows.indices {
+            let items = newRows[i].items
+            var newItems: [MediaItem] = []
+            for item in items {
+                if item.mediaType == .episode {
+                    if let seriesId = item.parentID {
+                        do {
+                            let series = try await dependencies.seriesCache.getSeries(id: seriesId)
+                            var updatedItem = item
+                            updatedItem.seriesName = updatedItem.seriesName ?? series.name
+                            updatedItem.seriesPosterTag = updatedItem.seriesPosterTag ?? series.posterTag
+                            newItems.append(updatedItem)
+                        } catch {
+                            newItems.append(item)
+                        }
+                    } else {
+                        newItems.append(item)
+                    }
+                } else {
+                    newItems.append(item)
+                }
+            }
+            newRows[i].items = newItems
+        }
+        return HomeFeed(featured: feed.featured, rows: newRows)
     }
 }

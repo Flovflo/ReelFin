@@ -6,6 +6,7 @@ import UIKit
 @main
 struct ReelFinApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     private let container = AppContainer()
 
     init() {

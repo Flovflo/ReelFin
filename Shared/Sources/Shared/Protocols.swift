@@ -56,7 +56,10 @@ public protocol JellyfinAPIClientProtocol: AnyObject {
 
     func fetchUserViews() async throws -> [LibraryView]
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed
+    func fetchItem(id: String) async throws -> MediaItem
     func fetchItemDetail(id: String) async throws -> MediaDetail
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem]
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem]
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem]
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource]
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource]

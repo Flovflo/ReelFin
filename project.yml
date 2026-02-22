@@ -2,12 +2,12 @@ name: ReelFin
 options:
   bundleIdPrefix: com.reelfin
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:
     SWIFT_VERSION: 5.9
-    IPHONEOS_DEPLOYMENT_TARGET: 16.0
+    IPHONEOS_DEPLOYMENT_TARGET: 26.0
     TARGETED_DEVICE_FAMILY: "1,2"
     GENERATE_INFOPLIST_FILE: YES
     CURRENT_PROJECT_VERSION: 1
@@ -41,7 +41,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: ReelFin
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
   Shared:
     type: framework
@@ -139,6 +139,16 @@ targets:
       - target: PlaybackEngine
       - target: JellyfinAPI
       - target: DataStore
+  JellyfinAPITests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/JellyfinAPITests
+    dependencies:
+      - target: JellyfinAPI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.jellyfinapi.tests
   PlaybackEngineTests:
     type: bundle.unit-test
     platform: iOS
@@ -160,6 +170,17 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.imagecache.tests
+  ReelFinUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/ReelFinUITests
+    dependencies:
+      - target: ReelFinApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.ui.tests
+        TEST_TARGET_NAME: ReelFinApp
 schemes:
   ReelFin:
     build:
@@ -170,3 +191,5 @@ schemes:
       targets:
         - PlaybackEngineTests
         - ImageCacheTests
+        - JellyfinAPITests
+        - ReelFinUITests

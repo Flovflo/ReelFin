@@ -187,6 +187,17 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         return HomeFeed(featured: featured, rows: rows)
     }
 
+    public func fetchItem(id: String) async throws -> MediaItem {
+        let userID = try requireUserID()
+        let item: ItemDTO = try await request(
+            path: "Users/\(userID)/Items/\(id)",
+            query: [
+                URLQueryItem(name: "Fields", value: "Genres,Overview,PrimaryImageAspectRatio,RunTimeTicks,People")
+            ]
+        )
+        return item.toDomain()
+    }
+
     public func fetchItemDetail(id: String) async throws -> MediaDetail {
         let userID = try requireUserID()
         let item: ItemDTO = try await request(
@@ -209,6 +220,30 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             similar: similarResponse.items.map { $0.toDomain() },
             cast: (item.people ?? []).map { $0.toDomain() }
         )
+    }
+
+    public func fetchSeasons(seriesID: String) async throws -> [MediaItem] {
+        let userID = try requireUserID()
+        let response: ItemsResponseDTO = try await request(
+            path: "Shows/\(seriesID)/Seasons",
+            query: [
+                URLQueryItem(name: "UserId", value: userID)
+            ]
+        )
+        return response.items.map { $0.toDomain() }
+    }
+
+    public func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] {
+        let userID = try requireUserID()
+        let response: ItemsResponseDTO = try await request(
+            path: "Shows/\(seriesID)/Episodes",
+            query: [
+                URLQueryItem(name: "UserId", value: userID),
+                URLQueryItem(name: "SeasonId", value: seasonID),
+                URLQueryItem(name: "Fields", value: "Overview")
+            ]
+        )
+        return response.items.map { $0.toDomain() }
     }
 
     public func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {

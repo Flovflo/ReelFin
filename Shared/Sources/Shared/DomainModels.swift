@@ -131,6 +131,10 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     public var backdropTag: String?
     public var libraryID: String?
     public var parentID: String?
+    public var seriesName: String?
+    public var seriesPosterTag: String?
+    public var indexNumber: Int?
+    public var parentIndexNumber: Int?
 
     public init(
         id: String,
@@ -144,7 +148,11 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         posterTag: String? = nil,
         backdropTag: String? = nil,
         libraryID: String? = nil,
-        parentID: String? = nil
+        parentID: String? = nil,
+        seriesName: String? = nil,
+        seriesPosterTag: String? = nil,
+        indexNumber: Int? = nil,
+        parentIndexNumber: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -158,6 +166,10 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         self.backdropTag = backdropTag
         self.libraryID = libraryID
         self.parentID = parentID
+        self.seriesName = seriesName
+        self.seriesPosterTag = seriesPosterTag
+        self.indexNumber = indexNumber
+        self.parentIndexNumber = parentIndexNumber
     }
 
     public var runtimeMinutes: Int? {

@@ -7,7 +7,6 @@ struct DetailView: View {
     @StateObject private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
     private let namespace: Namespace.ID?
-    private let onDismiss: () -> Void
 
     @State private var playerSession: PlaybackSessionController?
     @State private var showPlayer = false
@@ -16,13 +15,11 @@ struct DetailView: View {
     init(
         dependencies: ReelFinDependencies,
         item: MediaItem,
-        namespace: Namespace.ID? = nil,
-        onDismiss: @escaping () -> Void
+        namespace: Namespace.ID? = nil
     ) {
         _viewModel = StateObject(wrappedValue: DetailViewModel(item: item, dependencies: dependencies))
         self.dependencies = dependencies
         self.namespace = namespace
-        self.onDismiss = onDismiss
     }
 
     var body: some View {
@@ -35,15 +32,18 @@ struct DetailView: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text(viewModel.detail.item.name)
-                            .font(.system(size: 33, weight: .bold, design: .rounded))
+                            .font(.system(size: horizontalSizeClass == .compact ? 32 : 44, weight: .heavy, design: .rounded))
+                            .minimumScaleFactor(0.7)
+                            .lineLimit(3)
                             .foregroundStyle(.white)
 
                         metadataLine
 
                         if let overview = viewModel.detail.item.overview {
                             Text(overview)
-                                .font(.system(size: 15, weight: .regular, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.8))
+                                .font(.system(size: 15, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(6)
                                 .lineSpacing(4)
                         }
                     }
@@ -51,6 +51,11 @@ struct DetailView: View {
 
                     actionButtons
                         .padding(.horizontal, horizontalPadding)
+
+                    if viewModel.detail.item.mediaType == .series {
+                        seasonSection
+                        episodeSection
+                    }
 
                     if !viewModel.detail.cast.isEmpty {
                         castSection
@@ -62,19 +67,6 @@ struct DetailView: View {
                 }
                 .padding(.bottom, 30)
             }
-
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(12)
-                    .background(Color.black.opacity(0.55))
-                    .clipShape(Circle())
-            }
-            .padding(.top, 14)
-            .padding(.trailing, 16)
         }
         .task {
             await viewModel.load()
@@ -225,6 +217,111 @@ struct DetailView: View {
                 .padding(.horizontal, horizontalPadding)
             }
         }
+    }
+
+    @ViewBuilder
+    private var seasonSection: some View {
+        if !viewModel.seasons.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Seasons")
+                    .reelFinSectionStyle()
+                    .padding(.horizontal, horizontalPadding)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(viewModel.seasons) { season in
+                            Button {
+                                Task {
+                                    await viewModel.select(season: season)
+                                }
+                            } label: {
+                                Text(season.name)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(viewModel.selectedSeason?.id == season.id ? Color.white : ReelFinTheme.card.opacity(0.88))
+                                    .foregroundStyle(viewModel.selectedSeason?.id == season.id ? Color.black : Color.white)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, horizontalPadding)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var episodeSection: some View {
+        if viewModel.isLoadingEpisodes {
+            ProgressView()
+                .tint(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+        } else if !viewModel.episodes.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Episodes")
+                    .reelFinSectionStyle()
+                    .padding(.horizontal, horizontalPadding)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(viewModel.episodes) { episode in
+                            episodeCard(for: episode)
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, horizontalPadding)
+                }
+            }
+        }
+    }
+
+    private func episodeCard(for episode: MediaItem) -> some View {
+        Button {
+            viewModel.detail = MediaDetail(item: episode)
+            Task {
+                await viewModel.load()
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                CachedRemoteImage(
+                    itemID: episode.id,
+                    type: .primary,
+                    width: 400,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline
+                )
+                .frame(width: 260, height: 146) // 16:9 ratio
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(episode.indexNumber.map { "\($0). " } ?? "")\(episode.name)")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+
+                    if let runtime = episode.runtimeMinutes {
+                        Text("\(runtime)m")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
+
+                    if let overview = episode.overview, !overview.isEmpty {
+                        Text(overview)
+                            .font(.system(size: 13, weight: .regular, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(3)
+                            .lineSpacing(2)
+                            .padding(.top, 2)
+                    }
+                }
+                .frame(width: 260, alignment: .leading)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func startPlayback() {

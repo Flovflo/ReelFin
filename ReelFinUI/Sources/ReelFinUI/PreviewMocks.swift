@@ -1,4 +1,5 @@
 import PlaybackEngine
+import JellyfinAPI
 import Shared
 import SwiftUI
 import UIKit
@@ -33,6 +34,26 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol {
 
     func fetchUserViews() async throws -> [Shared.LibraryView] {
         [Shared.LibraryView(id: "movies", name: "Movies", collectionType: "movies")]
+    }
+
+    func fetchItem(id: String) async throws -> MediaItem {
+        Self.sampleItems(prefix: 1).first!
+    }
+
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] {
+        [
+            MediaItem(id: "season1", name: "Season 1", mediaType: .season, indexNumber: 1),
+            MediaItem(id: "season2", name: "Season 2", mediaType: .season, indexNumber: 2)
+        ]
+    }
+
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] {
+        Self.sampleItems(prefix: 5).enumerated().map { index, item in
+            var modified = item
+            modified.mediaType = .episode
+            modified.indexNumber = index + 1
+            return modified
+        }
     }
 
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed {
@@ -190,6 +211,7 @@ public enum ReelFinPreviewFactory {
         let images = MockImagePipeline()
         let sync = MockSyncEngine()
         let settings = DefaultSettingsStore()
+        let seriesCache = SeriesLookupCache(apiClient: api)
 
         return ReelFinDependencies(
             apiClient: api,
@@ -197,6 +219,7 @@ public enum ReelFinPreviewFactory {
             imagePipeline: images,
             syncEngine: sync,
             settingsStore: settings,
+            seriesCache: seriesCache,
             makePlaybackSession: {
                 PlaybackSessionController(apiClient: api, repository: repository)
             }

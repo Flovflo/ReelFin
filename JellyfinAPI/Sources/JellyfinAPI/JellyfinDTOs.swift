@@ -72,6 +72,10 @@ struct ItemDTO: Decodable {
     let backdropImageTags: [String]?
     let parentID: String?
     let seriesID: String?
+    let seriesName: String?
+    let seriesPrimaryImageTag: String?
+    let indexNumber: Int?
+    let parentIndexNumber: Int?
     let people: [PersonDTO]?
 
     enum CodingKeys: String, CodingKey {
@@ -87,6 +91,10 @@ struct ItemDTO: Decodable {
         case backdropImageTags = "BackdropImageTags"
         case parentID = "ParentId"
         case seriesID = "SeriesId"
+        case seriesName = "SeriesName"
+        case seriesPrimaryImageTag = "SeriesPrimaryImageTag"
+        case indexNumber = "IndexNumber"
+        case parentIndexNumber = "ParentIndexNumber"
         case people = "People"
     }
 
@@ -117,7 +125,11 @@ struct ItemDTO: Decodable {
             posterTag: imageTags?["Primary"],
             backdropTag: backdropImageTags?.first,
             libraryID: libraryID,
-            parentID: parentID ?? seriesID
+            parentID: parentID ?? seriesID,
+            seriesName: seriesName,
+            seriesPosterTag: seriesPrimaryImageTag,
+            indexNumber: indexNumber,
+            parentIndexNumber: parentIndexNumber
         )
     }
 }
