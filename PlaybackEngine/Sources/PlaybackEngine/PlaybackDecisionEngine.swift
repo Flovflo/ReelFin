@@ -104,7 +104,7 @@ public struct PlaybackDecisionEngine {
         guard let fallbackSource = bestFallbackSource(from: sources) else { return nil }
         let fallbackURL = buildTranscodeURL(
             itemID: itemID,
-            sourceID: fallbackSource.id,
+            source: fallbackSource,
             configuration: configuration,
             token: token
         )
@@ -242,31 +242,51 @@ public struct PlaybackDecisionEngine {
 
     private func buildTranscodeURL(
         itemID: String,
-        sourceID: String,
+        source: MediaSource,
         configuration: ServerConfiguration,
         token: String?
     ) -> URL {
+        let preferredVideoCodec = preferredVideoCodec(for: source)
+        let useFMP4Container = preferredVideoCodec == "hevc"
         var components = URLComponents(
             url: configuration.serverURL.appendingPathComponent("Videos/\(itemID)/master.m3u8"),
             resolvingAgainstBaseURL: false
         )!
 
-        components.queryItems = [
-            // Force the most compatible fallback profile for AVPlayer.
-            URLQueryItem(name: "VideoCodec", value: "h264"),
-            URLQueryItem(name: "AudioCodec", value: "aac,ac3"),
-            URLQueryItem(name: "Container", value: "ts"),
-            URLQueryItem(name: "SegmentContainer", value: "ts"),
+        var queryItems = [
+            // Keep video close to source whenever possible; force only audio to AAC.
+            URLQueryItem(name: "AudioCodec", value: "aac"),
+            URLQueryItem(name: "Container", value: useFMP4Container ? "fmp4" : "ts"),
+            URLQueryItem(name: "SegmentContainer", value: useFMP4Container ? "fmp4" : "ts"),
+            URLQueryItem(name: "AllowVideoStreamCopy", value: "true"),
+            URLQueryItem(name: "AllowAudioStreamCopy", value: "false"),
             URLQueryItem(name: "MaxStreamingBitrate", value: String(configuration.preferredQuality.maxStreamingBitrate)),
-            URLQueryItem(name: "MediaSourceId", value: sourceID),
-            URLQueryItem(name: "TranscodeReasons", value: "ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported")
+            URLQueryItem(name: "MediaSourceId", value: source.id),
+            URLQueryItem(name: "TranscodeReasons", value: "ContainerNotSupported,AudioCodecNotSupported")
         ]
 
-        if let token {
-            components.queryItems?.append(URLQueryItem(name: "api_key", value: token))
+        if let preferredVideoCodec {
+            queryItems.append(URLQueryItem(name: "VideoCodec", value: preferredVideoCodec))
         }
 
+        if let token {
+            queryItems.append(URLQueryItem(name: "api_key", value: token))
+        }
+
+        components.queryItems = queryItems
         return components.url ?? configuration.serverURL
+    }
+
+    private func preferredVideoCodec(for source: MediaSource) -> String? {
+        let codec = source.normalizedVideoCodec
+
+        if codec.contains("hevc") || codec.contains("h265") || codec.contains("dvhe") || codec.contains("dvh1") {
+            return "hevc"
+        }
+        if codec.contains("h264") || codec.contains("avc1") {
+            return "h264"
+        }
+        return nil
     }
 }
 

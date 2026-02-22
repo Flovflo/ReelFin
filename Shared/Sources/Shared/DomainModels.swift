@@ -37,19 +37,50 @@ public enum QualityPreference: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public enum PlaybackStrategy: String, Codable, CaseIterable, Sendable {
+    case bestQualityFastest
+    case directRemuxOnly
+}
+
 public struct ServerConfiguration: Codable, Hashable, Sendable {
     public var serverURL: URL
     public var allowCellularStreaming: Bool
     public var preferredQuality: QualityPreference
+    public var playbackStrategy: PlaybackStrategy
 
     public init(
         serverURL: URL,
         allowCellularStreaming: Bool = true,
-        preferredQuality: QualityPreference = .auto
+        preferredQuality: QualityPreference = .auto,
+        playbackStrategy: PlaybackStrategy = .bestQualityFastest
     ) {
         self.serverURL = serverURL
         self.allowCellularStreaming = allowCellularStreaming
         self.preferredQuality = preferredQuality
+        self.playbackStrategy = playbackStrategy
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case serverURL
+        case allowCellularStreaming
+        case preferredQuality
+        case playbackStrategy
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        serverURL = try container.decode(URL.self, forKey: .serverURL)
+        allowCellularStreaming = try container.decodeIfPresent(Bool.self, forKey: .allowCellularStreaming) ?? true
+        preferredQuality = try container.decodeIfPresent(QualityPreference.self, forKey: .preferredQuality) ?? .auto
+        playbackStrategy = try container.decodeIfPresent(PlaybackStrategy.self, forKey: .playbackStrategy) ?? .bestQualityFastest
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(serverURL, forKey: .serverURL)
+        try container.encode(allowCellularStreaming, forKey: .allowCellularStreaming)
+        try container.encode(preferredQuality, forKey: .preferredQuality)
+        try container.encode(playbackStrategy, forKey: .playbackStrategy)
     }
 }
 
@@ -276,6 +307,12 @@ public enum PlaybackMode: String, Codable, CaseIterable, Sendable {
     case balanced
 }
 
+public enum PlaybackDeviceProfile: String, Codable, CaseIterable, Sendable {
+    case automatic
+    case iosOptimizedHEVC
+    case iosCompatibilityH264
+}
+
 public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
     public var mode: PlaybackMode
     public var enableDirectPlay: Bool
@@ -283,6 +320,10 @@ public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
     public var allowTranscoding: Bool
     public var maxStreamingBitrate: Int?
     public var startTimeTicks: Int64?
+    public var allowVideoStreamCopy: Bool?
+    public var allowAudioStreamCopy: Bool?
+    public var maxAudioChannels: Int?
+    public var deviceProfile: PlaybackDeviceProfile?
 
     public init(
         mode: PlaybackMode = .balanced,
@@ -290,7 +331,11 @@ public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
         enableDirectStream: Bool = true,
         allowTranscoding: Bool = true,
         maxStreamingBitrate: Int? = nil,
-        startTimeTicks: Int64? = nil
+        startTimeTicks: Int64? = nil,
+        allowVideoStreamCopy: Bool? = nil,
+        allowAudioStreamCopy: Bool? = nil,
+        maxAudioChannels: Int? = nil,
+        deviceProfile: PlaybackDeviceProfile? = nil
     ) {
         self.mode = mode
         self.enableDirectPlay = enableDirectPlay
@@ -298,6 +343,10 @@ public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
         self.allowTranscoding = allowTranscoding
         self.maxStreamingBitrate = maxStreamingBitrate
         self.startTimeTicks = startTimeTicks
+        self.allowVideoStreamCopy = allowVideoStreamCopy
+        self.allowAudioStreamCopy = allowAudioStreamCopy
+        self.maxAudioChannels = maxAudioChannels
+        self.deviceProfile = deviceProfile
     }
 
     public static func performance(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
@@ -317,6 +366,36 @@ public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
             enableDirectStream: true,
             allowTranscoding: true,
             maxStreamingBitrate: maxStreamingBitrate
+        )
+    }
+
+    public static func appleOptimizedHEVC(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
+        let bitrate = min(maxStreamingBitrate ?? 30_000_000, 30_000_000)
+        return PlaybackInfoOptions(
+            mode: .balanced,
+            enableDirectPlay: false,
+            enableDirectStream: false,
+            allowTranscoding: true,
+            maxStreamingBitrate: bitrate,
+            allowVideoStreamCopy: false,
+            allowAudioStreamCopy: false,
+            maxAudioChannels: 6,
+            deviceProfile: .iosOptimizedHEVC
+        )
+    }
+
+    public static func compatibilityH264(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
+        let bitrate = min(maxStreamingBitrate ?? 12_000_000, 12_000_000)
+        return PlaybackInfoOptions(
+            mode: .balanced,
+            enableDirectPlay: false,
+            enableDirectStream: false,
+            allowTranscoding: true,
+            maxStreamingBitrate: bitrate,
+            allowVideoStreamCopy: false,
+            allowAudioStreamCopy: false,
+            maxAudioChannels: 2,
+            deviceProfile: .iosCompatibilityH264
         )
     }
 }

@@ -8,6 +8,7 @@ struct PlayerView: View {
     let onDismiss: () -> Void
 
     @State private var showDebug = false
+    @State private var spinnerRotation: Double = 0
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -17,14 +18,19 @@ struct PlayerView: View {
             NativePlayerViewController(player: session.player)
                 .ignoresSafeArea()
 
+            if shouldShowLoadingOverlay {
+                loadingOverlay
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+
             if showDebug {
                 debugOverlay
                     .padding(.horizontal, 16)
                     .padding(.top, 108)
                     .transition(.opacity)
             }
-
-            topRightControls
 
             if let error = session.playbackErrorMessage {
                 errorBanner(error)
@@ -33,13 +39,36 @@ struct PlayerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
+        .safeAreaInset(edge: .top) {
+            topBarControls
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
+        }
         .onDisappear {
             session.pause()
         }
+        .onAppear {
+            spinnerRotation = 0
+            withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
+                spinnerRotation = 360
+            }
+        }
     }
 
-    private var topRightControls: some View {
+    private var topBarControls: some View {
         HStack(spacing: 10) {
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "chevron.backward")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 36, height: 36)
+                    .background(Color.black.opacity(0.65))
+                    .clipShape(Circle())
+            }
+
+            Spacer(minLength: 0)
+
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showDebug.toggle()
@@ -51,21 +80,9 @@ struct PlayerView: View {
                     .background(Color.black.opacity(0.65))
                     .clipShape(Circle())
             }
-
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 36, height: 36)
-                    .background(Color.black.opacity(0.65))
-                    .clipShape(Circle())
-            }
         }
         .foregroundStyle(.white)
-        .padding(.top, 12)
-        .padding(.trailing, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func errorBanner(_ message: String) -> some View {
@@ -82,6 +99,38 @@ struct PlayerView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.black.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var shouldShowLoadingOverlay: Bool {
+        session.metrics.timeToFirstFrameMs == nil && session.playbackErrorMessage == nil
+    }
+
+    private var loadingOverlay: some View {
+        VStack(spacing: 14) {
+            Circle()
+                .trim(from: 0.1, to: 0.9)
+                .stroke(
+                    LinearGradient(
+                        colors: [ReelFinTheme.accent, ReelFinTheme.accentSecondary],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                )
+                .frame(width: 42, height: 42)
+                .rotationEffect(.degrees(spinnerRotation))
+
+            Text(session.routeDescription.isEmpty ? "Starting playback…" : "Starting playback…\n\(session.routeDescription)")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .padding(.horizontal, 2)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(Color.black.opacity(0.74))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var debugOverlay: some View {

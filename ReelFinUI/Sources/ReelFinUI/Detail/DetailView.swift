@@ -11,6 +11,7 @@ struct DetailView: View {
 
     @State private var playerSession: PlaybackSessionController?
     @State private var showPlayer = false
+    @State private var isLoadingPlayback = false
 
     init(
         dependencies: ReelFinDependencies,
@@ -126,10 +127,17 @@ struct DetailView: View {
                 Button {
                     startPlayback()
                 } label: {
-                    Label("Play", systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
+                    if isLoadingPlayback {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Label("Play", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
                 }
                 .buttonStyle(PrimaryCapsuleButtonStyle())
+                .disabled(isLoadingPlayback)
 
                 Button {
                     startPlayback()
@@ -220,17 +228,25 @@ struct DetailView: View {
     }
 
     private func startPlayback() {
+        guard !isLoadingPlayback else { return }
+        isLoadingPlayback = true
+        let session = dependencies.makePlaybackSession()
+        playerSession = session
+
         Task {
-            let session = dependencies.makePlaybackSession()
             do {
                 try await session.load(item: viewModel.detail.item)
-                await MainActor.run {
-                    playerSession = session
-                    showPlayer = true
-                }
+                // Show the player AFTER the item is loaded on the AVPlayer.
+                // This ensures AVPlayerViewController is created with a player
+                // that already has a current item, avoiding the XPC race condition
+                // that causes black screen with audio on slow transcodes.
+                isLoadingPlayback = false
+                showPlayer = true
             } catch {
+                isLoadingPlayback = false
                 await MainActor.run {
                     viewModel.errorMessage = error.localizedDescription
+                    showPlayer = false
                 }
             }
         }

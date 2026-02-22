@@ -49,7 +49,8 @@ final class LoginViewModel: ObservableObject {
             let config = ServerConfiguration(
                 serverURL: url,
                 allowCellularStreaming: dependencies.settingsStore.serverConfiguration?.allowCellularStreaming ?? true,
-                preferredQuality: dependencies.settingsStore.serverConfiguration?.preferredQuality ?? .auto
+                preferredQuality: dependencies.settingsStore.serverConfiguration?.preferredQuality ?? .auto,
+                playbackStrategy: dependencies.settingsStore.serverConfiguration?.playbackStrategy ?? .bestQualityFastest
             )
             try await dependencies.apiClient.configure(server: config)
 

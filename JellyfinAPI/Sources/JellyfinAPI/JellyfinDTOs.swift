@@ -320,6 +320,10 @@ struct PlaybackInfoRequestDTO: Encodable {
     let enableTranscoding: Bool
     let maxStreamingBitrate: Int?
     let startTimeTicks: Int64?
+    let allowVideoStreamCopy: Bool?
+    let allowAudioStreamCopy: Bool?
+    let maxAudioChannels: Int?
+    let deviceProfile: DeviceProfileRequestDTO?
 
     enum CodingKeys: String, CodingKey {
         case userID = "UserId"
@@ -328,6 +332,184 @@ struct PlaybackInfoRequestDTO: Encodable {
         case enableTranscoding = "EnableTranscoding"
         case maxStreamingBitrate = "MaxStreamingBitrate"
         case startTimeTicks = "StartTimeTicks"
+        case allowVideoStreamCopy = "AllowVideoStreamCopy"
+        case allowAudioStreamCopy = "AllowAudioStreamCopy"
+        case maxAudioChannels = "MaxAudioChannels"
+        case deviceProfile = "DeviceProfile"
+    }
+}
+
+enum DlnaProfileTypeDTO: Int, Encodable {
+    case audio = 0
+    case video = 1
+    case photo = 2
+    case subtitle = 3
+    case lyric = 4
+}
+
+enum MediaStreamProtocolDTO: Int, Encodable {
+    case http = 0
+    case hls = 1
+}
+
+enum EncodingContextDTO: Int, Encodable {
+    case streaming = 0
+    case staticMode = 1
+}
+
+enum SubtitleDeliveryMethodDTO: Int, Encodable {
+    case encode = 0
+    case embed = 1
+    case external = 2
+    case hls = 3
+    case drop = 4
+}
+
+struct DeviceProfileRequestDTO: Encodable {
+    let name: String
+    let id: String
+    let maxStreamingBitrate: Int
+    let musicStreamingTranscodingBitrate: Int
+    let directPlayProfiles: [DirectPlayProfileRequestDTO]
+    let transcodingProfiles: [TranscodingProfileRequestDTO]
+    let subtitleProfiles: [SubtitleProfileRequestDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case name = "Name"
+        case id = "Id"
+        case maxStreamingBitrate = "MaxStreamingBitrate"
+        case musicStreamingTranscodingBitrate = "MusicStreamingTranscodingBitrate"
+        case directPlayProfiles = "DirectPlayProfiles"
+        case transcodingProfiles = "TranscodingProfiles"
+        case subtitleProfiles = "SubtitleProfiles"
+    }
+
+    static func iosCompatibilityH264(maxStreamingBitrate: Int, maxAudioChannels: Int) -> DeviceProfileRequestDTO {
+        DeviceProfileRequestDTO(
+            name: "ReelFin iOS Compatibility",
+            id: "5f9f5b0d-4e24-4c24-96e9-4d9eb7221d2e",
+            maxStreamingBitrate: maxStreamingBitrate,
+            musicStreamingTranscodingBitrate: 192_000,
+            directPlayProfiles: [
+                DirectPlayProfileRequestDTO(
+                    container: "mp4,m4v,mov",
+                    audioCodec: "aac,ac3,eac3,mp3,alac",
+                    videoCodec: "h264,avc1",
+                    type: .video
+                )
+            ],
+            transcodingProfiles: [
+                TranscodingProfileRequestDTO(
+                    container: "ts",
+                    type: .video,
+                    videoCodec: "h264",
+                    audioCodec: "aac",
+                    protocolValue: .hls,
+                    context: .streaming,
+                    maxAudioChannels: String(maxAudioChannels),
+                    enableSubtitlesInManifest: false,
+                    estimateContentLength: false,
+                    copyTimestamps: false,
+                    enableAudioVbrEncoding: true
+                )
+            ],
+            subtitleProfiles: [
+                SubtitleProfileRequestDTO(
+                    format: "srt",
+                    method: .external
+                )
+            ]
+        )
+    }
+
+    static func iosOptimizedHEVC(maxStreamingBitrate: Int, maxAudioChannels: Int) -> DeviceProfileRequestDTO {
+        DeviceProfileRequestDTO(
+            name: "ReelFin Apple Optimized",
+            id: "7d0410cb-260f-4f7c-82cb-0d3ed7a5de38",
+            maxStreamingBitrate: maxStreamingBitrate,
+            musicStreamingTranscodingBitrate: 192_000,
+            directPlayProfiles: [
+                DirectPlayProfileRequestDTO(
+                    container: "mp4,m4v,mov",
+                    audioCodec: "aac,ac3,eac3,mp3,alac",
+                    videoCodec: "hevc,h265,hvc1,dvh1,dvhe,h264,avc1",
+                    type: .video
+                )
+            ],
+            transcodingProfiles: [
+                TranscodingProfileRequestDTO(
+                    container: "fmp4",
+                    type: .video,
+                    videoCodec: "hevc",
+                    audioCodec: "aac",
+                    protocolValue: .hls,
+                    context: .streaming,
+                    maxAudioChannels: String(maxAudioChannels),
+                    enableSubtitlesInManifest: false,
+                    estimateContentLength: false,
+                    copyTimestamps: false,
+                    enableAudioVbrEncoding: true
+                )
+            ],
+            subtitleProfiles: [
+                SubtitleProfileRequestDTO(
+                    format: "srt",
+                    method: .external
+                )
+            ]
+        )
+    }
+}
+
+struct DirectPlayProfileRequestDTO: Encodable {
+    let container: String
+    let audioCodec: String?
+    let videoCodec: String?
+    let type: DlnaProfileTypeDTO
+
+    enum CodingKeys: String, CodingKey {
+        case container = "Container"
+        case audioCodec = "AudioCodec"
+        case videoCodec = "VideoCodec"
+        case type = "Type"
+    }
+}
+
+struct TranscodingProfileRequestDTO: Encodable {
+    let container: String
+    let type: DlnaProfileTypeDTO
+    let videoCodec: String
+    let audioCodec: String
+    let protocolValue: MediaStreamProtocolDTO
+    let context: EncodingContextDTO
+    let maxAudioChannels: String
+    let enableSubtitlesInManifest: Bool
+    let estimateContentLength: Bool
+    let copyTimestamps: Bool
+    let enableAudioVbrEncoding: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case container = "Container"
+        case type = "Type"
+        case videoCodec = "VideoCodec"
+        case audioCodec = "AudioCodec"
+        case protocolValue = "Protocol"
+        case context = "Context"
+        case maxAudioChannels = "MaxAudioChannels"
+        case enableSubtitlesInManifest = "EnableSubtitlesInManifest"
+        case estimateContentLength = "EstimateContentLength"
+        case copyTimestamps = "CopyTimestamps"
+        case enableAudioVbrEncoding = "EnableAudioVbrEncoding"
+    }
+}
+
+struct SubtitleProfileRequestDTO: Encodable {
+    let format: String
+    let method: SubtitleDeliveryMethodDTO
+
+    enum CodingKeys: String, CodingKey {
+        case format = "Format"
+        case method = "Method"
     }
 }
 

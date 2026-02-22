@@ -64,6 +64,27 @@ struct ServerSettingsView: View {
                     .background(ReelFinTheme.card.opacity(0.95))
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Playback Strategy")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+
+                        Picker("Playback Strategy", selection: $viewModel.playbackStrategy) {
+                            Text("Best Quality + Fast").tag(PlaybackStrategy.bestQualityFastest)
+                            Text("Direct/Remux Only").tag(PlaybackStrategy.directRemuxOnly)
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text(viewModel.playbackStrategy == .directRemuxOnly
+                            ? "No video transcode fallback. Some files may fail if iOS cannot decode the source."
+                            : "Starts with direct/remux when possible, then automatic compatibility fallback if needed.")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.78))
+                    }
+                    .padding(14)
+                    .background(ReelFinTheme.card.opacity(0.95))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
                     if let info = viewModel.infoMessage {
                         Text(info)
                             .font(.system(size: 13, weight: .medium, design: .rounded))
@@ -90,6 +111,48 @@ struct ServerSettingsView: View {
                             }
                         }
                         .buttonStyle(SettingsActionButtonStyle(primary: true))
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Playback Diagnostics")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+
+                        HStack(spacing: 10) {
+                            Stepper("Loops: \(viewModel.diagnosticsLoopCount)", value: $viewModel.diagnosticsLoopCount, in: 1 ... 10)
+                            Stepper("Items: \(viewModel.diagnosticsSampleSize)", value: $viewModel.diagnosticsSampleSize, in: 1 ... 30)
+                        }
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.85))
+
+                        Button(viewModel.isRunningDiagnostics ? "Running…" : "Run Playback Diagnostics Loop") {
+                            Task {
+                                await viewModel.runPlaybackDiagnostics()
+                            }
+                        }
+                        .buttonStyle(SettingsActionButtonStyle(primary: true))
+                        .disabled(viewModel.isRunningDiagnostics)
+
+                        if viewModel.isRunningDiagnostics {
+                            ProgressView()
+                                .tint(.white)
+                        }
+                    }
+                    .padding(14)
+                    .background(ReelFinTheme.card.opacity(0.95))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    if let report = viewModel.diagnosticsReport {
+                        ScrollView {
+                            Text(report)
+                                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(minHeight: 120, maxHeight: 220)
+                        .padding(12)
+                        .background(ReelFinTheme.card.opacity(0.95))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
 
                     Button("Sign Out") {

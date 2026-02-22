@@ -379,7 +379,7 @@
 		2A35C22C38C67694B324D66D /* RootViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewModel.swift; sourceTree = "<group>"; };
 		34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ReelFinUI.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		3772E703603E46C29857FE13 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
-		37D2CD441A924785F27CF9F1 /* ReelFinWidgetsExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ReelFinWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		37D2CD441A924785F27CF9F1 /* ReelFinWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ReelFinWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B7A4C3B018207E57E97039A /* RequestDeduplicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestDeduplicator.swift; sourceTree = "<group>"; };
 		423061893D83BA407DCA4E7F /* ReelFinDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinDependencies.swift; sourceTree = "<group>"; };
 		43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSessionController.swift; sourceTree = "<group>"; };
@@ -397,7 +397,7 @@
 		7CE4D6101DFA4DC12F0610F9 /* PlaybackDecisionEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackDecisionEngineTests.swift; sourceTree = "<group>"; };
 		7E2E8B72B1F0F3CC9924DF8B /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		7F3D5AF190B72A5D423090D6 /* Shared.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Shared.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		86B6AA972FCFFB6E3E2E5B14 /* ReelFinApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ReelFinApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		86B6AA972FCFFB6E3E2E5B14 /* ReelFin.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReelFin.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		87845ECDB05ACF3E08A8616B /* HeroCarouselView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroCarouselView.swift; sourceTree = "<group>"; };
 		8C45085D8B5DC89B05188205 /* LRUDiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LRUDiskCache.swift; sourceTree = "<group>"; };
 		9102230AF45615307CE1B58A /* LRUDiskCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LRUDiskCacheTests.swift; sourceTree = "<group>"; };
@@ -657,7 +657,7 @@
 				0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */,
 				B401679A75C0322BF1EC2E0D /* PlaybackEngine.framework */,
 				F6E20B79D83C704F4FFA2659 /* PlaybackEngineTests.xctest */,
-				86B6AA972FCFFB6E3E2E5B14 /* ReelFinApp.app */,
+				86B6AA972FCFFB6E3E2E5B14 /* ReelFin.app */,
 				34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */,
 				37D2CD441A924785F27CF9F1 /* ReelFinWidgetsExtension.appex */,
 				7F3D5AF190B72A5D423090D6 /* Shared.framework */,
@@ -997,7 +997,7 @@
 			packageProductDependencies = (
 			);
 			productName = ReelFinApp;
-			productReference = 86B6AA972FCFFB6E3E2E5B14 /* ReelFinApp.app */;
+			productReference = 86B6AA972FCFFB6E3E2E5B14 /* ReelFin.app */;
 			productType = "com.apple.product-type.application";
 		};
 		69476753E5A95BB64D6211AB /* PlaybackEngine */ = {
@@ -1150,7 +1150,6 @@
 				LastUpgradeCheck = 1430;
 			};
 			buildConfigurationList = 71768937B43CC8BCC50E014A /* Build configuration list for PBXProject "ReelFin" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -1482,6 +1481,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = WZ4CHJH7TA;
 				INFOPLIST_KEY_CFBundleDisplayName = ReelFin;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -1652,6 +1652,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = WZ4CHJH7TA;
 				INFOPLIST_KEY_CFBundleDisplayName = ReelFin;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -1827,6 +1828,7 @@
 		94B64C2E4205F3015D722448 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				DEVELOPMENT_TEAM = WZ4CHJH7TA;
 				INFOPLIST_KEY_CFBundleDisplayName = "ReelFin Widgets";
 				INFOPLIST_KEY_NSExtensionPointIdentifier = "com.apple.widgetkit-extension";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1843,6 +1845,7 @@
 		A1658844E4EF6E869A4631C6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				DEVELOPMENT_TEAM = WZ4CHJH7TA;
 				INFOPLIST_KEY_CFBundleDisplayName = "ReelFin Widgets";
 				INFOPLIST_KEY_NSExtensionPointIdentifier = "com.apple.widgetkit-extension";
 				LD_RUNPATH_SEARCH_PATHS = (

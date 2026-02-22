@@ -7,6 +7,8 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
     private let imagePipeline: ImagePipelineProtocol
 
     private var isSyncing = false
+    private var lastForegroundLikeSyncAt: Date?
+    private let foregroundLikeCooldown: TimeInterval = 45
 
     public init(
         apiClient: JellyfinAPIClientProtocol,
@@ -19,6 +21,11 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
     }
 
     public func sync(reason: SyncReason) async {
+        if shouldSkipForegroundLikeSync(reason: reason) {
+            AppLog.sync.debug("Skipping sync: foreground cooldown active.")
+            return
+        }
+
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
@@ -33,16 +40,23 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
 
             var feed = try await apiClient.fetchHomeFeed(since: lastSyncDate)
 
-            // Incremental sync can legitimately return empty data; avoid replacing an existing home feed with blanks.
-            if lastSyncDate != nil, isEmpty(feed) {
-                let fullFeed = try await apiClient.fetchHomeFeed(since: nil)
-                if isEmpty(fullFeed) {
-                    let cached = try await repository.fetchHomeFeed()
-                    if !isEmpty(cached) {
-                        feed = cached
+            // Incremental feed can be degraded (for example only "Continue Watching").
+            // In that case, fetch a full feed before overwriting cache.
+            if lastSyncDate != nil, shouldRefreshWithFullFeed(feed) {
+                do {
+                    let fullFeed = try await apiClient.fetchHomeFeed(since: nil)
+                    if isEmpty(fullFeed) {
+                        let cached = try await repository.fetchHomeFeed()
+                        if !isEmpty(cached) {
+                            feed = cached
+                        }
+                    } else if homeFeedScore(fullFeed) >= homeFeedScore(feed) {
+                        feed = fullFeed
                     }
-                } else {
-                    feed = fullFeed
+                } catch {
+                    AppLog.sync.warning(
+                        "Full-feed refresh fallback failed: \(error.localizedDescription, privacy: .public). Keeping incremental feed."
+                    )
                 }
             }
 
@@ -50,6 +64,7 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
             let feedItems = feed.featured + feed.rows.flatMap(\.items)
             try await repository.upsertItems(feedItems)
             try await repository.setLastSyncDate(Date())
+            markForegroundLikeSyncIfNeeded(reason: reason)
 
             let posterURLs = await buildPrefetchURLs(feed: feed)
             await imagePipeline.prefetch(urls: posterURLs)
@@ -60,6 +75,21 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
         } catch {
             interval.end(name: "metadata_sync", message: "failure")
             AppLog.sync.error("Sync failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func shouldSkipForegroundLikeSync(reason: SyncReason) -> Bool {
+        guard reason == .appForeground else { return false }
+        guard let last = lastForegroundLikeSyncAt else { return false }
+        return Date().timeIntervalSince(last) < foregroundLikeCooldown
+    }
+
+    private func markForegroundLikeSyncIfNeeded(reason: SyncReason) {
+        switch reason {
+        case .appLaunch, .appForeground:
+            lastForegroundLikeSyncAt = Date()
+        case .manualRefresh, .backgroundRefresh:
+            break
         }
     }
 
@@ -76,5 +106,35 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
 
     private func isEmpty(_ feed: HomeFeed) -> Bool {
         !feed.featured.isEmpty ? false : feed.rows.allSatisfy { $0.items.isEmpty }
+    }
+
+    private func shouldRefreshWithFullFeed(_ feed: HomeFeed) -> Bool {
+        if isEmpty(feed) {
+            return true
+        }
+
+        let nonEmptyRows = feed.rows.filter { !$0.items.isEmpty }
+        if nonEmptyRows.isEmpty {
+            return true
+        }
+
+        if nonEmptyRows.count == 1, nonEmptyRows.first?.kind == .continueWatching {
+            return true
+        }
+
+        if feed.featured.isEmpty, nonEmptyRows.count <= 1 {
+            return true
+        }
+
+        return false
+    }
+
+    private func homeFeedScore(_ feed: HomeFeed) -> Int {
+        let featuredScore = feed.featured.count * 3
+        let nonEmptyRows = feed.rows.filter { !$0.items.isEmpty }.count * 2
+        let rowItems = feed.rows.reduce(0) { partial, row in
+            partial + min(row.items.count, 20)
+        }
+        return featuredScore + nonEmptyRows + rowItems
     }
 }

@@ -259,13 +259,34 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        let maxBitrate = options.maxStreamingBitrate ?? configuration?.preferredQuality.maxStreamingBitrate ?? 8_000_000
+        let profile: DeviceProfileRequestDTO?
+        switch options.deviceProfile ?? .automatic {
+        case .automatic:
+            profile = nil
+        case .iosOptimizedHEVC:
+            profile = DeviceProfileRequestDTO.iosOptimizedHEVC(
+                maxStreamingBitrate: maxBitrate,
+                maxAudioChannels: options.maxAudioChannels ?? 6
+            )
+        case .iosCompatibilityH264:
+            profile = DeviceProfileRequestDTO.iosCompatibilityH264(
+                maxStreamingBitrate: maxBitrate,
+                maxAudioChannels: options.maxAudioChannels ?? 2
+            )
+        }
+
         let body = PlaybackInfoRequestDTO(
             userID: activeSession?.userID,
             enableDirectPlay: options.enableDirectPlay,
             enableDirectStream: options.enableDirectStream,
             enableTranscoding: options.allowTranscoding,
-            maxStreamingBitrate: options.maxStreamingBitrate ?? configuration?.preferredQuality.maxStreamingBitrate,
-            startTimeTicks: options.startTimeTicks
+            maxStreamingBitrate: maxBitrate,
+            startTimeTicks: options.startTimeTicks,
+            allowVideoStreamCopy: options.allowVideoStreamCopy,
+            allowAudioStreamCopy: options.allowAudioStreamCopy,
+            maxAudioChannels: options.maxAudioChannels,
+            deviceProfile: profile
         )
 
         let response: PlaybackInfoResponseDTO = try await request(
