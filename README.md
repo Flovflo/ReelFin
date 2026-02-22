@@ -1,8 +1,9 @@
 # ReelFin iOS 🎬
 
 ReelFin is a native iOS streaming client for Jellyfin, meticulously built with pure Swift and SwiftUI. It prioritizes Apple's native frameworks to deliver the fastest, most battery-efficient media playback experience possible.
-<img width="380" height="568" alt="image" src="https://github.com/user-attachments/assets/f158ee58-b9f8-47bd-9122-058d9f446469" />
-<img width="380" height="568" alt="image" src="https://github.com/user-attachments/assets/7b1f296b-1b21-407b-b048-97a04f737280" />
+---<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-02-22 at 21 49 17" src="https://github.com/user-attachments/assets/a0636853-167b-4ff4-a8e0-61ade49aa04c" />
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-02-22 at 21 48 49" src="https://github.com/user-attachments/assets/d310c50e-8393-4cb2-bb88-f2e2222fd4ae" />
+
 
 
 ## Release: Beta 0.1
@@ -20,5 +21,6 @@ This initial beta release introduces a rock-solid foundation for video playback,
 * **Decoupled Playback Engine**: `PlaybackSessionController` isolates AVKit logic from the UI layer.
 * **Dynamic Network Watchdogs**: Automatic sync recovery mechanisms ensure uninterrupted viewing experiences.
 
----
+
+
 *Built for iOS 16+*
