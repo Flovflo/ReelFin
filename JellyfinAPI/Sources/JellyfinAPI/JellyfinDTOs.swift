@@ -128,9 +128,24 @@ struct ItemDTO: Decodable {
                 $0.type?.lowercased() == "video" && 
                 (($0.width ?? 0) >= 3840 || ($0.height ?? 0) >= 2160 || ($0.displayTitle?.lowercased().contains("4k") == true)) 
             }
-            hasDolbyVision = streams.contains { 
-                $0.type?.lowercased() == "video" && 
-                ($0.videoRangeType?.lowercased() == "dovi" || $0.videoRangeType?.lowercased() == "hdr10" || $0.videoRangeType?.lowercased() == "hdr" || $0.profile?.lowercased().contains("dolby vision") == true || ($0.displayTitle?.lowercased().contains("dolby vision") == true)) 
+            hasDolbyVision = streams.contains { stream in
+                guard stream.type?.lowercased() == "video" else { return false }
+
+                let rangeType = stream.videoRangeType?.lowercased() ?? ""
+                let profile = stream.profile?.lowercased() ?? ""
+                let displayTitle = stream.displayTitle?.lowercased() ?? ""
+                let codec = stream.codec?.lowercased() ?? ""
+
+                if rangeType == "dovi" || rangeType == "dv" || rangeType == "dolbyvision" || rangeType.contains("dolby vision") {
+                    return true
+                }
+
+                let metadata = "\(profile) \(displayTitle)"
+                if metadata.contains("dolby vision") || metadata.contains("dolbyvision") || metadata.contains("dvhe") || metadata.contains("dvh1") {
+                    return true
+                }
+
+                return codec.contains("dvhe") || codec.contains("dvh1")
             }
             hasClosedCaptions = streams.contains { $0.type?.lowercased() == "subtitle" }
         }

@@ -75,3 +75,103 @@ final class SeriesLookupCacheTests: XCTestCase {
         XCTAssertEqual(mockClient.fetchItemCallCount, 1, "In-flight deduplication should prevent multiple API calls")
     }
 }
+
+final class ItemDTOHDRDetectionTests: XCTestCase {
+    func testHasDolbyVisionWhenRangeTypeIsDolbyVision() {
+        let item = makeItem(
+            streams: [
+                makeVideoStream(videoRangeType: "DolbyVision", codec: "hevc")
+            ]
+        )
+
+        let domain = item.toDomain()
+
+        XCTAssertTrue(domain.hasDolbyVision)
+    }
+
+    func testHasDolbyVisionWhenCodecIsDVHE() {
+        let item = makeItem(
+            streams: [
+                makeVideoStream(videoRangeType: "SDR", codec: "dvhe.05.06")
+            ]
+        )
+
+        let domain = item.toDomain()
+
+        XCTAssertTrue(domain.hasDolbyVision)
+    }
+
+    func testHasDolbyVisionIsFalseForHDR10() {
+        let item = makeItem(
+            streams: [
+                makeVideoStream(videoRangeType: "HDR10", codec: "hevc")
+            ]
+        )
+
+        let domain = item.toDomain()
+
+        XCTAssertFalse(domain.hasDolbyVision)
+    }
+
+    func testHasDolbyVisionIsFalseForGenericHDR() {
+        let item = makeItem(
+            streams: [
+                makeVideoStream(videoRangeType: "HDR", codec: "hevc")
+            ]
+        )
+
+        let domain = item.toDomain()
+
+        XCTAssertFalse(domain.hasDolbyVision)
+    }
+
+    private func makeItem(streams: [MediaStreamDTO]) -> ItemDTO {
+        ItemDTO(
+            id: "item-1",
+            name: "Test Item",
+            overview: nil,
+            type: "Movie",
+            productionYear: nil,
+            runTimeTicks: nil,
+            genres: nil,
+            communityRating: nil,
+            imageTags: nil,
+            backdropImageTags: nil,
+            parentID: nil,
+            seriesID: nil,
+            seriesName: nil,
+            seriesPrimaryImageTag: nil,
+            indexNumber: nil,
+            parentIndexNumber: nil,
+            people: nil,
+            mediaStreams: streams,
+            airDays: nil,
+            userData: nil
+        )
+    }
+
+    private func makeVideoStream(
+        videoRangeType: String?,
+        codec: String?,
+        profile: String? = nil,
+        displayTitle: String? = nil
+    ) -> MediaStreamDTO {
+        MediaStreamDTO(
+            index: 0,
+            type: "Video",
+            title: nil,
+            displayTitle: displayTitle,
+            language: nil,
+            isDefault: true,
+            codec: codec,
+            profile: profile,
+            bitDepth: nil,
+            videoRangeType: videoRangeType,
+            channels: nil,
+            channelLayout: nil,
+            bitrate: nil,
+            width: 1920,
+            height: 1080
+        )
+    }
+}
