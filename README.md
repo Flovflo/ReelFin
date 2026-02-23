@@ -6,9 +6,9 @@ ReelFin is a native iOS streaming client for Jellyfin, meticulously built with p
 
 
 
-## Release: Beta 0.1
+## Release: Beta 0.2
 
-This initial beta release introduces a rock-solid foundation for video playback, solving complex AVPlayer rendering architectures with remote HLS transcodes.
+This release introduces a rock-solid foundation for video playback, solving complex AVPlayer rendering architectures with remote HLS transcodes. It also brings major UI and TTFF performance enhancements.
 
 ### Key Features
 * **Native Apple Player Experience**: Utilizes `AVPlayerViewController` wrapped seamlessly in SwiftUI for native PiP, spatial audio, and subtitle support.
