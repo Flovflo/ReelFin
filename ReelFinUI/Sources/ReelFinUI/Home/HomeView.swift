@@ -55,7 +55,7 @@ public struct SectionRow: View {
                                 item: item,
                                 apiClient: apiClient,
                                 imagePipeline: imagePipeline,
-                                layoutStyle: kind == .continueWatching ? .landscape : .row,
+                                layoutStyle: isLandscapeRail ? .landscape : .row,
                                 namespace: namespaceProvider(item.id),
                                 ranking: isTop10 ? (index + 1) : nil,
                                 progress: progress(for: item)
@@ -66,6 +66,10 @@ public struct SectionRow: View {
                             }
                         }
                         .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
+                        #if os(tvOS)
+                        .focusable(true)
+                        #endif
                     }
                 }
                 .scrollTargetLayout()
@@ -79,10 +83,13 @@ public struct SectionRow: View {
         title.lowercased().contains("top 10") || title.lowercased().contains("trending")
     }
 
+    private var isLandscapeRail: Bool {
+        kind == .continueWatching || kind == .nextUp
+    }
+
     private func progress(for item: MediaItem) -> Double? {
-        if kind == .continueWatching {
-            // Hardcode 0.4 for mockup since actual progress isn't on MediaItem yet
-            return 0.4
+        if kind == .continueWatching || kind == .nextUp {
+            return item.playbackProgress ?? 0.4
         }
         return nil
     }
@@ -99,6 +106,7 @@ struct HomeView: View {
 
     private let dependencies: ReelFinDependencies
     @State private var scrollInterval: SignpostInterval?
+    @State private var isCustomizationPresented = false
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
@@ -112,13 +120,13 @@ struct HomeView: View {
                     if viewModel.isInitialLoading && viewModel.feed.rows.isEmpty {
                         loadingSkeleton
                             .padding(.top, 48)
-                    } else if viewModel.feed.rows.allSatisfy({ $0.items.isEmpty }) && viewModel.feed.featured.isEmpty {
+                    } else if viewModel.visibleRows.isEmpty && viewModel.feed.featured.isEmpty {
                         emptyState
                             .padding(.top, 48)
                     } else {
                         featuredSection
 
-                        ForEach(viewModel.feed.rows.filter { !$0.items.isEmpty }) { row in
+                        ForEach(viewModel.visibleRows) { row in
                             SectionRow(
                                 title: row.title,
                                 items: row.items,
@@ -132,10 +140,12 @@ struct HomeView: View {
                                     viewModel.select(item: item)
                                 }
                             )
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(.snappy(duration: 0.35), value: viewModel.visibleRows.map(\.id))
             }
             .background(ReelFinTheme.pageGradient.ignoresSafeArea())
             .refreshable {
@@ -170,6 +180,11 @@ struct HomeView: View {
         }
         .task {
             await viewModel.load()
+        }
+        .sheet(isPresented: $isCustomizationPresented) {
+            HomeCustomizationSheet(viewModel: viewModel)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .toolbar(.hidden, for: .navigationBar)
         .ignoresSafeArea(edges: .top) // Let hero stretch to status bar
@@ -212,6 +227,13 @@ struct HomeView: View {
                         .padding(.trailing, 4)
                 }
 
+                Button {
+                    isCustomizationPresented = true
+                } label: {
+                    topIcon(symbol: "slider.horizontal.3", accessibilityLabel: "Customize Home")
+                }
+                .buttonStyle(.plain)
+
                 topIcon(symbol: "person.crop.circle", accessibilityLabel: "Profile")
             }
             .padding(.top, 4)
@@ -237,7 +259,7 @@ struct HomeView: View {
 
     private var firstRowByItemID: [String: String] {
         var map: [String: String] = [:]
-        for row in viewModel.feed.rows {
+        for row in viewModel.visibleRows {
             for item in row.items where map[item.id] == nil {
                 map[item.id] = row.id
             }
@@ -331,6 +353,86 @@ struct HomeView: View {
 
     private var rowCardHeight: CGFloat {
         rowCardWidth * 1.55
+    }
+}
+
+private struct HomeCustomizationSheet: View {
+    @ObservedObject var viewModel: HomeViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var editMode: EditMode = .active
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Order") {
+                    ForEach(viewModel.sectionCustomizationKinds, id: \.self) { kind in
+                        HStack(spacing: 12) {
+                            Image(systemName: icon(for: kind))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .frame(width: 20)
+                            Text(viewModel.sectionTitle(for: kind))
+                                .foregroundStyle(.white)
+                            Spacer()
+                        }
+                    }
+                    .onMove(perform: viewModel.moveSectionKinds(from:to:))
+                }
+
+                Section("Visible Sections") {
+                    ForEach(viewModel.sectionCustomizationKinds, id: \.self) { kind in
+                        Toggle(isOn: Binding(
+                            get: { viewModel.isSectionVisible(kind) },
+                            set: { viewModel.setSectionVisibility(kind, isVisible: $0) }
+                        )) {
+                            Text(viewModel.sectionTitle(for: kind))
+                                .foregroundStyle(.white)
+                        }
+                        .tint(.white)
+                    }
+                }
+            }
+            .environment(\.editMode, $editMode)
+            .scrollContentBackground(.hidden)
+            .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+            .navigationTitle("Customize Home")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Reset") {
+                        viewModel.resetSectionCustomization()
+                    }
+                    .tint(.white)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .tint(.white)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func icon(for kind: HomeSectionKind) -> String {
+        switch kind {
+        case .continueWatching:
+            return "play.circle"
+        case .nextUp:
+            return "forward.end.circle"
+        case .recentlyAddedMovies:
+            return "film.stack"
+        case .recentlyAddedSeries:
+            return "tv"
+        case .popular:
+            return "flame"
+        case .trending:
+            return "chart.line.uptrend.xyaxis"
+        case .movies:
+            return "film"
+        case .shows:
+            return "play.tv"
+        case .latest:
+            return "clock"
+        }
     }
 }
 

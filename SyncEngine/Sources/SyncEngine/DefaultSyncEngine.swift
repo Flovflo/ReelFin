@@ -1,5 +1,8 @@
 import Foundation
 import Shared
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 public actor DefaultSyncEngine: SyncEngineProtocol {
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
@@ -65,6 +68,7 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
             try await repository.upsertItems(feedItems)
             try await repository.setLastSyncDate(Date())
             markForegroundLikeSyncIfNeeded(reason: reason)
+            updateWidgetSnapshots(feed: feed)
 
             let posterURLs = await buildPrefetchURLs(feed: feed)
             await imagePipeline.prefetch(urls: posterURLs)
@@ -137,4 +141,49 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
         }
         return featuredScore + nonEmptyRows + rowItems
     }
+
+    private func updateWidgetSnapshots(feed: HomeFeed) {
+        guard let defaults = UserDefaults(suiteName: "group.com.reelfin.shared") else { return }
+
+        let continueItems = feed.rows.first(where: { $0.kind == .continueWatching })?.items ?? []
+        let recentItems = (feed.rows.first(where: { $0.kind == .recentlyAddedMovies })?.items ?? [])
+            + (feed.rows.first(where: { $0.kind == .recentlyAddedSeries })?.items ?? [])
+
+        let continueCards = Array(continueItems.prefix(3)).map(widgetCard(from:))
+        let recentCards = Array(recentItems.prefix(3)).map(widgetCard(from:))
+
+        if let continueData = try? JSONEncoder().encode(continueCards) {
+            defaults.set(continueData, forKey: "widget.continueWatching")
+        }
+        if let recentData = try? JSONEncoder().encode(recentCards) {
+            defaults.set(recentData, forKey: "widget.recentlyAdded")
+        }
+
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadAllTimelines()
+        #endif
+    }
+
+    private func widgetCard(from item: MediaItem) -> WidgetMediaCard {
+        let subtitle: String
+        if item.mediaType == .episode {
+            let season = item.parentIndexNumber.map { "S\($0)" } ?? "S1"
+            let episode = item.indexNumber.map { "E\($0)" } ?? "E1"
+            subtitle = "\(season) • \(episode)"
+        } else {
+            subtitle = item.mediaType == .series ? "Series" : "Movie"
+        }
+
+        return WidgetMediaCard(
+            title: item.seriesName ?? item.name,
+            subtitle: subtitle,
+            progress: item.playbackProgress ?? 0
+        )
+    }
+}
+
+private struct WidgetMediaCard: Codable {
+    let title: String
+    let subtitle: String
+    let progress: Double
 }

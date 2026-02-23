@@ -9,11 +9,28 @@ final class HomeViewModel: ObservableObject {
     @Published var isRefreshing = false
     @Published var errorMessage: String?
     @Published var selectedItem: MediaItem?
+    @Published var orderedSectionKinds: [HomeSectionKind]
+    @Published var hiddenSectionKinds: Set<HomeSectionKind>
 
     private let dependencies: ReelFinDependencies
+    private static let sectionPreferencesKey = "home.sectionPreferences.v1"
+    private static let defaultSectionOrder: [HomeSectionKind] = [
+        .continueWatching,
+        .nextUp,
+        .recentlyAddedMovies,
+        .recentlyAddedSeries,
+        .popular,
+        .trending,
+        .movies,
+        .shows,
+        .latest
+    ]
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
+        let stored = Self.loadSectionPreferences()
+        self.orderedSectionKinds = stored.orderedKinds.isEmpty ? Self.defaultSectionOrder : stored.orderedKinds
+        self.hiddenSectionKinds = Set(stored.hiddenKinds)
     }
 
     func load() async {
@@ -60,6 +77,94 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    var sectionCustomizationKinds: [HomeSectionKind] {
+        let dynamicKinds = feed.rows.map(\.kind)
+        return uniqueKinds(orderedSectionKinds + dynamicKinds + Self.defaultSectionOrder)
+    }
+
+    var visibleRows: [HomeRow] {
+        let filtered = feed.rows.filter { !hiddenSectionKinds.contains($0.kind) && !$0.items.isEmpty }
+        guard !filtered.isEmpty else { return [] }
+
+        var rowsByKind = Dictionary(grouping: filtered, by: \.kind)
+        var orderedRows: [HomeRow] = []
+
+        for kind in orderedSectionKinds {
+            if let rows = rowsByKind.removeValue(forKey: kind) {
+                orderedRows.append(contentsOf: rows)
+            }
+        }
+
+        if !rowsByKind.isEmpty {
+            let leftovers = rowsByKind.values
+                .flatMap { $0 }
+                .sorted { lhs, rhs in
+                    lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                }
+            orderedRows.append(contentsOf: leftovers)
+        }
+
+        return orderedRows
+    }
+
+    func sectionTitle(for kind: HomeSectionKind) -> String {
+        if let title = feed.rows.first(where: { $0.kind == kind })?.title {
+            return title
+        }
+
+        switch kind {
+        case .continueWatching:
+            return "Continue Watching"
+        case .nextUp:
+            return "Next Up"
+        case .recentlyAddedMovies:
+            return "Recently Added Movies"
+        case .recentlyAddedSeries:
+            return "Recently Added Series"
+        case .popular:
+            return "Popular"
+        case .trending:
+            return "Trending"
+        case .movies:
+            return "Movies"
+        case .shows:
+            return "Shows"
+        case .latest:
+            return "Latest"
+        }
+    }
+
+    func isSectionVisible(_ kind: HomeSectionKind) -> Bool {
+        !hiddenSectionKinds.contains(kind)
+    }
+
+    func setSectionVisibility(_ kind: HomeSectionKind, isVisible: Bool) {
+        withAnimation(.snappy(duration: 0.25)) {
+            if isVisible {
+                hiddenSectionKinds.remove(kind)
+            } else {
+                hiddenSectionKinds.insert(kind)
+            }
+        }
+        persistSectionPreferences()
+    }
+
+    func moveSectionKinds(from source: IndexSet, to destination: Int) {
+        guard !source.isEmpty else { return }
+        withAnimation(.snappy(duration: 0.25)) {
+            orderedSectionKinds.move(fromOffsets: source, toOffset: destination)
+        }
+        persistSectionPreferences()
+    }
+
+    func resetSectionCustomization() {
+        withAnimation(.snappy(duration: 0.3)) {
+            orderedSectionKinds = Self.defaultSectionOrder
+            hiddenSectionKinds = []
+        }
+        persistSectionPreferences()
+    }
+
     private func refresh(reason: SyncReason) async {
         isRefreshing = true
         defer { isRefreshing = false }
@@ -72,7 +177,9 @@ final class HomeViewModel: ObservableObject {
         do {
             let cached = try await dependencies.repository.fetchHomeFeed()
             if !cached.rows.isEmpty || !cached.featured.isEmpty {
-                feed = await processFeed(cached)
+                let processed = await processFeed(cached)
+                ensureKnownSectionKinds(from: processed.rows)
+                feed = processed
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -117,4 +224,49 @@ final class HomeViewModel: ObservableObject {
             await apiClient.prefetchImages(for: allItems)
         }
     }
+
+    private func ensureKnownSectionKinds(from rows: [HomeRow]) {
+        let knownKinds = Set(orderedSectionKinds)
+        let missing = rows
+            .map(\.kind)
+            .filter { !knownKinds.contains($0) }
+        if !missing.isEmpty {
+            orderedSectionKinds.append(contentsOf: missing)
+            persistSectionPreferences()
+        }
+    }
+
+    private func uniqueKinds(_ kinds: [HomeSectionKind]) -> [HomeSectionKind] {
+        var seen = Set<HomeSectionKind>()
+        var result: [HomeSectionKind] = []
+        for kind in kinds where !seen.contains(kind) {
+            seen.insert(kind)
+            result.append(kind)
+        }
+        return result
+    }
+
+    private func persistSectionPreferences() {
+        let preferences = HomeSectionPreferences(
+            orderedKinds: uniqueKinds(orderedSectionKinds),
+            hiddenKinds: Array(hiddenSectionKinds)
+        )
+        guard let data = try? JSONEncoder().encode(preferences) else { return }
+        UserDefaults.standard.set(data, forKey: Self.sectionPreferencesKey)
+    }
+
+    private static func loadSectionPreferences() -> HomeSectionPreferences {
+        guard
+            let data = UserDefaults.standard.data(forKey: sectionPreferencesKey),
+            let prefs = try? JSONDecoder().decode(HomeSectionPreferences.self, from: data)
+        else {
+            return HomeSectionPreferences(orderedKinds: defaultSectionOrder, hiddenKinds: [])
+        }
+        return prefs
+    }
+}
+
+private struct HomeSectionPreferences: Codable {
+    var orderedKinds: [HomeSectionKind]
+    var hiddenKinds: [HomeSectionKind]
 }

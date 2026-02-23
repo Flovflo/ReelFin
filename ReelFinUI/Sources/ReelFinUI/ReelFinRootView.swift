@@ -22,11 +22,15 @@ public struct ReelFinRootView: View {
                     ProgressView().tint(.white)
                 }
             } else if viewModel.isAuthenticated {
+                #if os(tvOS)
+                tvLayout
+                #else
                 if horizontalSizeClass == .regular {
                     splitLayout
                 } else {
                     mainTabs
                 }
+                #endif
             } else {
                 LoginView(dependencies: dependencies) { session in
                     viewModel.completeLogin(session)
@@ -64,6 +68,40 @@ public struct ReelFinRootView: View {
         // iOS 18 behavior to minimize the tab bar on scroll
         .tabBarMinimizeBehavior(.automatic)
     }
+
+    #if os(tvOS)
+    private var tvLayout: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                HomeView(dependencies: dependencies)
+            }
+            .tag(0)
+            .tabItem {
+                Label("Home", systemImage: "play.tv.fill")
+            }
+
+            NavigationStack {
+                LibraryView(dependencies: dependencies)
+            }
+            .tag(1)
+            .tabItem {
+                Label("Library", systemImage: "rectangle.stack")
+            }
+
+            NavigationStack {
+                ServerSettingsView(dependencies: dependencies) {
+                    viewModel.signOut()
+                }
+            }
+            .tag(2)
+            .tabItem {
+                Label("Settings", systemImage: "gearshape.fill")
+            }
+        }
+        .tint(.white)
+        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+    }
+    #endif
 
     private var splitLayout: some View {
         NavigationSplitView {

@@ -9,6 +9,7 @@ public enum PosterCardLayoutStyle: Sendable {
 
 public struct PosterCardView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.isFocused) private var isFocused
 
     private let item: MediaItem
     private let apiClient: JellyfinAPIClientProtocol
@@ -55,7 +56,7 @@ public struct PosterCardView: View {
                 )
                 .frame(width: posterWidth, height: posterHeight)
                 .clipShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
-                .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 6)
+                .shadow(color: isFocused ? .white.opacity(0.28) : .black.opacity(0.4), radius: isFocused ? 24 : 12, x: 0, y: 6)
                 .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
                 .overlay {
                     RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
@@ -107,6 +108,8 @@ public struct PosterCardView: View {
                         .offset(x: -12, y: 16)
                 }
             }
+            .scaleEffect(isFocused ? 1.06 : 1.0)
+            .animation(.easeOut(duration: 0.2), value: isFocused)
 
             // Text Metadata
             VStack(alignment: .leading, spacing: 2) {

@@ -63,8 +63,30 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed {
-        HomeFeed(featured: Self.sampleItems(prefix: 5), rows: [
+        let recentMovies = Self.sampleItems(prefix: 8).map { item -> MediaItem in
+            var copy = item
+            copy.mediaType = .movie
+            return copy
+        }
+        let recentSeries = Self.sampleItems(prefix: 8).map { item -> MediaItem in
+            var copy = item
+            copy.mediaType = .series
+            return copy
+        }
+        let nextUp = Self.sampleItems(prefix: 8).enumerated().map { index, item -> MediaItem in
+            var copy = item
+            copy.mediaType = .episode
+            copy.indexNumber = index + 1
+            copy.parentIndexNumber = 1
+            copy.seriesName = "Sample Series \(index + 1)"
+            return copy
+        }
+
+        return HomeFeed(featured: Self.sampleItems(prefix: 5), rows: [
             HomeRow(kind: .continueWatching, title: "Continue Watching", items: Self.sampleItems(prefix: 8)),
+            HomeRow(kind: .nextUp, title: "Next Up", items: nextUp),
+            HomeRow(kind: .recentlyAddedMovies, title: "Recently Added Movies", items: recentMovies),
+            HomeRow(kind: .recentlyAddedSeries, title: "Recently Added Series", items: recentSeries),
             HomeRow(kind: .popular, title: "Popular", items: Self.sampleItems(prefix: 8)),
             HomeRow(kind: .trending, title: "Trending", items: Self.sampleItems(prefix: 8)),
             HomeRow(kind: .movies, title: "Movies", items: Self.sampleItems(prefix: 8)),
