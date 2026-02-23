@@ -56,6 +56,12 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         }
     }
 
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? {
+        // For previews, return the second episode to simulate resume behaviour
+        let eps = try await fetchEpisodes(seriesID: seriesID, seasonID: "season1")
+        return eps.first
+    }
+
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed {
         HomeFeed(featured: Self.sampleItems(prefix: 5), rows: [
             HomeRow(kind: .continueWatching, title: "Continue Watching", items: Self.sampleItems(prefix: 8)),

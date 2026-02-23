@@ -60,6 +60,8 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func fetchItemDetail(id: String) async throws -> MediaDetail
     func fetchSeasons(seriesID: String) async throws -> [MediaItem]
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem]
+    /// Returns the next episode to watch for a given series (in-progress first, then next unplayed).
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem?
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem]
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource]
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource]

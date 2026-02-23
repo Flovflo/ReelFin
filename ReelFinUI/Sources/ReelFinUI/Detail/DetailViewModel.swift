@@ -74,24 +74,12 @@ final class DetailViewModel: ObservableObject {
     }
     
     private func resolveNextUpEpisode() async {
-        // Walk all season episodes and find the first in-progress one
-        for season in seasons {
-            do {
-                let eps = try await dependencies.apiClient.fetchEpisodes(seriesID: detail.item.id, seasonID: season.id)
-                for episode in eps {
-                    if let progress = try? await dependencies.repository.fetchPlaybackProgress(itemID: episode.id),
-                       progress.positionTicks > 0,
-                       progress.progressRatio < 0.97 {
-                        nextUpEpisode = episode
-                        return
-                    }
-                }
-            } catch {
-                continue
-            }
-        }
-        // Fall back to the very first episode
-        if nextUpEpisode == nil {
+        // Ask Jellyfin for the next episode to watch for this series.
+        // The /Shows/NextUp endpoint returns the in-progress or next unplayed episode server-side.
+        if let apiEpisode = try? await dependencies.apiClient.fetchNextUpEpisode(seriesID: detail.item.id) {
+            nextUpEpisode = apiEpisode
+        } else {
+            // Fallback: first episode of the first season
             nextUpEpisode = episodes.first
         }
     }

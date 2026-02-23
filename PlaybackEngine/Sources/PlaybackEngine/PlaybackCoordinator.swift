@@ -68,6 +68,7 @@ public enum TranscodeURLProfile: String, Sendable {
 public actor PlaybackCoordinator {
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let decisionEngine: PlaybackDecisionEngine
+    public let ttffTuning: TTFFTuningConfiguration
 
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
@@ -75,6 +76,7 @@ public actor PlaybackCoordinator {
     ) {
         self.apiClient = apiClient
         self.decisionEngine = decisionEngine
+        self.ttffTuning = decisionEngine.ttffTuning
     }
 
     public func resolvePlayback(
@@ -171,7 +173,19 @@ public actor PlaybackCoordinator {
 
         var assetURL: URL
         switch decision.route {
-        case let .directPlay(url), let .remux(url), let .transcode(url):
+        case let .directPlay(url):
+            // Prefer progressive Direct Play (static=true) for fastest TTFF
+            if let progressiveURL = decisionEngine.directPlayProgressiveURL(
+                itemID: itemID,
+                source: source,
+                configuration: configuration,
+                token: session.token
+            ) {
+                assetURL = progressiveURL
+            } else {
+                assetURL = url
+            }
+        case let .remux(url), let .transcode(url):
             assetURL = url
         }
 
@@ -369,6 +383,13 @@ public actor PlaybackCoordinator {
         setQuery("MaxStreamingBitrate", String(maxBitrate))
         setQuery("BreakOnNonKeyFrames", "True")
         setQuery("TranscodeReasons", "ContainerNotSupported,AudioCodecNotSupported")
+
+        // TTFF tuning: inject segment and subtitle parameters
+        setQuery("SegmentLength", String(ttffTuning.hlsSegmentLengthSeconds))
+        setQuery("MinSegments", String(ttffTuning.hlsMinSegments))
+        if ttffTuning.disableSubtitleBurnIn {
+            setQuery("SubtitleMethod", "External")
+        }
 
         components.queryItems = map.keys.sorted().map { key in
             URLQueryItem(name: key, value: map[key])

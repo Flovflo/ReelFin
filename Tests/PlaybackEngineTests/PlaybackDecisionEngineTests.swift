@@ -382,6 +382,170 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(names.filter { $0 == "allowvideostreamcopy" }.count, 1)
     }
 
+    // MARK: - TTFF Tuning Tests
+
+    func testTTFFTuningConfigurationDefaults() {
+        let config = TTFFTuningConfiguration.default
+        XCTAssertEqual(config.hlsSegmentLengthSeconds, 3)
+        XCTAssertEqual(config.hlsMinSegments, 1)
+        XCTAssertTrue(config.disableSubtitleBurnIn)
+        XCTAssertEqual(config.directPlayForwardBufferDuration, 2.0)
+        XCTAssertEqual(config.remuxForwardBufferDuration, 4.0)
+        XCTAssertEqual(config.transcodeForwardBufferDuration, 6.0)
+        XCTAssertFalse(config.directPlayWaitsToMinimizeStalling)
+        XCTAssertFalse(config.remuxWaitsToMinimizeStalling)
+        XCTAssertTrue(config.transcodeWaitsToMinimizeStalling)
+        XCTAssertTrue(config.preferProgressiveDirectPlay)
+    }
+
+    func testTranscodeURLContainsSegmentLengthAndMinSegments() {
+        let engine = PlaybackDecisionEngine()
+        let sources = [
+            MediaSource(
+                id: "segment-test",
+                itemID: "item-seg",
+                name: "segment test",
+                container: "mkv",
+                videoCodec: "hevc",
+                audioCodec: "eac3",
+                supportsDirectPlay: false,
+                supportsDirectStream: false,
+                directStreamURL: nil,
+                directPlayURL: nil,
+                transcodeURL: nil
+            )
+        ]
+
+        let decision = engine.decide(itemID: "item-seg", sources: sources, configuration: server, token: "abc")
+
+        guard case let .transcode(url) = decision?.route else {
+            XCTFail("Expected transcode route")
+            return
+        }
+
+        let qmap = queryMap(from: url)
+        XCTAssertEqual(qmap["SegmentLength"], "3")
+        XCTAssertEqual(qmap["MinSegments"], "1")
+    }
+
+    func testTranscodeURLDisablesSubtitleBurnIn() {
+        let engine = PlaybackDecisionEngine()
+        let sources = [
+            MediaSource(
+                id: "sub-test",
+                itemID: "item-sub",
+                name: "sub test",
+                container: "mkv",
+                videoCodec: "h264",
+                audioCodec: "dts",
+                supportsDirectPlay: false,
+                supportsDirectStream: false,
+                directStreamURL: nil,
+                directPlayURL: nil,
+                transcodeURL: nil
+            )
+        ]
+
+        let decision = engine.decide(itemID: "item-sub", sources: sources, configuration: server, token: "abc")
+
+        guard case let .transcode(url) = decision?.route else {
+            XCTFail("Expected transcode route")
+            return
+        }
+
+        let qmap = queryMap(from: url)
+        XCTAssertEqual(qmap["SubtitleMethod"], "External")
+        XCTAssertNil(qmap["SubtitleStreamIndex"])
+    }
+
+    func testDirectPlayProgressiveURLGeneration() {
+        let engine = PlaybackDecisionEngine()
+        let source = MediaSource(
+            id: "dp-source",
+            itemID: "item-dp",
+            name: "Direct",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/direct.mp4"),
+            directPlayURL: URL(string: "https://example.com/direct.mp4")
+        )
+
+        let progressiveURL = engine.directPlayProgressiveURL(
+            itemID: "item-dp",
+            source: source,
+            configuration: server,
+            token: "test-token"
+        )
+
+        XCTAssertNotNil(progressiveURL)
+        guard let url = progressiveURL else { return }
+        XCTAssertTrue(url.absoluteString.contains("/Videos/item-dp/stream"))
+        let qmap = queryMap(from: url)
+        XCTAssertEqual(qmap["static"], "true")
+        XCTAssertEqual(qmap["MediaSourceId"], "dp-source")
+        XCTAssertEqual(qmap["api_key"], "test-token")
+    }
+
+    func testDirectPlayProgressiveURLDisabledWhenConfigured() {
+        let config = TTFFTuningConfiguration(preferProgressiveDirectPlay: false)
+        let engine = PlaybackDecisionEngine(ttffTuning: config)
+        let source = MediaSource(
+            id: "dp-off",
+            itemID: "item-off",
+            name: "Direct",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/direct.mp4"),
+            directPlayURL: URL(string: "https://example.com/direct.mp4")
+        )
+
+        let progressiveURL = engine.directPlayProgressiveURL(
+            itemID: "item-off",
+            source: source,
+            configuration: server,
+            token: "token"
+        )
+
+        XCTAssertNil(progressiveURL)
+    }
+
+    func testCustomSegmentLengthInTranscodeURL() {
+        let config = TTFFTuningConfiguration(hlsSegmentLengthSeconds: 6, hlsMinSegments: 2)
+        let engine = PlaybackDecisionEngine(ttffTuning: config)
+        let sources = [
+            MediaSource(
+                id: "custom-seg",
+                itemID: "item-custom",
+                name: "custom",
+                container: "avi",
+                videoCodec: "hevc",
+                audioCodec: "dts",
+                supportsDirectPlay: false,
+                supportsDirectStream: false,
+                directStreamURL: nil,
+                directPlayURL: nil,
+                transcodeURL: nil
+            )
+        ]
+
+        let decision = engine.decide(itemID: "item-custom", sources: sources, configuration: server, token: "abc")
+
+        guard case let .transcode(url) = decision?.route else {
+            XCTFail("Expected transcode route")
+            return
+        }
+
+        let qmap = queryMap(from: url)
+        XCTAssertEqual(qmap["SegmentLength"], "6")
+        XCTAssertEqual(qmap["MinSegments"], "2")
+    }
+
     private func queryMap(from url: URL) -> [String: String] {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         return Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).compactMap { item in
@@ -488,4 +652,5 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
 
     func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
 }
