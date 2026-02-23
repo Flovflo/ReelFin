@@ -31,30 +31,20 @@ public struct HeroCarouselView: View {
             EmptyView()
         } else {
             ZStack(alignment: .bottom) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 0) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            heroContent(for: item)
-                                .containerRelativeFrame(.horizontal)
-                                .scrollTransition(axis: .horizontal) { content, phase in
-                                    content
-                                        .scaleEffect(phase.isIdentity ? 1.0 : 0.95)
-                                        .opacity(phase.isIdentity ? 1.0 : 0.6)
-                                }
-                                .id(index)
-                                .onTapGesture {
-                                    onTap(item)
-                                }
-                                .accessibilityAddTraits(.isButton)
-                        }
-                    }
-                    .scrollTargetLayout()
-                }
-                .scrollTargetBehavior(.paging)
-                .scrollPosition(id: Binding(
+                TabView(selection: Binding(
                     get: { currentIndex },
-                    set: { newIndex in if let idx = newIndex { currentIndex = idx } }
-                ))
+                    set: { newIndex in currentIndex = newIndex }
+                )) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        heroContent(for: item)
+                            .tag(index)
+                            .onTapGesture {
+                                onTap(item)
+                            }
+                            .accessibilityAddTraits(.isButton)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
                 .ignoresSafeArea(edges: .top)
                 .clipped()
 
