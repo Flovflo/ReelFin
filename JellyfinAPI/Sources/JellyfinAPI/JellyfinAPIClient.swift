@@ -246,6 +246,24 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         return response.items.map { $0.toDomain() }
     }
 
+    public func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? {
+        let userID = try requireUserID()
+        // Use the dedicated NextUp endpoint, filtered to this series.
+        // enableResumable=true (default) means in-progress episodes are returned first.
+        let response: ItemsResponseDTO = try await request(
+            path: "Shows/NextUp",
+            query: [
+                URLQueryItem(name: "UserId", value: userID),
+                URLQueryItem(name: "SeriesId", value: seriesID),
+                URLQueryItem(name: "Limit", value: "1"),
+                URLQueryItem(name: "Fields", value: "Overview"),
+                URLQueryItem(name: "EnableResumable", value: "true"),
+                URLQueryItem(name: "EnableRewatching", value: "false")
+            ]
+        )
+        return response.items.first?.toDomain()
+    }
+
     public func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
         let userID = try requireUserID()
         var queryItems = [

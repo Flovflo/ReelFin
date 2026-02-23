@@ -32,6 +32,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     func reportPlayed(itemID: String) async throws {}
     func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
 }
 
 final class SeriesLookupCacheTests: XCTestCase {
