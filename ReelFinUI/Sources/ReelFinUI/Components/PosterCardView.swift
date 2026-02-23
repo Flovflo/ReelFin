@@ -61,9 +61,22 @@ public struct PosterCardView: View {
                     RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
                         .stroke(ReelFinTheme.glassStrokeColor, lineWidth: ReelFinTheme.glassStrokeWidth)
                 }
+                .overlay(alignment: .topTrailing) {
+                    if item.isPlayed {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 28, height: 28)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay {
+                                Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                            }
+                            .padding(8)
+                    }
+                }
 
                 // Progress Bar Overlay
-                if let progress, progress > 0 {
+                if let progressValue = progress ?? item.playbackProgress, progressValue > 0 {
                     GeometryReader { geo in
                         Capsule()
                             .fill(.white.opacity(0.3))
@@ -71,7 +84,7 @@ public struct PosterCardView: View {
                             .overlay(alignment: .leading) {
                                 Capsule()
                                     .fill(ReelFinTheme.accent)
-                                    .frame(width: geo.size.width * CGFloat(progress))
+                                    .frame(width: geo.size.width * CGFloat(progressValue))
                             }
                     }
                     .frame(height: 4)

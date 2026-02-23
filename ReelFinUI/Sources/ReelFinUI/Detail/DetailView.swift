@@ -382,6 +382,36 @@ public struct EpisodeCardView: View {
                         .frame(width: width, height: width * (9.0 / 16.0))
                         .clipped()
                     }
+                    .overlay(alignment: .topTrailing) {
+                        if episode.isPlayed {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(.ultraThinMaterial, in: Circle())
+                                .overlay {
+                                    Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                                }
+                                .padding(12)
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if !episode.isPlayed, let progress = episode.playbackProgress, progress > 0 {
+                            GeometryReader { geo in
+                                Capsule()
+                                    .fill(.white.opacity(0.3))
+                                    .frame(height: 4)
+                                    .overlay(alignment: .leading) {
+                                        Capsule()
+                                            .fill(ReelFinTheme.accent)
+                                            .frame(width: geo.size.width * CGFloat(progress))
+                                    }
+                            }
+                            .frame(height: 4)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 12)
+                        }
+                    }
                 
                 // Dark bottom gradient overlay
                 RoundedRectangle(cornerRadius: 24, style: .continuous)

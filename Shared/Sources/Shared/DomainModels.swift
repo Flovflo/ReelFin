@@ -139,6 +139,8 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     public var hasDolbyVision: Bool
     public var hasClosedCaptions: Bool
     public var airDays: [String]?
+    public var isPlayed: Bool
+    public var playbackPositionTicks: Int64?
 
     public init(
         id: String,
@@ -160,7 +162,9 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         has4K: Bool = false,
         hasDolbyVision: Bool = false,
         hasClosedCaptions: Bool = false,
-        airDays: [String]? = nil
+        airDays: [String]? = nil,
+        isPlayed: Bool = false,
+        playbackPositionTicks: Int64? = nil
     ) {
         self.id = id
         self.name = name
@@ -182,11 +186,20 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         self.hasDolbyVision = hasDolbyVision
         self.hasClosedCaptions = hasClosedCaptions
         self.airDays = airDays
+        self.isPlayed = isPlayed
+        self.playbackPositionTicks = playbackPositionTicks
     }
 
     public var runtimeMinutes: Int? {
         guard let runtimeTicks else { return nil }
         return Int(runtimeTicks / 10_000_000 / 60)
+    }
+
+    public var playbackProgress: Double? {
+        guard let position = playbackPositionTicks, let total = runtimeTicks, total > 0 else {
+            return nil
+        }
+        return min(1, max(0, Double(position) / Double(total)))
     }
 }
 

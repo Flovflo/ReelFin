@@ -79,6 +79,7 @@ struct ItemDTO: Decodable {
     let people: [PersonDTO]?
     let mediaStreams: [MediaStreamDTO]?
     let airDays: [String]?
+    let userData: UserDataDTO?
 
     enum CodingKeys: String, CodingKey {
         case id = "Id"
@@ -100,6 +101,7 @@ struct ItemDTO: Decodable {
         case people = "People"
         case mediaStreams = "MediaStreams"
         case airDays = "AirDays"
+        case userData = "UserData"
     }
 
     func toDomain(libraryID: String? = nil) -> MediaItem {
@@ -153,8 +155,22 @@ struct ItemDTO: Decodable {
             has4K: has4K,
             hasDolbyVision: hasDolbyVision,
             hasClosedCaptions: hasClosedCaptions,
-            airDays: airDays
+            airDays: airDays,
+            isPlayed: userData?.played ?? false,
+            playbackPositionTicks: userData?.playbackPositionTicks
         )
+    }
+}
+
+struct UserDataDTO: Decodable {
+    let played: Bool?
+    let playbackPositionTicks: Int64?
+    let playCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case played = "Played"
+        case playbackPositionTicks = "PlaybackPositionTicks"
+        case playCount = "PlayCount"
     }
 }
 
