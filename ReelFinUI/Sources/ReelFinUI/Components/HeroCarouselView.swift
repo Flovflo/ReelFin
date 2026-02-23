@@ -145,7 +145,7 @@ public struct HeroCarouselView: View {
             .padding(.bottom, 60)
             .frame(width: UIScreen.main.bounds.width - (horizontalPadding * 2), alignment: .center)
         }
-        .frame(width: UIScreen.main.bounds.width)
+        .clipShape(Rectangle())
     }
 
     private func heroActionButtons(for item: MediaItem) -> some View {

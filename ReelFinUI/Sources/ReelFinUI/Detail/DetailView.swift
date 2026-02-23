@@ -156,11 +156,6 @@ struct DetailView: View {
                 .padding(.vertical, 40)
         } else if !viewModel.episodes.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
-                let seasonText = viewModel.episodes.first?.parentIndexNumber.map { "Season \($0)" } ?? "Episodes"
-                
-                SeasonHeaderView(title: seasonText)
-                    .padding(.bottom, 8)
-
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 16) {
                         ForEach(viewModel.episodes) { episode in

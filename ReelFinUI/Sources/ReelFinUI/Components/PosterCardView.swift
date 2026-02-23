@@ -40,7 +40,14 @@ public struct PosterCardView: View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .bottomLeading) {
                 CachedRemoteImage(
-                    itemID: (item.mediaType == .episode && item.parentID != nil && layoutStyle != .landscape) ? item.parentID! : item.id,
+                    itemID: {
+                        // For landscape (Continue Watching), use the series ID for backdrop.
+                        // For portrait poster, use the series/parent ID for episodes.
+                        if item.mediaType == .episode {
+                            return item.parentID ?? item.id
+                        }
+                        return item.id
+                    }(),
                     type: layoutStyle == .landscape ? .backdrop : .primary,
                     width: layoutStyle == .landscape ? 400 : 360,
                     apiClient: apiClient,
