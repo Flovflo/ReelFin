@@ -6,15 +6,16 @@ ReelFin is a native iOS streaming client for Jellyfin, meticulously built with p
 
 
 
-## Release: Beta 0.2
+## Release: v2.0.1
 
-This release introduces a rock-solid foundation for video playback, solving complex AVPlayer rendering architectures with remote HLS transcodes. It also brings major UI and TTFF performance enhancements.
+This release brings polished UI refinements and deeper Jellyfin integration, including a "Liquid Glass" watched status system and a rock-solid paging architecture for the home screen.
 
 ### Key Features
+* **Liquid Glass Watched Indicators**: Native support for Jellyfin `UserData`, displaying sleek checkmarks and progress bars that blend into the UI with Apple's hallmark translucency.
+* **Robust Carousel Paging**: Refactored the hero carousel using native `TabView` architecture, eliminating "ghosting" glitches and ensuring perfectly smooth auto-scrolling on iOS 17.
 * **Native Apple Player Experience**: Utilizes `AVPlayerViewController` wrapped seamlessly in SwiftUI for native PiP, spatial audio, and subtitle support.
 * **Intelligent Transcode Engine**: Custom `PlaybackDecisionEngine` interrogates Jellyfin to automatically request `.fmp4` containers for blazing-fast hardware HEVC decoding.
-* **HLS Race-Condition Immunity**: Implements a robust `Coordinator` layer that KVO-observes `readyToPlay` networks states, guaranteeing iOS's RemoteXPC video pipeline never times out or drops to a black screen during slow server-side transcodes.
-* **Graceful Degradation**: Safely falls back to stable `.ts` containers for H264 streams when HEVC hardware acceleration is unsupported.
+* **HLS Race-Condition Immunity**: Implements a robust `Coordinator` layer that KVO-observes `readyToPlay` networks states, guaranteeing iOS's RemoteXPC video pipeline never times out or drops to a black screen.
 
 ### Architecture Highlights
 * **Pure Swift 6 & Structured Concurrency**: Built from the ground up utilizing `async/await` and Actors for a thread-safe UI loop.
