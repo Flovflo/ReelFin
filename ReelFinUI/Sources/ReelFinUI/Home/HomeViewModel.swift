@@ -212,9 +212,11 @@ final class HomeViewModel: ObservableObject {
             }
             newRows[i].items = newItems
         }
-        let feed = HomeFeed(featured: feed.featured, rows: newRows)
-        prefetchImages(for: feed)
-        return feed
+
+        let normalizedFeatured = feed.featured.isEmpty ? fallbackFeatured(from: newRows) : feed.featured
+        let normalizedFeed = HomeFeed(featured: normalizedFeatured, rows: newRows)
+        prefetchImages(for: normalizedFeed)
+        return normalizedFeed
     }
 
     private func prefetchImages(for feed: HomeFeed) {
@@ -223,6 +225,36 @@ final class HomeViewModel: ObservableObject {
         Task.detached(priority: .background) {
             await apiClient.prefetchImages(for: allItems)
         }
+    }
+
+    private func fallbackFeatured(from rows: [HomeRow]) -> [MediaItem] {
+        let priority: [HomeSectionKind] = [
+            .recentlyAddedMovies,
+            .recentlyAddedSeries,
+            .popular,
+            .trending,
+            .movies,
+            .shows,
+            .continueWatching,
+            .nextUp,
+            .latest
+        ]
+
+        var seen = Set<String>()
+        var collected: [MediaItem] = []
+
+        for kind in priority {
+            guard let row = rows.first(where: { $0.kind == kind }) else { continue }
+            for item in row.items where !seen.contains(item.id) {
+                seen.insert(item.id)
+                collected.append(item)
+                if collected.count >= 10 {
+                    return collected
+                }
+            }
+        }
+
+        return collected
     }
 
     private func ensureKnownSectionKinds(from rows: [HomeRow]) {

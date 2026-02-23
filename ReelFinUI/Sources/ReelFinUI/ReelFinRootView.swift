@@ -1,5 +1,8 @@
 import Shared
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 public struct ReelFinRootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -25,7 +28,7 @@ public struct ReelFinRootView: View {
                 #if os(tvOS)
                 tvLayout
                 #else
-                if horizontalSizeClass == .regular {
+                if shouldUseSplitLayout {
                     splitLayout
                 } else {
                     mainTabs
@@ -139,6 +142,12 @@ public struct ReelFinRootView: View {
         }
         .tint(ReelFinTheme.accent)
     }
+
+    #if os(iOS)
+    private var shouldUseSplitLayout: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
+    }
+    #endif
 }
 
 private enum SidebarDestination: Hashable {

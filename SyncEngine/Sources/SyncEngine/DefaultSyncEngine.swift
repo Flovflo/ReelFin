@@ -122,7 +122,19 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
             return true
         }
 
-        if nonEmptyRows.count == 1, nonEmptyRows.first?.kind == .continueWatching {
+        let contentKinds: Set<HomeSectionKind> = [
+            .recentlyAddedMovies,
+            .recentlyAddedSeries,
+            .popular,
+            .trending,
+            .movies,
+            .shows,
+            .latest
+        ]
+        let hasContentRows = nonEmptyRows.contains { contentKinds.contains($0.kind) }
+
+        // Incremental feeds can contain only resume/next-up rails, which degrades Home.
+        if !hasContentRows {
             return true
         }
 
