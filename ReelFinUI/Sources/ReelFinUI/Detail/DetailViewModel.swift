@@ -14,6 +14,8 @@ final class DetailViewModel: ObservableObject {
     @Published var episodes: [MediaItem] = []
     @Published var selectedSeason: MediaItem?
     @Published var isLoadingEpisodes = false
+    /// For series: the episode that should be played (either in-progress or first episode)
+    @Published var nextUpEpisode: MediaItem?
 
     private let dependencies: ReelFinDependencies
 
@@ -63,8 +65,34 @@ final class DetailViewModel: ObservableObject {
             if let firstSeason = fetchedSeasons.first {
                 await select(season: firstSeason)
             }
+            
+            // Find the in-progress or next episode across all seasons
+            await resolveNextUpEpisode()
         } catch {
             print("Failed to load seasons: \(error)")
+        }
+    }
+    
+    private func resolveNextUpEpisode() async {
+        // Walk all season episodes and find the first in-progress one
+        for season in seasons {
+            do {
+                let eps = try await dependencies.apiClient.fetchEpisodes(seriesID: detail.item.id, seasonID: season.id)
+                for episode in eps {
+                    if let progress = try? await dependencies.repository.fetchPlaybackProgress(itemID: episode.id),
+                       progress.positionTicks > 0,
+                       progress.progressRatio < 0.97 {
+                        nextUpEpisode = episode
+                        return
+                    }
+                }
+            } catch {
+                continue
+            }
+        }
+        // Fall back to the very first episode
+        if nextUpEpisode == nil {
+            nextUpEpisode = episodes.first
         }
     }
 
@@ -76,6 +104,10 @@ final class DetailViewModel: ObservableObject {
         do {
             let fetchedEpisodes = try await dependencies.apiClient.fetchEpisodes(seriesID: detail.item.id, seasonID: season.id)
             self.episodes = fetchedEpisodes
+            // Update nextUpEpisode if we don't have one yet
+            if nextUpEpisode == nil {
+                nextUpEpisode = fetchedEpisodes.first
+            }
         } catch {
             print("Failed to load episodes: \(error)")
         }
@@ -84,6 +116,27 @@ final class DetailViewModel: ObservableObject {
     var shouldShowResume: Bool {
         guard let playbackProgress else { return false }
         return playbackProgress.positionTicks > 0 && playbackProgress.progressRatio < 0.97
+    }
+    
+    /// The label for the main play button
+    var playButtonLabel: String {
+        if detail.item.mediaType == .series {
+            if let ep = nextUpEpisode,
+               let s = ep.parentIndexNumber,
+               let e = ep.indexNumber {
+                return shouldShowResume ? "Resume S\(s) E\(e)" : "Play S\(s) E\(e)"
+            }
+            return shouldShowResume ? "Resume" : "Play"
+        }
+        return shouldShowResume ? "Resume" : "Play"
+    }
+    
+    /// The item that should actually be passed to the player when the main button is tapped
+    var itemToPlay: MediaItem {
+        if detail.item.mediaType == .series, let ep = nextUpEpisode {
+            return ep
+        }
+        return detail.item
     }
 
     func toggleWatchlist() {

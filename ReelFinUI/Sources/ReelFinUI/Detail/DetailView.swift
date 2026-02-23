@@ -37,6 +37,7 @@ struct DetailView: View {
                     isLoadingPlayback: isLoadingPlayback,
                     isInWatchlist: viewModel.isInWatchlist,
                     isDescriptionExpanded: $isDescriptionExpanded,
+                    playButtonLabel: viewModel.playButtonLabel,
                     onPlay: startPlayback,
                     onToggleWatchlist: { viewModel.toggleWatchlist() },
                     onMoreActions: { /* More actions */ },
@@ -95,7 +96,7 @@ struct DetailView: View {
         }
         .fullScreenCover(isPresented: $showPlayer) {
             if let playerSession {
-                PlayerView(session: playerSession, item: viewModel.detail.item) {
+                PlayerView(session: playerSession, item: viewModel.itemToPlay) {
                     showPlayer = false
                 }
             }
@@ -185,7 +186,8 @@ struct DetailView: View {
 
         Task {
             do {
-                try await session.load(item: viewModel.detail.item)
+                // Play the resolved item (nextUp episode for series, or the item itself)
+                try await session.load(item: viewModel.itemToPlay)
                 isLoadingPlayback = false
                 showPlayer = true
             } catch {
@@ -469,6 +471,7 @@ public struct MediaHeroHeaderView: View {
     let heroHeight: CGFloat
     let isLoadingPlayback: Bool
     let isInWatchlist: Bool
+    let playButtonLabel: String
     @Binding var isDescriptionExpanded: Bool
     let onPlay: () -> Void
     let onToggleWatchlist: () -> Void
@@ -477,11 +480,12 @@ public struct MediaHeroHeaderView: View {
     let imagePipeline: any ImagePipelineProtocol
     let namespace: Namespace.ID?
     
-    public init(item: MediaItem, heroHeight: CGFloat, isLoadingPlayback: Bool, isInWatchlist: Bool, isDescriptionExpanded: Binding<Bool>, onPlay: @escaping () -> Void, onToggleWatchlist: @escaping () -> Void, onMoreActions: @escaping () -> Void, apiClient: any JellyfinAPIClientProtocol, imagePipeline: any ImagePipelineProtocol, namespace: Namespace.ID? = nil) {
+    public init(item: MediaItem, heroHeight: CGFloat, isLoadingPlayback: Bool, isInWatchlist: Bool, isDescriptionExpanded: Binding<Bool>, playButtonLabel: String = "Play", onPlay: @escaping () -> Void, onToggleWatchlist: @escaping () -> Void, onMoreActions: @escaping () -> Void, apiClient: any JellyfinAPIClientProtocol, imagePipeline: any ImagePipelineProtocol, namespace: Namespace.ID? = nil) {
         self.item = item
         self.heroHeight = heroHeight
         self.isLoadingPlayback = isLoadingPlayback
         self.isInWatchlist = isInWatchlist
+        self.playButtonLabel = playButtonLabel
         self._isDescriptionExpanded = isDescriptionExpanded
         self.onPlay = onPlay
         self.onToggleWatchlist = onToggleWatchlist
@@ -543,7 +547,7 @@ public struct MediaHeroHeaderView: View {
                 
                 HStack(spacing: 12) {
                     PrimaryPlayButton(
-                        title: item.mediaType == .series ? "Play First Episode" : "Play",
+                        title: playButtonLabel,
                         isLoading: isLoadingPlayback,
                         action: onPlay
                     )

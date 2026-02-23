@@ -56,6 +56,7 @@ public struct HeroCarouselView: View {
                     set: { newIndex in if let idx = newIndex { currentIndex = idx } }
                 ))
                 .ignoresSafeArea(edges: .top)
+                .clipped()
 
                 // Page Indicators (centered at the bottom)
                 if items.count > 1 {
