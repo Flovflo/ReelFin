@@ -37,4 +37,5 @@ public enum Signpost {
     public static let playbackSelection = OSSignposter(subsystem: AppLog.subsystem, category: "playback_selection")
     public static let playerLifecycle = OSSignposter(subsystem: AppLog.subsystem, category: "player_lifecycle")
     public static let playbackStalls = OSSignposter(subsystem: AppLog.subsystem, category: "playback_stalls")
+    public static let ttffPipeline = OSSignposter(subsystem: AppLog.subsystem, category: "ttff_pipeline")
 }

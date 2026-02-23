@@ -46,9 +46,14 @@ public struct DeviceCapabilities: Sendable {
 
 public struct PlaybackDecisionEngine: Sendable {
     private let capabilities: DeviceCapabilities
+    public let ttffTuning: TTFFTuningConfiguration
 
-    public init(capabilities: DeviceCapabilities = DeviceCapabilities()) {
+    public init(
+        capabilities: DeviceCapabilities = DeviceCapabilities(),
+        ttffTuning: TTFFTuningConfiguration = .default
+    ) {
         self.capabilities = capabilities
+        self.ttffTuning = ttffTuning
     }
 
     public func decide(
@@ -265,8 +270,16 @@ public struct PlaybackDecisionEngine: Sendable {
             URLQueryItem(name: "AllowAudioStreamCopy", value: "false"),
             URLQueryItem(name: "MaxStreamingBitrate", value: String(configuration.preferredQuality.maxStreamingBitrate)),
             URLQueryItem(name: "MediaSourceId", value: source.id),
-            URLQueryItem(name: "TranscodeReasons", value: "ContainerNotSupported,AudioCodecNotSupported")
+            URLQueryItem(name: "TranscodeReasons", value: "ContainerNotSupported,AudioCodecNotSupported"),
+            // TTFF tuning: shorter segments → faster first frame
+            URLQueryItem(name: "SegmentLength", value: String(ttffTuning.hlsSegmentLengthSeconds)),
+            URLQueryItem(name: "MinSegments", value: String(ttffTuning.hlsMinSegments))
         ]
+
+        // Prevent subtitle burn-in which forces a full transcode pipeline
+        if ttffTuning.disableSubtitleBurnIn {
+            queryItems.append(URLQueryItem(name: "SubtitleMethod", value: "External"))
+        }
 
         if let preferredVideoCodec {
             queryItems.append(URLQueryItem(name: "VideoCodec", value: preferredVideoCodec))
@@ -278,6 +291,34 @@ public struct PlaybackDecisionEngine: Sendable {
 
         components.queryItems = queryItems
         return components.url ?? configuration.serverURL
+    }
+
+    /// Build a progressive download URL for true Direct Play.
+    /// This bypasses HLS manifest overhead entirely — the fastest path to first frame.
+    public func directPlayProgressiveURL(
+        itemID: String,
+        source: MediaSource,
+        configuration: ServerConfiguration,
+        token: String?
+    ) -> URL? {
+        guard ttffTuning.preferProgressiveDirectPlay else { return nil }
+
+        var components = URLComponents(
+            url: configuration.serverURL.appendingPathComponent("Videos/\(itemID)/stream"),
+            resolvingAgainstBaseURL: false
+        )
+
+        var queryItems = [
+            URLQueryItem(name: "static", value: "true"),
+            URLQueryItem(name: "MediaSourceId", value: source.id)
+        ]
+
+        if let token {
+            queryItems.append(URLQueryItem(name: "api_key", value: token))
+        }
+
+        components?.queryItems = queryItems
+        return components?.url
     }
 
     private func preferredVideoCodec(for source: MediaSource) -> String? {

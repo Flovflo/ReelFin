@@ -67,8 +67,17 @@ public final class PlaybackSessionController: ObservableObject {
     private var readyInterval: SignpostInterval?
     private var firstFrameInterval: SignpostInterval?
     private var activeStallInterval: SignpostInterval?
+    private var ttffPipelineInterval: SignpostInterval?
+    private var ttffInfoInterval: SignpostInterval?
+    private var ttffResolveInterval: SignpostInterval?
+    private var ttffFirstBytesInterval: SignpostInterval?
     private var startupWatchdogTask: Task<Void, Never>?
     private var decodedFrameWatchdogTask: Task<Void, Never>?
+    private var ttffTuning: TTFFTuningConfiguration = .default
+    private var ttffInfoMs: Double = 0
+    private var ttffResolveMs: Double = 0
+    private var ttffFirstBytesMs: Double = 0
+    private var ttffReadyMs: Double = 0
     private static let preferredProfileStorageKey = "reelfin.playback.preferredTranscodeProfileByItemID.v2"
 
     public init(
@@ -116,6 +125,11 @@ public final class PlaybackSessionController: ObservableObject {
         activeTranscodeProfile = preferredProfilesByItemID[item.id] ?? .serverDefault
         playbackStrategy = await currentPlaybackStrategy()
 
+        // Start the overall TTFF pipeline signpost
+        ttffPipelineInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_total")
+        ttffInfoInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_playback_info")
+        let infoStartDate = Date()
+
         do {
             var selection = try await coordinator.resolvePlayback(
                 itemID: item.id,
@@ -123,6 +137,15 @@ public final class PlaybackSessionController: ObservableObject {
                 allowTranscodingFallbackInPerformance: !usesDirectRemuxOnly,
                 transcodeProfile: activeTranscodeProfile
             )
+
+            // Mark PlaybackInfo phase complete
+            ttffInfoInterval?.end(name: "ttff_playback_info", message: "info_received")
+            ttffInfoInterval = nil
+            ttffInfoMs = Date().timeIntervalSince(infoStartDate) * 1000
+
+            ttffResolveInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_url_resolution")
+            let resolveStartDate = Date()
+
             var forcedH264ByManifestGuard = false
 
             if shouldBypassServerDefaultHEVCSelection(selection) {
@@ -194,6 +217,14 @@ public final class PlaybackSessionController: ObservableObject {
 
             prepareAndLoadSelection(selection, resumeSeconds: nil)
 
+            // Mark URL resolution phase complete
+            ttffResolveInterval?.end(name: "ttff_url_resolution", message: "url_resolved")
+            ttffResolveInterval = nil
+            ttffResolveMs = Date().timeIntervalSince(resolveStartDate) * 1000
+
+            // Retrieve TTFF tuning from coordinator
+            ttffTuning = await coordinator.ttffTuning
+
             if let progress = try await repository.fetchPlaybackProgress(itemID: item.id), progress.positionTicks > 0 {
                 let seconds = Double(progress.positionTicks) / 10_000_000
                 let seekTime = CMTime(seconds: seconds, preferredTimescale: 600)
@@ -242,6 +273,23 @@ public final class PlaybackSessionController: ObservableObject {
 
         routeDescription = routeLabel(for: selection.decision.route)
 
+        // Determine buffer tuning per play method
+        let forwardBuffer: Double
+        let waitsToMinimize: Bool
+        switch selection.decision.route {
+        case .directPlay:
+            forwardBuffer = ttffTuning.directPlayForwardBufferDuration
+            waitsToMinimize = ttffTuning.directPlayWaitsToMinimizeStalling
+        case .remux:
+            forwardBuffer = ttffTuning.remuxForwardBufferDuration
+            waitsToMinimize = ttffTuning.remuxWaitsToMinimizeStalling
+        case .transcode:
+            forwardBuffer = ttffTuning.transcodeForwardBufferDuration
+            waitsToMinimize = ttffTuning.transcodeWaitsToMinimizeStalling
+        }
+
+        player.automaticallyWaitsToMinimizeStalling = waitsToMinimize
+
         var assetOptions: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": selection.headers]
 #if os(iOS)
         assetOptions["AVURLAssetAllowsCellularAccessKey"] = true
@@ -250,8 +298,7 @@ public final class PlaybackSessionController: ObservableObject {
 
         let playerItem = AVPlayerItem(asset: asset)
         playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
-        // Tune forward buffer for faster startup while maintaining stability on weak networks.
-        playerItem.preferredForwardBufferDuration = 10.0 // 10 seconds buffer goal
+        playerItem.preferredForwardBufferDuration = forwardBuffer
 
         readyInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_item_ready")
         firstFrameInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_first_frame")
@@ -474,6 +521,7 @@ public final class PlaybackSessionController: ObservableObject {
                 if observedItem.status == .readyToPlay {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_to_play")
                     self.readyInterval = nil
+                    self.ttffReadyMs = Date().timeIntervalSince(self.startDate) * 1000
                     self.runtimeHDRMode = self.detectHDRMode(from: observedItem, fallback: self.debugInfo?.hdrMode ?? .unknown)
                     self.scheduleVideoValidation(for: observedItem)
                 } else if observedItem.status == .failed {
@@ -530,8 +578,16 @@ public final class PlaybackSessionController: ObservableObject {
         metrics.timeToFirstFrameMs = elapsedMs
         firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
         firstFrameInterval = nil
+        ttffPipelineInterval?.end(name: "ttff_total", message: "complete")
+        ttffPipelineInterval = nil
         rememberWorkingProfileForCurrentItem()
-        AppLog.playback.info("TTFF \(elapsedMs, format: .fixed(precision: 1))ms")
+
+        // Structured TTFF pipeline summary
+        let method = playMethodForReporting
+        let profile = activeTranscodeProfile.rawValue
+        AppLog.playback.info(
+            "TTFF \(elapsedMs, format: .fixed(precision: 1))ms [info=\(self.ttffInfoMs, format: .fixed(precision: 1))ms resolve=\(self.ttffResolveMs, format: .fixed(precision: 1))ms ready=\(self.ttffReadyMs, format: .fixed(precision: 1))ms] method=\(method, privacy: .public) profile=\(profile, privacy: .public)"
+        )
     }
 
     private func scheduleVideoValidation(for item: AVPlayerItem) {
