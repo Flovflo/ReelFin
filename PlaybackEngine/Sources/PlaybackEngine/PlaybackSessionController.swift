@@ -1452,7 +1452,9 @@ public final class PlaybackSessionController: ObservableObject {
         case .serverDefault:
             return isCurrentHEVCStreamCopyTranscode() ? 6_000_000_000 : 8_000_000_000
         case .appleOptimizedHEVC:
-            return 8_000_000_000
+            // HEVC startup on large HDR/DV assets can legitimately exceed 8s.
+            // Give more room before switching to an SDR fallback profile.
+            return currentItemHasDolbyVision ? 14_000_000_000 : 10_000_000_000
         case .conservativeCompatibility:
             return 8_000_000_000
         case .forceH264Transcode:
@@ -2234,14 +2236,6 @@ public final class PlaybackSessionController: ObservableObject {
         _ = attempt
         if usesDirectRemuxOnly {
             return [.serverDefault]
-        }
-
-        if (reason == "decoded_frame_watchdog" || reason == "startup_watchdog" || reason == "audio_only_no_video"),
-           activeTranscodeProfile == .appleOptimizedHEVC,
-           allowSDRFallback
-        {
-            // Startup decode failures on HEVC should jump directly to the known-safe AVC path.
-            return [.forceH264Transcode, .conservativeCompatibility]
         }
 
         let baseProfiles: [TranscodeURLProfile]
