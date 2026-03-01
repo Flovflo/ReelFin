@@ -1972,15 +1972,13 @@ public final class PlaybackSessionController: ObservableObject {
     }
 
     private func initialProfileForItem(itemID: String, itemHasDolbyVision: Bool) -> TranscodeURLProfile {
-        _ = itemHasDolbyVision
-        guard playbackPolicy == .auto else {
-            return .serverDefault
-        }
         let stored = preferredProfilesByItemID[itemID] ?? .serverDefault
-        if stored == .forceH264Transcode, !allowSDRFallback {
-            return .serverDefault
-        }
-        return stored
+        return Self.initialProfile(
+            stored: stored,
+            playbackPolicy: playbackPolicy,
+            allowSDRFallback: allowSDRFallback,
+            itemHasDolbyVision: itemHasDolbyVision
+        )
     }
 
     private func isMKVHEVCSource(_ source: MediaSource) -> Bool {
@@ -2503,6 +2501,13 @@ public final class PlaybackSessionController: ObservableObject {
             fallback: activeTranscodeProfile
         )
 
+        // Avoid locking Dolby Vision titles into SDR H264 fallback forever.
+        if currentItemHasDolbyVision, profile == .forceH264Transcode {
+            preferredProfilesByItemID.removeValue(forKey: itemID)
+            Self.storePreferredProfiles(preferredProfilesByItemID)
+            return
+        }
+
         if profile == .serverDefault {
             preferredProfilesByItemID.removeValue(forKey: itemID)
         } else {
@@ -2610,6 +2615,29 @@ public final class PlaybackSessionController: ObservableObject {
         case .forceH264Transcode:
             return []
         }
+    }
+
+    nonisolated static func initialProfile(
+        stored: TranscodeURLProfile,
+        playbackPolicy: PlaybackPolicy,
+        allowSDRFallback: Bool,
+        itemHasDolbyVision: Bool
+    ) -> TranscodeURLProfile {
+        guard playbackPolicy == .auto else {
+            return .serverDefault
+        }
+
+        // Do not persist an SDR-only H264 fallback as the default start profile
+        // for Dolby Vision titles. Try HEVC optimized first to preserve HDR/DV.
+        if itemHasDolbyVision, stored == .forceH264Transcode {
+            return .appleOptimizedHEVC
+        }
+
+        if stored == .forceH264Transcode, !allowSDRFallback {
+            return .serverDefault
+        }
+
+        return stored
     }
 
     nonisolated static func attemptTripleKey(profile: TranscodeURLProfile, routeLabel: String, url: String) -> String {
