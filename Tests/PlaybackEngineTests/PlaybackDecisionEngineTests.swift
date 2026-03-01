@@ -50,7 +50,33 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         let decision = engine.decide(itemID: "item", sources: sources, configuration: server, token: "abc")
 
         XCTAssertEqual(decision?.sourceID, "remux")
-        XCTAssertEqual(decision?.route, .remux(URL(string: "https://example.com/remux/master.m3u8")!))
+        XCTAssertEqual(decision?.route, .transcode(URL(string: "https://example.com/transcode.m3u8")!))
+    }
+
+    func testNativeBridgeDisabledDefaultsToServerRoute() {
+        let expiry = Date().timeIntervalSince1970 + 600
+        UserDefaults.standard.set(["item-bad": expiry], forKey: "reelfin.nativebridge.disabled.items")
+        defer { UserDefaults.standard.removeObject(forKey: "reelfin.nativebridge.disabled.items") }
+
+        let engine = PlaybackDecisionEngine()
+        let sources = [
+            MediaSource(
+                id: "mkv-source",
+                itemID: "item-bad",
+                name: "MKV",
+                container: "mkv",
+                videoCodec: "hevc",
+                audioCodec: "aac",
+                supportsDirectPlay: false,
+                supportsDirectStream: true,
+                directStreamURL: URL(string: "https://example.com/remux/master.m3u8"),
+                directPlayURL: nil,
+                transcodeURL: URL(string: "https://example.com/transcode.m3u8")
+            )
+        ]
+
+        let decision = engine.decide(itemID: "item-bad", sources: sources, configuration: server, token: "abc")
+        XCTAssertEqual(decision?.route, .transcode(URL(string: "https://example.com/transcode.m3u8")!))
     }
 
     func testTranscodeFallbackWhenNoDirectOptions() {
@@ -84,8 +110,8 @@ final class PlaybackDecisionEngineTests: XCTestCase {
                 id: "transcode-only",
                 itemID: "item",
                 name: "Only Transcode",
-                container: "mkv",
-                videoCodec: "hevc",
+                container: "avi",
+                videoCodec: "mpeg4",
                 audioCodec: "dts",
                 supportsDirectPlay: false,
                 supportsDirectStream: false,
@@ -146,14 +172,14 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(decision?.route, .directPlay(URL(string: "https://example.com/dv.mp4")!))
     }
 
-    func testFallbackTranscodeURLKeepsVideoCopyAndAudioAAC() {
+    func testFallbackTranscodeURLKeepsVideoCopyAndPreferredAppleAudio() {
         let engine = PlaybackDecisionEngine()
         let sources = [
             MediaSource(
                 id: "fallback-hevc",
                 itemID: "item",
                 name: "fallback",
-                container: "mkv",
+                container: "avi",
                 videoCodec: "hevc",
                 audioCodec: "eac3",
                 supportsDirectPlay: false,
@@ -178,7 +204,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         })
 
         XCTAssertEqual(queryMap["VideoCodec"], "hevc")
-        XCTAssertEqual(queryMap["AudioCodec"], "aac")
+        XCTAssertEqual(queryMap["AudioCodec"], "eac3")
         XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "true")
         XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "false")
         XCTAssertEqual(queryMap["Container"], "fmp4")
@@ -190,7 +216,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             id: "source-1",
             itemID: "item-1",
             name: "HEVC source",
-            container: "mkv",
+            container: "avi",
             videoCodec: "hevc",
             audioCodec: "eac3",
             supportsDirectPlay: false,
@@ -217,10 +243,11 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         let queryMap = queryMap(from: selection.assetURL)
         XCTAssertEqual(queryMap["VideoCodec"], "hevc")
         XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "true")
-        XCTAssertEqual(queryMap["AudioCodec"], "aac")
-        XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "false")
+        XCTAssertEqual(queryMap["AudioCodec"], "eac3")
+        XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "true")
         XCTAssertEqual(queryMap["Container"], "fmp4")
         XCTAssertEqual(queryMap["SegmentContainer"], "fmp4")
+        XCTAssertEqual(queryMap["BreakOnNonKeyFrames"], "False")
     }
 
     func testCoordinatorAppleOptimizedProfileForcesHEVCTranscode() async throws {
@@ -228,7 +255,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             id: "source-apple-hevc",
             itemID: "item-apple-hevc",
             name: "HEVC source",
-            container: "mkv",
+            container: "avi",
             videoCodec: "hevc",
             audioCodec: "eac3",
             supportsDirectPlay: false,
@@ -255,18 +282,19 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         let queryMap = queryMap(from: selection.assetURL)
         XCTAssertEqual(queryMap["VideoCodec"], "hevc")
         XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
-        XCTAssertEqual(queryMap["AudioCodec"], "aac")
-        XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "false")
+        XCTAssertEqual(queryMap["AudioCodec"], "eac3")
+        XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "true")
         XCTAssertEqual(queryMap["Container"], "fmp4")
         XCTAssertEqual(queryMap["SegmentContainer"], "fmp4")
+        XCTAssertEqual(queryMap["BreakOnNonKeyFrames"], "False")
     }
 
-    func testCoordinatorServerDefaultAutoUpgradesRiskyHEVCStreamCopy() async throws {
+    func testCoordinatorServerDefaultKeepsHEVCStreamCopyOnFirstAttempt() async throws {
         let source = MediaSource(
             id: "source-server-default-hevc",
             itemID: "item-server-default-hevc",
             name: "HEVC source",
-            container: "mkv",
+            container: "avi",
             videoCodec: "hevc",
             audioCodec: "eac3",
             supportsDirectPlay: false,
@@ -292,11 +320,49 @@ final class PlaybackDecisionEngineTests: XCTestCase {
 
         let queryMap = queryMap(from: selection.assetURL)
         XCTAssertEqual(queryMap["VideoCodec"], "hevc")
-        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
-        XCTAssertEqual(queryMap["AudioCodec"], "aac")
+        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "true")
         XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "false")
         XCTAssertEqual(queryMap["Container"], "fmp4")
         XCTAssertEqual(queryMap["SegmentContainer"], "fmp4")
+        // serverDefault + playbackPolicy.auto returns server URL as-is (no forced rewrite)
+        XCTAssertNil(queryMap["BreakOnNonKeyFrames"])
+    }
+
+    func testCoordinatorServerDefaultUpgradesMKVHEVCToAppleOptimizedHEVC() async throws {
+        let source = MediaSource(
+            id: "source-server-default-mkv-hevc",
+            itemID: "item-server-default-mkv-hevc",
+            name: "MKV HEVC source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/Videos/item-server-default-mkv-hevc/master.m3u8?MediaSourceId=source-server-default-mkv-hevc&VideoCodec=hevc&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true&Container=fmp4&SegmentContainer=fmp4")
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-server-default-mkv-hevc": [source]])
+        let coordinator = PlaybackCoordinator(apiClient: client)
+
+        let selection = try await coordinator.resolvePlayback(
+            itemID: "item-server-default-mkv-hevc",
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .serverDefault
+        )
+
+        guard case .transcode = selection.decision.route else {
+            XCTFail("Expected transcode route")
+            return
+        }
+
+        let queryMap = queryMap(from: selection.assetURL)
+        XCTAssertEqual(queryMap["VideoCodec"], "hevc")
+        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
+        XCTAssertEqual(queryMap["Container"], "fmp4")
+        XCTAssertEqual(queryMap["SegmentContainer"], "fmp4")
+        XCTAssertEqual(queryMap["BreakOnNonKeyFrames"], "False")
     }
 
     func testCoordinatorForceH264ProfileDisablesVideoCopy() async throws {
@@ -304,7 +370,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             id: "source-2",
             itemID: "item-2",
             name: "HEVC source",
-            container: "mkv",
+            container: "avi",
             videoCodec: "hevc",
             audioCodec: "eac3",
             supportsDirectPlay: false,
@@ -331,10 +397,11 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         let queryMap = queryMap(from: selection.assetURL)
         XCTAssertEqual(queryMap["VideoCodec"], "h264")
         XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
-        XCTAssertEqual(queryMap["AudioCodec"], "aac")
-        XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "false")
+        XCTAssertEqual(queryMap["AudioCodec"], "eac3")
+        XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "true")
         XCTAssertEqual(queryMap["Container"], "ts")
         XCTAssertEqual(queryMap["SegmentContainer"], "ts")
+        XCTAssertEqual(queryMap["BreakOnNonKeyFrames"], "False")
     }
 
     func testCoordinatorForceH264ProfileStripsHEVCConstraintsAndDeduplicatesKeys() async throws {
@@ -342,7 +409,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             id: "source-3",
             itemID: "item-3",
             name: "HEVC source with stale params",
-            container: "mkv",
+            container: "avi",
             videoCodec: "hevc",
             audioCodec: "eac3",
             supportsDirectPlay: false,
@@ -373,8 +440,8 @@ final class PlaybackDecisionEngineTests: XCTestCase {
 
         XCTAssertEqual(lowerMap["videocodec"], "h264")
         XCTAssertEqual(lowerMap["allowvideostreamcopy"], "false")
-        XCTAssertEqual(lowerMap["allowaudiostreamcopy"], "false")
-        XCTAssertEqual(lowerMap["audiocodec"], "aac")
+        XCTAssertEqual(lowerMap["allowaudiostreamcopy"], "true")
+        XCTAssertEqual(lowerMap["audiocodec"], "eac3")
         XCTAssertEqual(lowerMap["requireavc"], "true")
         XCTAssertNil(lowerMap["hevc-level"])
         XCTAssertNil(lowerMap["hevc-profile"])
@@ -405,7 +472,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
                 id: "segment-test",
                 itemID: "item-seg",
                 name: "segment test",
-                container: "mkv",
+                container: "avi",
                 videoCodec: "hevc",
                 audioCodec: "eac3",
                 supportsDirectPlay: false,
@@ -435,7 +502,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
                 id: "sub-test",
                 itemID: "item-sub",
                 name: "sub test",
-                container: "mkv",
+                container: "avi",
                 videoCodec: "h264",
                 audioCodec: "dts",
                 supportsDirectPlay: false,
@@ -653,4 +720,82 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
     func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
     func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
+}
+
+final class PlaybackTrackMatcherTests: XCTestCase {
+    func testBestOptionIndexPrefersExactDisplayNameMatch() {
+        let track = MediaTrack(
+            id: "track-1",
+            title: "English 5.1",
+            language: "eng",
+            codec: "eac3",
+            isDefault: false,
+            index: 1
+        )
+        let options: [MediaSelectionOptionDescriptor] = [
+            .init(optionIndex: 0, displayName: "French"),
+            .init(optionIndex: 1, displayName: "English 5.1")
+        ]
+
+        let selected = PlaybackTrackMatcher.bestOptionIndex(for: track, options: options)
+
+        XCTAssertEqual(selected, 1)
+    }
+
+    func testBestOptionIndexUsesLanguageWhenTitleDoesNotMatch() {
+        let track = MediaTrack(
+            id: "track-2",
+            title: "Main Audio",
+            language: "fr",
+            codec: "aac",
+            isDefault: true,
+            index: 0
+        )
+        let options: [MediaSelectionOptionDescriptor] = [
+            .init(optionIndex: 0, displayName: "English", languageIdentifier: "en"),
+            .init(optionIndex: 1, displayName: "Français", languageIdentifier: "fr-FR")
+        ]
+
+        let selected = PlaybackTrackMatcher.bestOptionIndex(for: track, options: options)
+
+        XCTAssertEqual(selected, 1)
+    }
+
+    func testBestOptionIndexPrefersForcedSubtitleOptionWhenRequested() {
+        let track = MediaTrack(
+            id: "track-3",
+            title: "English Forced",
+            language: "en",
+            codec: "subrip",
+            isDefault: false,
+            index: 3
+        )
+        let options: [MediaSelectionOptionDescriptor] = [
+            .init(optionIndex: 0, displayName: "English", languageIdentifier: "en", isForced: false),
+            .init(optionIndex: 1, displayName: "English", languageIdentifier: "en", isForced: true)
+        ]
+
+        let selected = PlaybackTrackMatcher.bestOptionIndex(for: track, options: options)
+
+        XCTAssertEqual(selected, 1)
+    }
+
+    func testBestOptionIndexReturnsNilWhenNoSignalsMatch() {
+        let track = MediaTrack(
+            id: "track-4",
+            title: "Unknown",
+            language: nil,
+            codec: nil,
+            isDefault: false,
+            index: 4
+        )
+        let options: [MediaSelectionOptionDescriptor] = [
+            .init(optionIndex: 0, displayName: "Option A"),
+            .init(optionIndex: 1, displayName: "Option B")
+        ]
+
+        let selected = PlaybackTrackMatcher.bestOptionIndex(for: track, options: options)
+
+        XCTAssertNil(selected)
+    }
 }

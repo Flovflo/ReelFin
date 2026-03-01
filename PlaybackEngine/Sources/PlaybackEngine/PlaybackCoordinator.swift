@@ -39,6 +39,7 @@ public struct PlaybackDebugInfo: Equatable, Sendable {
 public struct PlaybackAssetSelection: Sendable {
     public var source: MediaSource
     public var decision: PlaybackDecision
+    public var playbackPlan: PlaybackPlan?
     public var assetURL: URL
     public var headers: [String: String]
     public var debugInfo: PlaybackDebugInfo
@@ -46,12 +47,14 @@ public struct PlaybackAssetSelection: Sendable {
     public init(
         source: MediaSource,
         decision: PlaybackDecision,
+        playbackPlan: PlaybackPlan? = nil,
         assetURL: URL,
         headers: [String: String],
         debugInfo: PlaybackDebugInfo
     ) {
         self.source = source
         self.decision = decision
+        self.playbackPlan = playbackPlan
         self.assetURL = assetURL
         self.headers = headers
         self.debugInfo = debugInfo
@@ -92,11 +95,12 @@ public actor PlaybackCoordinator {
             throw AppError.unauthenticated
         }
 
-        let maxBitrate = configuration.preferredQuality.maxStreamingBitrate
+        let maxBitrate = configuration.effectiveMaxStreamingBitrate
         let initialOptions = playbackOptions(
             mode: mode,
             maxBitrate: maxBitrate,
-            transcodeProfile: transcodeProfile
+            transcodeProfile: transcodeProfile,
+            configuration: configuration
         )
         let initialOptionBitrate = initialOptions.maxStreamingBitrate ?? maxBitrate
 
@@ -123,7 +127,8 @@ public actor PlaybackCoordinator {
             let fallbackOptions = playbackOptions(
                 mode: .balanced,
                 maxBitrate: maxBitrate,
-                transcodeProfile: transcodeProfile
+                transcodeProfile: transcodeProfile,
+                configuration: configuration
             )
             let fallbackBitrate = fallbackOptions.maxStreamingBitrate ?? maxBitrate
             let fallbackRequest = SignpostInterval(signposter: Signpost.playbackInfo, name: "playback_info_request_fallback")
@@ -172,6 +177,11 @@ public actor PlaybackCoordinator {
         }
 
         var assetURL: URL
+        let audioSelection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: source.audioTracks,
+            fallbackCodec: source.normalizedAudioCodec,
+            nativePlayerPath: true
+        )
         switch decision.route {
         case let .directPlay(url):
             // Prefer progressive Direct Play (static=true) for fastest TTFF
@@ -187,6 +197,24 @@ public actor PlaybackCoordinator {
             }
         case let .remux(url), let .transcode(url):
             assetURL = url
+        case let .nativeBridge(plan):
+            assetURL = plan.sourceURL
+            if plan.audioAction == .serverTranscode {
+                var comps = URLComponents(url: assetURL, resolvingAgainstBaseURL: false)
+                var q = comps?.queryItems ?? []
+                q.removeAll(where: { $0.name == "static" })
+                q.append(URLQueryItem(name: "AudioCodec", value: "aac"))
+                q.append(URLQueryItem(name: "VideoCodec", value: "copy"))
+                comps?.queryItems = q
+                assetURL = comps?.url ?? assetURL
+            }
+        }
+
+        if let preferredAudioIndex = audioSelection.selectedTrackIndex {
+            assetURL = appendingQueryItem(url: assetURL, name: "AudioStreamIndex", value: String(preferredAudioIndex))
+        }
+        if audioSelection.trueHDWasDeprioritized {
+            AppLog.playback.notice("\(PlaybackFailureReason.trueHDDeprioritizedForNativePath.localizedDescription ?? "TrueHD deprioritized", privacy: .public)")
         }
 
         let effectiveProfile = effectiveTranscodeProfile(
@@ -200,7 +228,10 @@ public actor PlaybackCoordinator {
             let effectiveBitrate: Int
             switch effectiveProfile {
             case .appleOptimizedHEVC:
-                effectiveBitrate = min(maxBitrate, 30_000_000)
+                // 4K HEVC server-side transcoding at 30Mbps overwhelms most servers.
+                // Cap at 20Mbps which is high quality for HEVC and server-friendly.
+                let is4K = (source.videoWidth ?? 0) >= 3840 || (source.videoHeight ?? 0) >= 2160
+                effectiveBitrate = min(maxBitrate, is4K ? 20_000_000 : 30_000_000)
             case .serverDefault, .conservativeCompatibility, .forceH264Transcode:
                 effectiveBitrate = maxBitrate
             }
@@ -208,7 +239,9 @@ public actor PlaybackCoordinator {
                 assetURL,
                 maxBitrate: effectiveBitrate,
                 preferredVideoCodec: source.normalizedVideoCodec,
-                profile: effectiveProfile
+                preferredAudioCodec: audioSelection.selectedCodec,
+                profile: effectiveProfile,
+                configuration: configuration
             )
         }
 
@@ -223,13 +256,15 @@ public actor PlaybackCoordinator {
             videoCodec: source.videoCodec ?? "unknown",
             videoBitDepth: source.videoBitDepth,
             hdrMode: classifyHDRMode(for: source),
-            audioMode: classifyAudioMode(for: source),
+            audioMode: audioSelection.selectedCodec.uppercased(),
             bitrate: source.bitrate,
             playMethod: decision.playMethod
         )
 
         let profileLabel: String
-        if effectiveProfile == transcodeProfile {
+        if case .nativeBridge = decision.route {
+            profileLabel = "nativeBridge"
+        } else if effectiveProfile == transcodeProfile {
             profileLabel = effectiveProfile.rawValue
         } else {
             profileLabel = "\(transcodeProfile.rawValue)->\(effectiveProfile.rawValue)"
@@ -242,6 +277,7 @@ public actor PlaybackCoordinator {
         return PlaybackAssetSelection(
             source: source,
             decision: decision,
+            playbackPlan: decision.playbackPlan,
             assetURL: assetURL,
             headers: headers,
             debugInfo: debug
@@ -251,8 +287,23 @@ public actor PlaybackCoordinator {
     private func playbackOptions(
         mode: PlaybackMode,
         maxBitrate: Int,
-        transcodeProfile: TranscodeURLProfile
+        transcodeProfile: TranscodeURLProfile,
+        configuration: ServerConfiguration
     ) -> PlaybackInfoOptions {
+        if transcodeProfile == .serverDefault, configuration.playbackPolicy != .auto {
+            return PlaybackInfoOptions(
+                mode: .balanced,
+                enableDirectPlay: true,
+                enableDirectStream: true,
+                allowTranscoding: true,
+                maxStreamingBitrate: maxBitrate,
+                allowVideoStreamCopy: true,
+                allowAudioStreamCopy: configuration.preferAudioTranscodeOnly ? false : true,
+                maxAudioChannels: configuration.preferAudioTranscodeOnly ? 6 : nil,
+                deviceProfile: .automatic
+            )
+        }
+
         switch transcodeProfile {
         case .appleOptimizedHEVC:
             return .appleOptimizedHEVC(maxStreamingBitrate: maxBitrate)
@@ -281,11 +332,24 @@ public actor PlaybackCoordinator {
         return components.url ?? url
     }
 
+    private func appendingQueryItem(url: URL, name: String, value: String) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        var queryItems = components.queryItems ?? []
+        queryItems.removeAll(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
+        queryItems.append(URLQueryItem(name: name, value: value))
+        components.queryItems = queryItems
+        return components.url ?? url
+    }
+
     private func normalizeTranscodeURL(
         _ url: URL,
         maxBitrate: Int,
         preferredVideoCodec: String,
-        profile: TranscodeURLProfile
+        preferredAudioCodec: String,
+        profile: TranscodeURLProfile,
+        configuration: ServerConfiguration
     ) -> URL {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return url
@@ -332,7 +396,22 @@ public actor PlaybackCoordinator {
 
         switch profile {
         case .serverDefault:
-            return url
+            if configuration.playbackPolicy == .auto {
+                return url
+            }
+            setQuery("AllowVideoStreamCopy", "true")
+            if configuration.preferAudioTranscodeOnly {
+                setQuery("AllowAudioStreamCopy", "false")
+                setQuery("AudioCodec", "aac")
+            } else {
+                setQuery("AllowAudioStreamCopy", "true")
+            }
+            if let normalizedVideoCodec = normalizedVideoCodec(preferredVideoCodec), normalizedVideoCodec == "hevc" {
+                setQuery("VideoCodec", "hevc")
+            } else {
+                removeQuery("VideoCodec")
+            }
+            removeQuery("RequireAvc")
         case .conservativeCompatibility:
             // Keep source video codec whenever possible, but normalize audio/container.
             if let normalizedVideoCodec = normalizedVideoCodec(preferredVideoCodec) {
@@ -347,6 +426,8 @@ public actor PlaybackCoordinator {
             setQuery("VideoCodec", "hevc")
             setQuery("AllowVideoStreamCopy", "false")
             setQuery("RequireAvc", "false")
+            setQuery("TranscodingMaxAudioChannels", "6")
+            setQuery("EnableAudioVbrEncoding", "true")
         case .forceH264Transcode:
             // Hard fallback for audio-only/black-screen cases: disable video copy.
             setQuery("VideoCodec", "h264")
@@ -372,16 +453,34 @@ public actor PlaybackCoordinator {
             useFMP4Container = true
         case .conservativeCompatibility:
             useFMP4Container = (queryValue("VideoCodec")?.lowercased() == "hevc")
-        case .serverDefault, .forceH264Transcode:
+        case .serverDefault:
+            let resolvedCodec = queryValue("VideoCodec")?.lowercased() ?? normalizedVideoCodec(preferredVideoCodec)
+            useFMP4Container = resolvedCodec == "hevc"
+        case .forceH264Transcode:
             useFMP4Container = false
         }
 
-        setQuery("AudioCodec", "aac")
+        let normalizedAudio = normalizedAudioCodec(preferredAudioCodec)
+        let preferBitstreamAudio = normalizedAudio == "eac3" || normalizedAudio == "ac3"
+        if configuration.preferAudioTranscodeOnly || profile != .serverDefault {
+            setQuery("AudioCodec", preferBitstreamAudio ? normalizedAudio : "aac")
+        }
         setQuery("Container", useFMP4Container ? "fmp4" : "ts")
         setQuery("SegmentContainer", useFMP4Container ? "fmp4" : "ts")
-        setQuery("AllowAudioStreamCopy", "false")
+        if profile != .serverDefault || configuration.preferAudioTranscodeOnly {
+            setQuery("AllowAudioStreamCopy", preferBitstreamAudio ? "true" : "false")
+        }
         setQuery("MaxStreamingBitrate", String(maxBitrate))
-        setQuery("BreakOnNonKeyFrames", "True")
+        let resolvedVideoCodec = queryValue("VideoCodec")?.lowercased() ?? normalizedVideoCodec(preferredVideoCodec)
+        let breakOnNonKeyFrames: String
+        if profile == .forceH264Transcode {
+            // Startup-first fallback: allow segmenting on non-keyframes to reduce
+            // transcode startup latency on difficult HEVC/DV sources.
+            breakOnNonKeyFrames = "False"
+        } else {
+            breakOnNonKeyFrames = (resolvedVideoCodec == "h264") ? "True" : "False"
+        }
+        setQuery("BreakOnNonKeyFrames", breakOnNonKeyFrames)
         setQuery("TranscodeReasons", "ContainerNotSupported,AudioCodecNotSupported")
 
         // TTFF tuning: inject segment and subtitle parameters
@@ -408,6 +507,20 @@ public actor PlaybackCoordinator {
         return nil
     }
 
+    private func normalizedAudioCodec(_ value: String) -> String {
+        let codec = value.lowercased()
+        if codec.contains("eac3") || codec.contains("ec3") {
+            return "eac3"
+        }
+        if codec.contains("ac3") {
+            return "ac3"
+        }
+        if codec.contains("aac") {
+            return "aac"
+        }
+        return "aac"
+    }
+
     private func effectiveTranscodeProfile(
         for route: PlaybackRoute,
         requestedProfile: TranscodeURLProfile,
@@ -417,13 +530,23 @@ public actor PlaybackCoordinator {
         guard case .transcode = route else { return requestedProfile }
         guard requestedProfile == .serverDefault else { return requestedProfile }
 
-        let map = queryMap(from: url)
-        let allowVideoCopy = map["allowvideostreamcopy"] == "true"
-        let codec = map["videocodec"] ?? normalizedVideoCodec(source.normalizedVideoCodec) ?? ""
-        let isHEVC = codec == "hevc"
+        // Apple-safe default for problematic sources:
+        // MKV-family + HEVC/DV should avoid initial video stream copy.
+        let container = source.normalizedContainer
+        let mkvFamily = container == "mkv" || container == "matroska" || container == "webm"
+        let codec = source.normalizedVideoCodec
+        let hevcFamily = codec.contains("hevc") || codec.contains("h265") || codec.contains("dvhe") || codec.contains("dvh1")
 
-        // Server-default HEVC stream copy frequently causes audio-only black screen on AVPlayer.
-        if allowVideoCopy, isHEVC {
+        if mkvFamily && hevcFamily {
+            return .appleOptimizedHEVC
+        }
+
+        // Guardrail for URLs already carrying HEVC + video copy on server-default profile.
+        // This avoids unstable startup loops on some Jellyfin/Apple combinations.
+        let query = queryMap(from: url)
+        let queryCodec = query["videocodec"] ?? ""
+        let allowVideoCopy = query["allowvideostreamcopy"] == "true"
+        if allowVideoCopy, queryCodec.contains("hevc"), mkvFamily {
             return .appleOptimizedHEVC
         }
 
