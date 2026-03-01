@@ -1,128 +1,55 @@
-# Architecture Playback Actuelle (ReelFin)
+# Playback Architecture (Beta v0.3)
 
-## Objectif
-Ce document décrit l'architecture playback actuellement en place dans ReelFin, les choix techniques faits, et les contraintes connues en production (iOS/tvOS).
+This document explains the current playback stack inside ReelFin, the decision-making flow, the deterministic fallback profiles, and the constraints we enforce so the app stays Apple-safe on iOS/tvOS.
 
-## Vue d'ensemble
-La stack playback est native Apple (AVPlayer/AVFoundation) avec un moteur de décision qui choisit une route parmi:
+## Core components
+- `MediaSourceResolver`: collects every `DirectStreamUrl` and available metadata for a `MediaSource` (container, codecs, audio/subtitle tracks, HDR tags).
+- `PlaybackCapabilityEvaluator`: maps Jellyfin metadata to native capability flags (H.264/HEVC/AC3/AAC, HDR10/Dolby Vision, supported subtitles).
+- `PlaybackDecisionEngine`: chooses between `DirectPlay`, `Remux`, and `Transcode` plans, immediately favoring raw assets marked as Apple-compatible.
+- `PlaybackCoordinator`: normalizes Jellyfin URLs (container/segment, audio codec, stream copy flags, `BreakOnNonKeyFrames`, `SegmentLength`, and `MinSegments`) before handing them to AVPlayer.
+- `NativePlaybackEngine`: wraps AVPlayer/AVPlayerViewController, handles the debug overlay toggle, variant pinning, and VideoToolbox-based enhancements when needed.
+- `PlaybackSessionController`: runs watchdog timers, monitors `readyToPlay`, and triggers deterministic recovery steps if the first plan fails.
 
-1. `DirectPlay`
-2. `Remux` (direct stream)
-3. `Transcode` serveur Jellyfin
-4. `NativeBridge` (pipeline local MKV -> fMP4/HLS, voie avancée)
+## Decision flow
+1. Ask `MediaSourceResolver` for direct stream URLs; load codec/container metadata from Jellyfin.
+2. Use `PlaybackCapabilityEvaluator` to mark each source as supported (mp4/fmp4/HLS + AVC/HEVC/HDR10/DV/AAC/E-AC3).
+3. If a supported source exists, immediately request it (raw direct play). The fallback cascade is bypassed unless AVPlayer reports a hard failure.
+4. If no compatible direct route exists, fall back to server-driven plans ranked by determinism:
+   * `appleOptimizedHEVC`: force `AllowVideoStreamCopy=false`, `Container=fmp4`, `VideoCodec=hevc`, keep `AudioCodec` copy when possible.
+   * `conservativeCompatibility`: a middle ground for uncertain hardware by tuning `AllowVideoStreamCopy` and pinning `SegmentLength/MinSegments`.
+   * `forceH264Transcode`: last resort; sets `VideoCodec=h264`, `RequireAvc=true`, `Container=ts`, `SegmentContainer=ts`, and `BreakOnNonKeyFrames=false` to minimize startup crashes.
 
-La logique est orchestrée par:
+## Profiles & enforcement
+| Profile | Purpose | Key query params |
+| --- | --- | --- |
+| `serverDefault` | Let Jellyfin decide while keeping stream-copy video if safe | keeps `AllowVideoStreamCopy` true when heuristics pass |
+| `appleOptimizedHEVC` | Native HEVC path with Apple-friendly parameters | `AllowVideoStreamCopy=false`, `VideoCodec=hevc`, `SegmentContainer=fmp4` |
+| `conservativeCompatibility` | Safer fallback for marginal hardware | enforces consistent `SegmentLength`/`MinSegments`, may disable `AllowVideoStreamCopy` |
+| `forceH264Transcode` | Stable, SDR AVC path for stuck flows | `VideoCodec=h264`, `RequireAvc=true`, `Container=ts`, `SegmentContainer=ts`, `BreakOnNonKeyFrames=false` |
 
-- `PlaybackDecisionEngine` (sélection de la route)
-- `PlaybackCoordinator` (résolution des URLs + normalisation des paramètres)
-- `PlaybackSessionController` (cycle de vie AVPlayer, watchdogs, recovery)
-- `HLSVariantSelector` (sélection/pin de variante HLS)
+Every fallback step records the reason for the change; you can see the plan trace in logs/diagnostics when the nerd overlay is enabled.
 
-Fichiers clés:
+## Settings & diagnostics
+- **Force Raw Direct Play:** stops the decision engine from requesting a remux/transcode URL if an Apple-compatible source already exists. Useful when you trust the server’s metadata.
+- **Force H264 Fallback:** pins playback to the `forceH264Transcode` plan, bypassing the other profiles even if HEVC is available—handy for compatibility on older devices and AirPlay mirroring.
+- **Debug Overlay:** controlled via `reelfin.playback.debugOverlay.enabled`; when enabled, the overlay surfaces capability outcomes, selected plan, and AVPlayer state strings.
 
-- `PlaybackEngine/Sources/PlaybackEngine/PlaybackDecisionEngine.swift`
-- `PlaybackEngine/Sources/PlaybackEngine/PlaybackCoordinator.swift`
-- `PlaybackEngine/Sources/PlaybackEngine/PlaybackSessionController.swift`
-- `PlaybackEngine/Sources/PlaybackEngine/HLSVariantSelector.swift`
+## Constraints
+- Native Apple path only. There is no VLCKit, libVLC, or FFmpeg decoding shadowing the decision engine.
+- MKV direct play remains unsupported; MKVs always route through remux/transcode.
+- HDR10/Dolby Vision flows must stay on HEVC-compatible plans; forcing `forceH264Transcode` converts the output to SDR.
+- PGS subtitles and Atmos/TrueHD audio are not played natively—clear them on the server or let a remux/transcode pipeline burn them in.
+- Logging lines such as `PlayerRemoteXPC ... err=-12860` or `FigApplicationStateMonitor ... -19431` are expected noise when the watchdog fires; focus on the capability trace instead.
 
-## Flux de décision
-
-### 1) Évaluation des sources Jellyfin
-À partir des `MediaSource`, le moteur évalue:
-
-- container (mkv/mp4/...)
-- codecs vidéo/audio (hevc/h264/eac3/aac/...)
-- capacités direct play/direct stream
-- contraintes policy (auto/originalFirst/originalLockHDRDV)
-
-### 2) Choix de route
-Ordre nominal: direct play -> remux -> transcode. En cas de source complexe (souvent MKV + HEVC/HDR), le moteur peut forcer des profils transcode plus compatibles.
-
-### 3) Normalisation transcode
-`PlaybackCoordinator` normalise les query params de l'URL HLS:
-
-- `VideoCodec`
-- `AllowVideoStreamCopy`
-- `Container` / `SegmentContainer`
-- `AudioCodec` / `AllowAudioStreamCopy`
-- `BreakOnNonKeyFrames`
-- `SegmentLength` / `MinSegments`
-
-## Profils transcode utilisés
-
-### `serverDefault`
-- Comportement serveur par défaut.
-- Peut garder le stream-copy vidéo selon contexte.
-
-### `appleOptimizedHEVC`
-- Forçage HEVC transcode côté serveur (`AllowVideoStreamCopy=false`).
-- Conteneur fMP4.
-- Vise un chemin Apple plus stable que stream-copy MKV/HEVC brut.
-
-### `conservativeCompatibility`
-- Profil intermédiaire compatibilité.
-- Essaie de limiter les paramètres risqués.
-
-### `forceH264Transcode`
-- Fallback de robustesse maximale.
-- `VideoCodec=h264`, `RequireAvc=true`, segment TS.
-- Priorise la lecture stable, pas la fidélité HDR/DV.
-
-## Récupération (recovery) et stabilité
-`PlaybackSessionController` gère:
-
-- watchdog démarrage (no first frame)
-- watchdog décodage vidéo
-- relances sur profils alternatifs
-- anti-boucle de retries
-
-Ajustements récents intégrés:
-
-- watchdog moins agressif en `forceH264Transcode`
-- pas de fallback prématuré si `AVPlayerItem` est déjà `readyToPlay`
-- `BreakOnNonKeyFrames=False` sur `forceH264Transcode` pour réduire certaines latences de démarrage
-
-## Contraintes techniques importantes
-
-### HDR / Dolby Vision
-- Si le profil final est `forceH264Transcode`, le flux est SDR (H264), donc perte HDR/DV.
-- Pour conserver HDR, il faut rester sur chemin HEVC compatible (`appleOptimizedHEVC` ou direct/remux HDR viable).
-
-### Formats/sous-titres
-- MKV + HEVC + audio HD + sous-titres bitmap = cas coûteux/fragiles.
-- Sous-titres burn-in augmentent fortement le coût transcode et le TTFF.
-
-### Démarrage (TTFF)
-- Les flux lourds (4K, DV, haut bitrate) peuvent provoquer un `readyToPlay` tardif.
-- La stabilité est priorisée par paliers de fallback.
-
-### Logs système iOS/tvOS
-Des logs comme `PlayerRemoteXPC ... -12860` ou `FigApplicationStateMonitor ... -19431` apparaissent souvent en bruit système. Ils ne signifient pas automatiquement un bug applicatif fatal.
-
-## Contraintes produit / architecture
-
-- Chemin natif Apple prioritaire (AVPlayer).
-- Pas de dépendance VLC/libVLC/FFmpeg comme moteur principal.
-- Routage vers transcode serveur obligatoire dès que la source n'est pas nativement fiable.
-
-## Contraintes Git / maintenance
-
-- L'architecture playback a été modularisée dans `PlaybackEngine`.
-- Les tests playback sont sous `Tests/PlaybackEngineTests`.
-- Pour éviter les régressions: toute modif playback doit inclure au minimum des tests unitaires de décision/URL/variants.
-
-Commandes utiles:
-
-```bash
+## Testing
+Target the playback test suites when modifying decoder decisions or fallback policies.
+```sh
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
   -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2' \
   -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests \
-  -only-testing:PlaybackEngineTests/PlaybackPolicyTests \
-  -only-testing:PlaybackEngineTests/HLSVariantSelectorTests
+  -only-testing:PlaybackEngineTests/CapabilityEngineTests
 ```
+Add more variant/tests if you touch `HLSVariantSelector` or the `NativeBridge` code paths.
 
-## État actuel résumé
-
-- Le player est opérationnel sur la voie native AVPlayer.
-- Les contenus difficiles peuvent tomber sur `forceH264Transcode` pour garantir lecture/stabilité.
-- Dans ce cas, la contrepartie est une image SDR (pas HDR/DV) et parfois un TTFF plus élevé selon la charge transcode serveur.
+## Staying current
+Update this file whenever a new fallback profile is added, AVPlayer handling changes, or debugging toggles move. The README surfaces the high-level mission, but this file contains the flow you must respect to keep playback deterministic.
