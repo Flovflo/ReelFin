@@ -45,22 +45,43 @@ public enum PlaybackStrategy: String, Codable, CaseIterable, Sendable {
     case directRemuxOnly
 }
 
+public enum PlaybackPolicy: String, Codable, CaseIterable, Sendable {
+    case auto
+    case originalFirst
+    case originalLockHDRDV
+}
+
 public struct ServerConfiguration: Codable, Hashable, Sendable {
     public var serverURL: URL
     public var allowCellularStreaming: Bool
     public var preferredQuality: QualityPreference
     public var playbackStrategy: PlaybackStrategy
+    public var playbackPolicy: PlaybackPolicy
+    public var allowSDRFallback: Bool
+    public var preferAudioTranscodeOnly: Bool
+    public var maxStreamingBitrateOverride: Int?
+    public var forceH264FallbackWhenNotDirectPlay: Bool
 
     public init(
         serverURL: URL,
         allowCellularStreaming: Bool = true,
         preferredQuality: QualityPreference = .auto,
-        playbackStrategy: PlaybackStrategy = .bestQualityFastest
+        playbackStrategy: PlaybackStrategy = .bestQualityFastest,
+        playbackPolicy: PlaybackPolicy = .auto,
+        allowSDRFallback: Bool? = nil,
+        preferAudioTranscodeOnly: Bool = true,
+        maxStreamingBitrateOverride: Int? = nil,
+        forceH264FallbackWhenNotDirectPlay: Bool = false
     ) {
         self.serverURL = serverURL
         self.allowCellularStreaming = allowCellularStreaming
         self.preferredQuality = preferredQuality
         self.playbackStrategy = playbackStrategy
+        self.playbackPolicy = playbackPolicy
+        self.allowSDRFallback = allowSDRFallback ?? (playbackPolicy == .originalLockHDRDV ? false : true)
+        self.preferAudioTranscodeOnly = preferAudioTranscodeOnly
+        self.maxStreamingBitrateOverride = maxStreamingBitrateOverride
+        self.forceH264FallbackWhenNotDirectPlay = forceH264FallbackWhenNotDirectPlay
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -68,6 +89,11 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         case allowCellularStreaming
         case preferredQuality
         case playbackStrategy
+        case playbackPolicy
+        case allowSDRFallback
+        case preferAudioTranscodeOnly
+        case maxStreamingBitrateOverride
+        case forceH264FallbackWhenNotDirectPlay
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,6 +102,12 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         allowCellularStreaming = try container.decodeIfPresent(Bool.self, forKey: .allowCellularStreaming) ?? true
         preferredQuality = try container.decodeIfPresent(QualityPreference.self, forKey: .preferredQuality) ?? .auto
         playbackStrategy = try container.decodeIfPresent(PlaybackStrategy.self, forKey: .playbackStrategy) ?? .bestQualityFastest
+        playbackPolicy = try container.decodeIfPresent(PlaybackPolicy.self, forKey: .playbackPolicy) ?? .auto
+        allowSDRFallback = try container.decodeIfPresent(Bool.self, forKey: .allowSDRFallback)
+            ?? (playbackPolicy == .originalLockHDRDV ? false : true)
+        preferAudioTranscodeOnly = try container.decodeIfPresent(Bool.self, forKey: .preferAudioTranscodeOnly) ?? true
+        maxStreamingBitrateOverride = try container.decodeIfPresent(Int.self, forKey: .maxStreamingBitrateOverride)
+        forceH264FallbackWhenNotDirectPlay = try container.decodeIfPresent(Bool.self, forKey: .forceH264FallbackWhenNotDirectPlay) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -84,6 +116,15 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         try container.encode(allowCellularStreaming, forKey: .allowCellularStreaming)
         try container.encode(preferredQuality, forKey: .preferredQuality)
         try container.encode(playbackStrategy, forKey: .playbackStrategy)
+        try container.encode(playbackPolicy, forKey: .playbackPolicy)
+        try container.encode(allowSDRFallback, forKey: .allowSDRFallback)
+        try container.encode(preferAudioTranscodeOnly, forKey: .preferAudioTranscodeOnly)
+        try container.encodeIfPresent(maxStreamingBitrateOverride, forKey: .maxStreamingBitrateOverride)
+        try container.encode(forceH264FallbackWhenNotDirectPlay, forKey: .forceH264FallbackWhenNotDirectPlay)
+    }
+
+    public var effectiveMaxStreamingBitrate: Int {
+        maxStreamingBitrateOverride ?? preferredQuality.maxStreamingBitrate
     }
 }
 
@@ -248,13 +289,22 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var title: String
     public var language: String?
+    public var codec: String?
     public var isDefault: Bool
     public var index: Int
 
-    public init(id: String, title: String, language: String? = nil, isDefault: Bool, index: Int) {
+    public init(
+        id: String,
+        title: String,
+        language: String? = nil,
+        codec: String? = nil,
+        isDefault: Bool,
+        index: Int
+    ) {
         self.id = id
         self.title = title
         self.language = language
+        self.codec = codec
         self.isDefault = isDefault
         self.index = index
     }
@@ -270,7 +320,16 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
     public var bitrate: Int?
     public var videoBitDepth: Int?
     public var videoRange: String?
+    public var videoRangeType: String?
     public var videoProfile: String?
+    public var dvProfile: Int?
+    public var dvLevel: Int?
+    public var dvBlSignalCompatibilityId: Int?
+    public var hdr10PlusPresentFlag: Bool?
+    public var colorPrimaries: String?
+    public var colorTransfer: String?
+    public var colorSpace: String?
+    public var colorRange: String?
     public var audioChannels: Int?
     public var audioChannelLayout: String?
     public var audioProfile: String?
@@ -282,6 +341,8 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
     public var requiredHTTPHeaders: [String: String]
     public var audioTracks: [MediaTrack]
     public var subtitleTracks: [MediaTrack]
+    public var videoWidth: Int?
+    public var videoHeight: Int?
 
     public init(
         id: String,
@@ -293,7 +354,16 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         bitrate: Int? = nil,
         videoBitDepth: Int? = nil,
         videoRange: String? = nil,
+        videoRangeType: String? = nil,
         videoProfile: String? = nil,
+        dvProfile: Int? = nil,
+        dvLevel: Int? = nil,
+        dvBlSignalCompatibilityId: Int? = nil,
+        hdr10PlusPresentFlag: Bool? = nil,
+        colorPrimaries: String? = nil,
+        colorTransfer: String? = nil,
+        colorSpace: String? = nil,
+        colorRange: String? = nil,
         audioChannels: Int? = nil,
         audioChannelLayout: String? = nil,
         audioProfile: String? = nil,
@@ -304,7 +374,9 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         transcodeURL: URL? = nil,
         requiredHTTPHeaders: [String: String] = [:],
         audioTracks: [MediaTrack] = [],
-        subtitleTracks: [MediaTrack] = []
+        subtitleTracks: [MediaTrack] = [],
+        videoWidth: Int? = nil,
+        videoHeight: Int? = nil
     ) {
         self.id = id
         self.itemID = itemID
@@ -315,7 +387,16 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         self.bitrate = bitrate
         self.videoBitDepth = videoBitDepth
         self.videoRange = videoRange
+        self.videoRangeType = videoRangeType
         self.videoProfile = videoProfile
+        self.dvProfile = dvProfile
+        self.dvLevel = dvLevel
+        self.dvBlSignalCompatibilityId = dvBlSignalCompatibilityId
+        self.hdr10PlusPresentFlag = hdr10PlusPresentFlag
+        self.colorPrimaries = colorPrimaries
+        self.colorTransfer = colorTransfer
+        self.colorSpace = colorSpace
+        self.colorRange = colorRange
         self.audioChannels = audioChannels
         self.audioChannelLayout = audioChannelLayout
         self.audioProfile = audioProfile
@@ -327,6 +408,8 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         self.requiredHTTPHeaders = requiredHTTPHeaders
         self.audioTracks = audioTracks
         self.subtitleTracks = subtitleTracks
+        self.videoWidth = videoWidth
+        self.videoHeight = videoHeight
     }
 
     public var normalizedContainer: String {
@@ -339,6 +422,43 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
 
     public var normalizedAudioCodec: String {
         audioCodec?.lowercased() ?? ""
+    }
+
+    public var isLikely4K: Bool {
+        (videoWidth ?? 0) >= 3_840 || (videoHeight ?? 0) >= 2_160
+    }
+
+    public var isLikelyHDRorDV: Bool {
+        let range = (videoRange ?? "").lowercased()
+        let rangeType = (videoRangeType ?? "").lowercased()
+        let profile = (videoProfile ?? "").lowercased()
+        let codec = normalizedVideoCodec
+        return (videoBitDepth ?? 8) >= 10
+            || range.contains("hdr")
+            || rangeType.contains("dovi")
+            || rangeType.contains("hdr10")
+            || rangeType.contains("hlg")
+            || range.contains("pq")
+            || range.contains("hlg")
+            || range.contains("dolby")
+            || range.contains("vision")
+            || profile.contains("dolby")
+            || profile.contains("vision")
+            || (dvProfile ?? 0) > 0
+            || hdr10PlusPresentFlag == true
+            || codec.contains("dvhe")
+            || codec.contains("dvh1")
+    }
+
+    public var isPremiumVideoSource: Bool {
+        let codec = normalizedVideoCodec
+        let hevcLike = codec.contains("hevc")
+            || codec.contains("h265")
+            || codec.contains("dvh1")
+            || codec.contains("dvhe")
+            || codec.contains("hvc1")
+            || codec.contains("hev1")
+        return hevcLike && (isLikely4K || isLikelyHDRorDV)
     }
 }
 

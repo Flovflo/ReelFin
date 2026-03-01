@@ -276,7 +276,18 @@ public struct AudioCompatibilitySelector: Sendable {
         let candidates: [Candidate] = tracks.map { track in
             let codecValue = codec(from: track)
             var score = 0
-            if codecValue.contains("eac3") || codecValue.contains("ec3") {
+            if nativePlayerPath {
+                // For AVPlayer-first playback, prioritize AAC for fastest/most reliable startup.
+                if codecValue.contains("aac") {
+                    score += 10_500
+                } else if codecValue.contains("eac3") || codecValue.contains("ec3") {
+                    score += 9_500
+                } else if codecValue.contains("ac3") {
+                    score += 8_500
+                } else if codecValue.contains("truehd") {
+                    score += 100
+                }
+            } else if codecValue.contains("eac3") || codecValue.contains("ec3") {
                 score += 10_000
             } else if codecValue.contains("ac3") {
                 score += 8_000
@@ -391,6 +402,15 @@ public struct PlaybackDecisionEngine: Sendable {
         token: String?,
         allowTranscoding: Bool
     ) -> PlaybackDecision? {
+        if let rawDecision = rawDirectPlayDecision(
+            itemID: itemID,
+            sources: sources,
+            configuration: configuration,
+            token: token
+        ) {
+            return rawDecision
+        }
+
         let probes = sources.map { mediaProbe.probe(itemID: itemID, source: $0) }
         let planningInput = PlaybackPlanningInput(
             itemID: itemID,
@@ -412,7 +432,7 @@ public struct PlaybackDecisionEngine: Sendable {
         }
 
         let directBest = sources
-            .compactMap { directPlayCandidate(for: $0, configuration: configuration) }
+            .compactMap { directPlayCandidate(for: $0, itemID: itemID, configuration: configuration, token: token) }
             .max(by: { $0.score < $1.score })
 
         if let directBest {
@@ -483,6 +503,60 @@ public struct PlaybackDecisionEngine: Sendable {
         )
     }
 
+    private func rawDirectPlayDecision(
+        itemID: String,
+        sources: [MediaSource],
+        configuration: ServerConfiguration,
+        token: String?
+    ) -> PlaybackDecision? {
+        let ranked = sources.sorted { qualityBoost(for: $0) > qualityBoost(for: $1) }
+
+        for source in ranked {
+            guard let rawURL = rawDirectURL(
+                for: source,
+                itemID: itemID,
+                configuration: configuration,
+                token: token
+            ) else {
+                continue
+            }
+
+            guard !isHLS(url: rawURL), isDirectPlayable(source: source, url: rawURL) else {
+                continue
+            }
+
+            if qualityMode(for: source, configuration: configuration) == .strictQuality,
+               !isStrictRouteAllowed(source: source, route: .directPlay(rawURL)) {
+                continue
+            }
+
+            return PlaybackDecision(sourceID: source.id, route: .directPlay(rawURL))
+        }
+
+        return nil
+    }
+
+    private func rawDirectURL(
+        for source: MediaSource,
+        itemID: String,
+        configuration: ServerConfiguration,
+        token: String?
+    ) -> URL? {
+        if let direct = source.directPlayURL {
+            return direct
+        }
+
+        if let stream = source.directStreamURL, !isHLS(url: stream) {
+            return stream
+        }
+
+        let containers = normalizedContainers(source.container, fallbackURL: configuration.serverURL)
+        let appleContainer = containers.contains(where: { capabilities.directPlayableContainers.contains($0) })
+        guard appleContainer else { return nil }
+
+        return constructDirectStreamURL(itemID: itemID, sourceID: source.id, configuration: configuration, token: token)
+    }
+
     private func decisionFromPlan(
         _ plan: PlaybackPlan,
         sources: [MediaSource],
@@ -497,7 +571,8 @@ public struct PlaybackDecisionEngine: Sendable {
 
         switch plan.lane {
         case .nativeDirectPlay:
-            guard let url = source.directPlayURL ?? plan.targetURL else { return nil }
+            guard let url = directPlayableURL(for: source, itemID: itemID, configuration: configuration, token: token)
+                ?? plan.targetURL else { return nil }
             if qualityMode(for: source, configuration: configuration) == .strictQuality,
                !isStrictRouteAllowed(source: source, route: .directPlay(url)) {
                 return nil
@@ -509,7 +584,8 @@ public struct PlaybackDecisionEngine: Sendable {
             let container = source.normalizedContainer
             let isAppleContainer = container == "mp4" || container == "m4v" || container == "mov"
             if isAppleContainer {
-                if source.supportsDirectPlay, let directURL = source.directPlayURL, isDirectPlayable(source: source, url: directURL) {
+                if let directURL = directPlayableURL(for: source, itemID: itemID, configuration: configuration, token: token),
+                   isDirectPlayable(source: source, url: directURL) {
                     if qualityMode(for: source, configuration: configuration) == .strictQuality,
                        !isStrictRouteAllowed(source: source, route: .directPlay(directURL)) {
                         return nil
@@ -579,8 +655,15 @@ public struct PlaybackDecisionEngine: Sendable {
         }
     }
 
-    private func directPlayCandidate(for source: MediaSource, configuration: ServerConfiguration) -> Candidate? {
-        guard source.supportsDirectPlay, let url = source.directPlayURL else { return nil }
+    private func directPlayCandidate(
+        for source: MediaSource,
+        itemID: String,
+        configuration: ServerConfiguration,
+        token: String?
+    ) -> Candidate? {
+        guard let url = directPlayableURL(for: source, itemID: itemID, configuration: configuration, token: token) else {
+            return nil
+        }
         guard isDirectPlayable(source: source, url: url) else { return nil }
         if qualityMode(for: source, configuration: configuration) == .strictQuality,
            !isStrictRouteAllowed(source: source, route: .directPlay(url)) {
@@ -592,6 +675,15 @@ public struct PlaybackDecisionEngine: Sendable {
         score += 20
 
         return Candidate(source: source, url: url, score: score)
+    }
+
+    private func directPlayableURL(
+        for source: MediaSource,
+        itemID: String,
+        configuration: ServerConfiguration,
+        token: String?
+    ) -> URL? {
+        rawDirectURL(for: source, itemID: itemID, configuration: configuration, token: token)
     }
 
     private func remuxCandidate(for source: MediaSource, configuration: ServerConfiguration) -> Candidate? {
@@ -619,7 +711,7 @@ public struct PlaybackDecisionEngine: Sendable {
         let url: URL
         if let provided = source.directStreamURL ?? source.directPlayURL {
             url = provided
-        } else if let constructed = constructDirectStreamURL(itemID: itemID, sourceID: source.id, configuration: configuration) {
+        } else if let constructed = constructDirectStreamURL(itemID: itemID, sourceID: source.id, configuration: configuration, token: nil) {
             url = constructed
         } else {
             return nil
@@ -729,8 +821,8 @@ public struct PlaybackDecisionEngine: Sendable {
     }
 
     private func isDirectPlayable(source: MediaSource, url: URL) -> Bool {
-        let container = normalizedContainer(source.container, fallbackURL: url)
-        guard capabilities.directPlayableContainers.contains(container) else {
+        let containers = normalizedContainers(source.container, fallbackURL: url)
+        guard containers.contains(where: { capabilities.directPlayableContainers.contains($0) }) else {
             return false
         }
 
@@ -738,7 +830,12 @@ public struct PlaybackDecisionEngine: Sendable {
             return false
         }
 
-        if !source.normalizedAudioCodec.isEmpty, !capabilities.audioCodecs.contains(source.normalizedAudioCodec) {
+        let sourceAudioSupported = source.normalizedAudioCodec.isEmpty || capabilities.audioCodecs.contains(source.normalizedAudioCodec)
+        let anyTrackSupported = source.audioTracks.contains { track in
+            guard let codec = track.codec?.lowercased(), !codec.isEmpty else { return false }
+            return capabilities.audioCodecs.contains(codec)
+        }
+        if !sourceAudioSupported && !anyTrackSupported {
             return false
         }
 
@@ -750,29 +847,35 @@ public struct PlaybackDecisionEngine: Sendable {
             return true
         }
 
-        let container = normalizedContainer(source.container, fallbackURL: url)
-        if capabilities.directPlayableContainers.contains(container) {
+        let containers = normalizedContainers(source.container, fallbackURL: url)
+        if containers.contains(where: { capabilities.directPlayableContainers.contains($0) }) {
             return true
         }
 
         // MKV is not a first-class AVPlayer container. Accept only when remuxed to HLS.
-        if container == "mkv" {
+        if containers.contains("mkv") || containers.contains("matroska") || containers.contains("webm") {
             return false
         }
 
-        return container == "ts" || container == "m2ts"
+        return containers.contains("ts") || containers.contains("m2ts")
     }
 
-    private func normalizedContainer(_ rawContainer: String?, fallbackURL: URL) -> String {
+    private func normalizedContainers(_ rawContainer: String?, fallbackURL: URL) -> [String] {
         if let rawContainer, !rawContainer.isEmpty {
-            return rawContainer.lowercased()
+            let tokens = rawContainer
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+            if !tokens.isEmpty {
+                return tokens
+            }
         }
 
         let ext = fallbackURL.pathExtension.lowercased()
         if ext == "m3u8" {
-            return "hls"
+            return ["hls"]
         }
-        return ext
+        return [ext]
     }
 
     private func isHLS(url: URL) -> Bool {
@@ -781,15 +884,24 @@ public struct PlaybackDecisionEngine: Sendable {
 
     /// Construct a direct stream URL for NativeBridge when the server doesn't provide one.
     /// Uses the Jellyfin /Videos/{itemId}/stream endpoint with static=true for raw file access.
-    private func constructDirectStreamURL(itemID: String, sourceID: String, configuration: ServerConfiguration) -> URL? {
+    private func constructDirectStreamURL(
+        itemID: String,
+        sourceID: String,
+        configuration: ServerConfiguration,
+        token: String?
+    ) -> URL? {
         var components = URLComponents(
             url: configuration.serverURL.appendingPathComponent("Videos/\(itemID)/stream"),
             resolvingAgainstBaseURL: false
         )
-        components?.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "static", value: "true"),
-            URLQueryItem(name: "MediaSourceId", value: sourceID)
+            URLQueryItem(name: "mediaSourceId", value: sourceID)
         ]
+        if let token {
+            queryItems.append(URLQueryItem(name: "api_key", value: token))
+        }
+        components?.queryItems = queryItems
         return components?.url
     }
 

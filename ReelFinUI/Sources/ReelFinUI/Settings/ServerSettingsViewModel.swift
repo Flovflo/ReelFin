@@ -9,6 +9,12 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var allowCellularStreaming = true
     @Published var preferredQuality: QualityPreference = .auto
     @Published var playbackStrategy: PlaybackStrategy = .bestQualityFastest
+    @Published var playbackPolicy: PlaybackPolicy = .auto
+    @Published var allowSDRFallback = true
+    @Published var preferAudioTranscodeOnly = true
+    @Published var maxStreamingBitrateText = ""
+    @Published var forceH264FallbackWhenNotDirectPlay = true
+    @Published var nerdOverlayEnabled = false
     @Published var infoMessage: String?
     @Published var errorMessage: String?
     @Published var isRunningDiagnostics = false
@@ -17,6 +23,7 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var diagnosticsReport: String?
 
     private let dependencies: ReelFinDependencies
+    private static let nerdOverlayKey = "reelfin.playback.debugOverlay.enabled"
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
@@ -26,7 +33,16 @@ final class ServerSettingsViewModel: ObservableObject {
             allowCellularStreaming = config.allowCellularStreaming
             preferredQuality = config.preferredQuality
             playbackStrategy = config.playbackStrategy
+            playbackPolicy = config.playbackPolicy
+            allowSDRFallback = config.allowSDRFallback
+            preferAudioTranscodeOnly = config.preferAudioTranscodeOnly
+            forceH264FallbackWhenNotDirectPlay = config.forceH264FallbackWhenNotDirectPlay
+            if let customBitrate = config.maxStreamingBitrateOverride {
+                maxStreamingBitrateText = String(customBitrate)
+            }
         }
+
+        nerdOverlayEnabled = UserDefaults.standard.bool(forKey: Self.nerdOverlayKey)
 
         if let session = dependencies.settingsStore.lastSession {
             username = session.username
@@ -46,14 +62,33 @@ final class ServerSettingsViewModel: ObservableObject {
                 serverURL: url,
                 allowCellularStreaming: allowCellularStreaming,
                 preferredQuality: preferredQuality,
-                playbackStrategy: playbackStrategy
+                playbackStrategy: playbackStrategy,
+                playbackPolicy: playbackPolicy,
+                allowSDRFallback: allowSDRFallback,
+                preferAudioTranscodeOnly: preferAudioTranscodeOnly,
+                maxStreamingBitrateOverride: parseMaxStreamingBitrateOverride(),
+                forceH264FallbackWhenNotDirectPlay: forceH264FallbackWhenNotDirectPlay
             )
             try await dependencies.apiClient.configure(server: config)
             dependencies.settingsStore.serverConfiguration = config
+            UserDefaults.standard.set(nerdOverlayEnabled, forKey: Self.nerdOverlayKey)
             infoMessage = "Settings saved"
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func applyPolicyDefaultsIfNeeded() {
+        if playbackPolicy == .originalLockHDRDV, allowSDRFallback {
+            allowSDRFallback = false
+        }
+    }
+
+    private func parseMaxStreamingBitrateOverride() -> Int? {
+        let trimmed = maxStreamingBitrateText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let value = Int(trimmed), value > 0 else { return nil }
+        return value
     }
 
     func testConnection() async {

@@ -217,14 +217,20 @@ public actor PlaybackCoordinator {
             AppLog.playback.notice("\(PlaybackFailureReason.trueHDDeprioritizedForNativePath.localizedDescription ?? "TrueHD deprioritized", privacy: .public)")
         }
 
+        let requestedProfile = forcedProfileIfNeeded(
+            route: decision.route,
+            configuration: configuration,
+            defaultProfile: transcodeProfile
+        )
+
         let effectiveProfile = effectiveTranscodeProfile(
             for: decision.route,
-            requestedProfile: transcodeProfile,
+            requestedProfile: requestedProfile,
             source: source,
             url: assetURL
         )
 
-        if case .transcode = decision.route, effectiveProfile != .serverDefault {
+        if !isDirectPlayRoute(decision.route), effectiveProfile != .serverDefault {
             let effectiveBitrate: Int
             switch effectiveProfile {
             case .appleOptimizedHEVC:
@@ -234,6 +240,9 @@ public actor PlaybackCoordinator {
                 effectiveBitrate = min(maxBitrate, is4K ? 20_000_000 : 30_000_000)
             case .serverDefault, .conservativeCompatibility, .forceH264Transcode:
                 effectiveBitrate = maxBitrate
+            }
+            if case .remux = decision.route, let transcodeURL = source.transcodeURL {
+                assetURL = transcodeURL
             }
             assetURL = normalizeTranscodeURL(
                 assetURL,
@@ -264,10 +273,10 @@ public actor PlaybackCoordinator {
         let profileLabel: String
         if case .nativeBridge = decision.route {
             profileLabel = "nativeBridge"
-        } else if effectiveProfile == transcodeProfile {
+        } else if effectiveProfile == requestedProfile {
             profileLabel = effectiveProfile.rawValue
         } else {
-            profileLabel = "\(transcodeProfile.rawValue)->\(effectiveProfile.rawValue)"
+            profileLabel = "\(requestedProfile.rawValue)->\(effectiveProfile.rawValue)"
         }
         AppLog.playback.info(
             "Playback selected method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) profile=\(profileLabel, privacy: .public)"
@@ -282,6 +291,24 @@ public actor PlaybackCoordinator {
             headers: headers,
             debugInfo: debug
         )
+    }
+
+    private func isDirectPlayRoute(_ route: PlaybackRoute) -> Bool {
+        if case .directPlay = route {
+            return true
+        }
+        return false
+    }
+
+    private func forcedProfileIfNeeded(
+        route: PlaybackRoute,
+        configuration: ServerConfiguration,
+        defaultProfile: TranscodeURLProfile
+    ) -> TranscodeURLProfile {
+        guard configuration.forceH264FallbackWhenNotDirectPlay else {
+            return defaultProfile
+        }
+        return isDirectPlayRoute(route) ? defaultProfile : .forceH264Transcode
     }
 
     private func playbackOptions(

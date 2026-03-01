@@ -29,6 +29,107 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(decision?.route, .directPlay(URL(string: "https://example.com/direct-play.mp4")!))
     }
 
+    func testDirectPlayPreferredWhenContainerIsCommaSeparatedList() {
+        let engine = PlaybackDecisionEngine()
+        let sources = [
+            MediaSource(
+                id: "direct-csv",
+                itemID: "item",
+                name: "Direct CSV",
+                container: "mov,mp4,m4a,3gp,3g2,mj2",
+                videoCodec: "hevc",
+                audioCodec: "eac3",
+                supportsDirectPlay: true,
+                supportsDirectStream: true,
+                directStreamURL: URL(string: "https://example.com/direct-stream.mp4"),
+                directPlayURL: URL(string: "https://example.com/direct-play.mp4"),
+                transcodeURL: URL(string: "https://example.com/transcode.m3u8")
+            )
+        ]
+
+        let decision = engine.decide(itemID: "item", sources: sources, configuration: server, token: "abc")
+
+        XCTAssertEqual(decision?.sourceID, "direct-csv")
+        XCTAssertEqual(decision?.route, .directPlay(URL(string: "https://example.com/direct-play.mp4")!))
+    }
+
+    func testDirectPlayPreferredWhenSourceCodecUnsupportedButAACTrackExists() {
+        let engine = PlaybackDecisionEngine(
+            capabilities: DeviceCapabilities(
+                directPlayableContainers: ["mp4", "mov", "m4v"],
+                videoCodecs: ["hevc", "h264", "avc1"],
+                audioCodecs: ["aac"]
+            )
+        )
+        let sources = [
+            MediaSource(
+                id: "direct-aac",
+                itemID: "item",
+                name: "Direct AAC",
+                container: "mp4",
+                videoCodec: "hevc",
+                audioCodec: "eac3",
+                supportsDirectPlay: true,
+                supportsDirectStream: true,
+                directStreamURL: URL(string: "https://example.com/direct-stream.mp4"),
+                directPlayURL: URL(string: "https://example.com/direct-play.mp4"),
+                transcodeURL: URL(string: "https://example.com/transcode.m3u8"),
+                audioTracks: [
+                    MediaTrack(id: "t1", title: "FR E-AC3", language: "fra", codec: "eac3", isDefault: true, index: 1),
+                    MediaTrack(id: "t2", title: "FR AAC", language: "fra", codec: "aac", isDefault: false, index: 2)
+                ]
+            )
+        ]
+
+        let decision = engine.decide(itemID: "item", sources: sources, configuration: server, token: "abc")
+
+        XCTAssertEqual(decision?.sourceID, "direct-aac")
+        XCTAssertEqual(decision?.route, .directPlay(URL(string: "https://example.com/direct-play.mp4")!))
+    }
+
+    func testForcesRawDirectPlayWhenNoDirectURLsButContainerIsAppleCompatible() {
+        let engine = PlaybackDecisionEngine()
+        let sources = [
+            MediaSource(
+                id: "raw-forced",
+                itemID: "item",
+                name: "Raw forced",
+                container: "mov,mp4,m4a,3gp,3g2,mj2",
+                videoCodec: "hevc",
+                audioCodec: "aac",
+                supportsDirectPlay: false,
+                supportsDirectStream: false,
+                directStreamURL: nil,
+                directPlayURL: nil,
+                transcodeURL: URL(string: "https://example.com/transcode.m3u8")
+            )
+        ]
+
+        let decision = engine.decide(itemID: "item", sources: sources, configuration: server, token: "abc")
+
+        XCTAssertEqual(
+            decision?.route,
+            .directPlay(URL(string: "https://example.com/Videos/item/stream?static=true&mediaSourceId=raw-forced&api_key=abc")!)
+        )
+    }
+
+    func testAudioSelectorPrefersAACForNativePlayerPath() {
+        let selector = AudioCompatibilitySelector()
+        let tracks = [
+            MediaTrack(id: "1", title: "French E-AC3", language: "fra", codec: "eac3", isDefault: true, index: 1),
+            MediaTrack(id: "2", title: "French AAC", language: "fra", codec: "aac", isDefault: false, index: 2)
+        ]
+
+        let selection = selector.selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "eac3",
+            nativePlayerPath: true
+        )
+
+        XCTAssertEqual(selection.selectedCodec, "aac")
+        XCTAssertEqual(selection.selectedTrackIndex, 2)
+    }
+
     func testRemuxUsedWhenDirectPlayNotCompatible() {
         let engine = PlaybackDecisionEngine()
         let sources = [
@@ -122,7 +223,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(decision?.route, .directPlay(URL(string: "https://example.com/direct.mp4")!))
     }
 
-    func testJitPlanUsesRemuxWhenDirectPlayMissingForAppleContainers() {
+    func testJitPlanForcesRawDirectPlayWhenAppleContainerIsCompatible() {
         let plan = PlaybackPlan(
             itemID: "item-jit-mov",
             sourceID: "source-jit-mov",
@@ -162,7 +263,10 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             token: "abc"
         )
 
-        XCTAssertEqual(decision?.route, .remux(URL(string: "https://example.com/remux/master.m3u8")!))
+        XCTAssertEqual(
+            decision?.route,
+            .directPlay(URL(string: "https://example.com/Videos/item-jit-mov/stream?static=true&mediaSourceId=source-jit-mov&api_key=abc")!)
+        )
     }
 
     func testTranscodeFallbackWhenNoDirectOptions() {
