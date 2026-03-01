@@ -79,6 +79,92 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(decision?.route, .transcode(URL(string: "https://example.com/transcode.m3u8")!))
     }
 
+    func testJitPlanKeepsDirectPlayForAppleContainers() {
+        let plan = PlaybackPlan(
+            itemID: "item-jit-mp4",
+            sourceID: "source-jit-mp4",
+            lane: .jitRepackageHLS,
+            targetURL: URL(string: "https://example.com/transcode.m3u8"),
+            selectedVideoCodec: "hevc",
+            selectedAudioCodec: "eac3",
+            selectedSubtitleCodec: nil,
+            hdrMode: .dolbyVision,
+            subtitleMode: .native,
+            seekMode: .serverManaged,
+            fallbackGraph: [.audioTranscodeOnly, .fullTranscode],
+            reasonChain: PlaybackReasonChain()
+        )
+        let engine = PlaybackDecisionEngine(
+            capabilityEngine: FixedPlanCapabilityEngine(plan: plan),
+            mediaProbe: PassthroughMediaProbe()
+        )
+        let source = MediaSource(
+            id: "source-jit-mp4",
+            itemID: "item-jit-mp4",
+            name: "DV MP4",
+            container: "mp4",
+            videoCodec: "dvh1",
+            audioCodec: "eac3",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/stream.m3u8"),
+            directPlayURL: URL(string: "https://example.com/direct.mp4"),
+            transcodeURL: URL(string: "https://example.com/transcode.m3u8")
+        )
+
+        let decision = engine.decide(
+            itemID: "item-jit-mp4",
+            sources: [source],
+            configuration: server,
+            token: "abc"
+        )
+
+        XCTAssertEqual(decision?.route, .directPlay(URL(string: "https://example.com/direct.mp4")!))
+    }
+
+    func testJitPlanUsesRemuxWhenDirectPlayMissingForAppleContainers() {
+        let plan = PlaybackPlan(
+            itemID: "item-jit-mov",
+            sourceID: "source-jit-mov",
+            lane: .jitRepackageHLS,
+            targetURL: URL(string: "https://example.com/transcode.m3u8"),
+            selectedVideoCodec: "hevc",
+            selectedAudioCodec: "eac3",
+            selectedSubtitleCodec: nil,
+            hdrMode: .hdr10,
+            subtitleMode: .native,
+            seekMode: .serverManaged,
+            fallbackGraph: [.audioTranscodeOnly, .fullTranscode],
+            reasonChain: PlaybackReasonChain()
+        )
+        let engine = PlaybackDecisionEngine(
+            capabilityEngine: FixedPlanCapabilityEngine(plan: plan),
+            mediaProbe: PassthroughMediaProbe()
+        )
+        let source = MediaSource(
+            id: "source-jit-mov",
+            itemID: "item-jit-mov",
+            name: "MOV source",
+            container: "mov",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            supportsDirectPlay: false,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/remux/master.m3u8"),
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/transcode.m3u8")
+        )
+
+        let decision = engine.decide(
+            itemID: "item-jit-mov",
+            sources: [source],
+            configuration: server,
+            token: "abc"
+        )
+
+        XCTAssertEqual(decision?.route, .remux(URL(string: "https://example.com/remux/master.m3u8")!))
+    }
+
     func testTranscodeFallbackWhenNoDirectOptions() {
         let engine = PlaybackDecisionEngine()
         let sources = [
@@ -632,6 +718,40 @@ final class PlaybackDecisionEngineTests: XCTestCase {
     private func queryNames(from url: URL) -> [String] {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         return (components?.queryItems ?? []).map { $0.name.lowercased() }
+    }
+}
+
+private struct FixedPlanCapabilityEngine: CapabilityEngineProtocol {
+    let plan: PlaybackPlan
+
+    func computePlan(input: PlaybackPlanningInput) -> PlaybackPlan {
+        _ = input
+        return plan
+    }
+}
+
+private struct PassthroughMediaProbe: MediaProbeProtocol {
+    func probe(itemID: String, source: MediaSource) -> MediaProbeResult {
+        MediaProbeResult(
+            itemID: itemID,
+            sourceID: source.id,
+            container: source.normalizedContainer,
+            directPlayURL: source.directPlayURL,
+            directStreamURL: source.directStreamURL,
+            transcodeURL: source.transcodeURL,
+            videoCodec: source.normalizedVideoCodec,
+            audioCodec: source.normalizedAudioCodec,
+            videoBitDepth: source.videoBitDepth,
+            videoRangeType: source.videoRangeType,
+            dvProfile: source.dvProfile,
+            dvLevel: source.dvLevel,
+            dvBlSignalCompatibilityId: source.dvBlSignalCompatibilityId,
+            hdr10PlusPresent: source.hdr10PlusPresentFlag ?? false,
+            audioTracks: [],
+            subtitleTracks: [],
+            hasKeyframeIndex: false,
+            confidence: .server
+        )
     }
 }
 
