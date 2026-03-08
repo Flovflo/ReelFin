@@ -20,9 +20,16 @@ struct DetailView: View {
     init(
         dependencies: ReelFinDependencies,
         item: MediaItem,
+        preferredEpisode: MediaItem? = nil,
         namespace: Namespace.ID? = nil
     ) {
-        _viewModel = StateObject(wrappedValue: DetailViewModel(item: item, dependencies: dependencies))
+        _viewModel = StateObject(
+            wrappedValue: DetailViewModel(
+                item: item,
+                preferredEpisode: preferredEpisode,
+                dependencies: dependencies
+            )
+        )
         self.dependencies = dependencies
         self.namespace = namespace
     }
@@ -59,7 +66,7 @@ struct DetailView: View {
                     SimilarRow(
                         similar: viewModel.detail.similar,
                         onSelect: { item in
-                            viewModel.detail = MediaDetail(item: item)
+                            viewModel.setDetailItem(item)
                             Task {
                                 await viewModel.load()
                             }

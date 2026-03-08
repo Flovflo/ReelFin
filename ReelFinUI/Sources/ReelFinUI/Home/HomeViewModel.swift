@@ -10,6 +10,7 @@ final class HomeViewModel: ObservableObject {
     @Published var isRefreshing = false
     @Published var errorMessage: String?
     @Published var selectedItem: MediaItem?
+    @Published var selectedEpisode: MediaItem?
     @Published var orderedSectionKinds: [HomeSectionKind]
     @Published var hiddenSectionKinds: Set<HomeSectionKind>
 
@@ -55,12 +56,14 @@ final class HomeViewModel: ObservableObject {
                     let series = try await dependencies.seriesCache.getSeries(id: seriesId)
                     await MainActor.run {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            selectedEpisode = item
                             selectedItem = series
                         }
                     }
                 } catch {
                     await MainActor.run {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            selectedEpisode = nil
                             selectedItem = item
                         }
                     }
@@ -68,6 +71,7 @@ final class HomeViewModel: ObservableObject {
             }
         } else {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                selectedEpisode = nil
                 selectedItem = item
             }
         }
@@ -75,6 +79,7 @@ final class HomeViewModel: ObservableObject {
 
     func dismissDetail() {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+            selectedEpisode = nil
             selectedItem = nil
         }
     }

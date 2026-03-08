@@ -19,10 +19,24 @@ final class DetailViewModel: ObservableObject {
     @Published var nextUpEpisode: MediaItem?
 
     private let dependencies: ReelFinDependencies
+    private var preferredEpisode: MediaItem?
 
-    init(item: MediaItem, dependencies: ReelFinDependencies) {
+    init(item: MediaItem, preferredEpisode: MediaItem? = nil, dependencies: ReelFinDependencies) {
         self.detail = MediaDetail(item: item)
+        self.preferredEpisode = preferredEpisode
         self.dependencies = dependencies
+    }
+
+    func setDetailItem(_ item: MediaItem, preferredEpisode: MediaItem? = nil) {
+        detail = MediaDetail(item: item)
+        self.preferredEpisode = preferredEpisode
+        playbackProgress = nil
+        playbackSources = []
+        seasons = []
+        episodes = []
+        selectedSeason = nil
+        nextUpEpisode = nil
+        errorMessage = nil
     }
 
     func load() async {
@@ -33,7 +47,7 @@ final class DetailViewModel: ObservableObject {
             if let cached = try await dependencies.repository.fetchItem(id: detail.item.id) {
                 detail.item = cached
             }
-            playbackProgress = try await dependencies.repository.fetchPlaybackProgress(itemID: detail.item.id)
+            playbackProgress = await resolvedPlaybackProgress(for: detail.item)
 
             let freshDetail = try await dependencies.apiClient.fetchItemDetail(id: detail.item.id)
             detail = freshDetail
@@ -53,15 +67,24 @@ final class DetailViewModel: ObservableObject {
         do {
             let fetchedSeasons = try await dependencies.apiClient.fetchSeasons(seriesID: detail.item.id)
             self.seasons = fetchedSeasons
-            
-            if let firstSeason = fetchedSeasons.first {
-                await select(season: firstSeason)
+
+            let preferredSeason = preferredEpisode.flatMap { episode in
+                seasonMatching(preferredEpisode: episode, seasons: fetchedSeasons)
             }
-            
-            // Find the in-progress or next episode across all seasons
-            await resolveNextUpEpisode()
+
+            if let preferredSeason {
+                await select(season: preferredSeason)
+                nextUpEpisode = episodes.first(where: { $0.id == preferredEpisode?.id }) ?? preferredEpisode
+            } else if let firstSeason = fetchedSeasons.first {
+                await select(season: firstSeason)
+                await resolveNextUpEpisode()
+            }
+
             if let episode = nextUpEpisode {
+                playbackProgress = await resolvedPlaybackProgress(for: episode)
                 await loadPlaybackSources(for: episode)
+            } else {
+                playbackSources = []
             }
         } catch {
             print("Failed to load seasons: \(error)")
@@ -87,9 +110,19 @@ final class DetailViewModel: ObservableObject {
         do {
             let fetchedEpisodes = try await dependencies.apiClient.fetchEpisodes(seriesID: detail.item.id, seasonID: season.id)
             self.episodes = fetchedEpisodes
-            // Update nextUpEpisode if we don't have one yet
-            if nextUpEpisode == nil {
+            if let preferredEpisode,
+               fetchedEpisodes.contains(where: { $0.id == preferredEpisode.id }) {
+                if let matched = fetchedEpisodes.first(where: { $0.id == preferredEpisode.id }) {
+                    nextUpEpisode = mergedEpisode(matched, preferred: preferredEpisode)
+                } else {
+                    nextUpEpisode = preferredEpisode
+                }
+                playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode ?? preferredEpisode)
+            } else if nextUpEpisode == nil {
                 nextUpEpisode = fetchedEpisodes.first
+                if let nextUpEpisode {
+                    playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode)
+                }
             }
         } catch {
             print("Failed to load episodes: \(error)")
@@ -97,7 +130,14 @@ final class DetailViewModel: ObservableObject {
     }
 
     func prepareEpisodePlayback(_ episode: MediaItem) {
+        preferredEpisode = episode
         nextUpEpisode = episode
+        Task {
+            let progress = await resolvedPlaybackProgress(for: episode)
+            await MainActor.run {
+                self.playbackProgress = progress
+            }
+        }
     }
 
     var shouldShowResume: Bool {
@@ -147,6 +187,47 @@ final class DetailViewModel: ObservableObject {
         } catch {
             playbackSources = []
         }
+    }
+
+    private func seasonMatching(preferredEpisode: MediaItem, seasons: [MediaItem]) -> MediaItem? {
+        if let seasonNumber = preferredEpisode.parentIndexNumber,
+           let exact = seasons.first(where: { $0.indexNumber == seasonNumber }) {
+            return exact
+        }
+        return seasons.first
+    }
+
+    private func resolvedPlaybackProgress(for item: MediaItem) async -> PlaybackProgress? {
+        if let local = try? await dependencies.repository.fetchPlaybackProgress(itemID: item.id) {
+            return local
+        }
+        guard let positionTicks = item.playbackPositionTicks, positionTicks > 0 else {
+            return nil
+        }
+        let totalTicks = max(item.runtimeTicks ?? 0, positionTicks)
+        return PlaybackProgress(
+            itemID: item.id,
+            positionTicks: positionTicks,
+            totalTicks: totalTicks,
+            updatedAt: Date()
+        )
+    }
+
+    private func mergedEpisode(_ item: MediaItem, preferred: MediaItem) -> MediaItem {
+        var merged = item
+        if merged.playbackPositionTicks == nil {
+            merged.playbackPositionTicks = preferred.playbackPositionTicks
+        }
+        if merged.runtimeTicks == nil {
+            merged.runtimeTicks = preferred.runtimeTicks
+        }
+        if merged.parentIndexNumber == nil {
+            merged.parentIndexNumber = preferred.parentIndexNumber
+        }
+        if merged.indexNumber == nil {
+            merged.indexNumber = preferred.indexNumber
+        }
+        return merged
     }
 
     private func playbackSourceRank(_ source: MediaSource) -> Int {

@@ -176,7 +176,7 @@ struct HomeView: View {
                 set: {
                     if !$0 {
                         selectedDetailNamespace = nil
-                        viewModel.selectedItem = nil
+                        viewModel.dismissDetail()
                     }
                 }
             )
@@ -185,6 +185,7 @@ struct HomeView: View {
                 DetailView(
                     dependencies: dependencies,
                     item: item,
+                    preferredEpisode: viewModel.selectedEpisode,
                     namespace: selectedDetailNamespace
                 )
             }
