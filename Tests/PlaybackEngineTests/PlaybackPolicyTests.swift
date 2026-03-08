@@ -66,6 +66,80 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertEqual(profile, .forceH264Transcode)
     }
 
+    func testPreemptiveH264FallbackTriggersForUnsafeHEVCFMP4Packaging() {
+        let source = MediaSource(
+            id: "source-sdr",
+            itemID: "item-sdr",
+            name: "SDR Source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            videoRange: "SDR",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/master.m3u8")
+        )
+
+        let shouldFallback = PlaybackSessionController.shouldPreferForceH264Fallback(
+            transport: "fMP4",
+            hasInitMap: false,
+            source: source,
+            allowSDRFallback: true,
+            itemPrefersDolbyVision: false,
+            strictQualityMode: false,
+            videoCodec: "hevc",
+            allowAudioStreamCopy: false
+        )
+
+        XCTAssertTrue(shouldFallback)
+    }
+
+    func testPreemptiveH264FallbackSkipsDolbyVisionOrStrictQuality() {
+        let source = MediaSource(
+            id: "source-dv",
+            itemID: "item-dv",
+            name: "DV Source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            videoRange: "DolbyVision",
+            dvProfile: 8,
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/master.m3u8")
+        )
+
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPreferForceH264Fallback(
+                transport: "fMP4",
+                hasInitMap: false,
+                source: source,
+                allowSDRFallback: true,
+                itemPrefersDolbyVision: true,
+                strictQualityMode: false,
+                videoCodec: "hevc",
+                allowAudioStreamCopy: false
+            )
+        )
+
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPreferForceH264Fallback(
+                transport: "fMP4",
+                hasInitMap: false,
+                source: source,
+                allowSDRFallback: true,
+                itemPrefersDolbyVision: false,
+                strictQualityMode: true,
+                videoCodec: "hevc",
+                allowAudioStreamCopy: false
+            )
+        )
+    }
+
     func testDuplicateAttemptTripleIsSkipped() {
         var attempted = Set<String>()
         let key = PlaybackSessionController.attemptTripleKey(

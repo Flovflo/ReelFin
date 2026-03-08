@@ -404,6 +404,14 @@ public final class PlaybackSessionController {
                     source: selection.source
                 )
             )
+            selection = try await stabilizeInitialSelectionIfNeeded(
+                itemID: item.id,
+                selection: selection,
+                itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                    itemPrefersDolbyVision: item.hasDolbyVision,
+                    source: selection.source
+                )
+            )
             selection = try await upgradeRiskyInitialSelectionIfNeeded(
                 itemID: item.id,
                 selection: selection,
@@ -451,6 +459,14 @@ public final class PlaybackSessionController {
                             source: selection.source
                         )
                     )
+                    selection = try await stabilizeInitialSelectionIfNeeded(
+                        itemID: item.id,
+                        selection: selection,
+                        itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                            itemPrefersDolbyVision: item.hasDolbyVision,
+                            source: selection.source
+                        )
+                    )
                     selection = try await upgradeRiskyInitialSelectionIfNeeded(
                         itemID: item.id,
                         selection: selection,
@@ -485,7 +501,7 @@ public final class PlaybackSessionController {
             ttffResolveMs = Date().timeIntervalSince(resolveStartDate) * 1000
 
             // Retrieve TTFF tuning from coordinator
-            ttffTuning = await coordinator.ttffTuning
+            ttffTuning = coordinator.ttffTuning
 
             if let progress = try await repository.fetchPlaybackProgress(itemID: item.id), progress.positionTicks > 0 {
                 let seconds = Double(progress.positionTicks) / 10_000_000
@@ -1820,6 +1836,49 @@ public final class PlaybackSessionController {
         }
     }
 
+    private func shouldPreemptivelyFallbackToH264(
+        for selection: PlaybackAssetSelection,
+        itemPrefersDolbyVision: Bool
+    ) async -> Bool {
+        guard case .transcode = selection.decision.route else { return false }
+        guard activeTranscodeProfile != .forceH264Transcode else { return false }
+
+        let query = transcodeQueryMap(from: selection.assetURL)
+        let transport = selectedVariantInfo.map {
+            StreamVariantInspector.inferTransport(from: $0, playlist: selectedVariantPlaylistInspection)
+        } ?? selectedVariantPlaylistInspection?.transport ?? "TS"
+        let hasInitMap = selectedVariantPlaylistInspection?.mapURL != nil
+        let codec = selectedVariantInfo?.normalizedCodec
+            ?? query["videocodec"]
+            ?? selection.source.normalizedVideoCodec
+        let allowAudioCopy = query["allowaudiostreamcopy"] == "true"
+
+        if Self.shouldPreferForceH264Fallback(
+            transport: transport,
+            hasInitMap: hasInitMap,
+            source: selection.source,
+            allowSDRFallback: allowSDRFallback,
+            itemPrefersDolbyVision: itemPrefersDolbyVision,
+            strictQualityMode: strictQualityIsActive,
+            videoCodec: codec,
+            allowAudioStreamCopy: allowAudioCopy
+        ) {
+            AppLog.playback.notice(
+                "Preemptive profile upgrade profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)->forceH264Transcode reason=unsafe_hevc_startup_packaging"
+            )
+            return true
+        }
+
+        if await shouldForceCompatibilityH264(for: selection) {
+            AppLog.playback.notice(
+                "Preemptive profile upgrade profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)->forceH264Transcode reason=degraded_hevc_variant"
+            )
+            return true
+        }
+
+        return false
+    }
+
     private func parseIntAttribute(_ name: String, from streamInfLine: String) -> Int {
         let pattern = "\(NSRegularExpression.escapedPattern(for: name))=([0-9]+)"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return 0 }
@@ -2197,6 +2256,14 @@ public final class PlaybackSessionController {
                         source: selection.source
                     )
                 )
+                selection = try await stabilizeInitialSelectionIfNeeded(
+                    itemID: itemID,
+                    selection: selection,
+                    itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                        itemPrefersDolbyVision: currentItemHasDolbyVision || (currentSource?.isLikelyHDRorDV ?? false),
+                        source: selection.source
+                    )
+                )
 
                 if !registerAttempt(selection: selection, profile: profile) {
                     continue
@@ -2373,6 +2440,33 @@ public final class PlaybackSessionController {
             profileOverride: saferProfile
         )
         activeTranscodeProfile = saferProfile
+        return upgraded
+    }
+
+    private func stabilizeInitialSelectionIfNeeded(
+        itemID: String,
+        selection: PlaybackAssetSelection,
+        itemPrefersDolbyVision: Bool
+    ) async throws -> PlaybackAssetSelection {
+        guard await shouldPreemptivelyFallbackToH264(
+            for: selection,
+            itemPrefersDolbyVision: itemPrefersDolbyVision
+        ) else {
+            return selection
+        }
+
+        var upgraded = try await coordinator.resolvePlayback(
+            itemID: itemID,
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .forceH264Transcode
+        )
+        upgraded = try await pinPreferredVariantIfNeeded(
+            selection: upgraded,
+            itemPrefersDolbyVision: itemPrefersDolbyVision,
+            profileOverride: .forceH264Transcode
+        )
+        activeTranscodeProfile = .forceH264Transcode
         return upgraded
     }
 
@@ -2563,7 +2657,9 @@ public final class PlaybackSessionController {
             totalTicks: totalTicks,
             updatedAt: Date()
         )
-        try? await repository.savePlaybackProgress(localProgress)
+        if (try? await repository.fetchItem(id: itemID)) != nil {
+            try? await repository.savePlaybackProgress(localProgress)
+        }
 
         let remoteProgress = PlaybackProgressUpdate(
             itemID: itemID,
@@ -2633,6 +2729,35 @@ public final class PlaybackSessionController {
         }
 
         return stored
+    }
+
+    nonisolated static func shouldPreferForceH264Fallback(
+        transport: String,
+        hasInitMap: Bool,
+        source: MediaSource,
+        allowSDRFallback: Bool,
+        itemPrefersDolbyVision: Bool,
+        strictQualityMode: Bool,
+        videoCodec: String,
+        allowAudioStreamCopy: Bool
+    ) -> Bool {
+        guard allowSDRFallback, !strictQualityMode else { return false }
+        guard !itemPrefersDolbyVision, !source.isLikelyHDRorDV else { return false }
+        guard !allowAudioStreamCopy else { return false }
+        guard transport == "fMP4", !hasInitMap else { return false }
+
+        let container = source.normalizedContainer
+        let mkvLike = container == "mkv" || container == "matroska" || container == "webm"
+        guard mkvLike else { return false }
+
+        let codec = videoCodec.lowercased()
+        let hevcLike = codec.contains("hevc")
+            || codec.contains("h265")
+            || codec.contains("dvhe")
+            || codec.contains("dvh1")
+            || codec.contains("hvc1")
+            || codec.contains("hev1")
+        return hevcLike
     }
 
     nonisolated static func attemptTripleKey(profile: TranscodeURLProfile, routeLabel: String, url: String) -> String {
