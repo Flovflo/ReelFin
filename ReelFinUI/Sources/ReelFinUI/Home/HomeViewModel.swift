@@ -1,4 +1,5 @@
 import Foundation
+import JellyfinAPI
 import Shared
 import SwiftUI
 
@@ -13,6 +14,7 @@ final class HomeViewModel: ObservableObject {
     @Published var hiddenSectionKinds: Set<HomeSectionKind>
 
     private let dependencies: ReelFinDependencies
+    private var feedEnrichmentTask: Task<Void, Never>?
     private static let sectionPreferencesKey = "home.sectionPreferences.v1"
     private static let defaultSectionOrder: [HomeSectionKind] = [
         .continueWatching,
@@ -176,85 +178,32 @@ final class HomeViewModel: ObservableObject {
     private func loadFromCache() async {
         do {
             let cached = try await dependencies.repository.fetchHomeFeed()
-            if !cached.rows.isEmpty || !cached.featured.isEmpty {
-                let processed = await processFeed(cached)
-                ensureKnownSectionKinds(from: processed.rows)
-                feed = processed
+            guard !cached.rows.isEmpty || !cached.featured.isEmpty else { return }
+
+            ensureKnownSectionKinds(from: cached.rows)
+            if feed != cached {
+                feed = cached
             }
+            scheduleFeedEnrichment(for: cached)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func processFeed(_ feed: HomeFeed) async -> HomeFeed {
-        var newRows = feed.rows
-        for i in newRows.indices {
-            let items = newRows[i].items
-            var newItems: [MediaItem] = []
-            for item in items {
-                if item.mediaType == .episode {
-                    if let seriesId = item.parentID {
-                        do {
-                            let series = try await dependencies.seriesCache.getSeries(id: seriesId)
-                            var updatedItem = item
-                            updatedItem.seriesName = updatedItem.seriesName ?? series.name
-                            updatedItem.seriesPosterTag = updatedItem.seriesPosterTag ?? series.posterTag
-                            newItems.append(updatedItem)
-                        } catch {
-                            newItems.append(item)
-                        }
-                    } else {
-                        newItems.append(item)
-                    }
-                } else {
-                    newItems.append(item)
-                }
-            }
-            newRows[i].items = newItems
-        }
+    private func scheduleFeedEnrichment(for feed: HomeFeed) {
+        feedEnrichmentTask?.cancel()
 
-        let normalizedFeatured = feed.featured.isEmpty ? fallbackFeatured(from: newRows) : feed.featured
-        let normalizedFeed = HomeFeed(featured: normalizedFeatured, rows: newRows)
-        prefetchImages(for: normalizedFeed)
-        return normalizedFeed
-    }
+        let seriesCache = dependencies.seriesCache
+        feedEnrichmentTask = Task(priority: .utility) { [weak self] in
+            let processed = await HomeFeedProcessor.process(feed, seriesCache: seriesCache)
+            guard !Task.isCancelled else { return }
 
-    private func prefetchImages(for feed: HomeFeed) {
-        let allItems = feed.featured + feed.rows.flatMap { $0.items }
-        let apiClient = dependencies.apiClient
-        Task.detached(priority: .background) {
-            await apiClient.prefetchImages(for: allItems)
-        }
-    }
-
-    private func fallbackFeatured(from rows: [HomeRow]) -> [MediaItem] {
-        let priority: [HomeSectionKind] = [
-            .recentlyAddedMovies,
-            .recentlyAddedSeries,
-            .popular,
-            .trending,
-            .movies,
-            .shows,
-            .continueWatching,
-            .nextUp,
-            .latest
-        ]
-
-        var seen = Set<String>()
-        var collected: [MediaItem] = []
-
-        for kind in priority {
-            guard let row = rows.first(where: { $0.kind == kind }) else { continue }
-            for item in row.items where !seen.contains(item.id) {
-                seen.insert(item.id)
-                collected.append(item)
-                if collected.count >= 10 {
-                    return collected
-                }
+            await MainActor.run {
+                guard let self, self.feed == feed, self.feed != processed else { return }
+                self.ensureKnownSectionKinds(from: processed.rows)
+                self.feed = processed
             }
         }
-
-        return collected
     }
 
     private func ensureKnownSectionKinds(from rows: [HomeRow]) {
@@ -301,4 +250,92 @@ final class HomeViewModel: ObservableObject {
 private struct HomeSectionPreferences: Codable {
     var orderedKinds: [HomeSectionKind]
     var hiddenKinds: [HomeSectionKind]
+}
+
+private enum HomeFeedProcessor {
+    static func process(_ feed: HomeFeed, seriesCache: SeriesLookupCache) async -> HomeFeed {
+        let seriesIDs: Set<String> = Set(
+            feed.rows.flatMap { row in
+                row.items.compactMap { item in
+                    guard item.mediaType == .episode else { return nil }
+                    return item.parentID
+                }
+            }
+        )
+
+        var updatedRows = feed.rows
+        if !seriesIDs.isEmpty {
+            var seriesByID: [String: MediaItem] = [:]
+
+            await withTaskGroup(of: (String, MediaItem?).self) { group in
+                for seriesID in seriesIDs {
+                    group.addTask {
+                        do {
+                            return (seriesID, try await seriesCache.getSeries(id: seriesID))
+                        } catch {
+                            return (seriesID, nil)
+                        }
+                    }
+                }
+
+                for await (seriesID, series) in group {
+                    if let series {
+                        seriesByID[seriesID] = series
+                    }
+                }
+            }
+
+            if !seriesByID.isEmpty {
+                for rowIndex in updatedRows.indices {
+                    updatedRows[rowIndex].items = updatedRows[rowIndex].items.map { item in
+                        guard
+                            item.mediaType == .episode,
+                            let seriesID = item.parentID,
+                            let series = seriesByID[seriesID]
+                        else {
+                            return item
+                        }
+
+                        var updatedItem = item
+                        updatedItem.seriesName = updatedItem.seriesName ?? series.name
+                        updatedItem.seriesPosterTag = updatedItem.seriesPosterTag ?? series.posterTag
+                        return updatedItem
+                    }
+                }
+            }
+        }
+
+        let normalizedFeatured = feed.featured.isEmpty ? fallbackFeatured(from: updatedRows) : feed.featured
+        return HomeFeed(featured: normalizedFeatured, rows: updatedRows)
+    }
+
+    private static func fallbackFeatured(from rows: [HomeRow]) -> [MediaItem] {
+        let priority: [HomeSectionKind] = [
+            .recentlyAddedMovies,
+            .recentlyAddedSeries,
+            .popular,
+            .trending,
+            .movies,
+            .shows,
+            .continueWatching,
+            .nextUp,
+            .latest
+        ]
+
+        var seen = Set<String>()
+        var collected: [MediaItem] = []
+
+        for kind in priority {
+            guard let row = rows.first(where: { $0.kind == kind }) else { continue }
+            for item in row.items where !seen.contains(item.id) {
+                seen.insert(item.id)
+                collected.append(item)
+                if collected.count >= 10 {
+                    return collected
+                }
+            }
+        }
+
+        return collected
+    }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 
 public enum ReelFinTheme {
     // Colors
-    public static let background = Color(red: 0.05, green: 0.06, blue: 0.08)
+    public static let background = Color.black
     public static let surface = Color(white: 0.12)
     public static let card = Color(white: 0.16)
     public static let accent = Color.white
@@ -11,8 +11,8 @@ public enum ReelFinTheme {
     // Gradients
     public static let pageGradient = LinearGradient(
         colors: [
-            Color(red: 0.12, green: 0.14, blue: 0.18).opacity(0.8),
-            Color(red: 0.04, green: 0.05, blue: 0.08)
+            Color.black,
+            Color.black
         ],
         startPoint: .top,
         endPoint: .bottom

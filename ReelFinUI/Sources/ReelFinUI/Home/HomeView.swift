@@ -116,6 +116,9 @@ struct HomeView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            Color.black
+                .ignoresSafeArea()
+
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 32) {
                     if viewModel.isInitialLoading && viewModel.feed.rows.isEmpty {

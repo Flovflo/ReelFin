@@ -75,6 +75,8 @@ public struct HeroCarouselView: View {
     @ViewBuilder
     private func heroContent(for item: MediaItem) -> some View {
         ZStack(alignment: .bottom) {
+            Color.black
+
             // Background Image
             CachedRemoteImage(
                 itemID: item.id,
@@ -92,9 +94,9 @@ public struct HeroCarouselView: View {
                     LinearGradient(
                         stops: [
                             .init(color: .clear, location: 0.0),
-                            .init(color: .black.opacity(0.3), location: 0.5),
-                            .init(color: .black.opacity(0.85), location: 0.8),
-                            .init(color: ReelFinTheme.background, location: 1.0)
+                            .init(color: .black.opacity(0.45), location: 0.5),
+                            .init(color: .black.opacity(0.92), location: 0.78),
+                            .init(color: .black, location: 1.0)
                         ],
                         startPoint: .top,
                         endPoint: .bottom

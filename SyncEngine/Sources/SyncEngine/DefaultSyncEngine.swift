@@ -70,8 +70,14 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
             markForegroundLikeSyncIfNeeded(reason: reason)
             updateWidgetSnapshots(feed: feed)
 
-            let posterURLs = await buildPrefetchURLs(feed: feed)
-            await imagePipeline.prefetch(urls: posterURLs)
+            let prefetchLimit = reason == .appLaunch ? 12 : 24
+            let posterURLs = await buildPrefetchURLs(feed: feed, limit: prefetchLimit)
+            if !posterURLs.isEmpty {
+                let imagePipeline = imagePipeline
+                Task.detached(priority: .background) {
+                    await imagePipeline.prefetch(urls: posterURLs)
+                }
+            }
 
             AppLog.sync.debug("Home feed rows: \(feed.rows.count, privacy: .public), items: \(feedItems.count, privacy: .public)")
             interval.end(name: "metadata_sync", message: "success")
@@ -97,10 +103,10 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
         }
     }
 
-    private func buildPrefetchURLs(feed: HomeFeed) async -> [URL] {
+    private func buildPrefetchURLs(feed: HomeFeed, limit: Int) async -> [URL] {
         var urls = [URL]()
         let items = feed.featured + feed.rows.flatMap(\.items)
-        for item in items.prefix(60) {
+        for item in items.prefix(limit) {
             if let url = await apiClient.imageURL(for: item.id, type: .primary, width: 420, quality: 85) {
                 urls.append(url)
             }
