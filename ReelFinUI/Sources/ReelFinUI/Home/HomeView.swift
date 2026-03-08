@@ -108,6 +108,7 @@ struct HomeView: View {
     private let dependencies: ReelFinDependencies
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
+    @State private var selectedDetailNamespace: Namespace.ID?
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
@@ -141,6 +142,7 @@ struct HomeView: View {
                                     namespaceForCard(itemID: itemID, rowID: row.id)
                                 },
                                 onSelect: { item in
+                                    selectedDetailNamespace = namespaceForCard(itemID: item.id, rowID: row.id)
                                     viewModel.select(item: item)
                                 }
                             )
@@ -171,14 +173,19 @@ struct HomeView: View {
         .navigationDestination(
             isPresented: Binding(
                 get: { viewModel.selectedItem != nil },
-                set: { if !$0 { viewModel.selectedItem = nil } }
+                set: {
+                    if !$0 {
+                        selectedDetailNamespace = nil
+                        viewModel.selectedItem = nil
+                    }
+                }
             )
         ) {
             if let item = viewModel.selectedItem {
                 DetailView(
                     dependencies: dependencies,
                     item: item,
-                    namespace: posterNamespace
+                    namespace: selectedDetailNamespace
                 )
             }
         }
@@ -203,6 +210,7 @@ struct HomeView: View {
                     apiClient: dependencies.apiClient,
                     imagePipeline: dependencies.imagePipeline,
                     onTap: { item in
+                        selectedDetailNamespace = nil
                         viewModel.select(item: item)
                     }
                 )
@@ -237,8 +245,6 @@ struct HomeView: View {
                     topIcon(symbol: "slider.horizontal.3", accessibilityLabel: "Customize Home")
                 }
                 .buttonStyle(.plain)
-
-                topIcon(symbol: "person.crop.circle", accessibilityLabel: "Profile")
             }
             .padding(.top, 4)
         }

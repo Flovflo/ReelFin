@@ -5,6 +5,7 @@ import SwiftUI
 public struct HeroCarouselView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
 
     private let items: [MediaItem]
     private let apiClient: JellyfinAPIClientProtocol
@@ -30,36 +31,46 @@ public struct HeroCarouselView: View {
         if items.isEmpty {
             EmptyView()
         } else {
-            ZStack(alignment: .bottom) {
-                TabView(selection: Binding(
-                    get: { currentIndex },
-                    set: { newIndex in currentIndex = newIndex }
-                )) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        heroContent(for: item)
-                            .tag(index)
-                            .onTapGesture {
+            GeometryReader { proxy in
+                ZStack(alignment: .bottom) {
+                    TabView(selection: Binding(
+                        get: { currentIndex },
+                        set: { newIndex in currentIndex = newIndex }
+                    )) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            Button {
                                 onTap(item)
+                            } label: {
+                                heroContent(for: item, size: proxy.size)
+                                    .frame(width: proxy.size.width, height: heroHeight)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .tag(index)
+                            .accessibilityLabel(item.name)
                             .accessibilityAddTraits(.isButton)
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .ignoresSafeArea(edges: .top)
-                .clipped()
-
-                // Page Indicators (centered at the bottom)
-                if items.count > 1 {
-                    HStack(spacing: 6) {
-                        ForEach(0..<items.count, id: \.self) { dotIndex in
-                            Capsule()
-                                .fill(currentIndex == dotIndex ? Color.white : Color.white.opacity(0.34))
-                                .frame(width: currentIndex == dotIndex ? 24 : 8, height: 8)
-                                .animation(.snappy(duration: 0.2), value: currentIndex)
+                            .clipped()
+                            .containerRelativeFrame(.horizontal)
                         }
                     }
-                    .padding(.bottom, 24)
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .frame(width: proxy.size.width, height: heroHeight)
+                    .ignoresSafeArea(edges: .top)
+                    .clipped()
+
+                    if items.count > 1 {
+                        HStack(spacing: 6) {
+                            ForEach(0..<items.count, id: \.self) { dotIndex in
+                                Capsule()
+                                    .fill(currentIndex == dotIndex ? Color.white : Color.white.opacity(0.34))
+                                    .frame(width: currentIndex == dotIndex ? 24 : 8, height: 8)
+                                    .animation(.snappy(duration: 0.2), value: currentIndex)
+                            }
+                        }
+                        .padding(.bottom, 24)
+                    }
                 }
+                .frame(width: proxy.size.width, height: heroHeight, alignment: .bottom)
             }
             .frame(height: heroHeight)
             .onReceive(timer) { _ in
@@ -73,22 +84,21 @@ public struct HeroCarouselView: View {
     }
 
     @ViewBuilder
-    private func heroContent(for item: MediaItem) -> some View {
+    private func heroContent(for item: MediaItem, size: CGSize) -> some View {
         ZStack(alignment: .bottom) {
             Color.black
 
-            // Background Image
             CachedRemoteImage(
                 itemID: item.id,
                 type: .backdrop,
-                width: 1200,
+                width: backdropImageWidth(for: size),
                 quality: 85,
                 apiClient: apiClient,
                 imagePipeline: imagePipeline
             )
+            .frame(width: size.width, height: heroHeight)
             .clipped()
             
-            // Dark scrim to ensure text readability (gradient blur)
             Rectangle()
                 .fill(
                     LinearGradient(
@@ -136,9 +146,10 @@ public struct HeroCarouselView: View {
             }
             .padding(.horizontal, horizontalPadding)
             .padding(.bottom, 60)
-            .frame(width: UIScreen.main.bounds.width - (horizontalPadding * 2), alignment: .center)
+            .frame(width: max(size.width - (horizontalPadding * 2), 0), alignment: .center)
         }
-        .clipShape(Rectangle())
+        .frame(width: size.width, height: heroHeight)
+        .clipped()
     }
 
     private func heroActionButtons(for item: MediaItem) -> some View {
@@ -209,5 +220,10 @@ public struct HeroCarouselView: View {
             return dynamicTypeSize.isAccessibilitySize ? 620 : 540
         }
         return dynamicTypeSize.isAccessibilitySize ? 720 : 660
+    }
+
+    private func backdropImageWidth(for size: CGSize) -> Int {
+        let requestedWidth = Int((size.width * displayScale).rounded(.up))
+        return min(max(requestedWidth, 720), 1400)
     }
 }

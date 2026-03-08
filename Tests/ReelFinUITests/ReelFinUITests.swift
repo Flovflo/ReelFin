@@ -65,6 +65,7 @@ class ReelFinUITests: XCTestCase {
             )
         }
     }
+
 }
 
 final class AppStoreScreenshotTests: XCTestCase {

@@ -314,6 +314,8 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var itemID: String
     public var name: String
+    public var filePath: String?
+    public var fileSize: Int64?
     public var container: String?
     public var videoCodec: String?
     public var audioCodec: String?
@@ -348,6 +350,8 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         id: String,
         itemID: String,
         name: String,
+        filePath: String? = nil,
+        fileSize: Int64? = nil,
         container: String? = nil,
         videoCodec: String? = nil,
         audioCodec: String? = nil,
@@ -381,6 +385,8 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         self.id = id
         self.itemID = itemID
         self.name = name
+        self.filePath = filePath
+        self.fileSize = fileSize
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec

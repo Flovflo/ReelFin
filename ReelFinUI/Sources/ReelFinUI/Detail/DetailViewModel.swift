@@ -9,6 +9,7 @@ final class DetailViewModel: ObservableObject {
     @Published var playbackProgress: PlaybackProgress?
     @Published var isInWatchlist = false
     @Published var isWatched = false
+    @Published var playbackSources: [MediaSource] = []
 
     @Published var seasons: [MediaItem] = []
     @Published var episodes: [MediaItem] = []
@@ -41,19 +42,10 @@ final class DetailViewModel: ObservableObject {
             if freshDetail.item.mediaType == .series {
                 await loadSeasons()
             } else {
-                // Speculative loading: fetch playback info early to warm up the transcode engine.
-                prefetchPlaybackInfo(for: freshDetail.item.id)
+                await loadPlaybackSources(for: freshDetail.item)
             }
         } catch {
             errorMessage = error.localizedDescription
-        }
-    }
-
-    private func prefetchPlaybackInfo(for itemID: String) {
-        let apiClient = dependencies.apiClient
-        Task.detached(priority: .background) {
-            // This warms up the Jellyfin transcode decision and any potential fMP4 manifest generation.
-            _ = try? await apiClient.fetchPlaybackSources(itemID: itemID)
         }
     }
 
@@ -68,6 +60,9 @@ final class DetailViewModel: ObservableObject {
             
             // Find the in-progress or next episode across all seasons
             await resolveNextUpEpisode()
+            if let episode = nextUpEpisode {
+                await loadPlaybackSources(for: episode)
+            }
         } catch {
             print("Failed to load seasons: \(error)")
         }
@@ -101,6 +96,10 @@ final class DetailViewModel: ObservableObject {
         }
     }
 
+    func prepareEpisodePlayback(_ episode: MediaItem) {
+        nextUpEpisode = episode
+    }
+
     var shouldShowResume: Bool {
         guard let playbackProgress else { return false }
         return playbackProgress.positionTicks > 0 && playbackProgress.progressRatio < 0.97
@@ -127,11 +126,40 @@ final class DetailViewModel: ObservableObject {
         return detail.item
     }
 
+    var preferredPlaybackSource: MediaSource? {
+        playbackSources.sorted { lhs, rhs in
+            playbackSourceRank(lhs) > playbackSourceRank(rhs)
+        }.first
+    }
+
     func toggleWatchlist() {
         isInWatchlist.toggle()
     }
 
     func toggleWatched() {
         isWatched.toggle()
+    }
+
+    private func loadPlaybackSources(for item: MediaItem) async {
+        do {
+            let sources = try await dependencies.apiClient.fetchPlaybackSources(itemID: item.id)
+            playbackSources = sources
+        } catch {
+            playbackSources = []
+        }
+    }
+
+    private func playbackSourceRank(_ source: MediaSource) -> Int {
+        var score = source.bitrate ?? 0
+        if source.supportsDirectPlay {
+            score += 10_000_000
+        }
+        if source.supportsDirectStream {
+            score += 5_000_000
+        }
+        if source.isPremiumVideoSource {
+            score += 100_000
+        }
+        return score
     }
 }

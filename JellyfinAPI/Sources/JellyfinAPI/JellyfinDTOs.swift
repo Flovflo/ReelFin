@@ -263,6 +263,8 @@ struct MediaSourceDTO: Decodable {
     // $.components.schemas.MediaSourceInfo
     let id: String
     let name: String?
+    let path: String?
+    let size: Int64?
     let container: String?
     let videoCodec: String?
     let audioCodec: String?
@@ -279,6 +281,8 @@ struct MediaSourceDTO: Decodable {
     init(
         id: String,
         name: String?,
+        path: String? = nil,
+        size: Int64? = nil,
         container: String?,
         videoCodec: String?,
         audioCodec: String?,
@@ -294,6 +298,8 @@ struct MediaSourceDTO: Decodable {
     ) {
         self.id = id
         self.name = name
+        self.path = path
+        self.size = size
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
@@ -311,6 +317,8 @@ struct MediaSourceDTO: Decodable {
     enum CodingKeys: String, CodingKey {
         case id = "Id"
         case name = "Name"
+        case path = "Path"
+        case size = "Size"
         case container = "Container"
         case videoCodec = "VideoCodec"
         case audioCodec = "AudioCodec"
@@ -340,6 +348,8 @@ struct MediaSourceDTO: Decodable {
             id: id,
             itemID: itemID,
             name: name ?? "Source",
+            filePath: path,
+            fileSize: size,
             container: container,
             videoCodec: videoCodec ?? videoStream?.codec,
             audioCodec: preferredAppleAudioCodec(explicit: audioCodec, fallback: audioStream?.codec),

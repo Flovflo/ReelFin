@@ -3,11 +3,11 @@ import Shared
 import SwiftUI
 import ImageCache
 import JellyfinAPI
+import UIKit
 
 struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
     private let namespace: Namespace.ID?
@@ -29,7 +29,7 @@ struct DetailView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 32) {
+            VStack(alignment: .leading, spacing: 20) {
                 // Hero Banner
                 MediaHeroHeaderView(
                     item: viewModel.detail.item,
@@ -38,7 +38,7 @@ struct DetailView: View {
                     isInWatchlist: viewModel.isInWatchlist,
                     isDescriptionExpanded: $isDescriptionExpanded,
                     playButtonLabel: viewModel.playButtonLabel,
-                    onPlay: startPlayback,
+                    onPlay: { startPlayback() },
                     onToggleWatchlist: { viewModel.toggleWatchlist() },
                     onMoreActions: { /* More actions */ },
                     apiClient: dependencies.apiClient,
@@ -68,28 +68,17 @@ struct DetailView: View {
                         imagePipeline: dependencies.imagePipeline
                     )
                 }
+
+                fileDetailsSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 64)
+            .padding(.bottom, 56)
         }
         .background(ReelFinTheme.background.ignoresSafeArea())
         .ignoresSafeArea(edges: .top)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-            }
-        }
+        .navigationBarBackButtonHidden(false)
         .toolbarBackground(.hidden, for: .navigationBar)
         .task {
             await viewModel.load()
@@ -108,7 +97,7 @@ struct DetailView: View {
     @ViewBuilder
     private var seasonSection: some View {
         if !viewModel.seasons.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("Seasons")
                     .reelFinSectionStyle()
                     .padding(.horizontal, horizontalPadding)
@@ -156,7 +145,7 @@ struct DetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
         } else if !viewModel.episodes.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 16) {
                         ForEach(viewModel.episodes) { episode in
@@ -164,8 +153,8 @@ struct DetailView: View {
                                 episode: episode,
                                 width: episodeCardWidth,
                                 onSelect: {
-                                    viewModel.detail = MediaDetail(item: episode)
-                                    Task { await viewModel.load() }
+                                    viewModel.prepareEpisodePlayback(episode)
+                                    startPlayback(item: episode)
                                 },
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline
@@ -178,16 +167,16 @@ struct DetailView: View {
         }
     }
 
-    private func startPlayback() {
+    private func startPlayback(item: MediaItem? = nil) {
         guard !isLoadingPlayback else { return }
         isLoadingPlayback = true
         let session = dependencies.makePlaybackSession()
         playerSession = session
+        let targetItem = item ?? viewModel.itemToPlay
 
         Task {
             do {
-                // Play the resolved item (nextUp episode for series, or the item itself)
-                try await session.load(item: viewModel.itemToPlay)
+                try await session.load(item: targetItem)
                 isLoadingPlayback = false
                 showPlayer = true
             } catch {
@@ -206,15 +195,23 @@ struct DetailView: View {
 
     private var heroHeight: CGFloat {
         if horizontalSizeClass == .compact {
-            return dynamicTypeSize.isAccessibilitySize ? 560 : 500
+            return dynamicTypeSize.isAccessibilitySize ? 520 : 420
         }
-        return dynamicTypeSize.isAccessibilitySize ? 700 : 640
+        return dynamicTypeSize.isAccessibilitySize ? 660 : 560
     }
 
 
 
     private var episodeCardWidth: CGFloat {
         horizontalSizeClass == .compact ? 320 : 400
+    }
+
+    @ViewBuilder
+    private var fileDetailsSection: some View {
+        if let source = viewModel.preferredPlaybackSource {
+            FileDetailsSection(source: source)
+                .padding(.horizontal, horizontalPadding)
+        }
     }
 }
 
@@ -226,10 +223,10 @@ public struct HeroScrimView: View {
     public var body: some View {
         LinearGradient(
             stops: [
-                .init(color: .black.opacity(0.8), location: 0),
-                .init(color: .clear, location: 0.25),
-                .init(color: .clear, location: 0.5),
-                .init(color: .black.opacity(0.7), location: 0.8),
+                .init(color: .clear, location: 0.0),
+                .init(color: .black.opacity(0.08), location: 0.35),
+                .init(color: .black.opacity(0.42), location: 0.68),
+                .init(color: .black.opacity(0.82), location: 0.9),
                 .init(color: .black, location: 1.0)
             ],
             startPoint: .top,
@@ -496,6 +493,7 @@ struct MatchedPosterModifier: ViewModifier {
 public struct MediaHeroHeaderView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.displayScale) private var displayScale
     
     let item: MediaItem
     let heroHeight: CGFloat
@@ -526,27 +524,7 @@ public struct MediaHeroHeaderView: View {
     }
     
     public var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.clear
-                .frame(height: heroHeight)
-                .overlay(alignment: .center) {
-                    CachedRemoteImage(
-                        itemID: item.id,
-                        type: .backdrop,
-                        width: 1300,
-                        quality: 85,
-                        apiClient: apiClient,
-                        imagePipeline: imagePipeline
-                    )
-                    .modifier(MatchedPosterModifier(itemID: item.id, namespace: namespace))
-                    .frame(height: heroHeight)
-                    .clipped()
-                }
-                .clipped()
-
-            HeroScrimView()
-                .frame(height: heroHeight)
-            
+        VStack(spacing: 0) {
             VStack(alignment: .center, spacing: 12) {
                 if let airDays = item.airDays, !airDays.isEmpty {
                     if airDays.count == 1 {
@@ -555,26 +533,26 @@ public struct MediaHeroHeaderView: View {
                         BadgePill(text: "New Episodes on \(airDays.joined(separator: ", "))")
                     }
                 }
-                
+
                 Text(item.name)
                     .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 36 : 56, weight: .heavy, design: .rounded))
-                    .tracking(1.5)
+                    .tracking(1.2)
                     .lineLimit(2)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.72)
                     .truncationMode(.tail)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
                     .textSelection(.disabled)
-                    .shadow(color: .black.opacity(0.4), radius: 6)
+                    .shadow(color: .black.opacity(0.45), radius: 8)
                     .accessibilityAddTraits(.isHeader)
-                
+
                 if !metadataText.isEmpty {
                     Text(metadataText)
                         .font(.title3.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(.white.opacity(0.82))
                         .multilineTextAlignment(.center)
                 }
-                
+
                 HStack(spacing: 12) {
                     PrimaryPlayButton(
                         title: playButtonLabel,
@@ -582,46 +560,19 @@ public struct MediaHeroHeaderView: View {
                         action: onPlay
                     )
                     .frame(maxWidth: 320)
-                    
+
                     GlassCircleButton(
                         systemImage: isInWatchlist ? "checkmark" : "plus",
                         action: onToggleWatchlist
                     )
-                    
+
                     GlassCircleButton(
                         systemImage: "ellipsis",
                         action: onMoreActions
                     )
                 }
-                .padding(.top, 16)
-                .padding(.bottom, 8)
-                
-                if let overview = item.overview, !overview.isEmpty {
-                    VStack(spacing: 8) {
-                        Text(overview)
-                            .font(.body)
-                            .foregroundStyle(.white.opacity(0.75))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(isDescriptionExpanded ? nil : 2)
-                            .fixedSize(horizontal: false, vertical: true)
-                        
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                isDescriptionExpanded.toggle()
-                            }
-                        }) {
-                            Text(isDescriptionExpanded ? "LESS" : "MORE")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Color(white: 0.2))
-                                .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                
+                .padding(.top, 8)
+
                 HStack(spacing: 8) {
                     if item.has4K {
                         BadgePill(text: "4K")
@@ -633,12 +584,41 @@ public struct MediaHeroHeaderView: View {
                         BadgePill(text: "CC")
                     }
                 }
-                .padding(.top, 8)
+                .padding(.top, 2)
+
+                if let overview = item.overview, !overview.isEmpty {
+                    ExpandableOverviewSection(
+                        overview: overview,
+                        isExpanded: $isDescriptionExpanded
+                    )
+                    .padding(.top, 8)
+                }
             }
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, horizontalPadding)
-            .padding(.bottom, 24)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, topInset)
+            .padding(.bottom, 10)
         }
+        .frame(maxWidth: .infinity, minHeight: heroHeight, alignment: .top)
+        .background {
+            GeometryReader { proxy in
+                ZStack(alignment: .bottom) {
+                    DetailHeroArtworkView(
+                        item: item,
+                        containerWidth: proxy.size.width,
+                        width: max(Int((proxy.size.width * displayScale).rounded(.up)), heroImageWidth),
+                        height: proxy.size.height,
+                        apiClient: apiClient,
+                        imagePipeline: imagePipeline,
+                        namespace: namespace
+                    )
+
+                    HeroScrimView()
+                }
+            }
+        }
+        .clipped()
     }
     
     private var metadataText: String {
@@ -657,6 +637,321 @@ public struct MediaHeroHeaderView: View {
     
     private var horizontalPadding: CGFloat {
         horizontalSizeClass == .compact ? 24 : 40
+    }
+
+    private var heroImageWidth: Int {
+        let estimatedWidth = horizontalSizeClass == .compact ? 430.0 : 900.0
+        let requestedWidth = Int((estimatedWidth * displayScale).rounded(.up))
+        return min(max(requestedWidth, 900), 1600)
+    }
+
+    private var topInset: CGFloat {
+        if horizontalSizeClass == .compact {
+            return dynamicTypeSize.isAccessibilitySize ? 120 : 104
+        }
+        return dynamicTypeSize.isAccessibilitySize ? 148 : 124
+    }
+}
+
+private struct DetailHeroArtworkView: View {
+    let item: MediaItem
+    let containerWidth: CGFloat
+    let width: Int
+    let height: CGFloat
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let namespace: Namespace.ID?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if showsForegroundArtwork {
+                backgroundArtwork
+                foregroundArtwork
+            } else {
+                fullBleedArtwork
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(height: max(height, 0))
+    }
+
+    private var artworkItemID: String {
+        if item.mediaType == .episode, let parentID = item.parentID {
+            return parentID
+        }
+        return item.id
+    }
+
+    private var backgroundImageType: JellyfinImageType {
+        if item.backdropTag != nil {
+            return .backdrop
+        }
+        return .primary
+    }
+
+    private var foregroundImageType: JellyfinImageType {
+        .primary
+    }
+
+    private var showsForegroundArtwork: Bool {
+        backgroundImageType == .primary
+    }
+
+    private var backgroundArtwork: some View {
+        CachedRemoteImage(
+            itemID: artworkItemID,
+            type: backgroundImageType,
+            width: width,
+            quality: 82,
+            contentMode: .fill,
+            apiClient: apiClient,
+            imagePipeline: imagePipeline
+        )
+        .scaleEffect(1.24)
+        .blur(radius: 28)
+        .opacity(0.42)
+        .offset(x: backdropOffsetX)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .clipped()
+    }
+
+    private var fullBleedArtwork: some View {
+        CachedRemoteImage(
+            itemID: artworkItemID,
+            type: backgroundImageType,
+            width: width,
+            quality: 85,
+            contentMode: .fill,
+            apiClient: apiClient,
+            imagePipeline: imagePipeline
+        )
+        .offset(x: backdropOffsetX)
+        .frame(width: containerWidth, height: height, alignment: .center)
+        .clipped()
+    }
+
+    private var foregroundArtwork: some View {
+        CachedRemoteImage(
+            itemID: artworkItemID,
+            type: foregroundImageType,
+            width: width,
+            quality: 85,
+            contentMode: .fit,
+            apiClient: apiClient,
+            imagePipeline: imagePipeline
+        )
+        .modifier(MatchedPosterModifier(itemID: item.id, namespace: namespace))
+        .frame(
+            width: foregroundWidth,
+            height: foregroundHeight,
+            alignment: .center
+        )
+        .offset(x: foregroundOffsetX, y: foregroundOffsetY)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
+    private var foregroundWidth: CGFloat {
+        if foregroundImageType == .primary {
+            return min(containerWidth * 0.82, 360)
+        }
+        return containerWidth
+    }
+
+    private var foregroundHeight: CGFloat {
+        if foregroundImageType == .primary {
+            return height * 0.92
+        }
+        return height * 0.82
+    }
+
+    private var foregroundOffsetY: CGFloat {
+        foregroundImageType == .primary ? height * 0.03 : 0
+    }
+
+    private var foregroundOffsetX: CGFloat {
+        foregroundImageType == .primary ? 0 : backdropOffsetX
+    }
+
+    private var backdropOffsetX: CGFloat {
+        backgroundImageType == .backdrop ? -(containerWidth * 0.12) : 0
+    }
+}
+
+private struct ExpandableOverviewSection: View {
+    let overview: String
+    @Binding var isExpanded: Bool
+
+    @State private var availableWidth: CGFloat = 0
+
+    var body: some View {
+        let showToggle = shouldShowToggle
+
+        VStack(spacing: 10) {
+            Text(overview)
+                .font(.body)
+                .foregroundStyle(.white.opacity(0.8))
+                .multilineTextAlignment(.center)
+                .lineLimit(showToggle && !isExpanded ? 3 : nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(widthReader)
+
+            if showToggle {
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    Text(isExpanded ? "LESS" : "MORE")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.14))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var shouldShowToggle: Bool {
+        guard availableWidth > 0 else { return false }
+        return lineCount > 3
+    }
+
+    private var widthReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear {
+                    availableWidth = proxy.size.width
+                }
+                .onChange(of: proxy.size.width) { _, newWidth in
+                    availableWidth = newWidth
+                }
+        }
+    }
+
+    private func measuredHeight(lineLimit: Int?) -> CGFloat {
+        guard availableWidth > 0 else { return 0 }
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        paragraphStyle.lineBreakMode = .byWordWrapping
+
+        let font = measurementFont
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        let attributedString = NSAttributedString(string: overview, attributes: attributes)
+        let boundingRect = attributedString.boundingRect(
+            with: CGSize(width: availableWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+
+        if let lineLimit {
+            return min(ceil(boundingRect.height), CGFloat(lineLimit) * font.lineHeight)
+        }
+        return ceil(boundingRect.height)
+    }
+
+    private var lineCount: Int {
+        guard availableWidth > 0 else { return 0 }
+        return Int(ceil(measuredHeight(lineLimit: nil) / measurementFont.lineHeight))
+    }
+
+    private var measurementFont: UIFont {
+        UIFont.preferredFont(forTextStyle: .body)
+    }
+}
+
+private struct FileDetailsSection: View {
+    let source: MediaSource
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("File Details")
+                .reelFinSectionStyle()
+
+            VStack(alignment: .leading, spacing: 12) {
+                if let fileName {
+                    detailRow(label: "Original File", value: fileName)
+                }
+                detailRow(label: "Container", value: source.container?.uppercased() ?? "Unknown")
+                detailRow(label: "Video", value: videoSummary)
+                detailRow(label: "Audio", value: audioSummary)
+                if let bitrate = formattedBitrate {
+                    detailRow(label: "Bitrate", value: bitrate)
+                }
+                if let size = formattedFileSize {
+                    detailRow(label: "Size", value: size)
+                }
+                if let path = source.filePath, !path.isEmpty {
+                    detailRow(label: "Path", value: path)
+                }
+            }
+            .padding(18)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+            }
+        }
+    }
+
+    private var fileName: String? {
+        if let path = source.filePath, !path.isEmpty {
+            return URL(fileURLWithPath: path).lastPathComponent
+        }
+        return source.name.isEmpty ? nil : source.name
+    }
+
+    private var videoSummary: String {
+        let codec = source.videoCodec?.uppercased() ?? "Unknown"
+        let resolution = if let width = source.videoWidth, let height = source.videoHeight {
+            "\(width)x\(height)"
+        } else {
+            "Unknown resolution"
+        }
+        return "\(codec) • \(resolution)"
+    }
+
+    private var audioSummary: String {
+        let codec = source.audioCodec?.uppercased() ?? "Unknown"
+        if let channels = source.audioChannels {
+            return "\(codec) • \(channels) ch"
+        }
+        return codec
+    }
+
+    private var formattedBitrate: String? {
+        guard let bitrate = source.bitrate, bitrate > 0 else { return nil }
+        return String(format: "%.1f Mbps", Double(bitrate) / 1_000_000)
+    }
+
+    private var formattedFileSize: String? {
+        guard let fileSize = source.fileSize, fileSize > 0 else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: fileSize)
+    }
+
+    @ViewBuilder
+    private func detailRow(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.55))
+
+            Text(value)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
