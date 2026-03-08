@@ -378,7 +378,8 @@ struct MediaSourceDTO: Decodable {
             audioTracks: audioTracks,
             subtitleTracks: subtitleTracks,
             videoWidth: videoStream?.width,
-            videoHeight: videoStream?.height
+            videoHeight: videoStream?.height,
+            videoFrameRate: videoStream?.realFrameRate
         )
     }
 
@@ -479,6 +480,7 @@ struct MediaStreamDTO: Decodable {
     let bitrate: Int?
     let width: Int?
     let height: Int?
+    let realFrameRate: Double?
 
     init(
         index: Int?,
@@ -510,7 +512,8 @@ struct MediaStreamDTO: Decodable {
         channelLayout: String?,
         bitrate: Int?,
         width: Int?,
-        height: Int?
+        height: Int?,
+        realFrameRate: Double? = nil
     ) {
         self.index = index
         self.type = type
@@ -542,6 +545,7 @@ struct MediaStreamDTO: Decodable {
         self.bitrate = bitrate
         self.width = width
         self.height = height
+        self.realFrameRate = realFrameRate
     }
 
     enum CodingKeys: String, CodingKey {
@@ -575,6 +579,7 @@ struct MediaStreamDTO: Decodable {
         case bitrate = "BitRate"
         case width = "Width"
         case height = "Height"
+        case realFrameRate = "RealFrameRate"
     }
 
     /// Jellyfin sends some Bool fields as integers (0/1) instead of true/false.
@@ -621,6 +626,7 @@ struct MediaStreamDTO: Decodable {
         bitrate = try container.decodeIfPresent(Int.self, forKey: .bitrate)
         width = try container.decodeIfPresent(Int.self, forKey: .width)
         height = try container.decodeIfPresent(Int.self, forKey: .height)
+        realFrameRate = try container.decodeIfPresent(Double.self, forKey: .realFrameRate)
     }
 
     func toTrack(streamCodec: String?) -> MediaTrack {

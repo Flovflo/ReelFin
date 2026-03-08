@@ -92,11 +92,30 @@ final class AppStoreScreenshotTests: XCTestCase {
         let playButton = app.buttons["Play"]
         XCTAssertTrue(playButton.waitForExistence(timeout: 8))
         capture(name: "03-detail")
-
-        app.navigationBars.buttons.firstMatch.tap()
         openSection(named: "Settings", in: app)
         XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 8))
         capture(name: "04-settings")
+    }
+
+    func testCapturePlayerScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let firstPoster = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")).firstMatch
+        XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
+
+        firstPoster.tap()
+        let playButton = app.buttons["Play"]
+        XCTAssertTrue(playButton.waitForExistence(timeout: 8))
+
+        playButton.tap()
+        let playerScreen = app.otherElements["native_player_screen"].firstMatch
+        XCTAssertTrue(playerScreen.waitForExistence(timeout: 12))
+        sleep(2)
+        capture(name: "player-native")
     }
 
     private func openSection(named title: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {

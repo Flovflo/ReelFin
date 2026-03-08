@@ -345,6 +345,7 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
     public var subtitleTracks: [MediaTrack]
     public var videoWidth: Int?
     public var videoHeight: Int?
+    public var videoFrameRate: Double?
 
     public init(
         id: String,
@@ -380,7 +381,8 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         audioTracks: [MediaTrack] = [],
         subtitleTracks: [MediaTrack] = [],
         videoWidth: Int? = nil,
-        videoHeight: Int? = nil
+        videoHeight: Int? = nil,
+        videoFrameRate: Double? = nil
     ) {
         self.id = id
         self.itemID = itemID
@@ -416,6 +418,7 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         self.subtitleTracks = subtitleTracks
         self.videoWidth = videoWidth
         self.videoHeight = videoHeight
+        self.videoFrameRate = videoFrameRate
     }
 
     public var normalizedContainer: String {

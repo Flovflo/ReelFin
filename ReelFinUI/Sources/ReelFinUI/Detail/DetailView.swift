@@ -877,28 +877,37 @@ private struct FileDetailsSection: View {
             Text("File Details")
                 .reelFinSectionStyle()
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
                 if let fileName {
-                    detailRow(label: "Original File", value: fileName)
+                    Text(fileName)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
                 }
-                detailRow(label: "Container", value: source.container?.uppercased() ?? "Unknown")
-                detailRow(label: "Video", value: videoSummary)
-                detailRow(label: "Audio", value: audioSummary)
-                if let bitrate = formattedBitrate {
-                    detailRow(label: "Bitrate", value: bitrate)
-                }
-                if let size = formattedFileSize {
-                    detailRow(label: "Size", value: size)
-                }
-                if let path = source.filePath, !path.isEmpty {
-                    detailRow(label: "Path", value: path)
+
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 12) {
+                    if let codec = codecSummary {
+                        compactMetric(label: "Codec", value: codec)
+                    }
+                    if let resolution = resolutionSummary {
+                        compactMetric(label: "Resolution", value: resolution)
+                    }
+                    if let frameRate = frameRateSummary {
+                        compactMetric(label: "Frame Rate", value: frameRate)
+                    }
+                    if let bitrate = formattedBitrate {
+                        compactMetric(label: "Bitrate", value: bitrate)
+                    }
+                    if let size = formattedFileSize {
+                        compactMetric(label: "Size", value: size)
+                    }
                 }
             }
             .padding(18)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 0.8)
             }
         }
     }
@@ -910,22 +919,21 @@ private struct FileDetailsSection: View {
         return source.name.isEmpty ? nil : source.name
     }
 
-    private var videoSummary: String {
-        let codec = source.videoCodec?.uppercased() ?? "Unknown"
-        let resolution = if let width = source.videoWidth, let height = source.videoHeight {
-            "\(width)x\(height)"
-        } else {
-            "Unknown resolution"
-        }
-        return "\(codec) • \(resolution)"
+    private var codecSummary: String? {
+        let video = source.videoCodec?.uppercased()
+        let audio = source.audioCodec?.uppercased()
+        let values = [video, audio].compactMap { $0 }.filter { !$0.isEmpty }
+        return values.isEmpty ? nil : values.joined(separator: " / ")
     }
 
-    private var audioSummary: String {
-        let codec = source.audioCodec?.uppercased() ?? "Unknown"
-        if let channels = source.audioChannels {
-            return "\(codec) • \(channels) ch"
-        }
-        return codec
+    private var resolutionSummary: String? {
+        guard let width = source.videoWidth, let height = source.videoHeight else { return nil }
+        return "\(width)x\(height)"
+    }
+
+    private var frameRateSummary: String? {
+        guard let frameRate = source.videoFrameRate, frameRate > 0 else { return nil }
+        return String(format: "%.2f fps", frameRate)
     }
 
     private var formattedBitrate: String? {
@@ -940,18 +948,26 @@ private struct FileDetailsSection: View {
         return formatter.string(fromByteCount: fileSize)
     }
 
+    private var gridColumns: [GridItem] {
+        [
+            GridItem(.flexible(minimum: 120), spacing: 12, alignment: .leading),
+            GridItem(.flexible(minimum: 120), spacing: 12, alignment: .leading)
+        ]
+    }
+
     @ViewBuilder
-    private func detailRow(label: String, value: String) -> some View {
+    private func compactMetric(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.white.opacity(0.5))
 
             Text(value)
                 .font(.body.weight(.medium))
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
