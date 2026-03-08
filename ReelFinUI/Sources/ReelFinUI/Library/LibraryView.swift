@@ -28,6 +28,7 @@ struct LibraryView: View {
                                     layoutStyle: .grid
                                 )
                             }
+                            .accessibilityIdentifier("media_card_button_\(item.id)")
                             .buttonStyle(.plain)
                             .task {
                                 await viewModel.loadMoreIfNeeded(for: item)

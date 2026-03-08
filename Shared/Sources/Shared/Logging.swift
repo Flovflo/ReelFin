@@ -9,6 +9,7 @@ public enum AppLog {
     public static let playback = Logger(subsystem: subsystem, category: "playback")
     public static let sync = Logger(subsystem: subsystem, category: "sync")
     public static let ui = Logger(subsystem: subsystem, category: "ui")
+    public static let nativeBridge = Logger(subsystem: subsystem, category: "nativeBridge")
 }
 
 public final class SignpostInterval {
@@ -38,4 +39,5 @@ public enum Signpost {
     public static let playerLifecycle = OSSignposter(subsystem: AppLog.subsystem, category: "player_lifecycle")
     public static let playbackStalls = OSSignposter(subsystem: AppLog.subsystem, category: "playback_stalls")
     public static let ttffPipeline = OSSignposter(subsystem: AppLog.subsystem, category: "ttff_pipeline")
+    public static let nativeBridgePipeline = OSSignposter(subsystem: AppLog.subsystem, category: "native_bridge_pipeline")
 }

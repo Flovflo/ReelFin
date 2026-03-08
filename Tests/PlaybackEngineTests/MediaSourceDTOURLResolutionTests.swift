@@ -43,4 +43,59 @@ final class MediaSourceDTOURLResolutionTests: XCTestCase {
 
         XCTAssertEqual(domain.transcodeURL?.absoluteString, "https://cdn.example.com/master.m3u8?token=123")
     }
+
+    func testVideoMetadataMapsDolbyVisionAndColorFields() {
+        let stream = MediaStreamDTO(
+            index: 0,
+            type: "Video",
+            title: nil,
+            displayTitle: "HEVC DV",
+            language: nil,
+            isDefault: true,
+            codec: "hevc",
+            profile: "Main 10",
+            bitDepth: 10,
+            colorRange: "tv",
+            colorSpace: "bt2020nc",
+            colorTransfer: "smpte2084",
+            colorPrimaries: "bt2020",
+            dvVersionMajor: 1,
+            dvVersionMinor: 0,
+            dvProfile: 8,
+            dvLevel: 6,
+            rpuPresentFlag: true,
+            elPresentFlag: false,
+            blPresentFlag: true,
+            dvBlSignalCompatibilityId: 1,
+            hdr10PlusPresentFlag: false,
+            videoRange: "HDR",
+            videoRangeType: "DOVIWithHDR10",
+            videoDoViTitle: "Dolby Vision",
+            channels: nil,
+            channelLayout: nil,
+            bitrate: 15_000_000,
+            width: 3840,
+            height: 1608
+        )
+        let dto = MediaSourceDTO(
+            id: "source-3",
+            name: "dv",
+            container: "mkv",
+            videoCodec: nil,
+            audioCodec: "eac3",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: "/Videos/abc/stream?Static=true",
+            transcodingURL: nil,
+            mediaStreams: [stream]
+        )
+
+        let domain = dto.toDomain(itemID: "abc", serverURL: URL(string: "https://jellyfin.example.com")!)
+        XCTAssertEqual(domain.videoRangeType, "DOVIWithHDR10")
+        XCTAssertEqual(domain.dvProfile, 8)
+        XCTAssertEqual(domain.dvLevel, 6)
+        XCTAssertEqual(domain.dvBlSignalCompatibilityId, 1)
+        XCTAssertEqual(domain.colorTransfer, "smpte2084")
+        XCTAssertEqual(domain.colorPrimaries, "bt2020")
+    }
 }

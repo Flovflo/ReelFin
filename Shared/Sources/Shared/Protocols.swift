@@ -14,6 +14,7 @@ public enum AppError: LocalizedError, Sendable {
     case network(String)
     case decoding(String)
     case persistence(String)
+    case nativeBridge(String)
     case unknown
 
     public var errorDescription: String? {
@@ -27,6 +28,8 @@ public enum AppError: LocalizedError, Sendable {
         case let .decoding(message):
             return message
         case let .persistence(message):
+            return message
+        case let .nativeBridge(message):
             return message
         case .unknown:
             return "An unknown error occurred."

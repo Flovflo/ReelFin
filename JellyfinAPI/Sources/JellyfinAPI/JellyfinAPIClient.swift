@@ -208,14 +208,14 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             libraryID: nil
         )
 
-        let resume = try await resumeItems
-        let nextUp = try await nextUpEpisodes
-        let recentMovieItems = try await recentlyAddedMovies
-        let recentSeriesItems = try await recentlyAddedSeries
-        let popular = try await popularItems
-        let trending = try await trendingItems
-        let movieItems = try await movies
-        let showItems = try await shows
+        let resume = (try? await resumeItems) ?? []
+        let nextUp = (try? await nextUpEpisodes) ?? []
+        let recentMovieItems = (try? await recentlyAddedMovies) ?? []
+        let recentSeriesItems = (try? await recentlyAddedSeries) ?? []
+        let popular = (try? await popularItems) ?? []
+        let trending = (try? await trendingItems) ?? []
+        let movieItems = (try? await movies) ?? []
+        let showItems = (try? await shows) ?? []
 
         let featured = Array((recentMovieItems + recentSeriesItems + popular).prefix(8))
         let rows = [
@@ -357,6 +357,9 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        // OpenAPI source:
+        // /Users/florian/Downloads/jellyfin-openapi-stable.json
+        // $.paths["/Items/{itemId}/PlaybackInfo"].post
         let maxBitrate = options.maxStreamingBitrate ?? configuration?.preferredQuality.maxStreamingBitrate ?? 8_000_000
         let profile: DeviceProfileRequestDTO?
         switch options.deviceProfile ?? .automatic {
@@ -510,12 +513,33 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
         let data = try await send(request, dedupe: dedupe && method.uppercased() == "GET")
 
-        if T.self == EmptyResponse.self {
-            return EmptyResponse() as! T
+        if T.self == EmptyResponse.self || data.isEmpty {
+            if T.self == EmptyResponse.self {
+                return EmptyResponse() as! T
+            }
+            // Server returned an empty body for a typed response — log and fail gracefully.
+            AppLog.networking.warning("Empty response body for \(String(describing: T.self), privacy: .public)")
+            throw AppError.decoding("Server returned an empty response.")
         }
 
         do {
             return try decoder.decode(T.self, from: data)
+        } catch let decodingError as DecodingError {
+            let detail: String
+            switch decodingError {
+            case let .keyNotFound(key, context):
+                detail = "Missing key '\(key.stringValue)' at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
+            case let .typeMismatch(type, context):
+                detail = "Type mismatch for \(type) at \(context.codingPath.map(\.stringValue).joined(separator: ".")): \(context.debugDescription)"
+            case let .valueNotFound(type, context):
+                detail = "Null value for \(type) at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
+            case let .dataCorrupted(context):
+                detail = "Corrupted data at \(context.codingPath.map(\.stringValue).joined(separator: ".")): \(context.debugDescription)"
+            @unknown default:
+                detail = decodingError.localizedDescription
+            }
+            AppLog.networking.error("Decoding failed [\(String(describing: T.self), privacy: .public)]: \(detail, privacy: .public)")
+            throw AppError.decoding("Unable to decode server response.")
         } catch {
             AppLog.networking.error("Decoding failed: \(error.localizedDescription, privacy: .public)")
             throw AppError.decoding("Unable to decode server response.")

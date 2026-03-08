@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
-    private var config: ServerConfiguration?
+    private var config: ServerConfiguration? = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
     private var session: UserSession? = UserSession(userID: "preview-user", username: "Preview", token: "token")
 
     func currentConfiguration() async -> ServerConfiguration? {
@@ -131,7 +131,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? {
-        URL(string: "https://picsum.photos/\(width ?? 400)/600?random=\(itemID.hashValue)")
+        URL(string: "mock-image://\(itemID)?type=\(type.rawValue)&width=\(width ?? 400)")
     }
 
     func reportPlayback(progress: PlaybackProgressUpdate) async throws {}
@@ -164,6 +164,16 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         }
 
         return items
+    }
+}
+
+final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
+    var serverConfiguration: ServerConfiguration?
+    var lastSession: UserSession?
+
+    init() {
+        serverConfiguration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
+        lastSession = UserSession(userID: "preview-user", username: "Preview", token: "token")
     }
 }
 
@@ -216,7 +226,7 @@ final class MockMetadataRepository: MetadataRepositoryProtocol, @unchecked Senda
 
 final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     func image(for url: URL) async throws -> UIImage {
-        UIImage(systemName: "film.fill") ?? UIImage()
+        ArtworkPlaceholderRenderer.makeImage(seed: url.absoluteString)
     }
 
     func cachedImage(for url: URL) async -> UIImage? {
@@ -226,6 +236,64 @@ final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     func prefetch(urls: [URL]) async {}
 
     func cancel(url: URL) {}
+}
+
+private enum ArtworkPlaceholderRenderer {
+    static func makeImage(seed: String, size: CGSize = CGSize(width: 900, height: 1350)) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let palette = palette(for: seed)
+
+        return renderer.image { context in
+            let cgContext = context.cgContext
+            let bounds = CGRect(origin: .zero, size: size)
+
+            let gradientColors = palette.map(\.cgColor) as CFArray
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let gradient = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: [0, 0.55, 1])!
+
+            cgContext.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: 0, y: 0),
+                end: CGPoint(x: size.width, y: size.height),
+                options: []
+            )
+
+            UIColor.white.withAlphaComponent(0.07).setFill()
+            cgContext.fillEllipse(in: CGRect(x: -120, y: -80, width: 520, height: 520))
+            cgContext.fillEllipse(in: CGRect(x: size.width - 420, y: size.height - 520, width: 560, height: 560))
+
+            let symbolConfiguration = UIImage.SymbolConfiguration(pointSize: 220, weight: .bold)
+            let symbol = UIImage(systemName: "film.stack.fill", withConfiguration: symbolConfiguration)?
+                .withTintColor(.white.withAlphaComponent(0.16), renderingMode: .alwaysOriginal)
+            symbol?.draw(in: CGRect(x: 72, y: size.height - 360, width: 220, height: 220))
+
+            let pillRect = CGRect(x: 56, y: 64, width: 220, height: 40)
+            UIBezierPath(roundedRect: pillRect, cornerRadius: 20).addClip()
+            UIColor.white.withAlphaComponent(0.12).setFill()
+            UIRectFill(pillRect)
+
+            let badgeText = NSString(string: "REELFIN")
+            badgeText.draw(
+                in: CGRect(x: pillRect.minX + 18, y: pillRect.minY + 10, width: 184, height: 22),
+                withAttributes: [
+                    .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+                    .foregroundColor: UIColor.white.withAlphaComponent(0.92)
+                ]
+            )
+        }
+    }
+
+    private static func palette(for seed: String) -> [UIColor] {
+        let palettes: [[UIColor]] = [
+            [UIColor(red: 0.07, green: 0.10, blue: 0.18, alpha: 1), UIColor(red: 0.17, green: 0.30, blue: 0.54, alpha: 1), UIColor(red: 0.03, green: 0.64, blue: 0.89, alpha: 1)],
+            [UIColor(red: 0.20, green: 0.07, blue: 0.16, alpha: 1), UIColor(red: 0.54, green: 0.16, blue: 0.29, alpha: 1), UIColor(red: 0.89, green: 0.36, blue: 0.29, alpha: 1)],
+            [UIColor(red: 0.10, green: 0.18, blue: 0.12, alpha: 1), UIColor(red: 0.18, green: 0.40, blue: 0.24, alpha: 1), UIColor(red: 0.62, green: 0.83, blue: 0.39, alpha: 1)],
+            [UIColor(red: 0.11, green: 0.08, blue: 0.20, alpha: 1), UIColor(red: 0.28, green: 0.20, blue: 0.55, alpha: 1), UIColor(red: 0.72, green: 0.48, blue: 0.96, alpha: 1)]
+        ]
+
+        let index = abs(seed.hashValue) % palettes.count
+        return palettes[index]
+    }
 }
 
 final class MockSyncEngine: SyncEngineProtocol, @unchecked Sendable {
@@ -238,7 +306,7 @@ public enum ReelFinPreviewFactory {
         let repository = MockMetadataRepository()
         let images = MockImagePipeline()
         let sync = MockSyncEngine()
-        let settings = DefaultSettingsStore()
+        let settings = MockSettingsStore()
         let seriesCache = SeriesLookupCache(apiClient: api)
 
         return ReelFinDependencies(
@@ -252,6 +320,10 @@ public enum ReelFinPreviewFactory {
                 PlaybackSessionController(apiClient: api, repository: repository)
             }
         )
+    }
+
+    @MainActor public static func appStoreDependencies() -> ReelFinDependencies {
+        dependencies()
     }
 }
 

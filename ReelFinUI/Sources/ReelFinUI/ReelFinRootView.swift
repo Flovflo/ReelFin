@@ -145,7 +145,10 @@ public struct ReelFinRootView: View {
 
     #if os(iOS)
     private var shouldUseSplitLayout: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
+        if AppMetadata.current.isScreenshotModeEnabled {
+            return false
+        }
+        return UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
     }
     #endif
 }

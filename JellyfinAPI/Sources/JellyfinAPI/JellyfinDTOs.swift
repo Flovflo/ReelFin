@@ -1,6 +1,28 @@
 import Foundation
 import Shared
 
+/// Decodes a JSON array while silently skipping elements that fail to decode.
+/// This prevents a single malformed item from crashing the entire response.
+struct LossyArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var result: [Element] = []
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                result.append(element)
+            } else {
+                // Skip the bad element by decoding as throwaway JSON
+                _ = try? container.decode(AnyCodable.self)
+            }
+        }
+        self.elements = result
+    }
+}
+
+private struct AnyCodable: Decodable {}
+
 struct AuthenticateRequestDTO: Encodable {
     let username: String
     let pw: String
@@ -37,6 +59,11 @@ struct ViewsResponseDTO: Decodable {
     enum CodingKeys: String, CodingKey {
         case items = "Items"
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.items = (try? container.decodeIfPresent(LossyArray<ViewDTO>.self, forKey: .items))?.elements ?? []
+    }
 }
 
 struct ViewDTO: Decodable {
@@ -56,6 +83,15 @@ struct ItemsResponseDTO: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case items = "Items"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.items = (try? container.decodeIfPresent(LossyArray<ItemDTO>.self, forKey: .items))?.elements ?? []
+    }
+
+    init(items: [ItemDTO]) {
+        self.items = items
     }
 }
 
@@ -206,14 +242,25 @@ struct PersonDTO: Decodable {
 }
 
 struct PlaybackInfoResponseDTO: Decodable {
+    // OpenAPI source:
+    // /Users/florian/Downloads/jellyfin-openapi-stable.json
+    // $.components.schemas.PlaybackInfoResponse.properties.MediaSources
     let mediaSources: [MediaSourceDTO]
 
     enum CodingKeys: String, CodingKey {
         case mediaSources = "MediaSources"
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.mediaSources = (try? container.decodeIfPresent(LossyArray<MediaSourceDTO>.self, forKey: .mediaSources))?.elements ?? []
+    }
 }
 
 struct MediaSourceDTO: Decodable {
+    // OpenAPI source:
+    // /Users/florian/Downloads/jellyfin-openapi-stable.json
+    // $.components.schemas.MediaSourceInfo
     let id: String
     let name: String?
     let container: String?
@@ -280,10 +327,11 @@ struct MediaSourceDTO: Decodable {
 
     func toDomain(itemID: String, serverURL: URL) -> MediaSource {
         let tracks = mediaStreams ?? []
-        let audioTracks = tracks.filter { $0.type?.lowercased() == "audio" }.map { $0.toTrack() }
-        let subtitleTracks = tracks.filter { $0.type?.lowercased() == "subtitle" }.map { $0.toTrack() }
+        let audioStreams = tracks.filter { $0.type?.lowercased() == "audio" }
+        let audioTracks = audioStreams.map { $0.toTrack(streamCodec: $0.codec) }
+        let subtitleTracks = tracks.filter { $0.type?.lowercased() == "subtitle" }.map { $0.toTrack(streamCodec: $0.codec) }
         let videoStream = tracks.first(where: { $0.type?.lowercased() == "video" })
-        let audioStream = tracks.first(where: { $0.type?.lowercased() == "audio" })
+        let audioStream = preferredAppleAudioStream(from: audioStreams)
 
         let streamURL = directStreamURL.flatMap { resolvePlaybackURL($0, serverURL: serverURL) }
         let transcode = transcodingURL.flatMap { resolvePlaybackURL($0, serverURL: serverURL) }
@@ -294,11 +342,20 @@ struct MediaSourceDTO: Decodable {
             name: name ?? "Source",
             container: container,
             videoCodec: videoCodec ?? videoStream?.codec,
-            audioCodec: audioCodec ?? audioStream?.codec,
+            audioCodec: preferredAppleAudioCodec(explicit: audioCodec, fallback: audioStream?.codec),
             bitrate: bitrate ?? videoStream?.bitrate,
             videoBitDepth: videoBitDepth ?? videoStream?.bitDepth,
-            videoRange: videoRangeType ?? videoStream?.videoRangeType,
+            videoRange: videoRangeType ?? videoStream?.videoRangeType ?? videoStream?.videoRange,
+            videoRangeType: videoRangeType ?? videoStream?.videoRangeType,
             videoProfile: videoStream?.profile,
+            dvProfile: videoStream?.dvProfile,
+            dvLevel: videoStream?.dvLevel,
+            dvBlSignalCompatibilityId: videoStream?.dvBlSignalCompatibilityId,
+            hdr10PlusPresentFlag: videoStream?.hdr10PlusPresentFlag,
+            colorPrimaries: videoStream?.colorPrimaries,
+            colorTransfer: videoStream?.colorTransfer,
+            colorSpace: videoStream?.colorSpace,
+            colorRange: videoStream?.colorRange,
             audioChannels: audioStream?.channels,
             audioChannelLayout: audioStream?.channelLayout,
             audioProfile: audioStream?.profile,
@@ -309,8 +366,49 @@ struct MediaSourceDTO: Decodable {
             transcodeURL: transcode,
             requiredHTTPHeaders: requiredHTTPHeaders ?? [:],
             audioTracks: audioTracks,
-            subtitleTracks: subtitleTracks
+            subtitleTracks: subtitleTracks,
+            videoWidth: videoStream?.width,
+            videoHeight: videoStream?.height
         )
+    }
+
+    private func preferredAppleAudioCodec(explicit: String?, fallback: String?) -> String? {
+        if let explicit {
+            let lowered = explicit.lowercased()
+            if lowered.contains("truehd"), let fallback {
+                // Prefer E-AC-3/AC-3/AAC whenever available for Apple native pipeline stability.
+                return fallback
+            }
+            return explicit
+        }
+        return fallback
+    }
+
+    private func preferredAppleAudioStream(from audioStreams: [MediaStreamDTO]) -> MediaStreamDTO? {
+        func rank(_ stream: MediaStreamDTO) -> Int {
+            let codec = (stream.codec ?? "").lowercased()
+            var score = 0
+            if codec.contains("eac3") || codec.contains("ec3") {
+                score += 10_000
+            } else if codec.contains("ac3") {
+                score += 8_000
+            } else if codec.contains("aac") {
+                score += 7_000
+            } else if codec.contains("truehd") {
+                score += 500
+            }
+            if stream.isDefault == true {
+                score += 1_000
+            }
+            if let channels = stream.channels {
+                score += min(channels, 12) * 10
+            }
+            return score
+        }
+
+        return audioStreams.max { lhs, rhs in
+            rank(lhs) < rank(rhs)
+        }
     }
 
     private func resolvePlaybackURL(_ value: String, serverURL: URL) -> URL? {
@@ -338,6 +436,9 @@ struct MediaSourceDTO: Decodable {
 }
 
 struct MediaStreamDTO: Decodable {
+    // OpenAPI source:
+    // /Users/florian/Downloads/jellyfin-openapi-stable.json
+    // $.components.schemas.MediaStream
     let index: Int?
     let type: String?
     let title: String?
@@ -347,12 +448,91 @@ struct MediaStreamDTO: Decodable {
     let codec: String?
     let profile: String?
     let bitDepth: Int?
+    let colorRange: String?
+    let colorSpace: String?
+    let colorTransfer: String?
+    let colorPrimaries: String?
+    let dvVersionMajor: Int?
+    let dvVersionMinor: Int?
+    let dvProfile: Int?
+    let dvLevel: Int?
+    let rpuPresentFlag: Bool?
+    let elPresentFlag: Bool?
+    let blPresentFlag: Bool?
+    let dvBlSignalCompatibilityId: Int?
+    let hdr10PlusPresentFlag: Bool?
+    let videoRange: String?
     let videoRangeType: String?
+    let videoDoViTitle: String?
     let channels: Int?
     let channelLayout: String?
     let bitrate: Int?
     let width: Int?
     let height: Int?
+
+    init(
+        index: Int?,
+        type: String?,
+        title: String?,
+        displayTitle: String?,
+        language: String?,
+        isDefault: Bool?,
+        codec: String?,
+        profile: String?,
+        bitDepth: Int?,
+        colorRange: String? = nil,
+        colorSpace: String? = nil,
+        colorTransfer: String? = nil,
+        colorPrimaries: String? = nil,
+        dvVersionMajor: Int? = nil,
+        dvVersionMinor: Int? = nil,
+        dvProfile: Int? = nil,
+        dvLevel: Int? = nil,
+        rpuPresentFlag: Bool? = nil,
+        elPresentFlag: Bool? = nil,
+        blPresentFlag: Bool? = nil,
+        dvBlSignalCompatibilityId: Int? = nil,
+        hdr10PlusPresentFlag: Bool? = nil,
+        videoRange: String? = nil,
+        videoRangeType: String?,
+        videoDoViTitle: String? = nil,
+        channels: Int?,
+        channelLayout: String?,
+        bitrate: Int?,
+        width: Int?,
+        height: Int?
+    ) {
+        self.index = index
+        self.type = type
+        self.title = title
+        self.displayTitle = displayTitle
+        self.language = language
+        self.isDefault = isDefault
+        self.codec = codec
+        self.profile = profile
+        self.bitDepth = bitDepth
+        self.colorRange = colorRange
+        self.colorSpace = colorSpace
+        self.colorTransfer = colorTransfer
+        self.colorPrimaries = colorPrimaries
+        self.dvVersionMajor = dvVersionMajor
+        self.dvVersionMinor = dvVersionMinor
+        self.dvProfile = dvProfile
+        self.dvLevel = dvLevel
+        self.rpuPresentFlag = rpuPresentFlag
+        self.elPresentFlag = elPresentFlag
+        self.blPresentFlag = blPresentFlag
+        self.dvBlSignalCompatibilityId = dvBlSignalCompatibilityId
+        self.hdr10PlusPresentFlag = hdr10PlusPresentFlag
+        self.videoRange = videoRange
+        self.videoRangeType = videoRangeType
+        self.videoDoViTitle = videoDoViTitle
+        self.channels = channels
+        self.channelLayout = channelLayout
+        self.bitrate = bitrate
+        self.width = width
+        self.height = height
+    }
 
     enum CodingKeys: String, CodingKey {
         case index = "Index"
@@ -364,7 +544,22 @@ struct MediaStreamDTO: Decodable {
         case codec = "Codec"
         case profile = "Profile"
         case bitDepth = "BitDepth"
+        case colorRange = "ColorRange"
+        case colorSpace = "ColorSpace"
+        case colorTransfer = "ColorTransfer"
+        case colorPrimaries = "ColorPrimaries"
+        case dvVersionMajor = "DvVersionMajor"
+        case dvVersionMinor = "DvVersionMinor"
+        case dvProfile = "DvProfile"
+        case dvLevel = "DvLevel"
+        case rpuPresentFlag = "RpuPresentFlag"
+        case elPresentFlag = "ElPresentFlag"
+        case blPresentFlag = "BlPresentFlag"
+        case dvBlSignalCompatibilityId = "DvBlSignalCompatibilityId"
+        case hdr10PlusPresentFlag = "Hdr10PlusPresentFlag"
+        case videoRange = "VideoRange"
         case videoRangeType = "VideoRangeType"
+        case videoDoViTitle = "VideoDoViTitle"
         case channels = "Channels"
         case channelLayout = "ChannelLayout"
         case bitrate = "BitRate"
@@ -372,12 +567,59 @@ struct MediaStreamDTO: Decodable {
         case height = "Height"
     }
 
-    func toTrack() -> MediaTrack {
+    /// Jellyfin sends some Bool fields as integers (0/1) instead of true/false.
+    /// This helper tries Bool first, then falls back to Int interpretation.
+    private static func flexibleBool(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Bool? {
+        if let value = try? container.decodeIfPresent(Bool.self, forKey: key) {
+            return value
+        }
+        if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return intValue != 0
+        }
+        return nil
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        index = try container.decodeIfPresent(Int.self, forKey: .index)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        displayTitle = try container.decodeIfPresent(String.self, forKey: .displayTitle)
+        language = try container.decodeIfPresent(String.self, forKey: .language)
+        isDefault = Self.flexibleBool(from: container, forKey: .isDefault)
+        codec = try container.decodeIfPresent(String.self, forKey: .codec)
+        profile = try container.decodeIfPresent(String.self, forKey: .profile)
+        bitDepth = try container.decodeIfPresent(Int.self, forKey: .bitDepth)
+        colorRange = try container.decodeIfPresent(String.self, forKey: .colorRange)
+        colorSpace = try container.decodeIfPresent(String.self, forKey: .colorSpace)
+        colorTransfer = try container.decodeIfPresent(String.self, forKey: .colorTransfer)
+        colorPrimaries = try container.decodeIfPresent(String.self, forKey: .colorPrimaries)
+        dvVersionMajor = try container.decodeIfPresent(Int.self, forKey: .dvVersionMajor)
+        dvVersionMinor = try container.decodeIfPresent(Int.self, forKey: .dvVersionMinor)
+        dvProfile = try container.decodeIfPresent(Int.self, forKey: .dvProfile)
+        dvLevel = try container.decodeIfPresent(Int.self, forKey: .dvLevel)
+        rpuPresentFlag = Self.flexibleBool(from: container, forKey: .rpuPresentFlag)
+        elPresentFlag = Self.flexibleBool(from: container, forKey: .elPresentFlag)
+        blPresentFlag = Self.flexibleBool(from: container, forKey: .blPresentFlag)
+        dvBlSignalCompatibilityId = try container.decodeIfPresent(Int.self, forKey: .dvBlSignalCompatibilityId)
+        hdr10PlusPresentFlag = Self.flexibleBool(from: container, forKey: .hdr10PlusPresentFlag)
+        videoRange = try container.decodeIfPresent(String.self, forKey: .videoRange)
+        videoRangeType = try container.decodeIfPresent(String.self, forKey: .videoRangeType)
+        videoDoViTitle = try container.decodeIfPresent(String.self, forKey: .videoDoViTitle)
+        channels = try container.decodeIfPresent(Int.self, forKey: .channels)
+        channelLayout = try container.decodeIfPresent(String.self, forKey: .channelLayout)
+        bitrate = try container.decodeIfPresent(Int.self, forKey: .bitrate)
+        width = try container.decodeIfPresent(Int.self, forKey: .width)
+        height = try container.decodeIfPresent(Int.self, forKey: .height)
+    }
+
+    func toTrack(streamCodec: String?) -> MediaTrack {
         let trackIndex = index ?? 0
         return MediaTrack(
             id: "track-\(trackIndex)",
             title: displayTitle ?? title ?? "Track \(trackIndex + 1)",
             language: language,
+            codec: streamCodec ?? codec,
             isDefault: isDefault ?? false,
             index: trackIndex
         )
@@ -385,6 +627,9 @@ struct MediaStreamDTO: Decodable {
 }
 
 struct PlaybackInfoRequestDTO: Encodable {
+    // OpenAPI source:
+    // /Users/florian/Downloads/jellyfin-openapi-stable.json
+    // $.components.schemas.PlaybackInfoDto
     let userID: String?
     let enableDirectPlay: Bool
     let enableDirectStream: Bool
@@ -465,7 +710,7 @@ struct DeviceProfileRequestDTO: Encodable {
             musicStreamingTranscodingBitrate: 192_000,
             directPlayProfiles: [
                 DirectPlayProfileRequestDTO(
-                    container: "mp4,m4v,mov",
+                    container: "mp4,m4v,mov,mkv",
                     audioCodec: "aac,ac3,eac3,mp3,alac",
                     videoCodec: "h264,avc1",
                     type: .video
@@ -514,7 +759,7 @@ struct DeviceProfileRequestDTO: Encodable {
             musicStreamingTranscodingBitrate: 192_000,
             directPlayProfiles: [
                 DirectPlayProfileRequestDTO(
-                    container: "mp4,m4v,mov",
+                    container: "mp4,m4v,mov,mkv",
                     audioCodec: "aac,ac3,eac3,mp3,alac,flac",
                     videoCodec: "hevc,h265,hvc1,dvh1,dvhe,h264,avc1",
                     type: .video

@@ -66,3 +66,105 @@ class ReelFinUITests: XCTestCase {
         }
     }
 }
+
+final class AppStoreScreenshotTests: XCTestCase {
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
+
+    func testCaptureScreenshots() throws {
+        let app = XCUIApplication()
+        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let firstPoster = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")).firstMatch
+        XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
+        capture(name: "01-home")
+
+        openSection(named: "Search", in: app)
+        XCTAssertTrue(firstPoster.waitForExistence(timeout: 8))
+        capture(name: "02-library")
+
+        firstPoster.tap()
+        let playButton = app.buttons["Play"]
+        XCTAssertTrue(playButton.waitForExistence(timeout: 8))
+        capture(name: "03-detail")
+
+        app.navigationBars.buttons.firstMatch.tap()
+        openSection(named: "Settings", in: app)
+        XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 8))
+        capture(name: "04-settings")
+    }
+
+    private func openSection(named title: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let tabButton = app.tabBars.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        if tabButton.exists {
+            tabButton.tap()
+            return
+        }
+
+        if let tabIndex = tabIndex(for: title), app.tabBars.buttons.count > tabIndex {
+            app.tabBars.buttons.element(boundBy: tabIndex).tap()
+            return
+        }
+
+        let sidebarButton = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        if sidebarButton.exists {
+            sidebarButton.tap()
+            return
+        }
+
+        let sidebarLabel = app.staticTexts.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        if sidebarLabel.exists {
+            sidebarLabel.tap()
+            return
+        }
+
+        let cellLabel = app.cells.staticTexts.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        if cellLabel.exists {
+            cellLabel.tap()
+            return
+        }
+
+        XCTFail("Unable to navigate to \(title)", file: file, line: line)
+    }
+
+    private func tabIndex(for title: String) -> Int? {
+        switch title {
+        case "Home":
+            return 0
+        case "Search":
+            return 1
+        case "Settings":
+            return 2
+        default:
+            return nil
+        }
+    }
+
+    private func capture(name: String, file: StaticString = #filePath, line: UInt = #line) {
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        guard let outputDirectory = ProcessInfo.processInfo.environment["REELFIN_SCREENSHOT_OUTPUT_DIR"] else {
+            return
+        }
+
+        let deviceSlug = ProcessInfo.processInfo.environment["REELFIN_SCREENSHOT_DEVICE_SLUG"] ?? "simulator"
+        let deviceDirectory = URL(fileURLWithPath: outputDirectory, isDirectory: true)
+            .appendingPathComponent(deviceSlug, isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: deviceDirectory, withIntermediateDirectories: true)
+            let destinationURL = deviceDirectory.appendingPathComponent("\(name).png")
+            try screenshot.pngRepresentation.write(to: destinationURL)
+        } catch {
+            XCTFail("Unable to export screenshot \(name): \(error.localizedDescription)", file: file, line: line)
+        }
+    }
+}

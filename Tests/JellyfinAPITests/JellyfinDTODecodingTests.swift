@@ -171,4 +171,76 @@ final class JellyfinDTODecodingTests: XCTestCase {
         let response = try decoder.decode(ItemsResponseDTO.self, from: json)
         XCTAssertEqual(response.items.count, 0)
     }
+
+    // MARK: - MediaStreamDTO flexible Bool decoding
+
+    func testMediaStreamDecodes_boolFlagsAsIntegers() throws {
+        let json = """
+        {
+            "Index": 0,
+            "Type": "Video",
+            "Codec": "hevc",
+            "BitDepth": 10,
+            "VideoRangeType": "DOVI",
+            "DvProfile": 8,
+            "DvLevel": 5,
+            "RpuPresentFlag": 1,
+            "ElPresentFlag": 0,
+            "BlPresentFlag": 1,
+            "DvBlSignalCompatibilityId": 1,
+            "Hdr10PlusPresentFlag": 0,
+            "IsDefault": 1,
+            "Width": 3840,
+            "Height": 2160
+        }
+        """.data(using: .utf8)!
+
+        let stream = try decoder.decode(MediaStreamDTO.self, from: json)
+        XCTAssertEqual(stream.rpuPresentFlag, true, "RpuPresentFlag=1 should decode as true")
+        XCTAssertEqual(stream.elPresentFlag, false, "ElPresentFlag=0 should decode as false")
+        XCTAssertEqual(stream.blPresentFlag, true, "BlPresentFlag=1 should decode as true")
+        XCTAssertEqual(stream.hdr10PlusPresentFlag, false, "Hdr10PlusPresentFlag=0 should decode as false")
+        XCTAssertEqual(stream.isDefault, true, "IsDefault=1 should decode as true")
+        XCTAssertEqual(stream.dvProfile, 8)
+        XCTAssertEqual(stream.width, 3840)
+    }
+
+    func testMediaStreamDecodes_boolFlagsAsActualBools() throws {
+        let json = """
+        {
+            "Index": 0,
+            "Type": "Video",
+            "Codec": "hevc",
+            "RpuPresentFlag": true,
+            "ElPresentFlag": false,
+            "BlPresentFlag": true,
+            "IsDefault": false
+        }
+        """.data(using: .utf8)!
+
+        let stream = try decoder.decode(MediaStreamDTO.self, from: json)
+        XCTAssertEqual(stream.rpuPresentFlag, true)
+        XCTAssertEqual(stream.elPresentFlag, false)
+        XCTAssertEqual(stream.blPresentFlag, true)
+        XCTAssertEqual(stream.isDefault, false)
+    }
+
+    func testMediaStreamDecodes_missingBoolFlags() throws {
+        let json = """
+        {
+            "Index": 1,
+            "Type": "Audio",
+            "Codec": "eac3",
+            "Channels": 6,
+            "ChannelLayout": "5.1"
+        }
+        """.data(using: .utf8)!
+
+        let stream = try decoder.decode(MediaStreamDTO.self, from: json)
+        XCTAssertNil(stream.rpuPresentFlag, "Missing flags should decode as nil")
+        XCTAssertNil(stream.elPresentFlag)
+        XCTAssertNil(stream.blPresentFlag)
+        XCTAssertNil(stream.hdr10PlusPresentFlag)
+        XCTAssertEqual(stream.channels, 6)
+    }
 }

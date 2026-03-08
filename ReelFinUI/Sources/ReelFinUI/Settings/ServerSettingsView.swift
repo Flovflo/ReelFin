@@ -3,7 +3,9 @@ import SwiftUI
 
 struct ServerSettingsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.openURL) private var openURL
     @StateObject private var viewModel: ServerSettingsViewModel
+    private let metadata = AppMetadata.current
     let onLogout: () -> Void
 
     init(dependencies: ReelFinDependencies, onLogout: @escaping () -> Void) {
@@ -80,6 +82,9 @@ struct ServerSettingsView: View {
                                 .font(.system(size: 14, weight: .medium, design: .rounded))
                                 .foregroundStyle(.white)
                         }
+                        .onChange(of: viewModel.nerdOverlayEnabled) { _, newValue in
+                            UserDefaults.standard.set(newValue, forKey: "reelfin.playback.debugOverlay.enabled")
+                        }
                     }
                     .padding(14)
                     .background(ReelFinTheme.card.opacity(0.95))
@@ -117,6 +122,41 @@ struct ServerSettingsView: View {
                         onLogout()
                     }
                     .buttonStyle(SettingsActionButtonStyle(primary: false))
+
+                    if metadata.hasSupportSurface {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Legal & Support")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white)
+
+                            if let privacyPolicyURL = metadata.privacyPolicyURL {
+                                supportLinkButton(title: "Privacy Policy", subtitle: privacyPolicyURL.absoluteString) {
+                                    openURL(privacyPolicyURL)
+                                }
+                            }
+
+                            if let termsOfServiceURL = metadata.termsOfServiceURL {
+                                supportLinkButton(title: "Terms of Service", subtitle: termsOfServiceURL.absoluteString) {
+                                    openURL(termsOfServiceURL)
+                                }
+                            }
+
+                            if let supportURL = metadata.supportURL {
+                                supportLinkButton(title: "Support", subtitle: supportURL.absoluteString) {
+                                    openURL(supportURL)
+                                }
+                            }
+
+                            if let supportEmailURL = metadata.supportEmailURL, let supportEmail = metadata.supportEmail {
+                                supportLinkButton(title: "Email Support", subtitle: supportEmail) {
+                                    openURL(supportEmailURL)
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .background(ReelFinTheme.card.opacity(0.95))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
                 }
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, 16)
@@ -127,6 +167,31 @@ struct ServerSettingsView: View {
 
     private var horizontalPadding: CGFloat {
         horizontalSizeClass == .compact ? 14 : 22
+    }
+
+    private func supportLinkButton(title: String, subtitle: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
     }
 }
 

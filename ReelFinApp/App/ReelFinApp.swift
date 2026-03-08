@@ -7,20 +7,25 @@ import UIKit
 struct ReelFinApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    private let container = AppContainer()
+    private let metadata: AppMetadata
+    private let dependencies: ReelFinDependencies
 
     init() {
+        let metadata = AppMetadata.current
+        self.metadata = metadata
+        self.dependencies = AppBootstrap.makeDependencies(metadata: metadata)
         configureTabBarAppearance()
+        ErrorTracking.startIfConfigured(metadata: metadata)
     }
 
     var body: some Scene {
         WindowGroup {
-            ReelFinRootView(dependencies: container.makeDependencies())
+            ReelFinRootView(dependencies: dependencies)
                 .preferredColorScheme(.dark)
                 .onChange(of: scenePhase) { newValue in
                     if newValue == .active {
                         Task {
-                            await container.syncEngine.sync(reason: .appForeground)
+                            await dependencies.syncEngine.sync(reason: .appForeground)
                         }
                     }
                 }

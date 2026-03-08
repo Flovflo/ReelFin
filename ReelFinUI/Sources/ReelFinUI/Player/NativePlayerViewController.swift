@@ -15,6 +15,7 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         // Already presented full-screen by SwiftUI; avoid nested full-screen transitions.
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.player?.appliesMediaSelectionCriteriaAutomatically = false
 #if os(iOS)
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = false

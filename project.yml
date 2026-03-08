@@ -17,6 +17,9 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift.git
     from: 6.29.3
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa.git
+    from: 8.55.1
 targets:
   ReelFinApp:
     type: application
@@ -33,6 +36,8 @@ targets:
       - target: DataStore
       - target: ImageCache
       - target: PlaybackEngine
+      - package: Sentry
+        product: Sentry
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.app
@@ -43,6 +48,12 @@ targets:
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/privacy-policy.html
+        INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/terms-of-service.html
+        INFOPLIST_KEY_REELFIN_SUPPORT_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/support.html
+        INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL: floriantaffin@gmail.com
+        INFOPLIST_KEY_REELFIN_SENTRY_DSN: $(REELFIN_SENTRY_DSN)
+        REELFIN_SENTRY_DSN: ""
   Shared:
     type: framework
     platform: iOS
@@ -102,6 +113,8 @@ targets:
     platform: iOS
     sources:
       - path: PlaybackEngine/Sources/PlaybackEngine
+      - path: PlaybackEngine/Sources/PlaybackEngine/NativeBridge/EBMLParser.swift
+      - path: PlaybackEngine/Sources/PlaybackEngine/NativeBridge/MP4BoxWriter.swift
     dependencies:
       - target: Shared
       - target: JellyfinAPI

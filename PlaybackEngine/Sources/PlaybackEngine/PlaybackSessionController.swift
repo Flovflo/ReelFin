@@ -1,7 +1,7 @@
 import AVFoundation
-import Combine
 import CoreMedia
 import Foundation
+import Observation
 import Shared
 import UIKit
 import CoreVideo
@@ -158,23 +158,24 @@ public struct PlaybackProofSnapshot: Sendable, Equatable {
     }
 }
 
+@Observable
 @MainActor
-public final class PlaybackSessionController: ObservableObject {
-    @Published public private(set) var isPlaying = false
-    @Published public private(set) var currentTime: TimeInterval = 0
-    @Published public private(set) var duration: TimeInterval = 0
-    @Published public private(set) var availableAudioTracks: [MediaTrack] = []
-    @Published public private(set) var availableSubtitleTracks: [MediaTrack] = []
-    @Published public private(set) var selectedAudioTrackID: String?
-    @Published public private(set) var selectedSubtitleTrackID: String?
-    @Published public private(set) var routeDescription: String = ""
-    @Published public private(set) var debugInfo: PlaybackDebugInfo?
-    @Published public private(set) var currentPlaybackPlan: PlaybackPlan?
-    @Published public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
-    @Published public private(set) var metrics = PlaybackPerformanceMetrics()
-    @Published public private(set) var isExternalPlaybackActive = false
-    @Published public private(set) var playbackErrorMessage: String?
-    @Published public private(set) var playbackProof = PlaybackProofSnapshot()
+public final class PlaybackSessionController {
+    public private(set) var isPlaying = false
+    public private(set) var currentTime: TimeInterval = 0
+    public private(set) var duration: TimeInterval = 0
+    public private(set) var availableAudioTracks: [MediaTrack] = []
+    public private(set) var availableSubtitleTracks: [MediaTrack] = []
+    public private(set) var selectedAudioTrackID: String?
+    public private(set) var selectedSubtitleTrackID: String?
+    public private(set) var routeDescription: String = ""
+    public private(set) var debugInfo: PlaybackDebugInfo?
+    public private(set) var currentPlaybackPlan: PlaybackPlan?
+    public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
+    public private(set) var metrics = PlaybackPerformanceMetrics()
+    public private(set) var isExternalPlaybackActive = false
+    public private(set) var playbackErrorMessage: String?
+    public private(set) var playbackProof = PlaybackProofSnapshot()
 
     public let player = AVPlayer()
 

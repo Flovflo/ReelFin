@@ -135,6 +135,8 @@ public struct PosterCardView: View {
             }
         }
         .frame(width: posterWidth, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("media_card_\(item.id)")
     }
 
     private var posterWidth: CGFloat {
