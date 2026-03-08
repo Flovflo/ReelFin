@@ -5,6 +5,64 @@ class ReelFinUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testLoggedOutMockLaunchShowsOnboarding() throws {
+        let app = launchLoggedOutMockApp()
+
+        XCTAssertTrue(app.staticTexts["login_landing_title"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["login_primary_cta"].exists)
+    }
+
+    func testLoggedOutMockFlowShowsServerAndCredentialsSteps() throws {
+        let app = launchLoggedOutMockApp()
+
+        let primaryCTA = app.buttons["login_primary_cta"]
+        XCTAssertTrue(primaryCTA.waitForExistence(timeout: 5))
+        primaryCTA.tap()
+
+        let serverField = app.textFields["login_server_field"]
+        XCTAssertTrue(serverField.waitForExistence(timeout: 5))
+
+        let continueButton = app.buttons["login_server_continue"]
+        XCTAssertTrue(continueButton.exists)
+        continueButton.tap()
+
+        XCTAssertTrue(app.staticTexts["Sign in"].waitForExistence(timeout: 5))
+
+        let usernameField = app.textFields["Username"].firstMatch
+        XCTAssertTrue(usernameField.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.secureTextFields["Password"].firstMatch.exists)
+    }
+
+    func testLoggedOutMockFlowCanAuthenticateIntoHome() throws {
+        let app = launchLoggedOutMockApp()
+
+        let primaryCTA = app.buttons["login_primary_cta"]
+        XCTAssertTrue(primaryCTA.waitForExistence(timeout: 5))
+        primaryCTA.tap()
+
+        let continueButton = app.buttons["login_server_continue"]
+        XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
+        continueButton.tap()
+
+        XCTAssertTrue(app.staticTexts["Sign in"].waitForExistence(timeout: 5))
+
+        let usernameField = app.textFields["Username"].firstMatch
+        XCTAssertTrue(usernameField.waitForExistence(timeout: 5))
+        usernameField.tap()
+        usernameField.typeText("preview")
+
+        let passwordField = app.secureTextFields["Password"].firstMatch
+        XCTAssertTrue(passwordField.exists)
+        passwordField.tap()
+        passwordField.typeText("password")
+
+        let signInButton = app.buttons["Sign in"].firstMatch
+        XCTAssertTrue(signInButton.exists)
+        signInButton.tap()
+
+        XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 8))
+    }
+
     func testAppLaunches() throws {
         let app = XCUIApplication()
         app.launch()
@@ -66,6 +124,13 @@ class ReelFinUITests: XCTestCase {
         }
     }
 
+    private func launchLoggedOutMockApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-ui-logged-out"]
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        return app
+    }
 }
 
 final class AppStoreScreenshotTests: XCTestCase {

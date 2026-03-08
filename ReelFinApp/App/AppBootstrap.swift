@@ -7,7 +7,9 @@ enum AppBootstrap {
     static func makeDependencies(metadata: AppMetadata) -> ReelFinDependencies {
         if metadata.isMockModeEnabled || metadata.isScreenshotModeEnabled {
             UIView.setAnimationsEnabled(!metadata.isScreenshotModeEnabled)
-            return ReelFinPreviewFactory.appStoreDependencies()
+            let arguments = Set(ProcessInfo.processInfo.arguments)
+            let shouldStartLoggedOut = arguments.contains(AppMetadata.mockLoggedOutArgument)
+            return ReelFinPreviewFactory.appStoreDependencies(authenticated: !shouldStartLoggedOut)
         }
 
         let container = AppContainer()

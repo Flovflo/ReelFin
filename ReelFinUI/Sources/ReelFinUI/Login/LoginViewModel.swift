@@ -8,8 +8,10 @@ final class LoginViewModel: ObservableObject {
     @Published var password = ""
     @Published var isLoading = false
     @Published var isTestingConnection = false
-    @Published var infoMessage: String?
-    @Published var errorMessage: String?
+    @Published var serverMessage: String?
+    @Published var serverErrorMessage: String?
+    @Published var authErrorMessage: String?
+    @Published private(set) var validatedServerURL: URL?
 
     private let dependencies: ReelFinDependencies
 
@@ -17,35 +19,53 @@ final class LoginViewModel: ObservableObject {
         self.dependencies = dependencies
         if let saved = dependencies.settingsStore.serverConfiguration {
             serverURLText = saved.serverURL.absoluteString
+            validatedServerURL = saved.serverURL
         }
         if let session = dependencies.settingsStore.lastSession {
             username = session.username
         }
     }
 
-    func testConnection() async {
-        errorMessage = nil
-        infoMessage = nil
+    var hasSavedServer: Bool {
+        !serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var canAdvanceFromServer: Bool {
+        !serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isTestingConnection
+    }
+
+    var canSubmitCredentials: Bool {
+        !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty && !isLoading
+    }
+
+    func testConnection() async -> Bool {
+        serverErrorMessage = nil
+        authErrorMessage = nil
+        serverMessage = nil
         isTestingConnection = true
         defer { isTestingConnection = false }
 
         do {
             let url = try normalizedServerURL(from: serverURLText)
             try await dependencies.apiClient.testConnection(serverURL: url)
-            infoMessage = "Connection OK"
+            validatedServerURL = url
+            serverMessage = "Server ready"
+            return true
         } catch {
-            errorMessage = error.localizedDescription
+            validatedServerURL = nil
+            serverErrorMessage = error.localizedDescription
+            return false
         }
     }
 
     func login() async -> UserSession? {
-        errorMessage = nil
-        infoMessage = nil
+        serverErrorMessage = nil
+        authErrorMessage = nil
         isLoading = true
         defer { isLoading = false }
 
         do {
-            let url = try normalizedServerURL(from: serverURLText)
+            let url = try validatedServerURL ?? normalizedServerURL(from: serverURLText)
             let config = ServerConfiguration(
                 serverURL: url,
                 allowCellularStreaming: dependencies.settingsStore.serverConfiguration?.allowCellularStreaming ?? true,
@@ -58,12 +78,30 @@ final class LoginViewModel: ObservableObject {
             let session = try await dependencies.apiClient.authenticate(credentials: credentials)
             dependencies.settingsStore.serverConfiguration = config
             dependencies.settingsStore.lastSession = session
-            infoMessage = "Welcome, \(session.username)"
+            validatedServerURL = url
             return session
         } catch {
-            errorMessage = error.localizedDescription
+            authErrorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    func serverURLDidChange() {
+        serverMessage = nil
+        serverErrorMessage = nil
+
+        guard let validatedServerURL else {
+            return
+        }
+
+        let currentValue = serverURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentValue != validatedServerURL.absoluteString {
+            self.validatedServerURL = nil
+        }
+    }
+
+    func clearAuthError() {
+        authErrorMessage = nil
     }
 
     private func normalizedServerURL(from rawValue: String) throws -> URL {

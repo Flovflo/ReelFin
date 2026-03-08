@@ -5,8 +5,13 @@ import SwiftUI
 import UIKit
 
 final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
-    private var config: ServerConfiguration? = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
-    private var session: UserSession? = UserSession(userID: "preview-user", username: "Preview", token: "token")
+    private var config: ServerConfiguration?
+    private var session: UserSession?
+
+    init(authenticated: Bool = true) {
+        config = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
+        session = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
+    }
 
     func currentConfiguration() async -> ServerConfiguration? {
         config
@@ -101,8 +106,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     func fetchItemDetail(id: String) async throws -> MediaDetail {
         let item = Self.sampleItems(prefix: 1).first ?? MediaItem(id: id, name: "Mock")
         return MediaDetail(item: item, similar: Self.sampleItems(prefix: 8), cast: [
-            PersonCredit(id: "1", name: "Actor One", role: "Lead"),
-            PersonCredit(id: "2", name: "Actor Two", role: "Support")
+            PersonCredit(id: "1", name: "Actor One", role: "Lead", primaryImageTag: "primary"),
+            PersonCredit(id: "2", name: "Actor Two", role: "Support", primaryImageTag: "primary")
         ])
     }
 
@@ -171,9 +176,9 @@ final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
 
-    init() {
+    init(authenticated: Bool = true) {
         serverConfiguration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
-        lastSession = UserSession(userID: "preview-user", username: "Preview", token: "token")
+        lastSession = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
     }
 }
 
@@ -301,12 +306,12 @@ final class MockSyncEngine: SyncEngineProtocol, @unchecked Sendable {
 }
 
 public enum ReelFinPreviewFactory {
-    @MainActor public static func dependencies() -> ReelFinDependencies {
-        let api = MockJellyfinAPIClient()
+    @MainActor public static func dependencies(authenticated: Bool = true) -> ReelFinDependencies {
+        let api = MockJellyfinAPIClient(authenticated: authenticated)
         let repository = MockMetadataRepository()
         let images = MockImagePipeline()
         let sync = MockSyncEngine()
-        let settings = MockSettingsStore()
+        let settings = MockSettingsStore(authenticated: authenticated)
         let seriesCache = SeriesLookupCache(apiClient: api)
 
         return ReelFinDependencies(
@@ -322,8 +327,8 @@ public enum ReelFinPreviewFactory {
         )
     }
 
-    @MainActor public static func appStoreDependencies() -> ReelFinDependencies {
-        dependencies()
+    @MainActor public static func appStoreDependencies(authenticated: Bool = true) -> ReelFinDependencies {
+        dependencies(authenticated: authenticated)
     }
 }
 
