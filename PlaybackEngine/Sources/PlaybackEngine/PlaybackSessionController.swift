@@ -503,8 +503,7 @@ public final class PlaybackSessionController {
             // Retrieve TTFF tuning from coordinator
             ttffTuning = coordinator.ttffTuning
 
-            if let progress = try await repository.fetchPlaybackProgress(itemID: item.id), progress.positionTicks > 0 {
-                let seconds = Double(progress.positionTicks) / 10_000_000
+            if let seconds = try await resumeSeconds(for: item), seconds > 0 {
                 if shouldDeferResumeSeek(route: selection.decision.route, seconds: seconds) {
                     pendingResumeSeconds = seconds
                 } else {
@@ -527,6 +526,19 @@ public final class PlaybackSessionController {
             }
             throw error
         }
+    }
+
+    private func resumeSeconds(for item: MediaItem) async throws -> Double? {
+        if let progress = try await repository.fetchPlaybackProgress(itemID: item.id),
+           progress.positionTicks > 0 {
+            return Double(progress.positionTicks) / 10_000_000
+        }
+
+        if let itemTicks = item.playbackPositionTicks, itemTicks > 0 {
+            return Double(itemTicks) / 10_000_000
+        }
+
+        return nil
     }
 
     private var usesDirectRemuxOnly: Bool {
@@ -2742,7 +2754,7 @@ public final class PlaybackSessionController {
         allowAudioStreamCopy: Bool
     ) -> Bool {
         guard allowSDRFallback, !strictQualityMode else { return false }
-        guard !itemPrefersDolbyVision, !source.isLikelyHDRorDV else { return false }
+        guard !itemPrefersDolbyVision, !sourceHasExplicitHDROrDolbyVisionMetadata(source) else { return false }
         guard !allowAudioStreamCopy else { return false }
         guard transport == "fMP4", !hasInitMap else { return false }
 
@@ -2758,6 +2770,28 @@ public final class PlaybackSessionController {
             || codec.contains("hvc1")
             || codec.contains("hev1")
         return hevcLike
+    }
+
+    nonisolated private static func sourceHasExplicitHDROrDolbyVisionMetadata(_ source: MediaSource) -> Bool {
+        let range = (source.videoRange ?? "").lowercased()
+        let rangeType = (source.videoRangeType ?? "").lowercased()
+        let profile = (source.videoProfile ?? "").lowercased()
+        let codec = source.normalizedVideoCodec
+
+        return range.contains("hdr")
+            || rangeType.contains("dovi")
+            || rangeType.contains("hdr10")
+            || rangeType.contains("hlg")
+            || range.contains("pq")
+            || range.contains("hlg")
+            || range.contains("dolby")
+            || range.contains("vision")
+            || profile.contains("dolby")
+            || profile.contains("vision")
+            || (source.dvProfile ?? 0) > 0
+            || source.hdr10PlusPresentFlag == true
+            || codec.contains("dvhe")
+            || codec.contains("dvh1")
     }
 
     nonisolated static func attemptTripleKey(profile: TranscodeURLProfile, routeLabel: String, url: String) -> String {

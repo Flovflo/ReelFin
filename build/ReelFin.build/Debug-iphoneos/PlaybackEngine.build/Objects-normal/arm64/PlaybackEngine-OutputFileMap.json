@@ -1,0 +1,39 @@
+{
+  "" : {
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackEngine-primary.dia",
+    "emit-module-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackEngine-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackEngine-primary-emit-module.dia",
+    "pch" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackEngine-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackEngine-primary.swiftdeps"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/PlaybackEngine/Sources/PlaybackEngine/PlaybackCoordinator.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackCoordinator~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/PlaybackEngine/Sources/PlaybackEngine/PlaybackDecisionEngine.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackDecisionEngine~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/PlaybackEngine/Sources/PlaybackEngine/PlaybackSessionController.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-iphoneos/PlaybackEngine.build/Objects-normal/arm64/PlaybackSessionController~partial.swiftmodule"
+  }
+}

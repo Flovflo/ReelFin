@@ -1,0 +1,20 @@
+Target dependency graph (8 targets)
+Target 'PlaybackEngine' in project 'ReelFin'
+➜ Explicit dependency on target 'Shared' in project 'ReelFin'
+➜ Explicit dependency on target 'JellyfinAPI' in project 'ReelFin'
+➜ Explicit dependency on target 'DataStore' in project 'ReelFin'
+Target 'DataStore' in project 'ReelFin'
+➜ Explicit dependency on target 'Shared' in project 'ReelFin'
+➜ Explicit dependency on target 'JellyfinAPI' in project 'ReelFin'
+➜ Explicit dependency on target 'GRDB' in project 'GRDB'
+Target 'GRDB' in project 'GRDB'
+➜ Explicit dependency on target 'GRDB' in project 'GRDB'
+➜ Explicit dependency on target 'GRDB_GRDB' in project 'GRDB'
+Target 'GRDB' in project 'GRDB'
+➜ Explicit dependency on target 'GRDB_GRDB' in project 'GRDB'
+➜ Explicit dependency on target 'CSQLite' in project 'GRDB'
+Target 'CSQLite' in project 'GRDB' (no dependencies)
+Target 'GRDB_GRDB' in project 'GRDB' (no dependencies)
+Target 'JellyfinAPI' in project 'ReelFin'
+➜ Explicit dependency on target 'Shared' in project 'ReelFin'
+Target 'Shared' in project 'ReelFin' (no dependencies)

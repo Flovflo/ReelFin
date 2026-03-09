@@ -1,0 +1,4 @@
+framework module PlaybackEngine {
+  header "PlaybackEngine-Swift.h"
+  requires objc
+}

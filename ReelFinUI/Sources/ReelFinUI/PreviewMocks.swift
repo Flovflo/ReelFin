@@ -42,7 +42,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func fetchItem(id: String) async throws -> MediaItem {
-        Self.sampleItems(prefix: 1).first!
+        Self.item(for: id)
     }
 
     func fetchSeasons(seriesID: String) async throws -> [MediaItem] {
@@ -53,16 +53,24 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] {
-        Self.sampleItems(prefix: 5).enumerated().map { index, item in
+        if seriesID == "series-continue-1" {
+            return Self.continueWatchingEpisodes()
+        }
+
+        return Self.sampleItems(prefix: 5).enumerated().map { index, item in
             var modified = item
             modified.mediaType = .episode
             modified.indexNumber = index + 1
+            modified.parentID = seriesID
             return modified
         }
     }
 
     func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? {
-        // For previews, return the second episode to simulate resume behaviour
+        if seriesID == "series-continue-1" {
+            return Self.continueWatchingEpisodes()[1]
+        }
+
         let eps = try await fetchEpisodes(seriesID: seriesID, seasonID: "season1")
         return eps.first
     }
@@ -88,7 +96,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         }
 
         return HomeFeed(featured: Self.sampleItems(prefix: 5), rows: [
-            HomeRow(kind: .continueWatching, title: "Continue Watching", items: Self.sampleItems(prefix: 8)),
+            HomeRow(kind: .continueWatching, title: "Continue Watching", items: Self.continueWatchingItems()),
             HomeRow(kind: .nextUp, title: "Next Up", items: nextUp),
             HomeRow(kind: .recentlyAddedMovies, title: "Recently Added Movies", items: recentMovies),
             HomeRow(kind: .recentlyAddedSeries, title: "Recently Added Series", items: recentSeries),
@@ -104,7 +112,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func fetchItemDetail(id: String) async throws -> MediaDetail {
-        let item = Self.sampleItems(prefix: 1).first ?? MediaItem(id: id, name: "Mock")
+        let item = Self.item(for: id)
         return MediaDetail(item: item, similar: Self.sampleItems(prefix: 8), cast: [
             PersonCredit(id: "1", name: "Actor One", role: "Lead", primaryImageTag: "primary"),
             PersonCredit(id: "2", name: "Actor Two", role: "Support", primaryImageTag: "primary")
@@ -169,6 +177,97 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         }
 
         return items
+    }
+
+    private static func continueWatchingItems() -> [MediaItem] {
+        let resumeEpisode = continueWatchingEpisodes()[1]
+        let resumeMovie = MediaItem(
+            id: "cw-movie-1",
+            name: "Resume Movie",
+            overview: "A mock movie already started for validating direct resume from home.",
+            mediaType: .movie,
+            year: 2024,
+            runtimeTicks: Int64(112 * 60 * 10_000_000),
+            genres: ["Adventure"],
+            communityRating: 7.8,
+            posterTag: "poster",
+            backdropTag: "backdrop",
+            libraryID: "movies",
+            has4K: true,
+            isPlayed: false,
+            playbackPositionTicks: Int64(41 * 60 * 10_000_000)
+        )
+
+        return [resumeEpisode, resumeMovie] + sampleItems(prefix: 6)
+    }
+
+    private static func continueWatchingEpisodes() -> [MediaItem] {
+        [
+            MediaItem(
+                id: "cw-episode-1",
+                name: "Pilot",
+                overview: "The opening episode used to validate series resume flow.",
+                mediaType: .episode,
+                year: 2025,
+                runtimeTicks: Int64(24 * 60 * 10_000_000),
+                genres: ["Drama"],
+                communityRating: 7.9,
+                posterTag: "poster",
+                backdropTag: "backdrop",
+                libraryID: "shows",
+                parentID: "series-continue-1",
+                seriesName: "Continue Series",
+                seriesPosterTag: "poster",
+                indexNumber: 1,
+                parentIndexNumber: 1,
+                isPlayed: true,
+                playbackPositionTicks: Int64(24 * 60 * 10_000_000)
+            ),
+            MediaItem(
+                id: "cw-episode-2",
+                name: "Second Wind",
+                overview: "The in-progress episode used to validate direct resume from Continue Watching.",
+                mediaType: .episode,
+                year: 2025,
+                runtimeTicks: Int64(27 * 60 * 10_000_000),
+                genres: ["Drama"],
+                communityRating: 8.1,
+                posterTag: "poster",
+                backdropTag: "backdrop",
+                libraryID: "shows",
+                parentID: "series-continue-1",
+                seriesName: "Continue Series",
+                seriesPosterTag: "poster",
+                indexNumber: 2,
+                parentIndexNumber: 1,
+                isPlayed: false,
+                playbackPositionTicks: Int64((11 * 60 + 12) * 10_000_000)
+            )
+        ]
+    }
+
+    private static func item(for id: String) -> MediaItem {
+        if let match = continueWatchingItems().first(where: { $0.id == id }) {
+            return match
+        }
+
+        if id == "series-continue-1" {
+            return MediaItem(
+                id: "series-continue-1",
+                name: "Continue Series",
+                overview: "Mock series container for continue watching playback resolution.",
+                mediaType: .series,
+                year: 2025,
+                runtimeTicks: Int64(27 * 60 * 10_000_000),
+                genres: ["Drama"],
+                communityRating: 8.1,
+                posterTag: "poster",
+                backdropTag: "backdrop",
+                libraryID: "shows"
+            )
+        }
+
+        return sampleItems(prefix: 8).first(where: { $0.id == id }) ?? MediaItem(id: id, name: "Mock")
     }
 }
 
@@ -250,7 +349,6 @@ private enum ArtworkPlaceholderRenderer {
 
         return renderer.image { context in
             let cgContext = context.cgContext
-            let bounds = CGRect(origin: .zero, size: size)
 
             let gradientColors = palette.map(\.cgColor) as CFArray
             let colorSpace = CGColorSpaceCreateDeviceRGB()

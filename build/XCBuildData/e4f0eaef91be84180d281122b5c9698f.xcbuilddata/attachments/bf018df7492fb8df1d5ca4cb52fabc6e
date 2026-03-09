@@ -1,0 +1,4 @@
+framework module Shared {
+  header "Shared-Swift.h"
+  requires objc
+}

@@ -1,0 +1,79 @@
+{
+  "" : {
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Shared-primary.dia",
+    "emit-module-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Shared-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Shared-primary-emit-module.dia",
+    "pch" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Shared-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Shared-primary.swiftdeps"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/Shared/Sources/Shared/DomainModels.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/DomainModels~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/Shared/Sources/Shared/KeychainTokenStore.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/KeychainTokenStore~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/Shared/Sources/Shared/Logging.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Logging~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/Shared/Sources/Shared/Protocols.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/Protocols~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/Shared/Sources/Shared/RetryPolicy.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/RetryPolicy~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/Shared/Sources/Shared/SettingsStore.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/SettingsStore~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/Shared/Sources/Shared/TTFFTuningConfiguration.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvos/Shared.build/Objects-normal/arm64/TTFFTuningConfiguration~partial.swiftmodule"
+  }
+}

@@ -229,15 +229,17 @@ struct PersonDTO: Decodable {
     let id: String
     let name: String
     let role: String?
+    let primaryImageTag: String?
 
     enum CodingKeys: String, CodingKey {
         case id = "Id"
         case name = "Name"
         case role = "Role"
+        case primaryImageTag = "PrimaryImageTag"
     }
 
     func toDomain() -> PersonCredit {
-        PersonCredit(id: id, name: name, role: role)
+        PersonCredit(id: id, name: name, role: role, primaryImageTag: primaryImageTag)
     }
 }
 

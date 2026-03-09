@@ -1,0 +1,498 @@
+[
+  {
+    "isFramework" : true,
+    "moduleName" : "Accessibility",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Accessibility.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "Combine",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Combine.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "CoreFoundation",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/CoreFoundation.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "CoreGraphics",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/CoreGraphics.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "CoreImage",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/CoreImage.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "CoreText",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/CoreText.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "CoreTransferable",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/CoreTransferable.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "CoreVideo",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/CoreVideo.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "Darwin",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Darwin.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "DataDetection",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/DataDetection.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "DeveloperToolsSupport",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/DeveloperToolsSupport.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "Dispatch",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Dispatch.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "Foundation",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Foundation.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "Metal",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Metal.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "OSLog",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/OSLog.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "ObjectiveC",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/ObjectiveC.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "Observation",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Observation.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "QuartzCore",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/QuartzCore.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "Swift",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Swift.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "SwiftOnoneSupport",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/SwiftOnoneSupport.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "SwiftUICore",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/SwiftUICore.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "Symbols",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/Symbols.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "System",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/System.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : true,
+    "moduleName" : "UIKit",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/UIKit.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "UniformTypeIdentifiers",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/UniformTypeIdentifiers.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "_Builtin_float",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/_Builtin_float.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "_Concurrency",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/_Concurrency.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "_DarwinFoundation1",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/_DarwinFoundation1.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "_DarwinFoundation2",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/_DarwinFoundation2.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "_DarwinFoundation3",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/_DarwinFoundation3.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "_StringProcessing",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/_StringProcessing.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "isFramework" : false,
+    "moduleName" : "os",
+    "modulePath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/swift\/appletvsimulator\/prebuilt-modules\/26.2\/os.swiftmodule\/arm64-apple-tvos-simulator.swiftmodule"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/Accessibility.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/Accessibility-E2L87T9E0VDE71N2GJ7WQLXDM.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "Accessibility"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/CFNetwork.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/CFNetwork-55BXNW2PI5SQHHOT1G37B2EGS.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "CFNetwork"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/CoreFoundation.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/CoreFoundation-6I67NS20UY1Y8ZKZ3CUR74HAE.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "CoreFoundation"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/CoreGraphics.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/CoreGraphics-EAD29NLCGU9XF4AMXWLSZ1J3D.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "CoreGraphics"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/CoreImage.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/CoreImage-CHZ75ZF2ICUES9R01VATEIQCX.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "CoreImage"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/CoreText.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/CoreText-3R2AEZD77K9TZNKHBT570PURT.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "CoreText"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/CoreTransferable.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/CoreTransferable-3VENI6WNBDBQDE8WEIQJZEMKV.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "CoreTransferable"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/CoreVideo.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/CoreVideo-6KSULS5XX1INGNQLG7NPQ7US1.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "CoreVideo"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/Darwin.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/Darwin-7KO1TDLMT3QJKLJ1U2HTV1KRK.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "Darwin"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/DataDetection.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/DataDetection-6ODKBLHCWX39QE5IB8GB2VLGR.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "DataDetection"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/DeveloperToolsSupport.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/DeveloperToolsSupport-61QF4P1B9GJ1TZW5EYSOVJQZP.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "DeveloperToolsSupport"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/dispatch.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/Dispatch-EU2YQ0W8HY20BUAY1ANZ2JQ8U.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "Dispatch"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/Foundation.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/Foundation-8J4631O495J95RLO60OKJLGNA.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "Foundation"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/IOSurface.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/IOSurface-8T5W70MGFDOYZV2M6XMV48PJ9.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "IOSurface"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/ImageIO.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/ImageIO-EDFUWO3RN4Q3ESAHSO1MUD3B2.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "ImageIO"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/DarwinBasic.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/MachO-6XXTDN5CRANUVLXT56LX8D0TQ.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "MachO"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/Metal.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/Metal-4U9QKYT8M7FNPDX2U4F47388.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "Metal"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/OSLog.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/OSLog-B8Y1JJP3KK5TX72ZWVQW5HTUM.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "OSLog"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/ObjectiveC.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/ObjectiveC-3W1QF8QNJD0BA4DXFMXZIHTOQ.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "ObjectiveC"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/OpenGLES.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/OpenGLES-5Q03PNJF0L06ANZQS1RMA6DS6.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "OpenGLES"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/QuartzCore.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/QuartzCore-3VJ2K8A71V42XM1ANRM85C9HO.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "QuartzCore"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/Security.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/Security-6BKVX6TQ0AJNBRF3DZIDT24PD.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "Security"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/lib\/swift\/shims\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/SwiftShims-XSLJ1HIMUEIDA8FOTIS6CSRQ.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "SwiftShims"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/SwiftUICore.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/SwiftUICore-9I07MD5SYPMZJHHJ2O1RLS3MP.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "SwiftUICore"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/Symbols.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/Symbols-20IKJCWAEHZ9SL749N47955RJ.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "Symbols"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/UIKit.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/UIKit-BJDVZZ1NKYACGYJYPGQX2XF6I.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "UIKit"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/SubFrameworks\/UIUtilities.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/UIUtilities-6N1M9R4F2CYN3HDICNA1525AX.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "UIUtilities"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/UniformTypeIdentifiers.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/UniformTypeIdentifiers-9052TBE75HXIXR5HDUG9ILIFK.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "UniformTypeIdentifiers"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/System\/Library\/Frameworks\/UserNotifications.framework\/Modules\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/UserNotifications-BUGYW00A6H3M4QFVQC0BCJ3CV.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "UserNotifications"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/DarwinFoundation1.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_AvailabilityInternal-157X4DXDDLTG7FKFREIPU9VFP.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_AvailabilityInternal"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_float-32H6XFVY1V0KOPEVLQ06WP2M6.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_float"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_inttypes-86JV59M1IZHKVR2X1Y8DZS5K8.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_inttypes"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_limits-4NWR5W8JY6YCZPXMM4OKFQDDL.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_limits"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_stdarg-2P0FQQI6RKDV9248VV2JG1QAG.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_stdarg"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_stdatomic-CHS9L2PNA7SLAXICNI8D1XZ0T.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_stdatomic"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_stdbool-B8QFCK9ZEXQUF904DBZ6GRWZN.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_stdbool"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_stddef-92MGV3GZYA33EIV2MDHYQ28IC.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_stddef"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_Builtin_stdint-5LDB2DTQ0L7RK7Y5B0R93VO6G.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_Builtin_stdint"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/DarwinFoundation1.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_DarwinFoundation1-4E5BVC0EJVA6NVHQM3M7PJABQ.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_DarwinFoundation1"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/DarwinFoundation2.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_DarwinFoundation2-4N9T1J79G6G8VGFBNDI3SOQS9.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_DarwinFoundation2"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/DarwinFoundation3.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_DarwinFoundation3-5BIEV2GEJPD133O7KJHPNRFTA.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_DarwinFoundation3"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/lib\/swift\/shims\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/_SwiftConcurrencyShims-DQPDJGJLYPEQX2A8I81O75Z5D.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "_SwiftConcurrencyShims"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/os.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/os-7FKNR0K9T5CI77SBSQFEKHWUC.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "os"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/os.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/os_object-4BIFT0ORFMNHACES01L64RXS6.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "os_object"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/os.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/os_workgroup-5BMC8YWYBC2UIOXW5W2IYSCNT.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "os_workgroup"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/ptrauth-290L98ZPPG4QY4XR9XE9MJCQ1.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "ptrauth"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Toolchains\/XcodeDefault.xctoolchain\/usr\/lib\/clang\/17\/include\/module.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/ptrcheck-5CDQVWMPPC23Z2DTXCU7FPDA3.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "ptrcheck"
+  },
+  {
+    "clangModuleMapPath" : "\/Applications\/Xcode.app\/Contents\/Developer\/Platforms\/AppleTVSimulator.platform\/Developer\/SDKs\/AppleTVSimulator.sdk\/usr\/include\/DarwinFoundation2.modulemap",
+    "clangModulePath" : "\/Users\/florian\/Documents\/Projet\/ReelFin\/build\/SwiftExplicitPrecompiledModules\/sys_types-4H00TRQJMKD2L5GSLSJJ2AL5Y.pcm",
+    "isBridgingHeaderDependency" : false,
+    "isFramework" : false,
+    "moduleName" : "sys_types"
+  }
+]

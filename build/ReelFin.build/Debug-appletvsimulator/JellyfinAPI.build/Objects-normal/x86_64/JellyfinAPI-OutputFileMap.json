@@ -1,0 +1,49 @@
+{
+  "" : {
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPI-primary.dia",
+    "emit-module-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPI-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPI-primary-emit-module.dia",
+    "pch" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPI-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPI-primary.swiftdeps"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/JellyfinAPI/Sources/JellyfinAPI/JellyfinAPIClient.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinAPIClient~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/JellyfinAPI/Sources/JellyfinAPI/JellyfinDTOs.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/JellyfinDTOs~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/JellyfinAPI/Sources/JellyfinAPI/RequestDeduplicator.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/RequestDeduplicator~partial.swiftmodule"
+  },
+  "/Users/florian/Documents/Projet/ReelFin/JellyfinAPI/Sources/JellyfinAPI/SeriesLookupCache.swift" : {
+    "const-values" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache.swiftconstvalues",
+    "dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache.d",
+    "diagnostics" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache.dia",
+    "index-unit-output-path" : "/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache.o",
+    "llvm-bc" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache.bc",
+    "object" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache.o",
+    "swift-dependencies" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache.swiftdeps",
+    "swiftmodule" : "/Users/florian/Documents/Projet/ReelFin/build/ReelFin.build/Debug-appletvsimulator/JellyfinAPI.build/Objects-normal/x86_64/SeriesLookupCache~partial.swiftmodule"
+  }
+}

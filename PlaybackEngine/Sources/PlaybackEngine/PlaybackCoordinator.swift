@@ -214,7 +214,7 @@ public actor PlaybackCoordinator {
             assetURL = appendingQueryItem(url: assetURL, name: "AudioStreamIndex", value: String(preferredAudioIndex))
         }
         if audioSelection.trueHDWasDeprioritized {
-            AppLog.playback.notice("\(PlaybackFailureReason.trueHDDeprioritizedForNativePath.localizedDescription ?? "TrueHD deprioritized", privacy: .public)")
+            AppLog.playback.notice("\(PlaybackFailureReason.trueHDDeprioritizedForNativePath.localizedDescription, privacy: .public)")
         }
 
         let requestedProfile = forcedProfileIfNeeded(
@@ -488,7 +488,13 @@ public actor PlaybackCoordinator {
         }
 
         let normalizedAudio = normalizedAudioCodec(preferredAudioCodec)
-        let preferBitstreamAudio = normalizedAudio == "eac3" || normalizedAudio == "ac3"
+        let allowAudioCopy: Bool = {
+            if let explicit = queryValue("AllowAudioStreamCopy")?.lowercased() {
+                return explicit == "true"
+            }
+            return !configuration.preferAudioTranscodeOnly && profile == .serverDefault
+        }()
+        let preferBitstreamAudio = allowAudioCopy && (normalizedAudio == "eac3" || normalizedAudio == "ac3")
         if configuration.preferAudioTranscodeOnly || profile != .serverDefault {
             setQuery("AudioCodec", preferBitstreamAudio ? normalizedAudio : "aac")
         }

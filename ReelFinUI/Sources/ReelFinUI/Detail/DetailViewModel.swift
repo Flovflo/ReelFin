@@ -157,6 +157,18 @@ final class DetailViewModel: ObservableObject {
         }
         return shouldShowResume ? "Resume" : "Play"
     }
+
+    var playbackStatusText: String? {
+        if shouldShowResume, let item = itemToPlay.playbackPositionDisplayText ?? playbackProgressDisplayText {
+            return "Stopped at \(item)"
+        }
+
+        if itemToPlay.isPlayed || detail.item.isPlayed || isWatched {
+            return "Watched"
+        }
+
+        return nil
+    }
     
     /// The item that should actually be passed to the player when the main button is tapped
     var itemToPlay: MediaItem {
@@ -242,5 +254,20 @@ final class DetailViewModel: ObservableObject {
             score += 100_000
         }
         return score
+    }
+
+    private var playbackProgressDisplayText: String? {
+        guard let playbackProgress, playbackProgress.positionTicks > 0 else { return nil }
+        let totalSeconds = Int(playbackProgress.positionTicks / 10_000_000)
+        let totalMinutes = max(0, totalSeconds / 60)
+        if totalMinutes < 60 {
+            return "\(totalMinutes)m"
+        }
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if minutes == 0 {
+            return "\(hours)h"
+        }
+        return String(format: "%dh%02d", hours, minutes)
     }
 }

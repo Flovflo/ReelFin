@@ -49,6 +49,7 @@ struct DetailView: View {
                     isInWatchlist: viewModel.isInWatchlist,
                     isDescriptionExpanded: $isDescriptionExpanded,
                     playButtonLabel: viewModel.playButtonLabel,
+                    playbackStatusText: viewModel.playbackStatusText,
                     onPlay: { startPlayback() },
                     onToggleWatchlist: { viewModel.toggleWatchlist() },
                     onMoreActions: { /* More actions */ },
@@ -63,7 +64,11 @@ struct DetailView: View {
                 }
 
                 if !viewModel.detail.cast.isEmpty {
-                    CastRow(cast: viewModel.detail.cast)
+                    CastRow(
+                        cast: viewModel.detail.cast,
+                        apiClient: dependencies.apiClient,
+                        imagePipeline: dependencies.imagePipeline
+                    )
                 }
 
                 if !viewModel.detail.similar.isEmpty {
@@ -183,10 +188,11 @@ struct DetailView: View {
 
     private func startPlayback(item: MediaItem? = nil) {
         guard !isLoadingPlayback else { return }
-        isLoadingPlayback = true
         let session = dependencies.makePlaybackSession()
-        playerSession = session
         let targetItem = item ?? viewModel.itemToPlay
+
+        isLoadingPlayback = true
+        playerSession = session
 
         Task {
             do {
@@ -461,8 +467,8 @@ public struct EpisodeCardView: View {
                     }
                     
                     HStack {
-                        if let runtime = episode.runtimeMinutes {
-                            Label("\(runtime)m", systemImage: "play.fill")
+                        if let runtime = episode.runtimeDisplayText {
+                            Label(runtime, systemImage: "play.fill")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.white.opacity(0.9))
                         }
@@ -514,6 +520,7 @@ public struct MediaHeroHeaderView: View {
     let isLoadingPlayback: Bool
     let isInWatchlist: Bool
     let playButtonLabel: String
+    let playbackStatusText: String?
     @Binding var isDescriptionExpanded: Bool
     let onPlay: () -> Void
     let onToggleWatchlist: () -> Void
@@ -522,12 +529,13 @@ public struct MediaHeroHeaderView: View {
     let imagePipeline: any ImagePipelineProtocol
     let namespace: Namespace.ID?
     
-    public init(item: MediaItem, heroHeight: CGFloat, isLoadingPlayback: Bool, isInWatchlist: Bool, isDescriptionExpanded: Binding<Bool>, playButtonLabel: String = "Play", onPlay: @escaping () -> Void, onToggleWatchlist: @escaping () -> Void, onMoreActions: @escaping () -> Void, apiClient: any JellyfinAPIClientProtocol, imagePipeline: any ImagePipelineProtocol, namespace: Namespace.ID? = nil) {
+    public init(item: MediaItem, heroHeight: CGFloat, isLoadingPlayback: Bool, isInWatchlist: Bool, isDescriptionExpanded: Binding<Bool>, playButtonLabel: String = "Play", playbackStatusText: String? = nil, onPlay: @escaping () -> Void, onToggleWatchlist: @escaping () -> Void, onMoreActions: @escaping () -> Void, apiClient: any JellyfinAPIClientProtocol, imagePipeline: any ImagePipelineProtocol, namespace: Namespace.ID? = nil) {
         self.item = item
         self.heroHeight = heroHeight
         self.isLoadingPlayback = isLoadingPlayback
         self.isInWatchlist = isInWatchlist
         self.playButtonLabel = playButtonLabel
+        self.playbackStatusText = playbackStatusText
         self._isDescriptionExpanded = isDescriptionExpanded
         self.onPlay = onPlay
         self.onToggleWatchlist = onToggleWatchlist
@@ -549,12 +557,11 @@ public struct MediaHeroHeaderView: View {
                 }
 
                 Text(item.name)
-                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 36 : 56, weight: .heavy, design: .rounded))
-                    .tracking(1.2)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
-                    .truncationMode(.tail)
+                    .font(.system(size: titleFontSize, weight: .heavy, design: .rounded))
+                    .tracking(titleTracking)
+                    .lineLimit(nil)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(.white)
                     .textSelection(.disabled)
                     .shadow(color: .black.opacity(0.45), radius: 8)
@@ -597,8 +604,19 @@ public struct MediaHeroHeaderView: View {
                     if item.hasClosedCaptions {
                         BadgePill(text: "CC")
                     }
+                    if item.isPlayed, playbackStatusText == "Watched" {
+                        BadgePill(text: "Watched")
+                    }
                 }
                 .padding(.top, 2)
+
+                if let playbackStatusText, !playbackStatusText.isEmpty {
+                    Text(playbackStatusText)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 2)
+                }
 
                 if let overview = item.overview, !overview.isEmpty {
                     ExpandableOverviewSection(
@@ -641,7 +659,7 @@ public struct MediaHeroHeaderView: View {
             entries.append(String(year))
         }
         if let runtime = item.runtimeMinutes {
-            entries.append("\(runtime)m")
+            entries.append(item.runtimeDisplayText ?? "\(runtime)m")
         }
         if !item.genres.isEmpty {
             entries.append(item.genres.prefix(2).joined(separator: ", "))
@@ -664,6 +682,31 @@ public struct MediaHeroHeaderView: View {
             return dynamicTypeSize.isAccessibilitySize ? 120 : 104
         }
         return dynamicTypeSize.isAccessibilitySize ? 148 : 124
+    }
+
+    private var titleFontSize: CGFloat {
+        let count = item.name.count
+        if dynamicTypeSize.isAccessibilitySize {
+            if count > 42 { return 28 }
+            if count > 30 { return 31 }
+            return 34
+        }
+
+        if horizontalSizeClass == .compact {
+            if count > 42 { return 36 }
+            if count > 30 { return 42 }
+            if count > 20 { return 48 }
+            return 56
+        }
+
+        if count > 48 { return 42 }
+        if count > 34 { return 48 }
+        if count > 22 { return 52 }
+        return 60
+    }
+
+    private var titleTracking: CGFloat {
+        titleFontSize <= 38 ? 0.2 : 0.8
     }
 }
 
@@ -988,9 +1031,13 @@ private struct FileDetailsSection: View {
 public struct CastRow: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let cast: [PersonCredit]
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
     
-    public init(cast: [PersonCredit]) {
+    public init(cast: [PersonCredit], apiClient: any JellyfinAPIClientProtocol, imagePipeline: any ImagePipelineProtocol) {
         self.cast = cast
+        self.apiClient = apiClient
+        self.imagePipeline = imagePipeline
     }
     
     public var body: some View {
@@ -1000,23 +1047,37 @@ public struct CastRow: View {
                 .padding(.horizontal, horizontalPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
-                    ForEach(Array(cast.enumerated()), id: \.offset) { _, person in
-                        VStack(alignment: .leading, spacing: 4) {
+                LazyHStack(spacing: 20) {
+                    ForEach(cast) { person in
+                        VStack(alignment: .center, spacing: 10) {
+                            CastPortraitView(
+                                person: person,
+                                apiClient: apiClient,
+                                imagePipeline: imagePipeline
+                            )
+
                             Text(person.name)
                                 .font(.system(size: 15, weight: .bold, design: .rounded))
                                 .foregroundStyle(.white)
-                                .lineLimit(1)
-                            if let role = person.role {
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                                .frame(width: cardWidth)
+
+                            if let role = person.role, !role.isEmpty {
                                 Text(role)
                                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.6))
-                                    .lineLimit(1)
+                                    .foregroundStyle(.white.opacity(0.62))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.center)
+                                    .frame(width: cardWidth)
+                            } else {
+                                Spacer(minLength: 0)
+                                    .frame(height: 0)
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .glassPanelStyle(cornerRadius: 16)
+                        .frame(width: cardWidth, alignment: .top)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(accessibilityLabel(for: person))
                     }
                 }
                 .padding(.horizontal, horizontalPadding)
@@ -1026,6 +1087,76 @@ public struct CastRow: View {
     
     private var horizontalPadding: CGFloat {
         horizontalSizeClass == .compact ? 24 : 40
+    }
+
+    private var cardWidth: CGFloat {
+        horizontalSizeClass == .compact ? 108 : 124
+    }
+
+    private func accessibilityLabel(for person: PersonCredit) -> String {
+        if let role = person.role, !role.isEmpty {
+            return "\(person.name), \(role)"
+        }
+        return person.name
+    }
+}
+
+private struct CastPortraitView: View {
+    let person: PersonCredit
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.12),
+                            Color.white.opacity(0.04)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay {
+                    Circle()
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                }
+
+            if person.primaryImageTag != nil {
+                CachedRemoteImage(
+                    itemID: person.id,
+                    type: .primary,
+                    width: 240,
+                    quality: 82,
+                    contentMode: .fill,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline
+                )
+                .clipShape(Circle())
+            } else {
+                fallbackMonogram
+            }
+        }
+        .frame(width: 92, height: 92)
+        .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 6)
+    }
+
+    private var fallbackMonogram: some View {
+        Text(initials(for: person.name))
+            .font(.system(size: 28, weight: .bold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.88))
+    }
+
+    private func initials(for name: String) -> String {
+        let parts = name
+            .split(separator: " ")
+            .prefix(2)
+        let letters = parts.compactMap { part in
+            part.first.map { String($0).uppercased() }
+        }
+        return letters.joined()
     }
 }
 

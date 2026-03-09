@@ -1017,6 +1017,13 @@ public struct PlaybackDecisionEngine: Sendable {
         // /Users/florian/Downloads/jellyfin-openapi-stable.json
         // $.paths["/Videos/{itemId}/stream"].get (query parameter: static=true)
         guard ttffTuning.preferProgressiveDirectPlay else { return nil }
+        if let providedURL = source.directPlayURL ?? source.directStreamURL {
+            let serverHost = configuration.serverURL.host?.lowercased()
+            let providedHost = providedURL.host?.lowercased()
+            if let serverHost, let providedHost, serverHost != providedHost {
+                return nil
+            }
+        }
 
         var components = URLComponents(
             url: configuration.serverURL.appendingPathComponent("Videos/\(itemID)/stream"),

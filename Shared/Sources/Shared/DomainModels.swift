@@ -239,11 +239,37 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         return Int(runtimeTicks / 10_000_000 / 60)
     }
 
+    public var runtimeDisplayText: String? {
+        guard let runtimeMinutes else { return nil }
+        return Self.formatMinutes(runtimeMinutes)
+    }
+
+    public var playbackPositionDisplayText: String? {
+        guard let playbackPositionTicks, playbackPositionTicks > 0 else { return nil }
+        let totalSeconds = Int(playbackPositionTicks / 10_000_000)
+        return Self.formatDuration(seconds: totalSeconds)
+    }
+
     public var playbackProgress: Double? {
         guard let position = playbackPositionTicks, let total = runtimeTicks, total > 0 else {
             return nil
         }
         return min(1, max(0, Double(position) / Double(total)))
+    }
+
+    private static func formatMinutes(_ totalMinutes: Int) -> String {
+        guard totalMinutes >= 60 else { return "\(totalMinutes)m" }
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if minutes == 0 {
+            return "\(hours)h"
+        }
+        return String(format: "%dh%02d", hours, minutes)
+    }
+
+    private static func formatDuration(seconds: Int) -> String {
+        let totalMinutes = max(0, seconds / 60)
+        return formatMinutes(totalMinutes)
     }
 }
 
@@ -277,11 +303,13 @@ public struct PersonCredit: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var name: String
     public var role: String?
+    public var primaryImageTag: String?
 
-    public init(id: String, name: String, role: String? = nil) {
+    public init(id: String, name: String, role: String? = nil, primaryImageTag: String? = nil) {
         self.id = id
         self.name = name
         self.role = role
+        self.primaryImageTag = primaryImageTag
     }
 }
 

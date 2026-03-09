@@ -65,7 +65,7 @@ public struct SectionRow: View {
                                     .scaleEffect(phase.isIdentity ? 1 : 0.95)
                             }
                         }
-                        .accessibilityIdentifier("media_card_button_\(item.id)")
+                        .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
                         .buttonStyle(.plain)
                         .hoverEffect(.highlight)
                         #if os(tvOS)

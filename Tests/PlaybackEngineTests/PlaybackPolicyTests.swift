@@ -96,6 +96,37 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertTrue(shouldFallback)
     }
 
+    func testPreemptiveH264FallbackStillTriggersForTenBitSDRSource() {
+        let source = MediaSource(
+            id: "source-sdr-10bit",
+            itemID: "item-sdr-10bit",
+            name: "SDR 10-bit Source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            videoBitDepth: 10,
+            videoRange: "SDR",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/master.m3u8")
+        )
+
+        let shouldFallback = PlaybackSessionController.shouldPreferForceH264Fallback(
+            transport: "fMP4",
+            hasInitMap: false,
+            source: source,
+            allowSDRFallback: true,
+            itemPrefersDolbyVision: false,
+            strictQualityMode: false,
+            videoCodec: "hevc",
+            allowAudioStreamCopy: false
+        )
+
+        XCTAssertTrue(shouldFallback)
+    }
+
     func testPreemptiveH264FallbackSkipsDolbyVisionOrStrictQuality() {
         let source = MediaSource(
             id: "source-dv",

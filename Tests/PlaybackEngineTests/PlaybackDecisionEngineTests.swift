@@ -223,6 +223,80 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(decision?.route, .directPlay(URL(string: "https://example.com/direct.mp4")!))
     }
 
+    func testCoordinatorKeepsDirectPlayWhenSourceIsCompatible() async throws {
+        let configuration = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            forceH264FallbackWhenNotDirectPlay: true
+        )
+        let session = UserSession(userID: "user", username: "tester", token: "abc")
+        let source = MediaSource(
+            id: "source-direct",
+            itemID: "item-direct",
+            name: "Direct MP4",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/direct-stream.mp4"),
+            directPlayURL: URL(string: "https://example.com/direct-play.mp4"),
+            transcodeURL: URL(string: "https://example.com/master.m3u8")
+        )
+        let apiClient = PlaybackCoordinatorTestAPIClient(
+            configuration: configuration,
+            session: session,
+            sourcesByItemID: ["item-direct": [source]]
+        )
+        let coordinator = PlaybackCoordinator(apiClient: apiClient)
+
+        let selection = try await coordinator.resolvePlayback(
+            itemID: "item-direct",
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .serverDefault
+        )
+
+        guard case let .directPlay(url) = selection.decision.route else {
+            return XCTFail("Expected direct play route for a compatible MP4 source")
+        }
+
+        XCTAssertEqual(url, URL(string: "https://example.com/direct-play.mp4"))
+        XCTAssertTrue(selection.assetURL.absoluteString.contains("/Videos/item-direct/stream"))
+        XCTAssertFalse(selection.assetURL.absoluteString.contains("master.m3u8"))
+        XCTAssertEqual(selection.debugInfo.playMethod, "DirectPlay")
+    }
+
+    func testCoordinatorKeepsExternalDirectPlayURLForMockLikeSources() async throws {
+        let configuration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
+        let session = UserSession(userID: "user", username: "tester", token: "abc")
+        let source = MediaSource(
+            id: "source-external",
+            itemID: "item-external",
+            name: "External HLS",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://devstreaming-cdn.apple.com/videos/streaming/examples/adv_dv_atmos/main.m3u8"),
+            directPlayURL: URL(string: "https://devstreaming-cdn.apple.com/videos/streaming/examples/adv_dv_atmos/main.m3u8"),
+            transcodeURL: URL(string: "https://demo.reelfin.app/Videos/item-external/master.m3u8")
+        )
+        let apiClient = PlaybackCoordinatorTestAPIClient(
+            configuration: configuration,
+            session: session,
+            sourcesByItemID: ["item-external": [source]]
+        )
+        let coordinator = PlaybackCoordinator(apiClient: apiClient)
+
+        let selection = try await coordinator.resolvePlayback(itemID: "item-external", mode: .balanced)
+
+        XCTAssertEqual(selection.assetURL.host, "devstreaming-cdn.apple.com")
+        XCTAssertEqual(selection.assetURL.path, "/videos/streaming/examples/adv_dv_atmos/main.m3u8")
+        XCTAssertFalse(selection.assetURL.absoluteString.contains("demo.reelfin.app/Videos/item-external/stream"))
+        XCTAssertEqual(selection.debugInfo.playMethod, "DirectPlay")
+    }
+
     func testJitPlanForcesRawDirectPlayWhenAppleContainerIsCompatible() {
         let plan = PlaybackPlan(
             itemID: "item-jit-mov",
@@ -516,6 +590,46 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(queryMap["SegmentContainer"], "fmp4")
         // serverDefault + playbackPolicy.auto returns server URL as-is (no forced rewrite)
         XCTAssertNil(queryMap["BreakOnNonKeyFrames"])
+    }
+
+    func testCoordinatorServerDefaultTranscodesAC3ToAACWhenAudioCopyIsDisabled() async throws {
+        let source = MediaSource(
+            id: "source-server-default-h264-ac3",
+            itemID: "item-server-default-h264-ac3",
+            name: "H264 AC3 source",
+            container: "mkv",
+            videoCodec: "h264",
+            audioCodec: "ac3",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(
+                string: "https://example.com/Videos/item-server-default-h264-ac3/master.m3u8?MediaSourceId=source-server-default-h264-ac3&VideoCodec=h264&AllowVideoStreamCopy=true&AllowAudioStreamCopy=false&Container=ts&SegmentContainer=ts&AudioCodec=ac3"
+            )
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-server-default-h264-ac3": [source]])
+        let coordinator = PlaybackCoordinator(apiClient: client)
+
+        let selection = try await coordinator.resolvePlayback(
+            itemID: "item-server-default-h264-ac3",
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .serverDefault
+        )
+
+        guard case .transcode = selection.decision.route else {
+            XCTFail("Expected transcode route")
+            return
+        }
+
+        let queryMap = queryMap(from: selection.assetURL)
+        XCTAssertEqual(queryMap["VideoCodec"], "h264")
+        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "true")
+        XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "false")
+        XCTAssertEqual(queryMap["AudioCodec"], "aac")
+        XCTAssertEqual(queryMap["Container"], "ts")
+        XCTAssertEqual(queryMap["SegmentContainer"], "ts")
     }
 
     func testCoordinatorServerDefaultUpgradesMKVHEVCToAppleOptimizedHEVC() async throws {
@@ -823,6 +937,57 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         return (components?.queryItems ?? []).map { $0.name.lowercased() }
     }
+}
+
+private final class PlaybackCoordinatorTestAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
+    private let configuration: ServerConfiguration
+    private let session: UserSession
+    private let sourcesByItemID: [String: [MediaSource]]
+
+    init(
+        configuration: ServerConfiguration,
+        session: UserSession,
+        sourcesByItemID: [String: [MediaSource]]
+    ) {
+        self.configuration = configuration
+        self.session = session
+        self.sourcesByItemID = sourcesByItemID
+    }
+
+    func currentConfiguration() async -> ServerConfiguration? {
+        configuration
+    }
+
+    func currentSession() async -> UserSession? {
+        session
+    }
+
+    func configure(server: ServerConfiguration) async throws {}
+    func testConnection(serverURL: URL) async throws {}
+    func authenticate(credentials: UserCredentials) async throws -> UserSession { session }
+    func signOut() async {}
+    func fetchUserViews() async throws -> [LibraryView] { [] }
+    func fetchHomeFeed(since: Date?) async throws -> HomeFeed { .empty }
+    func fetchItem(id: String) async throws -> MediaItem { MediaItem(id: id, name: id) }
+    func fetchItemDetail(id: String) async throws -> MediaDetail { MediaDetail(item: MediaItem(id: id, name: id)) }
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
+    func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { [] }
+
+    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
+        sourcesByItemID[itemID] ?? []
+    }
+
+    func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        _ = options
+        return sourcesByItemID[itemID] ?? []
+    }
+
+    func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? { nil }
+    func prefetchImages(for items: [MediaItem]) async {}
+    func reportPlayback(progress: PlaybackProgressUpdate) async throws {}
+    func reportPlayed(itemID: String) async throws {}
 }
 
 private struct FixedPlanCapabilityEngine: CapabilityEngineProtocol {
