@@ -1,4 +1,3 @@
-import PlaybackEngine
 import Shared
 import SwiftUI
 
@@ -110,9 +109,7 @@ struct HomeView: View {
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
-    @State private var playerSession: PlaybackEngine.PlaybackSessionController?
-    @State private var isShowingPlayer = false
-    @State private var currentPlayerItem: MediaItem?
+    @State private var shouldAutoplaySelectedItem = false
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
@@ -147,9 +144,12 @@ struct HomeView: View {
                                 },
                                 onSelect: { item in
                                     if row.kind == .continueWatching {
-                                        startPlayback(item: item)
+                                        shouldAutoplaySelectedItem = true
+                                        selectedDetailNamespace = namespaceForCard(itemID: item.id, rowID: row.id)
+                                        viewModel.select(item: item)
                                         return
                                     }
+                                    shouldAutoplaySelectedItem = false
                                     selectedDetailNamespace = namespaceForCard(itemID: item.id, rowID: row.id)
                                     viewModel.select(item: item)
                                 }
@@ -183,6 +183,7 @@ struct HomeView: View {
                 get: { viewModel.selectedItem != nil },
                 set: {
                     if !$0 {
+                        shouldAutoplaySelectedItem = false
                         selectedDetailNamespace = nil
                         viewModel.dismissDetail()
                     }
@@ -194,6 +195,7 @@ struct HomeView: View {
                     dependencies: dependencies,
                     item: item,
                     preferredEpisode: viewModel.selectedEpisode,
+                    autoplayOnLoad: shouldAutoplaySelectedItem,
                     namespace: selectedDetailNamespace
                 )
             }
@@ -205,15 +207,6 @@ struct HomeView: View {
             HomeCustomizationSheet(viewModel: viewModel)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-        }
-        .fullScreenCover(isPresented: $isShowingPlayer) {
-            if let playerSession, let currentPlayerItem {
-                PlayerView(session: playerSession, item: currentPlayerItem) {
-                    isShowingPlayer = false
-                    self.playerSession = nil
-                    self.currentPlayerItem = nil
-                }
-            }
         }
         .toolbar(.hidden, for: .navigationBar)
         .ignoresSafeArea(edges: .top) // Let hero stretch to status bar
@@ -238,26 +231,6 @@ struct HomeView: View {
         } else {
             topChrome
                 .padding(.top, 60) // Add top padding to account for missing hero
-        }
-    }
-
-    private func startPlayback(item: MediaItem) {
-        let session = dependencies.makePlaybackSession()
-        playerSession = session
-        currentPlayerItem = item
-
-        Task {
-            do {
-                try await session.load(item: item)
-                await MainActor.run {
-                    isShowingPlayer = true
-                }
-            } catch {
-                await MainActor.run {
-                    playerSession = nil
-                    currentPlayerItem = nil
-                }
-            }
         }
     }
 

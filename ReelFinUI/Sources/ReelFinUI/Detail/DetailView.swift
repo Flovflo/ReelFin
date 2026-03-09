@@ -10,17 +10,20 @@ struct DetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
+    private let autoplayOnLoad: Bool
     private let namespace: Namespace.ID?
 
     @State private var playerSession: PlaybackSessionController?
     @State private var showPlayer = false
     @State private var isLoadingPlayback = false
     @State private var isDescriptionExpanded = false
+    @State private var hasTriggeredAutoplay = false
 
     init(
         dependencies: ReelFinDependencies,
         item: MediaItem,
         preferredEpisode: MediaItem? = nil,
+        autoplayOnLoad: Bool = false,
         namespace: Namespace.ID? = nil
     ) {
         _viewModel = StateObject(
@@ -31,6 +34,7 @@ struct DetailView: View {
             )
         )
         self.dependencies = dependencies
+        self.autoplayOnLoad = autoplayOnLoad
         self.namespace = namespace
     }
 
@@ -89,6 +93,9 @@ struct DetailView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .task {
             await viewModel.load()
+            guard autoplayOnLoad, !hasTriggeredAutoplay else { return }
+            hasTriggeredAutoplay = true
+            startPlayback()
         }
         .fullScreenCover(isPresented: $showPlayer) {
             if let playerSession {
