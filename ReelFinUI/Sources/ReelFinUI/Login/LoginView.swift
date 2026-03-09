@@ -12,7 +12,7 @@ struct LoginView: View {
 
     @State private var phase: OnboardingPhase = .landing
     @State private var contentVisible = false
-    @State private var successBounce = false
+    @State private var successVisible = false
 
     init(dependencies: ReelFinDependencies, onLogin: @escaping (UserSession) -> Void) {
         _viewModel = StateObject(wrappedValue: LoginViewModel(dependencies: dependencies))
@@ -24,31 +24,25 @@ struct LoginView: View {
             let metrics = layoutMetrics(for: proxy.size)
 
             ZStack {
-                backdrop(size: proxy.size)
+                backgroundView(size: proxy.size)
 
-                if phase != .success {
-                    VStack(alignment: .leading, spacing: 0) {
-                        topChrome
-                            .padding(.top, proxy.safeAreaInsets.top + metrics.topPadding)
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                        .padding(.top, proxy.safeAreaInsets.top + metrics.topPadding)
 
-                        Spacer(minLength: metrics.topSpacer)
+                    Spacer(minLength: metrics.topSpacer)
 
-                        currentStep(metrics: metrics)
-                            .frame(maxWidth: metrics.contentWidth, alignment: .leading)
-
-                        Spacer(minLength: metrics.bottomSpacer)
-
-                        bottomAction(metrics: metrics, safeAreaInsets: proxy.safeAreaInsets)
+                    ZStack {
+                        stageContent(metrics: metrics)
                     }
-                    .padding(.horizontal, metrics.horizontalPadding)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .opacity(contentVisible ? 1 : 0)
-                    .offset(y: contentVisible ? 0 : 12)
-                } else {
-                    successState
-                        .padding(.bottom, proxy.safeAreaInsets.bottom)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .frame(maxWidth: metrics.contentWidth)
+
+                    Spacer()
                 }
+                .padding(.horizontal, metrics.horizontalPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .opacity(contentVisible ? 1 : 0)
+                .offset(y: contentVisible ? 0 : 10)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -70,25 +64,22 @@ struct LoginView: View {
     }
 
     private var stageAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.16) : .smooth(duration: 0.38, extraBounce: 0.02)
+        reduceMotion ? .easeInOut(duration: 0.14) : .smooth(duration: 0.28, extraBounce: 0.01)
     }
 
     private var entranceAnimation: Animation {
-        reduceMotion ? .easeOut(duration: 0.12) : .smooth(duration: 0.34, extraBounce: 0.01)
+        reduceMotion ? .easeOut(duration: 0.12) : .smooth(duration: 0.26, extraBounce: 0)
     }
 
-    private var stepTransition: AnyTransition {
-        .asymmetric(
-            insertion: .offset(y: reduceMotion ? 0 : 10).combined(with: .opacity),
-            removal: .opacity
-        )
+    private var stageTransition: AnyTransition {
+        .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.985))
     }
 
-    private var topChrome: some View {
-        HStack {
-            Text(chromeTitle)
+    private var header: some View {
+        HStack(spacing: 12) {
+            Text("Jellyfin")
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(.white.opacity(0.68))
 
             Spacer()
 
@@ -98,70 +89,86 @@ struct LoginView: View {
                 } label: {
                     Image(systemName: phase == .serverEntry ? "xmark" : "chevron.backward")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.86))
+                        .foregroundStyle(.white)
                         .frame(width: 34, height: 34)
                 }
-                .buttonStyle(OnboardingIconButtonStyle())
+                .buttonStyle(NativeCircleButtonStyle())
             }
         }
     }
 
     @ViewBuilder
-    private func currentStep(metrics: LoginMetrics) -> some View {
+    private func stageContent(metrics: LoginMetrics) -> some View {
         switch phase {
         case .landing:
-            landingStep(metrics: metrics)
-                .transition(stepTransition)
+            landingCard(metrics: metrics)
+                .transition(stageTransition)
         case .serverEntry:
-            serverStep(metrics: metrics)
-                .transition(stepTransition)
-        case .credentialsSheet, .submitting:
-            credentialsStep(metrics: metrics)
-                .transition(stepTransition)
+            serverCard(metrics: metrics)
+                .transition(stageTransition)
+        case .credentials, .submitting:
+            credentialsCard(metrics: metrics)
+                .transition(stageTransition)
         case .success:
-            EmptyView()
+            successCard(metrics: metrics)
+                .transition(stageTransition)
         }
     }
 
-    private func landingStep(metrics: LoginMetrics) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Setup Jellyfin")
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.52))
+    private func landingCard(metrics: LoginMetrics) -> some View {
+        stageCard {
+            VStack(alignment: .leading, spacing: 22) {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.92))
 
-            Text("Fast. Native. Clean.")
-                .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .accessibilityIdentifier("login_landing_title")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Connect your server")
+                        .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .accessibilityIdentifier("login_landing_title")
 
-            Text("Just connect your server and sign in.")
-                .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.62))
+                    Text("Simple setup, native feel.")
+                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                }
 
-            if viewModel.hasSavedServer {
-                Text("Saved server ready")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(ReelFinTheme.onboardingMint)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .capsuleSurface()
+                if viewModel.hasSavedServer {
+                    Text("Saved server ready")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .capsuleSurface()
+                }
+
+                Button {
+                    transition(to: .serverEntry)
+                    focus(.serverURL)
+                } label: {
+                    Text(viewModel.hasSavedServer ? "Continue" : "Start setup")
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                }
+                .buttonStyle(NativePrimaryButtonStyle())
+                .accessibilityIdentifier("login_primary_cta")
             }
         }
     }
 
-    private func serverStep(metrics: LoginMetrics) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            stepIcon(systemImage: "network")
+    private func serverCard(metrics: LoginMetrics) -> some View {
+        stageCard {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Server URL")
+                        .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
 
-            Text("Server URL")
-                .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                    Text("Enter your Jellyfin address.")
+                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                }
 
-            Text("Paste your Jellyfin address.")
-                .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.60))
-
-            HStack(spacing: 12) {
                 TextField("https://server.tld", text: $viewModel.serverURLText)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
@@ -175,6 +182,15 @@ struct LoginView: View {
                         continueFromServer()
                     }
                     .accessibilityIdentifier("login_server_field")
+                    .fieldSurface()
+
+                if viewModel.isTestingConnection {
+                    feedbackRow(text: "Checking server", tint: .white.opacity(0.72))
+                } else if let serverError = viewModel.serverErrorMessage {
+                    feedbackRow(text: serverError, tint: .red.opacity(0.92))
+                } else if let serverMessage = viewModel.serverMessage {
+                    feedbackRow(text: serverMessage, tint: .white.opacity(0.72))
+                }
 
                 Button {
                     continueFromServer()
@@ -182,59 +198,50 @@ struct LoginView: View {
                     Group {
                         if viewModel.isTestingConnection {
                             ProgressView()
-                                .progressViewStyle(.circular)
-                                .tint(ReelFinTheme.onboardingButtonText)
+                                .tint(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54)
                         } else {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(ReelFinTheme.onboardingButtonText)
+                            Text("Continue")
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54)
                         }
                     }
-                    .frame(width: 50, height: 50)
                 }
-                .buttonStyle(OnboardingProminentIconButtonStyle())
+                .buttonStyle(NativePrimaryButtonStyle())
                 .disabled(!viewModel.canAdvanceFromServer)
                 .accessibilityIdentifier("login_server_continue")
-            }
-            .fieldSurface()
-
-            if viewModel.isTestingConnection {
-                feedbackRow(text: "Checking server", tint: ReelFinTheme.onboardingBlue)
-            } else if let serverError = viewModel.serverErrorMessage {
-                feedbackRow(text: serverError, tint: .red)
-            } else if let serverMessage = viewModel.serverMessage {
-                feedbackRow(text: serverMessage, tint: ReelFinTheme.onboardingMint)
             }
         }
     }
 
-    private func credentialsStep(metrics: LoginMetrics) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            stepIcon(systemImage: "person.crop.circle")
+    private func credentialsCard(metrics: LoginMetrics) -> some View {
+        stageCard {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Sign in")
+                        .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
 
-            Text("Sign in")
-                .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                    Text(serverHost)
+                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                }
 
-            Text(serverHost)
-                .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.60))
+                VStack(spacing: 12) {
+                    TextField("Username", text: $viewModel.username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .textContentType(.username)
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .focused($focusedField, equals: .username)
+                        .submitLabel(.next)
+                        .onSubmit {
+                            focusedField = .password
+                        }
+                        .fieldSurface()
 
-            VStack(spacing: 12) {
-                TextField("Username", text: $viewModel.username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .textContentType(.username)
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .focused($focusedField, equals: .username)
-                    .submitLabel(.next)
-                    .onSubmit {
-                        focusedField = .password
-                    }
-                    .fieldSurface()
-
-                HStack(spacing: 12) {
                     SecureField("Password", text: $viewModel.password)
                         .textContentType(.password)
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -244,177 +251,113 @@ struct LoginView: View {
                         .onSubmit {
                             submitCredentials()
                         }
+                        .fieldSurface()
                 }
-                .fieldSurface()
-            }
-            .accessibilityIdentifier("login_credentials_sheet")
+                .accessibilityIdentifier("login_credentials_sheet")
 
-            if phase == .submitting {
-                feedbackRow(text: "Signing in", tint: ReelFinTheme.onboardingBlue)
-            } else if let authError = viewModel.authErrorMessage {
-                feedbackRow(text: authError, tint: .red)
-            }
-        }
-    }
-
-    private func bottomAction(metrics: LoginMetrics, safeAreaInsets: EdgeInsets) -> some View {
-        VStack(spacing: 0) {
-            switch phase {
-            case .landing:
-                Button {
-                    transition(to: .serverEntry)
-                    focus(.serverURL)
-                } label: {
-                    Text(viewModel.hasSavedServer ? "Continue" : "Start")
-                        .foregroundStyle(ReelFinTheme.onboardingButtonText)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
+                if phase == .submitting {
+                    feedbackRow(text: "Signing in", tint: .white.opacity(0.72))
+                } else if let authError = viewModel.authErrorMessage {
+                    feedbackRow(text: authError, tint: .red.opacity(0.92))
                 }
-                .buttonStyle(OnboardingPrimaryButtonStyle())
-                .accessibilityIdentifier("login_primary_cta")
 
-            case .serverEntry:
-                Color.clear.frame(height: 1)
-
-            case .credentialsSheet, .submitting:
                 Button {
                     submitCredentials()
                 } label: {
                     Group {
                         if phase == .submitting {
                             ProgressView()
-                                .progressViewStyle(.circular)
-                                .tint(ReelFinTheme.onboardingButtonText)
+                                .tint(.white)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 56)
+                                .frame(height: 54)
                         } else {
                             Text("Sign in")
-                                .foregroundStyle(ReelFinTheme.onboardingButtonText)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 56)
+                                .frame(height: 54)
                         }
                     }
                 }
-                .buttonStyle(OnboardingPrimaryButtonStyle())
+                .buttonStyle(NativePrimaryButtonStyle())
                 .disabled(!viewModel.canSubmitCredentials || phase == .submitting)
-
-            case .success:
-                EmptyView()
             }
         }
-        .padding(.bottom, safeAreaInsets.bottom + 8)
     }
 
-    private var successState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 34, weight: .bold))
-                .foregroundStyle(ReelFinTheme.onboardingMint)
-                .frame(width: 84, height: 84)
-                .background(
-                    Circle()
-                        .fill(.white.opacity(0.06))
-                )
-                .overlay {
-                    Circle()
-                        .stroke(.white.opacity(0.08), lineWidth: 1)
-                }
-                .scaleEffect(successBounce ? 1 : 0.82)
+    private func successCard(metrics: LoginMetrics) -> some View {
+        stageCard {
+            VStack(alignment: .center, spacing: 18) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 54, weight: .medium))
+                    .foregroundStyle(.white)
+                    .opacity(successVisible ? 1 : 0.65)
+                    .scaleEffect(successVisible ? 1 : 0.9)
 
-            Text("Done")
-                .font(.system(size: 26, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .accessibilityIdentifier("login_success_title")
+                Text("Connected")
+                    .font(.system(size: metrics.titleSize - 4, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .accessibilityIdentifier("login_success_title")
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            withAnimation(reduceMotion ? .easeOut(duration: 0.14) : .smooth(duration: 0.32, extraBounce: 0.08)) {
-                successBounce = true
+            withAnimation(entranceAnimation) {
+                successVisible = true
             }
         }
     }
 
-    private func backdrop(size: CGSize) -> some View {
-        let state = backdropState
-        let orbDiameter = min(size.width * state.diameterScale, state.maximumDiameter)
-
-        return ZStack {
+    private func backgroundView(size: CGSize) -> some View {
+        ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.02, green: 0.02, blue: 0.03),
-                    Color(red: 0.03, green: 0.04, blue: 0.07),
+                    Color(red: 0.04, green: 0.05, blue: 0.08),
+                    Color(red: 0.02, green: 0.03, blue: 0.05),
                     Color.black
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
 
-            Ellipse()
-                .fill(
-                    RadialGradient(
-                        colors: paletteColors,
-                        center: .center,
-                        startRadius: 12,
-                        endRadius: orbDiameter * 0.5
-                    )
-                )
-                .frame(width: orbDiameter, height: orbDiameter * state.aspectRatio)
-                .blur(radius: state.blurRadius)
-                .opacity(state.opacity)
-                .scaleEffect(state.scale)
-                .offset(
-                    x: size.width * state.xOffsetRatio,
-                    y: size.height * state.yOffsetRatio
-                )
-                .drawingGroup()
+            Circle()
+                .fill(phaseTint.opacity(0.34))
+                .frame(width: min(size.width * 0.72, 340), height: min(size.width * 0.72, 340))
+                .blur(radius: 60)
+                .offset(y: -size.height * 0.2)
 
             LinearGradient(
                 colors: [
+                    Color.white.opacity(0.03),
                     Color.clear,
-                    Color.black.opacity(0.24),
-                    Color.black.opacity(0.56),
-                    Color.black.opacity(0.82)
+                    Color.black.opacity(0.44)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
         }
         .ignoresSafeArea()
+        .animation(stageAnimation, value: phase)
     }
 
-    private var paletteColors: [Color] {
+    private var phaseTint: Color {
         switch phase {
         case .landing, .serverEntry:
-            return [
-                ReelFinTheme.onboardingCyan.opacity(0.98),
-                ReelFinTheme.onboardingBlue.opacity(1.0)
-            ]
-        case .credentialsSheet, .submitting:
-            return [
-                ReelFinTheme.onboardingOrange.opacity(0.96),
-                ReelFinTheme.onboardingViolet.opacity(0.90)
-            ]
+            return ReelFinTheme.onboardingBlue
+        case .credentials, .submitting:
+            return ReelFinTheme.onboardingViolet
         case .success:
-            return [
-                ReelFinTheme.onboardingMint.opacity(0.72),
-                ReelFinTheme.onboardingBlue.opacity(0.48)
-            ]
+            return ReelFinTheme.onboardingMint
         }
     }
 
-    private func stepIcon(systemImage: String) -> some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 22, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.92))
-            .frame(width: 52, height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.white.opacity(0.06))
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
-            }
+    private var serverHost: String {
+        URL(string: viewModel.serverURLText.trimmingCharacters(in: .whitespacesAndNewlines))?.host ?? "Jellyfin account"
+    }
+
+    private func stageCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .nativeStageSurface()
     }
 
     private func feedbackRow(text: String, tint: Color) -> some View {
@@ -424,23 +367,6 @@ struct LoginView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .capsuleSurface()
-    }
-
-    private var serverHost: String {
-        URL(string: viewModel.serverURLText.trimmingCharacters(in: .whitespacesAndNewlines))?.host ?? "Jellyfin account"
-    }
-
-    private var chromeTitle: String {
-        switch phase {
-        case .landing:
-            return "Setup"
-        case .serverEntry:
-            return "Jellyfin server"
-        case .credentialsSheet, .submitting:
-            return "Jellyfin account"
-        case .success:
-            return ""
-        }
     }
 
     private func continueFromServer() {
@@ -455,7 +381,7 @@ struct LoginView: View {
             guard isValid else { return }
 
             await MainActor.run {
-                transition(to: .credentialsSheet)
+                transition(to: .credentials)
                 focus(.username)
             }
         }
@@ -475,7 +401,7 @@ struct LoginView: View {
                 await presentSuccess(for: session)
             } else {
                 await MainActor.run {
-                    transition(to: .credentialsSheet)
+                    transition(to: .credentials)
                     focus(.password)
                 }
             }
@@ -484,11 +410,11 @@ struct LoginView: View {
 
     private func presentSuccess(for session: UserSession) async {
         await MainActor.run {
-            successBounce = false
+            successVisible = false
             transition(to: .success)
         }
 
-        try? await Task.sleep(nanoseconds: reduceMotion ? 180_000_000 : 420_000_000)
+        try? await Task.sleep(nanoseconds: reduceMotion ? 180_000_000 : 360_000_000)
 
         await MainActor.run {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -502,7 +428,7 @@ struct LoginView: View {
             break
         case .serverEntry:
             transition(to: .landing)
-        case .credentialsSheet, .submitting:
+        case .credentials, .submitting:
             viewModel.clearAuthError()
             transition(to: .serverEntry)
         case .success:
@@ -523,59 +449,10 @@ struct LoginView: View {
         }
 
         Task {
-            try? await Task.sleep(nanoseconds: 160_000_000)
+            try? await Task.sleep(nanoseconds: 120_000_000)
             await MainActor.run {
                 focusedField = field
             }
-        }
-    }
-
-    private var backdropState: BackdropState {
-        switch phase {
-        case .landing:
-            return BackdropState(
-                diameterScale: 0.74,
-                maximumDiameter: 440,
-                aspectRatio: 1.04,
-                blurRadius: 54,
-                scale: 1,
-                opacity: 0.96,
-                xOffsetRatio: 0.02,
-                yOffsetRatio: -0.12
-            )
-        case .serverEntry:
-            return BackdropState(
-                diameterScale: 0.68,
-                maximumDiameter: 410,
-                aspectRatio: 1.08,
-                blurRadius: 52,
-                scale: 0.96,
-                opacity: 0.9,
-                xOffsetRatio: 0.08,
-                yOffsetRatio: -0.08
-            )
-        case .credentialsSheet, .submitting:
-            return BackdropState(
-                diameterScale: 0.78,
-                maximumDiameter: 470,
-                aspectRatio: 1.12,
-                blurRadius: 58,
-                scale: 1.03,
-                opacity: 0.92,
-                xOffsetRatio: 0.06,
-                yOffsetRatio: -0.18
-            )
-        case .success:
-            return BackdropState(
-                diameterScale: 0.62,
-                maximumDiameter: 360,
-                aspectRatio: 1,
-                blurRadius: 44,
-                scale: 0.88,
-                opacity: 0.7,
-                xOffsetRatio: 0,
-                yOffsetRatio: -0.22
-            )
         }
     }
 
@@ -584,43 +461,30 @@ struct LoginView: View {
 
         if compact {
             return LoginMetrics(
-                contentWidth: min(size.width - 40, 420),
-                horizontalPadding: 20,
+                contentWidth: min(size.width - 32, 420),
+                horizontalPadding: 16,
                 topPadding: 8,
-                topSpacer: max(40, size.height * 0.20),
-                bottomSpacer: 28,
-                titleSize: 36,
+                topSpacer: max(36, size.height * 0.18),
+                titleSize: 34,
                 subtitleSize: 18
             )
         }
 
         return LoginMetrics(
-            contentWidth: min(size.width - 120, 520),
-            horizontalPadding: 28,
+            contentWidth: min(size.width - 96, 500),
+            horizontalPadding: 24,
             topPadding: 18,
-            topSpacer: max(60, size.height * 0.18),
-            bottomSpacer: 36,
-            titleSize: 46,
+            topSpacer: max(52, size.height * 0.16),
+            titleSize: 42,
             subtitleSize: 20
         )
     }
 }
 
-private struct BackdropState {
-    let diameterScale: CGFloat
-    let maximumDiameter: CGFloat
-    let aspectRatio: CGFloat
-    let blurRadius: CGFloat
-    let scale: CGFloat
-    let opacity: CGFloat
-    let xOffsetRatio: CGFloat
-    let yOffsetRatio: CGFloat
-}
-
 private enum OnboardingPhase {
     case landing
     case serverEntry
-    case credentialsSheet
+    case credentials
     case submitting
     case success
 }
@@ -636,19 +500,42 @@ private struct LoginMetrics {
     let horizontalPadding: CGFloat
     let topPadding: CGFloat
     let topSpacer: CGFloat
-    let bottomSpacer: CGFloat
     let titleSize: CGFloat
     let subtitleSize: CGFloat
 }
 
 private extension View {
+    @ViewBuilder
+    func nativeStageSurface() -> some View {
+        let shape = RoundedRectangle(cornerRadius: 30, style: .continuous)
+
+        if #available(iOS 26.0, *) {
+            self
+                .background {
+                    Color.clear
+                        .glassEffect(.regular, in: .rect(cornerRadius: 30))
+                }
+                .overlay {
+                    shape.stroke(.white.opacity(0.10), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
+        } else {
+            self
+                .background(.ultraThinMaterial, in: shape)
+                .overlay {
+                    shape.stroke(.white.opacity(0.10), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
+        }
+    }
+
     func fieldSurface() -> some View {
         self
             .padding(.horizontal, 18)
-            .frame(height: 58)
+            .frame(height: 56)
             .background(
                 Capsule(style: .continuous)
-                    .fill(.white.opacity(0.06))
+                    .fill(.white.opacity(0.08))
             )
             .overlay {
                 Capsule(style: .continuous)
@@ -660,7 +547,7 @@ private extension View {
         self
             .background(
                 Capsule(style: .continuous)
-                    .fill(.white.opacity(0.05))
+                    .fill(.white.opacity(0.06))
             )
             .overlay {
                 Capsule(style: .continuous)
@@ -669,78 +556,61 @@ private extension View {
     }
 }
 
-private struct OnboardingPrimaryButtonStyle: ButtonStyle {
+private struct NativePrimaryButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                Capsule(style: .continuous)
-                    .fill(ReelFinTheme.onboardingButtonTint)
-            )
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
+        Group {
+            if #available(iOS 26.0, *) {
+                configuration.label
+                    .foregroundStyle(.white)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+            } else {
+                configuration.label
+                    .foregroundStyle(.white)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(.white.opacity(0.14))
+                    )
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                    }
             }
-            .shadow(
-                color: .black.opacity(configuration.isPressed ? 0.12 : 0.2),
-                radius: configuration.isPressed ? 10 : 18,
-                x: 0,
-                y: configuration.isPressed ? 5 : 10
-            )
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
-            .animation(
-                reduceMotion ? .linear(duration: 0.01) : .smooth(duration: 0.16, extraBounce: 0),
-                value: configuration.isPressed
-            )
+        }
+        .scaleEffect(configuration.isPressed ? 0.985 : 1)
+        .opacity(configuration.isPressed ? 0.96 : 1)
+        .animation(
+            reduceMotion ? .linear(duration: 0.01) : .smooth(duration: 0.14, extraBounce: 0),
+            value: configuration.isPressed
+        )
     }
 }
 
-private struct OnboardingIconButtonStyle: ButtonStyle {
+private struct NativeCircleButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                Circle()
-                    .fill(ReelFinTheme.onboardingQuietButtonTint)
-            )
-            .overlay {
-                Circle()
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
+        Group {
+            if #available(iOS 26.0, *) {
+                configuration.label
+                    .glassEffect(.regular.interactive(), in: .circle)
+            } else {
+                configuration.label
+                    .background(
+                        Circle()
+                            .fill(.white.opacity(0.10))
+                    )
+                    .overlay {
+                        Circle()
+                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                    }
             }
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .opacity(configuration.isPressed ? 0.92 : 1)
-            .animation(
-                reduceMotion ? .linear(duration: 0.01) : .smooth(duration: 0.14, extraBounce: 0),
-                value: configuration.isPressed
-            )
-    }
-}
-
-private struct OnboardingProminentIconButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                Circle()
-                    .fill(ReelFinTheme.onboardingButtonTint)
-            )
-            .overlay {
-                Circle()
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
-            }
-            .shadow(
-                color: .black.opacity(configuration.isPressed ? 0.08 : 0.16),
-                radius: configuration.isPressed ? 8 : 14,
-                x: 0,
-                y: configuration.isPressed ? 4 : 8
-            )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(
-                reduceMotion ? .linear(duration: 0.01) : .smooth(duration: 0.14, extraBounce: 0),
-                value: configuration.isPressed
-            )
+        }
+        .scaleEffect(configuration.isPressed ? 0.96 : 1)
+        .animation(
+            reduceMotion ? .linear(duration: 0.01) : .smooth(duration: 0.14, extraBounce: 0),
+            value: configuration.isPressed
+        )
     }
 }
