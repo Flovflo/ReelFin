@@ -1,4 +1,0 @@
-Target dependency graph (2 targets)
-Target 'JellyfinAPI' in project 'ReelFin'
-➜ Explicit dependency on target 'Shared' in project 'ReelFin'
-Target 'Shared' in project 'ReelFin' (no dependencies)

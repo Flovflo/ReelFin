@@ -34,12 +34,30 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         urlSession: URLSession = .shared,
         memoryCapacity: Int = 220
     ) {
-        self.diskCache = diskCache ?? (try? LRUDiskCache()) ?? {
-            fatalError("Unable to initialize disk cache")
-        }()
+        self.diskCache = diskCache ?? Self.makeDiskCache()
         self.urlSession = urlSession
         memoryCache.countLimit = memoryCapacity
         memoryCache.totalCostLimit = 130 * 1_024 * 1_024
+    }
+
+    private static func makeDiskCache(fileManager: FileManager = .default) -> LRUDiskCache {
+        if let cache = try? LRUDiskCache(fileManager: fileManager) {
+            return cache
+        }
+
+        let fallbackURL = fileManager.temporaryDirectory.appendingPathComponent("ReelFinImageCache", isDirectory: true)
+        if let cache = try? LRUDiskCache(directoryURL: fallbackURL, fileManager: fileManager) {
+            AppLog.caching.error("Falling back to temporary directory for image cache at \(fallbackURL.path, privacy: .public)")
+            return cache
+        }
+
+        let emergencyURL = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        if let cache = try? LRUDiskCache(directoryURL: emergencyURL, fileManager: fileManager) {
+            AppLog.caching.fault("Image cache initialization required emergency fallback at \(emergencyURL.path, privacy: .public)")
+            return cache
+        }
+
+        preconditionFailure("Unable to initialize image cache in caches or temporary directories.")
     }
 
     public func image(for url: URL) async throws -> UIImage {

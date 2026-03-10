@@ -1,94 +1,119 @@
-<br/>
 <div align="center">
-<img src="https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg" alt="Jellyfin Logo" width="120" height="120">
-<h1 align="center">ReelFin</h1>
-<p align="center">
-<strong>The Ultimate Native iOS & tvOS Client for Jellyfin</strong>
-</p>
-<p align="center">
-  <img src="https://img.shields.io/badge/Platform-iOS%2026%2B%20%7C%20tvOS-blue.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Swift-5.9%2B-orange.svg" alt="Swift">
-  <img src="https://img.shields.io/badge/Framework-SwiftUI-informational.svg" alt="SwiftUI">
-  <img src="https://img.shields.io/badge/Status-Beta%20v0.3-success.svg" alt="Status">
-</p>
+  <img src="https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg" alt="Jellyfin logo" width="120" height="120">
+  <h1>ReelFin</h1>
+  <p><strong>Native Jellyfin client for iPhone and iPad</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/Platform-iOS%2026%2B-blue.svg" alt="Platform">
+    <img src="https://img.shields.io/badge/Swift-5.9%2B-orange.svg" alt="Swift">
+    <img src="https://img.shields.io/badge/UI-SwiftUI-informational.svg" alt="SwiftUI">
+    <img src="https://img.shields.io/badge/Status-Beta-success.svg" alt="Status">
+  </p>
 </div>
 
----
+ReelFin is a native Jellyfin app focused on deterministic playback, modern SwiftUI interfaces, and Apple-first media pipelines. The project avoids VLC-style embedded stacks and instead leans on `AVFoundation`, `AVKit`, and `VideoToolbox` to keep playback debuggable, efficient, and App Store friendly.
 
-**ReelFin** is a beautifully crafted, highly optimized, and meticulously engineered native client for Jellyfin, designed exclusively for the Apple ecosystem. 
+## Why ReelFin
 
-Unlike other media players that rely on heavy, third-party libraries (like VLCKit, libVLC, or FFmpeg), ReelFin's playback strategy is deliberately tuned around **native Apple frameworks** (`AVFoundation`, `AVKit`, `VideoToolbox`). The result is a deterministic, debuggable stack that delivers maximum battery efficiency, fluid SwiftUI interfaces, and unparalleled performance.
+- Native Jellyfin playback path for iPhone and iPad
+- Direct-play-first decision engine for Apple-compatible streams
+- On-device remux path for MKV to fragmented MP4 when needed
+- Deterministic fallback profiles instead of opaque playback heuristics
+- Modular Swift codebase with separate UI, API, cache, sync, data, and playback layers
+- Built-in diagnostics for playback planning and runtime troubleshooting
 
-## ✨ Key Features
+## Feature Highlights
 
-- **Apple-Native Playback Engine**: Zero third-party decoding overhead. Everything flows through `AVPlayer` and hardware decoders for maximum efficiency.
-- **Direct-Play First**: ReelFin rigorously attempts to direct-play compatible streams (MP4/fMP4, HEVC, AVC, AAC, HDR10, Dolby Vision) exactly as they exist on your server.
-- **Native Bridge (On-Device Remuxing)**: Seamlessly handles MKV containers by repackaging them into fragmented MP4 (fMP4) on-the-fly, locally on your device, enabling native playback without server-side transcoding.
-- **Next-Gen Format Support**: Fully supports 4K HEVC 10-bit, HDR10, and Dolby Vision (Profile 8.1), delivering a premium home theater experience.
-- **Deterministic Fallback Profiles**: If a raw asset isn't Apple-compatible, the `PlaybackDecisionEngine` intelligently steps through precise profiles (`appleOptimizedHEVC`, `conservativeCompatibility`, `forceH264Transcode`) to guarantee successful playback.
-- **Premium SwiftUI Interface**: A buttery-smooth, natively designed UI that feels right at home on your iPhone, iPad, and Apple TV. Look for glassmorphism, fluid micro-animations, and striking typography.
-- **Advanced Diagnostics ("Nerd Overlay")**: For power users and developers, a built-in overlay surfaces real-time capability matrices, decision traces, and AVPlayer states.
+- Apple-native playback through `AVPlayer`
+- HEVC, HDR10, and Dolby Vision aware playback planning
+- Jellyfin home feed, library browsing, detail pages, and settings
+- Local metadata persistence with GRDB
+- Image pipeline with memory and disk cache
+- Test coverage around playback planning, HLS generation, subtitles, and image cache behavior
 
----
+## Architecture
 
-## 🏗️ Architecture & Technical Context (For LLMs & Developers)
+### Core modules
 
-ReelFin is architected with clear boundaries and separation of concerns, making it an excellent codebase for AI-assisted development (LLMs) and advanced iOS engineering. The primary modules include:
+- `ReelFinApp`: app bootstrap and dependency container
+- `ReelFinUI`: SwiftUI screens, theming, and view models
+- `PlaybackEngine`: playback planning, native bridge, local HLS server, subtitle strategy
+- `JellyfinAPI`: async/await network client and DTO decoding
+- `DataStore`: GRDB-backed metadata repository
+- `ImageCache`: memory and disk image pipeline
+- `SyncEngine`: sync orchestration
+- `Shared`: domain models, protocols, settings, logging, app metadata
 
-### 1. Playback Engine (`PlaybackEngine`)
-The brain of ReelFin. It evaluates media capabilities and manages the AVPlayer lifecycle.
-- **`MediaSourceResolver`**: Interrogates Jellyfin for direct stream URLs and exact file metadata (container, codecs, bitrates, HDR data).
-- **`PlaybackCapabilityEvaluator`**: Maps server metadata against the active iOS device's hardware decoding capabilities.
-- **`PlaybackDecisionEngine`**: The core router. Chooses between `DirectPlay`, `Remux` (via Native Bridge), or `Transcode`.
-- **`NativeBridge`**: A sophisticated local pipeline that demuxes incompatible containers (like MKV) and remuxes them into `AVAssetResourceLoaderDelegate`-friendly fMP4 chunks.
-- **`PlaybackCoordinator` & `PlaybackSessionController`**: Handles the `AVPlayer` initialization, URL parameter normalization (HLS variants), and watchdog timers for fault recovery.
+### Playback flow
 
-### 2. User Interface (`ReelFinUI`)
-Built purely with modern declarative **SwiftUI**.
-- Structured into cohesive feature domains: `Home`, `Library`, `Detail`, `Player`, `Login`, and `Settings`.
-- Utilizes `ReelFinDependencies` for clean dependency injection, keeping views testable and previews reliable.
+1. `JellyfinAPI` resolves media sources and metadata.
+2. `PlaybackEngine` evaluates Apple compatibility and builds a playback plan.
+3. ReelFin attempts direct play first.
+4. If needed, ReelFin falls back to local remux or server transcode profiles.
+5. `PlaybackSessionController` manages `AVPlayer`, diagnostics, watchdogs, and recovery.
 
-### 3. API Communication (`JellyfinAPI`)
-A robust, Swift concurrency (`async/await`) powered network layer that interfaces with the Jellyfin server, handling authentication, pagination, and real-time playback reporting.
+For the detailed playback contract, see `Docs/Playback-Architecture-Current.md`.
 
----
+## Repository Guide
 
-## ⚙️ Configuration & Settings
+- `project.yml` is the source of truth for targets, dependencies, and schemes.
+- `ReelFin.xcodeproj` is generated output and should stay aligned with `project.yml`.
+- `AppStore/Screenshots` contains curated release screenshots.
+- `build/`, `.artifacts/`, `.claude/`, logs, and user state are local artifacts and should not be versioned.
+- `AGENTS.md` and `llms.txt` are included to help coding agents and LLM tooling navigate the repo quickly.
 
-ReelFin puts you in control of your media playback:
-- **Force Raw Direct Play**: Instructs the decision engine to bypass remuxing or transcoding if an Apple-compatible source is detected.
-- **Force H264 Fallback**: Useful for older devices or AirPlay. Pins playback to stable, SDR H.264 streams (`forceH264Transcode`), ensuring maximum compatibility at the cost of HDR/HEVC features.
-- **Debug Overlay (`reelfin.playback.debugOverlay.enabled`)**: Enable this in settings to display the playback trace directly on the video player. Perfect for debugging why a specific file is transcoding.
+## Development
 
----
+### Requirements
 
-## 🛠️ Testing & Development
+- Xcode with iOS 26 simulators installed
+- XcodeGen available in your local environment
 
-ReelFin relies heavily on automated testing to ensure the playback decision matrix remains intact. When modifying `PlaybackEngine`, ensure tests remain green.
+### Generate the project
 
 ```bash
-# Run unit tests for the PlaybackEngine (iOS 26 Simulator recommended)
-xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 16,OS=26.0' \
-  -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests \
-  -only-testing:PlaybackEngineTests/CapabilityEngineTests
+xcodegen generate
 ```
 
-### Extending Playback Policy
-If you are extending the playback logic or adding new server fallback profiles:
-1. Always consult `Docs/Playback-Architecture-Current.md` first.
-2. Maintain the STRICT rule: **No non-native dependencies in the playback path.** Do not introduce VLCKit or embedded FFmpeg video decoders. Keep it pure.
+### Build
 
----
+```bash
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+```
 
-## 📄 License & Contributing
+### Test
 
-Contributions are welcome! Whether you are improving the Native Bridge MKV parsing, adding tvOS enhancements, or fixing UI glitches, please ensure your PRs align with the Apple-native philosophy of this project.
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+```
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+### Focused playback tests
 
-*Designed with ❤️ for Jellyfin & Apple ecosystem lovers.*
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2' \
+  -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests \
+  -only-testing:PlaybackEngineTests/Planning/CapabilityEngineTests
+```
+
+## LLM And Contributor Context
+
+If you are working on the repo with an AI agent or joining the project as a new contributor:
+
+- read `AGENTS.md` for repo conventions
+- read `Docs/Playback-Architecture-Current.md` before touching playback logic
+- keep the playback path Apple-native
+- prefer targeted module changes over broad rewrites
+- keep docs aligned with `project.yml`
+
+## App Store And Support
+
+- App Store submission notes: `Docs/AppStore-Submission.md`
+- Privacy policy: `Docs/privacy-policy.html`
+- Terms of service: `Docs/terms-of-service.html`
+- Support page: `Docs/support.html`
+
+## Keywords
+
+Jellyfin iOS client, native Jellyfin app, SwiftUI media app, AVFoundation player, Apple-native video playback, iPhone Jellyfin app, iPad Jellyfin client.

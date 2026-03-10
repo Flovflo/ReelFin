@@ -1232,7 +1232,6 @@ private extension MediaItem {
             item: .detailPreviewSample
         )
     }
-    .previewDevice("iPhone SE (3rd generation)")
 }
 
 #Preview("Detail - iPhone Pro Max") {
@@ -1242,7 +1241,6 @@ private extension MediaItem {
             item: .detailPreviewSample
         )
     }
-    .previewDevice("iPhone 15 Pro Max")
 }
 
 #Preview("Detail - Accessibility XXXL") {
@@ -1253,5 +1251,4 @@ private extension MediaItem {
         )
     }
     .environment(\.dynamicTypeSize, .accessibility5)
-    .previewDevice("iPhone SE (3rd generation)")
 }

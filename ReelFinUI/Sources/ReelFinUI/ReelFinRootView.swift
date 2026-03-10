@@ -6,7 +6,7 @@ import UIKit
 
 public struct ReelFinRootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @StateObject private var viewModel: RootViewModel
+    @State private var viewModel: RootViewModel
     private let dependencies: ReelFinDependencies
 
     @State private var selectedTab = 0
@@ -14,7 +14,7 @@ public struct ReelFinRootView: View {
 
     public init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
-        _viewModel = StateObject(wrappedValue: RootViewModel(dependencies: dependencies))
+        _viewModel = State(initialValue: RootViewModel(dependencies: dependencies))
     }
 
     public var body: some View {

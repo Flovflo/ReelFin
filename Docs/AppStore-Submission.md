@@ -29,7 +29,7 @@ Character count: 915
 ## Third-party SDK inventory
 
 - GRDB `6.29.3`
-- Sentry Cocoa `8.58.0`
+- Sentry Cocoa `8.55.1`
 
 ## Support
 

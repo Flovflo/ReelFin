@@ -515,7 +515,10 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
         if T.self == EmptyResponse.self || data.isEmpty {
             if T.self == EmptyResponse.self {
-                return EmptyResponse() as! T
+                guard let response = EmptyResponse() as? T else {
+                    throw AppError.decoding("Unable to create an empty response for \(String(describing: T.self)).")
+                }
+                return response
             }
             // Server returned an empty body for a typed response — log and fail gracefully.
             AppLog.networking.warning("Empty response body for \(String(describing: T.self), privacy: .public)")
@@ -584,7 +587,9 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         let key = request.httpMethod.map { "\($0)|\(request.url?.absoluteString ?? "")" }
 
         do {
-            return try await retrying(policy: retryPolicy, shouldRetry: self.isRetryable(error:)) { [self] in
+            return try await retrying(policy: retryPolicy, shouldRetry: { error in
+                Self.isRetryable(error: error)
+            }) { [self] in
                 if dedupe, let key {
                     return try await self.deduplicator.data(for: key) {
                         try await self.execute(request: request)
@@ -621,7 +626,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         return data
     }
 
-    nonisolated private func isRetryable(error: Error) -> Bool {
+    nonisolated private static func isRetryable(error: Error) -> Bool {
         if let statusError = error as? HTTPStatusError {
             return statusError.statusCode >= 500
         }

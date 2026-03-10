@@ -11,7 +11,7 @@ final class AppContainer {
     let settingsStore: SettingsStoreProtocol
     let tokenStore: TokenStoreProtocol
     let apiClient: JellyfinAPIClient
-    let repository: GRDBMetadataRepository
+    let repository: any MetadataRepositoryProtocol & Sendable
     let imagePipeline: DefaultImagePipeline
     let syncEngine: DefaultSyncEngine
     let seriesCache: SeriesLookupCache
@@ -28,7 +28,10 @@ final class AppContainer {
             do {
                 repository = try GRDBMetadataRepository(databaseURL: fallbackURL)
             } catch {
-                fatalError("Unable to initialize local metadata database: \(error.localizedDescription)")
+                AppLog.persistence.fault(
+                    "Metadata database initialization failed twice. Falling back to non-persistent repository: \(error.localizedDescription, privacy: .public)"
+                )
+                repository = NullMetadataRepository()
             }
         }
 

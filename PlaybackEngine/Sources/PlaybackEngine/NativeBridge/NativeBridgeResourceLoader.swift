@@ -52,13 +52,11 @@ public final class NativeBridgeResourceLoader: NSObject, AVAssetResourceLoaderDe
     
     /// Prepares an AVURLAsset equipped with this resource loader.
     public func makeAsset(for itemID: String) -> AVURLAsset {
-        var components = URLComponents()
-        components.scheme = Self.customScheme
-        components.host = "play"
-        components.path = "/\(itemID)"
-        
-        guard let url = components.url else {
-            fatalError("Failed to construct bridge URL")
+        let encodedItemID = itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "invalid-item"
+        let urlString = "\(Self.customScheme)://play/\(encodedItemID)"
+        let url = URL(string: urlString) ?? URL(string: "\(Self.customScheme)://play/invalid-item")!
+        if itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) == nil {
+            AppLog.nativeBridge.error("Failed to percent-encode item ID for resource loader: \(itemID, privacy: .public)")
         }
         
         let asset = AVURLAsset(url: url)

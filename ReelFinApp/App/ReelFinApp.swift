@@ -22,7 +22,7 @@ struct ReelFinApp: App {
         WindowGroup {
             ReelFinRootView(dependencies: dependencies)
                 .preferredColorScheme(.dark)
-                .onChange(of: scenePhase) { newValue in
+                .onChange(of: scenePhase) { _, newValue in
                     if newValue == .active {
                         Task {
                             await dependencies.syncEngine.sync(reason: .appForeground)

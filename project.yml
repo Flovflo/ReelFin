@@ -46,8 +46,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: ReelFin
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/privacy-policy.html
         INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/terms-of-service.html
         INFOPLIST_KEY_REELFIN_SUPPORT_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/support.html

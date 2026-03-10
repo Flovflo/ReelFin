@@ -1,0 +1,23 @@
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# Local agent workspaces and caches
+.artifacts/
+.claude/
+
+# Build output
+build/
+DerivedData/
+*.xcresult
+
+# Local logs and scratch files
+*.log
+runtimes.log
+claude_initial_prompt.txt
+
+# Python cache
+__pycache__/
+*.pyc

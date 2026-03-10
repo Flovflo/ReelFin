@@ -1,4 +1,0 @@
-framework module JellyfinAPI {
-  header "JellyfinAPI-Swift.h"
-  requires objc
-}

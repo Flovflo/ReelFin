@@ -1,4 +1,0 @@
-framework module DataStore {
-  header "DataStore-Swift.h"
-  requires objc
-}

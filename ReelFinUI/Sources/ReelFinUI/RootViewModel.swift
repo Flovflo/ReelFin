@@ -1,11 +1,13 @@
 import Foundation
+import Observation
 import Shared
 import SwiftUI
 
 @MainActor
-final class RootViewModel: ObservableObject {
-    @Published var isAuthenticated = false
-    @Published var didBootstrap = false
+@Observable
+final class RootViewModel {
+    var isAuthenticated = false
+    var didBootstrap = false
 
     private let dependencies: ReelFinDependencies
 

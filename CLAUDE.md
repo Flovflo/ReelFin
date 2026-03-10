@@ -1,21 +1,31 @@
-# Project: ReelFin (iOS 26 Native Video Player)
+# Project: ReelFin
 
 ## Quick Reference
-- **Platform**: iOS 26+ / tvOS (si applicable)
-- **Language**: Swift 6.0 (Strict Concurrency Obligatoire)
-- **UI Framework**: SwiftUI (Composants NATIFS uniquement, aucun bouton custom inutile)
-- **Architecture**: MVVM avec `@Observable` (Aucun `ObservableObject`)
 
-## Core Directives (App Store Ready)
-1. **Performance Absolue** : Le Time To First Frame (TTFF) doit être quasi-nul. Pas de blocage du Main Thread.
-2. **Native iOS 26** : Utilise les APIs natives Apple (`AVFoundation`, `AVAssetResourceLoaderDelegate`). Les boutons et contrôles doivent être les standards iOS (symboles SFSymbols, boutons natifs SwiftUI) pour garantir l'accessibilité et la fluidité.
-3. **App Store Review** : Code extrêmement propre, aucune API privée gérant la vidéo. Respect des guidelines Apple sur la gestion mémoire.
+- Platform: iOS 26+ for iPhone and iPad
+- UI: SwiftUI
+- Playback stack: AVFoundation, AVKit, VideoToolbox
+- Project generation: `project.yml` is the source of truth
+- Architecture: modular app with `ReelFinApp`, `ReelFinUI`, `PlaybackEngine`, `JellyfinAPI`, `DataStore`, `ImageCache`, `SyncEngine`, and `Shared`
 
-## Features Stratégiques
-- **Player** : Direct-play MKV vers fMP4 pipeline, support HEVC 10-bit Dolby Vision (Profile 8.1) / HDR10.
-- **Audio/Subtitles** : Switch complet (E-AC3, TrueHD Atmos, SRT, PGS).
-- **Metadata UI** : Affichage des infos fichiers (taille, bitrate, codec) en mode "glassmorphism" très subtil en bas de l'écran (UX non intrusive).
+## Engineering Priorities
 
-## MCP & Testing
-- Utilise `mcp__xcodebuildmcp__build_sim_name_proj` pour build.
-- Ne propose pas de code non testé mentalement. Utilise `ultrathink` pour les décisions d'architecture vidéo complexes (Remuxing).
+1. Keep playback Apple-native. No VLC, FFmpeg, or private playback APIs.
+2. Preserve deterministic playback behavior and documented fallback profiles.
+3. Avoid broad rewrites when a module-scoped fix is enough.
+4. Keep docs, package versions, and supported platforms aligned with `project.yml`.
+5. Treat `build/`, `.artifacts/`, `.claude/`, logs, and user state as local artifacts.
+
+## Before Editing Playback
+
+- Read `Docs/Playback-Architecture-Current.md`.
+- Respect the direct-play-first model and fallback profile ordering.
+- Maintain or extend tests when touching planning, HLS generation, remuxing, or subtitle logic.
+
+## Build And Test
+
+```bash
+xcodegen generate
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+```

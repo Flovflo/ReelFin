@@ -62,7 +62,7 @@ struct LibraryView: View {
         .task {
             await viewModel.loadInitial()
         }
-        .onChange(of: viewModel.searchQuery) { _ in
+        .onChange(of: viewModel.searchQuery) { _, _ in
             Task {
                 try? await Task.sleep(nanoseconds: 250_000_000)
                 if !Task.isCancelled {
@@ -70,10 +70,10 @@ struct LibraryView: View {
                 }
             }
         }
-        .onChange(of: viewModel.selectedFilter) { _ in
+        .onChange(of: viewModel.selectedFilter) { _, _ in
             Task { await viewModel.loadInitial() }
         }
-        .onChange(of: viewModel.sortMode) { _ in
+        .onChange(of: viewModel.sortMode) { _, _ in
             Task { await viewModel.loadInitial() }
         }
         .toolbar(.hidden, for: .navigationBar)

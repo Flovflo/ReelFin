@@ -469,14 +469,12 @@ private struct HomeCustomizationSheet: View {
     NavigationStack {
         HomeView(dependencies: ReelFinPreviewFactory.dependencies())
     }
-    .previewDevice("iPhone SE (3rd generation)")
 }
 
 #Preview("Home - iPhone Pro Max") {
     NavigationStack {
         HomeView(dependencies: ReelFinPreviewFactory.dependencies())
     }
-    .previewDevice("iPhone 15 Pro Max")
 }
 
 #Preview("Home - Accessibility XXXL") {
@@ -484,5 +482,4 @@ private struct HomeCustomizationSheet: View {
         HomeView(dependencies: ReelFinPreviewFactory.dependencies())
     }
     .environment(\.dynamicTypeSize, .accessibility5)
-    .previewDevice("iPhone SE (3rd generation)")
 }

@@ -1,0 +1,25 @@
+# ReelFin
+
+ReelFin is a modular native Jellyfin client for iPhone and iPad built with SwiftUI, AVFoundation, AVKit, VideoToolbox, GRDB, and async/await.
+
+Important files:
+- `project.yml`: source of truth for targets and dependencies
+- `README.md`: product overview and contributor entry point
+- `Docs/Playback-Architecture-Current.md`: playback rules and fallback policy
+- `AGENTS.md`: concise repo guide for coding agents
+
+Modules:
+- `ReelFinApp`: app bootstrap and dependency container
+- `ReelFinUI`: SwiftUI views and view models
+- `PlaybackEngine`: playback planning, native bridge, local HLS, subtitles
+- `JellyfinAPI`: Jellyfin client and DTOs
+- `DataStore`: GRDB metadata persistence
+- `ImageCache`: image pipeline and cache
+- `SyncEngine`: sync orchestration
+- `Shared`: domain models, settings, protocols, logging
+
+Engineering constraints:
+- Apple-native playback only
+- iOS-first deployment target from `project.yml`
+- XcodeGen-managed project layout
+- Tests live under `Tests/`
