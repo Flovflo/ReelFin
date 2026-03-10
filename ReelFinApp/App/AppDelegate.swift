@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import ReelFinUI
 
@@ -7,3 +8,4 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return OrientationManager.shared.lock
     }
 }
+#endif

@@ -3,6 +3,58 @@ import SwiftUI
 
 // MARK: - Components (Merged here to avoid missing .pbxproj references)
 
+#if os(tvOS)
+/// A focusable card button optimized for Apple TV Siri Remote navigation.
+/// Provides a natural scale + shadow focus animation matching tvOS design patterns.
+private struct TVCardButton: View {
+    let item: MediaItem
+    let index: Int
+    let kind: HomeSectionKind
+    let isTop10: Bool
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let namespaceProvider: (String) -> Namespace.ID?
+    let isLandscapeRail: Bool
+    let progress: Double?
+    let onSelect: (MediaItem) -> Void
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button {
+            onSelect(item)
+        } label: {
+            PosterCardView(
+                item: item,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
+                layoutStyle: isLandscapeRail ? .landscape : .row,
+                namespace: namespaceProvider(item.id),
+                ranking: isTop10 ? (index + 1) : nil,
+                progress: progress
+            )
+            .scaleEffect(isFocused ? 1.10 : 1.0)
+            .shadow(
+                color: .black.opacity(isFocused ? 0.5 : 0),
+                radius: isFocused ? 24 : 0,
+                x: 0, y: isFocused ? 12 : 0
+            )
+            .animation(.smooth(duration: 0.2), value: isFocused)
+            .overlay(alignment: .bottom) {
+                if isFocused {
+                    RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
+                        .stroke(Color.white.opacity(0.5), lineWidth: 3)
+                        .transition(.opacity)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .focused($isFocused)
+        .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
+    }
+}
+#endif
+
 public struct SectionRow: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -39,15 +91,31 @@ public struct SectionRow: View {
                     .reelFinSectionStyle()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+#if os(iOS)
                 Image(systemName: "chevron.right")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.4))
+#endif
             }
             .padding(.horizontal, horizontalPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 16) {
+                LazyHStack(spacing: cardSpacing) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+#if os(tvOS)
+                        TVCardButton(
+                            item: item,
+                            index: index,
+                            kind: kind,
+                            isTop10: isTop10,
+                            apiClient: apiClient,
+                            imagePipeline: imagePipeline,
+                            namespaceProvider: namespaceProvider,
+                            isLandscapeRail: isLandscapeRail,
+                            progress: progress(for: item),
+                            onSelect: onSelect
+                        )
+#else
                         Button {
                             onSelect(item)
                         } label: {
@@ -68,9 +136,7 @@ public struct SectionRow: View {
                         .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
                         .buttonStyle(.plain)
                         .hoverEffect(.highlight)
-                        #if os(tvOS)
-                        .focusable(true)
-                        #endif
+#endif
                     }
                 }
                 .scrollTargetLayout()
@@ -78,6 +144,14 @@ public struct SectionRow: View {
             }
             .scrollTargetBehavior(.viewAligned)
         }
+    }
+
+    private var cardSpacing: CGFloat {
+#if os(tvOS)
+        return 32
+#else
+        return 16
+#endif
     }
 
     private var isTop10: Bool {
@@ -162,6 +236,7 @@ struct HomeView: View {
                 .animation(.snappy(duration: 0.35), value: viewModel.visibleRows.map(\.id))
             }
             .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+#if os(iOS)
             .refreshable {
                 await viewModel.manualRefresh()
             }
@@ -177,6 +252,7 @@ struct HomeView: View {
                         scrollInterval = nil
                     }
             )
+#endif
         }
         .navigationDestination(
             isPresented: Binding(
@@ -205,11 +281,15 @@ struct HomeView: View {
         }
         .sheet(isPresented: $isCustomizationPresented) {
             HomeCustomizationSheet(viewModel: viewModel)
+#if os(iOS)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+#endif
         }
+#if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         .ignoresSafeArea(edges: .top) // Let hero stretch to status bar
+#endif
     }
 
     @ViewBuilder
@@ -250,12 +330,14 @@ struct HomeView: View {
                         .padding(.trailing, 4)
                 }
 
+#if os(iOS)
                 Button {
                     isCustomizationPresented = true
                 } label: {
                     topIcon(symbol: "slider.horizontal.3", accessibilityLabel: "Customize Home")
                 }
                 .buttonStyle(.plain)
+#endif
             }
             .padding(.top, 4)
         }
@@ -385,6 +467,7 @@ private struct HomeCustomizationSheet: View {
     var body: some View {
         NavigationStack {
             List {
+#if os(iOS)
                 Section("Order") {
                     ForEach(viewModel.sectionCustomizationKinds, id: \.self) { kind in
                         HStack(spacing: 12) {
@@ -398,6 +481,7 @@ private struct HomeCustomizationSheet: View {
                     }
                     .onMove(perform: viewModel.moveSectionKinds(from:to:))
                 }
+#endif
 
                 Section("Visible Sections") {
                     ForEach(viewModel.sectionCustomizationKinds, id: \.self) { kind in
@@ -413,9 +497,12 @@ private struct HomeCustomizationSheet: View {
                 }
             }
             .environment(\.editMode, $editMode)
+#if os(iOS)
             .scrollContentBackground(.hidden)
+#endif
             .background(ReelFinTheme.pageGradient.ignoresSafeArea())
             .navigationTitle("Customize Home")
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -429,6 +516,13 @@ private struct HomeCustomizationSheet: View {
                         .tint(.white)
                 }
             }
+#else
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+#endif
         }
         .preferredColorScheme(.dark)
     }
@@ -482,4 +576,11 @@ private struct HomeCustomizationSheet: View {
         HomeView(dependencies: ReelFinPreviewFactory.dependencies())
     }
     .environment(\.dynamicTypeSize, .accessibility5)
+}
+
+#Preview("Home - Apple TV", traits: .fixedLayout(width: 1920, height: 1080)) {
+    NavigationStack {
+        HomeView(dependencies: ReelFinPreviewFactory.dependencies())
+    }
+    .preferredColorScheme(.dark)
 }

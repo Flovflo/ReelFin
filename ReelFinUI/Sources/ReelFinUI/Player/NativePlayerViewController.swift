@@ -12,9 +12,11 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         let controller = AVPlayerViewController()
         controller.player = player
         controller.showsPlaybackControls = true
+#if os(iOS)
         // Already presented full-screen by SwiftUI; avoid nested full-screen transitions.
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
+#endif
         controller.player?.appliesMediaSelectionCriteriaAutomatically = false
 #if os(iOS)
         controller.allowsPictureInPicturePlayback = true

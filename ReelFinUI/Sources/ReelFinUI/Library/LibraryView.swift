@@ -16,34 +16,40 @@ struct LibraryView: View {
             topBar
 
             ScrollView(showsIndicators: false) {
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(viewModel.items) { item in
-                            Button {
-                                viewModel.select(item: item)
-                            } label: {
-                                PosterCardView(
-                                    item: item,
-                                    apiClient: dependencies.apiClient,
-                                    imagePipeline: dependencies.imagePipeline,
-                                    layoutStyle: .grid
-                                )
-                            }
-                            .accessibilityIdentifier("media_card_button_\(item.id)")
-                            .buttonStyle(.plain)
-                            .task {
-                                await viewModel.loadMoreIfNeeded(for: item)
-                            }
+                LazyVGrid(columns: columns, spacing: gridSpacing) {
+                    ForEach(viewModel.items) { item in
+                        Button {
+                            viewModel.select(item: item)
+                        } label: {
+                            PosterCardView(
+                                item: item,
+                                apiClient: dependencies.apiClient,
+                                imagePipeline: dependencies.imagePipeline,
+                                layoutStyle: .grid
+                            )
+#if os(tvOS)
+                            .scaleEffect(1.0) // scale handled by focus
+#endif
+                        }
+                        .accessibilityIdentifier("media_card_button_\(item.id)")
+                        .buttonStyle(.plain)
+#if os(tvOS)
+                        .hoverEffect(.highlight)
+#endif
+                        .task {
+                            await viewModel.loadMoreIfNeeded(for: item)
                         }
                     }
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.bottom, 24)
-
-                    if viewModel.isLoadingPage {
-                        ProgressView()
-                            .tint(.white)
-                            .padding(.bottom, 16)
-                    }
                 }
+                .padding(.horizontal, horizontalPadding)
+                .padding(.bottom, 24)
+
+                if viewModel.isLoadingPage {
+                    ProgressView()
+                        .tint(.white)
+                        .padding(.bottom, 16)
+                }
+            }
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .navigationDestination(
@@ -76,10 +82,60 @@ struct LibraryView: View {
         .onChange(of: viewModel.sortMode) { _, _ in
             Task { await viewModel.loadInitial() }
         }
+#if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
+#endif
     }
 
+    @ViewBuilder
     private var topBar: some View {
+#if os(tvOS)
+        tvTopBar
+#else
+        iosTopBar
+#endif
+    }
+
+    // MARK: - tvOS top bar: searchable + filter chips side by side
+
+    private var tvTopBar: some View {
+        HStack(spacing: 24) {
+            Text("Library")
+                .reelFinTitleStyle()
+
+            Spacer()
+
+            filterChip(title: "All", isActive: viewModel.selectedFilter == nil) {
+                viewModel.selectedFilter = nil
+            }
+            filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
+                viewModel.selectedFilter = .movie
+            }
+            filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
+                viewModel.selectedFilter = .series
+            }
+
+            Menu {
+                Picker("Sort", selection: $viewModel.sortMode) {
+                    ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 20, weight: .semibold))
+                    .padding(14)
+                    .background(ReelFinTheme.card.opacity(0.9))
+                    .clipShape(Circle())
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, 8)
+    }
+
+    // MARK: - iOS top bar: full search bar + filter chips
+
+    private var iosTopBar: some View {
         VStack(spacing: 10) {
             HStack {
                 Text("Library")
@@ -115,7 +171,9 @@ struct LibraryView: View {
             }
 
             TextField("Search your library", text: $viewModel.searchQuery)
+#if os(iOS)
                 .textInputAutocapitalization(.never)
+#endif
                 .autocorrectionDisabled(true)
                 .padding(.horizontal, 14)
                 .frame(height: 44)
@@ -129,24 +187,64 @@ struct LibraryView: View {
     private func filterChip(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .font(.system(size: chipFontSize, weight: .semibold, design: .rounded))
+                .padding(.horizontal, chipHPad)
+                .padding(.vertical, chipVPad)
                 .background(isActive ? ReelFinTheme.accent : ReelFinTheme.card.opacity(0.9))
                 .clipShape(Capsule())
-                .foregroundStyle(.white)
+                .foregroundStyle(isActive ? Color.black : Color.white)
         }
         .buttonStyle(.plain)
     }
 
     private var columns: [GridItem] {
+#if os(tvOS)
+        return [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 32)]
+#else
         if horizontalSizeClass == .compact {
             return [GridItem(.adaptive(minimum: 152, maximum: 190), spacing: 12)]
         }
         return [GridItem(.adaptive(minimum: 186, maximum: 230), spacing: 16)]
+#endif
+    }
+
+    private var gridSpacing: CGFloat {
+#if os(tvOS)
+        return 40
+#else
+        return 16
+#endif
     }
 
     private var horizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 12 : 22
+#if os(tvOS)
+        return 60
+#else
+        return horizontalSizeClass == .compact ? 12 : 22
+#endif
+    }
+
+    private var chipFontSize: CGFloat {
+#if os(tvOS)
+        return 18
+#else
+        return 13
+#endif
+    }
+
+    private var chipHPad: CGFloat {
+#if os(tvOS)
+        return 20
+#else
+        return 12
+#endif
+    }
+
+    private var chipVPad: CGFloat {
+#if os(tvOS)
+        return 12
+#else
+        return 8
+#endif
     }
 }

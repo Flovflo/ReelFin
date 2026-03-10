@@ -1,3 +1,4 @@
+#if os(iOS)
 import Shared
 import SwiftUI
 import UIKit
@@ -45,7 +46,9 @@ struct LoginView: View {
                 .offset(y: contentVisible ? 0 : 10)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+#if os(iOS)
             .ignoresSafeArea(.keyboard, edges: .bottom)
+#endif
         }
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
@@ -170,10 +173,12 @@ struct LoginView: View {
                 }
 
                 TextField("https://server.tld", text: $viewModel.serverURLText)
+#if os(iOS)
                     .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+#endif
                     .autocorrectionDisabled(true)
                     .textContentType(.URL)
-                    .keyboardType(.URL)
                     .font(.system(size: 17, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                     .focused($focusedField, equals: .serverURL)
@@ -230,7 +235,9 @@ struct LoginView: View {
 
                 VStack(spacing: 12) {
                     TextField("Username", text: $viewModel.username)
+#if os(iOS)
                         .textInputAutocapitalization(.never)
+#endif
                         .autocorrectionDisabled(true)
                         .textContentType(.username)
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -417,7 +424,9 @@ struct LoginView: View {
         try? await Task.sleep(nanoseconds: reduceMotion ? 180_000_000 : 360_000_000)
 
         await MainActor.run {
+#if os(iOS)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+#endif
             onLogin(session)
         }
     }
@@ -614,3 +623,4 @@ private struct NativeCircleButtonStyle: ButtonStyle {
         )
     }
 }
+#endif

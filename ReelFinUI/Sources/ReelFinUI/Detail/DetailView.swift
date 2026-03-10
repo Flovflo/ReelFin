@@ -3,7 +3,9 @@ import Shared
 import SwiftUI
 import ImageCache
 import JellyfinAPI
+#if os(iOS)
 import UIKit
+#endif
 
 struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -93,9 +95,11 @@ struct DetailView: View {
         .background(ReelFinTheme.background.ignoresSafeArea())
         .ignoresSafeArea(edges: .top)
         .navigationTitle("")
+#if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
         .toolbarBackground(.hidden, for: .navigationBar)
+#endif
         .task {
             await viewModel.load()
             guard autoplayOnLoad, !hasTriggeredAutoplay else { return }
@@ -563,7 +567,9 @@ public struct MediaHeroHeaderView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(.white)
+#if os(iOS)
                     .textSelection(.disabled)
+#endif
                     .shadow(color: .black.opacity(0.45), radius: 8)
                     .accessibilityAddTraits(.isHeader)
 

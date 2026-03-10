@@ -15,7 +15,9 @@ enum ErrorTracking {
         SentrySDK.start { options in
             options.dsn = dsn
             options.enableAppHangTracking = true
+#if os(iOS)
             options.enableMetricKit = true
+#endif
             options.sendDefaultPii = false
             options.attachScreenshot = false
             options.tracesSampleRate = 0.1

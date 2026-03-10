@@ -1,6 +1,9 @@
 import PlaybackEngine
 import Shared
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct PlayerView: View {
     var session: PlaybackSessionController
@@ -18,14 +21,18 @@ struct PlayerView: View {
         .accessibilityIdentifier("native_player_screen")
         .onDisappear {
             session.pause()
+#if os(iOS)
             OrientationManager.shared.lock = .portrait
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                 windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
             }
+#endif
             onDismiss()
         }
         .onAppear {
+#if os(iOS)
             OrientationManager.shared.lock = .allButUpsideDown
+#endif
         }
     }
 }
