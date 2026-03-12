@@ -7,6 +7,8 @@ import SwiftUI
 /// A focusable card button optimized for Apple TV Siri Remote navigation.
 /// Provides a natural scale + shadow focus animation matching tvOS design patterns.
 private struct TVCardButton: View {
+    @FocusState private var isFocused: Bool
+
     let item: MediaItem
     let index: Int
     let kind: HomeSectionKind
@@ -16,41 +18,37 @@ private struct TVCardButton: View {
     let namespaceProvider: (String) -> Namespace.ID?
     let isLandscapeRail: Bool
     let progress: Double?
+    let onFocus: ((MediaItem) -> Void)?
     let onSelect: (MediaItem) -> Void
 
-    @FocusState private var isFocused: Bool
-
     var body: some View {
-        Button {
-            onSelect(item)
-        } label: {
-            PosterCardView(
-                item: item,
-                apiClient: apiClient,
-                imagePipeline: imagePipeline,
-                layoutStyle: isLandscapeRail ? .landscape : .row,
-                namespace: namespaceProvider(item.id),
-                ranking: isTop10 ? (index + 1) : nil,
-                progress: progress
-            )
-            .scaleEffect(isFocused ? 1.10 : 1.0)
-            .shadow(
-                color: .black.opacity(isFocused ? 0.5 : 0),
-                radius: isFocused ? 24 : 0,
-                x: 0, y: isFocused ? 12 : 0
-            )
-            .animation(.smooth(duration: 0.2), value: isFocused)
-            .overlay(alignment: .bottom) {
-                if isFocused {
-                    RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.5), lineWidth: 3)
-                        .transition(.opacity)
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                onSelect(item)
+            } label: {
+                PosterCardArtworkView(
+                    item: item,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline,
+                    layoutStyle: isLandscapeRail ? .landscape : .row,
+                    namespace: namespaceProvider(item.id),
+                    ranking: isTop10 ? (index + 1) : nil,
+                    progress: progress
+                )
             }
+            .buttonStyle(.plain)
+            .focused($isFocused)
+
+            PosterCardMetadataView(
+                item: item,
+                layoutStyle: isLandscapeRail ? .landscape : .row
+            )
         }
-        .buttonStyle(.plain)
-        .focused($isFocused)
         .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
+        .onChange(of: isFocused) { _, focused in
+            guard focused else { return }
+            onFocus?(item)
+        }
     }
 }
 #endif
@@ -64,6 +62,7 @@ public struct SectionRow: View {
     private let apiClient: JellyfinAPIClientProtocol
     private let imagePipeline: ImagePipelineProtocol
     private let namespaceProvider: (String) -> Namespace.ID?
+    private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
     private let onSelect: (MediaItem) -> Void
 
     public init(
@@ -73,6 +72,7 @@ public struct SectionRow: View {
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         namespaceProvider: @escaping (String) -> Namespace.ID?,
+        onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
         onSelect: @escaping (MediaItem) -> Void
     ) {
         self.title = title
@@ -81,6 +81,7 @@ public struct SectionRow: View {
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
         self.namespaceProvider = namespaceProvider
+        self.onFocus = onFocus
         self.onSelect = onSelect
     }
 
@@ -113,6 +114,9 @@ public struct SectionRow: View {
                             namespaceProvider: namespaceProvider,
                             isLandscapeRail: isLandscapeRail,
                             progress: progress(for: item),
+                            onFocus: { focusedItem in
+                                onFocus?(focusedItem, items)
+                            },
                             onSelect: onSelect
                         )
 #else
@@ -141,6 +145,7 @@ public struct SectionRow: View {
                 }
                 .scrollTargetLayout()
                 .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, 14)
             }
             .scrollTargetBehavior(.viewAligned)
         }
@@ -170,7 +175,11 @@ public struct SectionRow: View {
     }
 
     private var horizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 24 : 40
+        #if os(tvOS)
+        return 32
+        #else
+        return horizontalSizeClass == .compact ? 24 : 40
+        #endif
     }
 }
 
@@ -183,7 +192,9 @@ struct HomeView: View {
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
-    @State private var shouldAutoplaySelectedItem = false
+    @State private var selectedDetailContextItems: [MediaItem] = []
+    @State private var selectedDetailContextTitle: String?
+    @State private var ambientItem: MediaItem?
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
@@ -192,8 +203,17 @@ struct HomeView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Color.black
-                .ignoresSafeArea()
+            CinematicBackdropView(
+                item: ambientItem ?? viewModel.feed.featured.first,
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                sharpnessOpacity: 0.78,
+                blurOpacity: 0.56,
+                bottomFadeStart: 0.5
+            )
+            .overlay {
+                Color.black.opacity(0.18).ignoresSafeArea()
+            }
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 32) {
@@ -216,15 +236,18 @@ struct HomeView: View {
                                 namespaceProvider: { itemID in
                                     namespaceForCard(itemID: itemID, rowID: row.id)
                                 },
+                                onFocus: { item, neighbors in
+                                    handleFocusedItem(item, neighbors: neighbors)
+                                },
                                 onSelect: { item in
-                                    if row.kind == .continueWatching {
-                                        shouldAutoplaySelectedItem = true
-                                        selectedDetailNamespace = namespaceForCard(itemID: item.id, rowID: row.id)
-                                        viewModel.select(item: item)
-                                        return
-                                    }
-                                    shouldAutoplaySelectedItem = false
                                     selectedDetailNamespace = namespaceForCard(itemID: item.id, rowID: row.id)
+                                    selectedDetailContextItems = row.items
+                                    selectedDetailContextTitle = row.title
+                                    ambientItem = item
+                                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                                    Task {
+                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                    }
                                     viewModel.select(item: item)
                                 }
                             )
@@ -259,8 +282,9 @@ struct HomeView: View {
                 get: { viewModel.selectedItem != nil },
                 set: {
                     if !$0 {
-                        shouldAutoplaySelectedItem = false
                         selectedDetailNamespace = nil
+                        selectedDetailContextItems = []
+                        selectedDetailContextTitle = nil
                         viewModel.dismissDetail()
                     }
                 }
@@ -271,7 +295,8 @@ struct HomeView: View {
                     dependencies: dependencies,
                     item: item,
                     preferredEpisode: viewModel.selectedEpisode,
-                    autoplayOnLoad: shouldAutoplaySelectedItem,
+                    contextItems: selectedDetailContextItems,
+                    contextTitle: selectedDetailContextTitle,
                     namespace: selectedDetailNamespace
                 )
             }
@@ -295,6 +320,30 @@ struct HomeView: View {
     @ViewBuilder
     private var featuredSection: some View {
         if !viewModel.feed.featured.isEmpty {
+            #if os(tvOS)
+            HeroCarouselView(
+                items: Array(viewModel.feed.featured.prefix(10)),
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                onVisibleItemChange: { item in
+                    ambientItem = item
+                    Task(priority: .utility) {
+                        await primePresentation(for: item, neighbors: Array(viewModel.feed.featured.prefix(3)))
+                    }
+                },
+                onTap: { item in
+                    selectedDetailNamespace = nil
+                    selectedDetailContextItems = Array(viewModel.feed.featured.prefix(10))
+                    selectedDetailContextTitle = "Featured"
+                    ambientItem = item
+                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                    Task {
+                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                    }
+                    viewModel.select(item: item)
+                }
+            )
+            #else
             ZStack(alignment: .top) {
                 HeroCarouselView(
                     items: Array(viewModel.feed.featured.prefix(10)),
@@ -302,15 +351,20 @@ struct HomeView: View {
                     imagePipeline: dependencies.imagePipeline,
                     onTap: { item in
                         selectedDetailNamespace = nil
+                        selectedDetailContextItems = Array(viewModel.feed.featured.prefix(10))
+                        selectedDetailContextTitle = "Featured"
                         viewModel.select(item: item)
                     }
                 )
 
                 topChrome
             }
+            #endif
         } else {
+            #if os(iOS)
             topChrome
                 .padding(.top, 60) // Add top padding to account for missing hero
+            #endif
         }
     }
 
@@ -343,7 +397,7 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, horizontalPadding)
-        .padding(.top, 64) // Safe area top offset approximately
+        .padding(.top, topChromePadding)
         .shadow(color: .black.opacity(0.3), radius: 6)
     }
 
@@ -439,7 +493,11 @@ struct HomeView: View {
     }
 
     private var horizontalPadding: CGFloat {
-        isCompact ? 24 : 40
+        #if os(tvOS)
+        return 32
+        #else
+        return isCompact ? 24 : 40
+        #endif
     }
 
     private var isCompact: Bool {
@@ -456,6 +514,42 @@ struct HomeView: View {
 
     private var rowCardHeight: CGFloat {
         rowCardWidth * 1.55
+    }
+
+    private var topChromePadding: CGFloat {
+        #if os(tvOS)
+        return 42
+        #else
+        return 64
+        #endif
+    }
+
+    private func handleFocusedItem(_ item: MediaItem, neighbors: [MediaItem]) {
+        ambientItem = item
+        Task(priority: .utility) {
+            await primePresentation(for: item, neighbors: neighbors)
+        }
+    }
+
+    private func primePresentation(for item: MediaItem, neighbors: [MediaItem]) async {
+        let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+        await dependencies.detailRepository.primeItem(id: detailItemID)
+        await dependencies.detailRepository.primeDetail(id: detailItemID)
+
+        let nearbyItems = Array(neighbors.prefix(4))
+        await dependencies.apiClient.prefetchImages(for: nearbyItems)
+
+        if let heroURL = await dependencies.apiClient.imageURL(
+            for: item.mediaType == .episode ? (item.parentID ?? item.id) : item.id,
+            type: item.backdropTag == nil ? .primary : .backdrop,
+            width: 1_920,
+            quality: 78
+        ) {
+            await dependencies.imagePipeline.prefetch(urls: [heroURL])
+        }
+
+        await dependencies.playbackWarmupManager.trim(keeping: [item.id] + nearbyItems.map(\.id))
+        await dependencies.playbackWarmupManager.warm(itemID: item.id)
     }
 }
 

@@ -207,6 +207,7 @@ struct ItemDTO: Decodable {
             hasDolbyVision: hasDolbyVision,
             hasClosedCaptions: hasClosedCaptions,
             airDays: airDays,
+            isFavorite: userData?.isFavorite ?? false,
             isPlayed: userData?.played ?? false,
             playbackPositionTicks: userData?.playbackPositionTicks
         )
@@ -214,11 +215,13 @@ struct ItemDTO: Decodable {
 }
 
 struct UserDataDTO: Decodable {
+    let isFavorite: Bool?
     let played: Bool?
     let playbackPositionTicks: Int64?
     let playCount: Int?
 
     enum CodingKeys: String, CodingKey {
+        case isFavorite = "IsFavorite"
         case played = "Played"
         case playbackPositionTicks = "PlaybackPositionTicks"
         case playCount = "PlayCount"
@@ -898,5 +901,39 @@ struct PlaybackProgressRequestDTO: Encodable {
         case isPaused = "IsPaused"
         case isMuted = "IsMuted"
         case playMethod = "PlayMethod"
+    }
+}
+
+// MARK: - Quick Connect DTOs
+
+struct QuickConnectInitiateResponseDTO: Decodable {
+    /// Short code displayed to the user (e.g. "A1B2").
+    let code: String
+    /// Opaque secret used to poll for auth completion.
+    let secret: String
+    /// Whether the request was successfully initiated.
+    let authenticated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case code = "Code"
+        case secret = "Secret"
+        case authenticated = "Authenticated"
+    }
+}
+
+struct QuickConnectAuthRequestDTO: Encodable {
+    let secret: String
+
+    enum CodingKeys: String, CodingKey {
+        case secret = "Secret"
+    }
+}
+
+struct QuickConnectAuthResponseDTO: Decodable {
+    /// True when the user has approved the code on another device.
+    let authenticated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case authenticated = "Authenticated"
     }
 }

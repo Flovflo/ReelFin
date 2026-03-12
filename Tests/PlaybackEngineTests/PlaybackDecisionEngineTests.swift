@@ -966,6 +966,8 @@ private final class PlaybackCoordinatorTestAPIClient: JellyfinAPIClientProtocol,
     func testConnection(serverURL: URL) async throws {}
     func authenticate(credentials: UserCredentials) async throws -> UserSession { session }
     func signOut() async {}
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
+    func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
     func fetchUserViews() async throws -> [LibraryView] { [] }
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed { .empty }
     func fetchItem(id: String) async throws -> MediaItem { MediaItem(id: id, name: id) }
@@ -1057,6 +1059,8 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
     }
 
     func signOut() async {}
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
+    func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
 
     func fetchUserViews() async throws -> [Shared.LibraryView] {
         []

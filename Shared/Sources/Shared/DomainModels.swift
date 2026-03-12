@@ -183,6 +183,7 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     public var hasDolbyVision: Bool
     public var hasClosedCaptions: Bool
     public var airDays: [String]?
+    public var isFavorite: Bool
     public var isPlayed: Bool
     public var playbackPositionTicks: Int64?
 
@@ -207,6 +208,7 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         hasDolbyVision: Bool = false,
         hasClosedCaptions: Bool = false,
         airDays: [String]? = nil,
+        isFavorite: Bool = false,
         isPlayed: Bool = false,
         playbackPositionTicks: Int64? = nil
     ) {
@@ -230,6 +232,7 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         self.hasDolbyVision = hasDolbyVision
         self.hasClosedCaptions = hasClosedCaptions
         self.airDays = airDays
+        self.isFavorite = isFavorite
         self.isPlayed = isPlayed
         self.playbackPositionTicks = playbackPositionTicks
     }
@@ -675,5 +678,18 @@ public struct LibraryQuery: Hashable, Sendable {
         self.pageSize = pageSize
         self.query = query
         self.mediaType = mediaType
+    }
+}
+
+/// Holds the active Quick Connect handshake state.
+public struct QuickConnectState: Sendable {
+    /// 4-character code shown to the user on Apple TV.
+    public let code: String
+    /// Opaque secret used to poll the server.
+    public let secret: String
+
+    public init(code: String, secret: String) {
+        self.code = code
+        self.secret = secret
     }
 }

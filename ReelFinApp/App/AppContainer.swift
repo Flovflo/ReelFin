@@ -12,9 +12,11 @@ final class AppContainer {
     let tokenStore: TokenStoreProtocol
     let apiClient: JellyfinAPIClient
     let repository: any MetadataRepositoryProtocol & Sendable
+    let detailRepository: any MediaDetailRepositoryProtocol & Sendable
     let imagePipeline: DefaultImagePipeline
     let syncEngine: DefaultSyncEngine
     let seriesCache: SeriesLookupCache
+    let playbackWarmupManager: PlaybackWarmupManager
 
     init() {
         settingsStore = DefaultSettingsStore()
@@ -36,12 +38,17 @@ final class AppContainer {
         }
 
         imagePipeline = DefaultImagePipeline()
+        detailRepository = DefaultMediaDetailRepository(
+            apiClient: apiClient,
+            repository: repository
+        )
         syncEngine = DefaultSyncEngine(
             apiClient: apiClient,
             repository: repository,
             imagePipeline: imagePipeline
         )
         seriesCache = SeriesLookupCache(apiClient: apiClient)
+        playbackWarmupManager = PlaybackWarmupManager(apiClient: apiClient)
     }
 
     @MainActor
@@ -49,12 +56,18 @@ final class AppContainer {
         ReelFinDependencies(
             apiClient: apiClient,
             repository: repository,
+            detailRepository: detailRepository,
             imagePipeline: imagePipeline,
             syncEngine: syncEngine,
             settingsStore: settingsStore,
             seriesCache: seriesCache,
+            playbackWarmupManager: playbackWarmupManager,
             makePlaybackSession: {
-                PlaybackSessionController(apiClient: self.apiClient, repository: self.repository)
+                PlaybackSessionController(
+                    apiClient: self.apiClient,
+                    repository: self.repository,
+                    warmupManager: self.playbackWarmupManager
+                )
             }
         )
     }

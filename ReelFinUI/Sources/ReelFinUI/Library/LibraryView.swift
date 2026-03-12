@@ -1,10 +1,49 @@
 import Shared
 import SwiftUI
 
+#if os(tvOS)
+private struct TVLibraryCardButton: View {
+    @FocusState private var isFocused: Bool
+
+    let item: MediaItem
+    let dependencies: ReelFinDependencies
+    let onFocus: (MediaItem) -> Void
+    let onSelect: (MediaItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                onSelect(item)
+            } label: {
+                PosterCardArtworkView(
+                    item: item,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline,
+                    layoutStyle: .grid
+                )
+            }
+            .accessibilityIdentifier("media_card_button_\(item.id)")
+            .buttonStyle(.plain)
+            .focused($isFocused)
+
+            PosterCardMetadataView(
+                item: item,
+                layoutStyle: .grid
+            )
+        }
+        .onChange(of: isFocused) { _, focused in
+            guard focused else { return }
+            onFocus(item)
+        }
+    }
+}
+#endif
+
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
+    @State private var ambientItem: MediaItem?
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: LibraryViewModel(dependencies: dependencies))
@@ -12,46 +51,86 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            topBar
+        ZStack {
+            CinematicBackdropView(
+                item: ambientItem ?? viewModel.items.first,
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                sharpnessOpacity: 0.68,
+                blurOpacity: 0.52,
+                bottomFadeStart: 0.46
+            )
+            .overlay {
+                Color.black.opacity(0.34).ignoresSafeArea()
+            }
 
-            ScrollView(showsIndicators: false) {
-                LazyVGrid(columns: columns, spacing: gridSpacing) {
-                    ForEach(viewModel.items) { item in
-                        Button {
-                            viewModel.select(item: item)
-                        } label: {
-                            PosterCardView(
+            VStack(spacing: 14) {
+                topBar
+
+                ScrollView(showsIndicators: false) {
+                    LazyVGrid(columns: columns, spacing: gridSpacing) {
+                        ForEach(viewModel.items) { item in
+#if os(tvOS)
+                            TVLibraryCardButton(
                                 item: item,
-                                apiClient: dependencies.apiClient,
-                                imagePipeline: dependencies.imagePipeline,
-                                layoutStyle: .grid
+                                dependencies: dependencies,
+                                onFocus: { focusedItem in
+                                    handleFocusedItem(focusedItem)
+                                },
+                                onSelect: { selectedItem in
+                                    ambientItem = selectedItem
+                                    let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
+                                    Task {
+                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                    }
+                                    viewModel.select(item: selectedItem)
+                                }
                             )
-#if os(tvOS)
-                            .scaleEffect(1.0) // scale handled by focus
+                            .task {
+                                await viewModel.loadMoreIfNeeded(for: item)
+                            }
+#else
+                            VStack(alignment: .leading, spacing: 10) {
+                                Button {
+                                    ambientItem = item
+                                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                                    Task {
+                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                    }
+                                    viewModel.select(item: item)
+                                } label: {
+                                    PosterCardArtworkView(
+                                        item: item,
+                                        apiClient: dependencies.apiClient,
+                                        imagePipeline: dependencies.imagePipeline,
+                                        layoutStyle: .grid
+                                    )
+                                }
+                                .accessibilityIdentifier("media_card_button_\(item.id)")
+                                .buttonStyle(.plain)
+
+                                PosterCardMetadataView(
+                                    item: item,
+                                    layoutStyle: .grid
+                                )
+                            }
+                            .task {
+                                await viewModel.loadMoreIfNeeded(for: item)
+                            }
 #endif
-                        }
-                        .accessibilityIdentifier("media_card_button_\(item.id)")
-                        .buttonStyle(.plain)
-#if os(tvOS)
-                        .hoverEffect(.highlight)
-#endif
-                        .task {
-                            await viewModel.loadMoreIfNeeded(for: item)
                         }
                     }
-                }
-                .padding(.horizontal, horizontalPadding)
-                .padding(.bottom, 24)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.bottom, 24)
 
-                if viewModel.isLoadingPage {
-                    ProgressView()
-                        .tint(.white)
-                        .padding(.bottom, 16)
+                    if viewModel.isLoadingPage {
+                        ProgressView()
+                            .tint(.white)
+                            .padding(.bottom, 16)
+                    }
                 }
             }
         }
-        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .navigationDestination(
             isPresented: Binding(
                 get: { viewModel.selectedItem != nil },
@@ -67,6 +146,7 @@ struct LibraryView: View {
         }
         .task {
             await viewModel.loadInitial()
+            ambientItem = viewModel.items.first
         }
         .onChange(of: viewModel.searchQuery) { _, _ in
             Task {
@@ -100,8 +180,13 @@ struct LibraryView: View {
 
     private var tvTopBar: some View {
         HStack(spacing: 24) {
-            Text("Library")
-                .reelFinTitleStyle()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Library")
+                    .reelFinTitleStyle()
+                Text("Browse instantly. Rich metadata and playback readiness fill in behind the shell.")
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+            }
 
             Spacer()
 
@@ -218,7 +303,7 @@ struct LibraryView: View {
 
     private var horizontalPadding: CGFloat {
 #if os(tvOS)
-        return 60
+        return 56
 #else
         return horizontalSizeClass == .compact ? 12 : 22
 #endif
@@ -246,5 +331,27 @@ struct LibraryView: View {
 #else
         return 8
 #endif
+    }
+
+    private func handleFocusedItem(_ item: MediaItem) {
+        ambientItem = item
+
+        Task(priority: .utility) {
+            await dependencies.detailRepository.primeItem(id: item.id)
+            await dependencies.detailRepository.primeDetail(id: item.id)
+            await dependencies.apiClient.prefetchImages(for: [item])
+
+            if let heroURL = await dependencies.apiClient.imageURL(
+                for: item.id,
+                type: item.backdropTag == nil ? .primary : .backdrop,
+                width: 1_920,
+                quality: 78
+            ) {
+                await dependencies.imagePipeline.prefetch(urls: [heroURL])
+            }
+
+            await dependencies.playbackWarmupManager.trim(keeping: [item.id])
+            await dependencies.playbackWarmupManager.warm(itemID: item.id)
+        }
     }
 }

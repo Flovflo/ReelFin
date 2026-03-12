@@ -51,22 +51,36 @@ final class HomeViewModel: ObservableObject {
 
     func select(item: MediaItem) {
         if item.mediaType == .episode, let seriesId = item.parentID {
+            let immediateSeriesShell = MediaItem(
+                id: seriesId,
+                name: item.seriesName ?? item.name,
+                overview: item.overview,
+                mediaType: .series,
+                year: item.year,
+                runtimeTicks: item.runtimeTicks,
+                genres: item.genres,
+                communityRating: item.communityRating,
+                posterTag: item.seriesPosterTag ?? item.posterTag,
+                backdropTag: item.backdropTag,
+                libraryID: item.libraryID
+            )
+
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                selectedEpisode = item
+                selectedItem = immediateSeriesShell
+            }
+
             Task {
                 do {
                     let series = try await dependencies.seriesCache.getSeries(id: seriesId)
                     await MainActor.run {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-                            selectedEpisode = item
-                            selectedItem = series
+                        guard self.selectedItem?.id == seriesId else { return }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                            selectedItem = mergedSeriesShell(current: immediateSeriesShell, incoming: series)
                         }
                     }
                 } catch {
-                    await MainActor.run {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-                            selectedEpisode = nil
-                            selectedItem = item
-                        }
-                    }
+                    AppLog.ui.error("Series shell enrichment failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         } else {
@@ -230,6 +244,23 @@ final class HomeViewModel: ObservableObject {
             result.append(kind)
         }
         return result
+    }
+
+    private func mergedSeriesShell(current: MediaItem, incoming: MediaItem) -> MediaItem {
+        var merged = incoming
+        if merged.posterTag == nil {
+            merged.posterTag = current.posterTag
+        }
+        if merged.backdropTag == nil {
+            merged.backdropTag = current.backdropTag
+        }
+        if merged.overview == nil {
+            merged.overview = current.overview
+        }
+        if merged.genres.isEmpty {
+            merged.genres = current.genres
+        }
+        return merged
     }
 
     private func persistSectionPreferences() {

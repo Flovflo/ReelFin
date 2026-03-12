@@ -21,6 +21,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     func testConnection(serverURL: URL) async throws {}
     func authenticate(credentials: UserCredentials) async throws -> UserSession { throw AppError.unknown }
     func signOut() async {}
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
+    func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
     func fetchUserViews() async throws -> [LibraryView] { [] }
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed { .empty }
     func fetchItemDetail(id: String) async throws -> MediaDetail { throw AppError.unknown }

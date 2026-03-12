@@ -1,6 +1,7 @@
 import Foundation
 import Shared
 import UIKit
+import ImageIO
 
 actor ImageTaskRegistry {
     private var tasks: [URL: Task<UIImage, Error>] = [:]
@@ -68,7 +69,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
             return memoryImage
         }
 
-        if let diskData = await diskCache.data(forKey: url.absoluteString), let image = UIImage(data: diskData) {
+        if let diskData = await diskCache.data(forKey: url.absoluteString), let image = decodeImage(data: diskData, for: url) {
             memoryCache.setObject(image, forKey: url as NSURL, cost: diskData.count)
             interval.end(name: "image_request", message: "disk_hit")
             return image
@@ -83,7 +84,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         let task = Task<UIImage, Error> {
             let data = try await self.fetchImageData(url: url)
 
-            guard let image = UIImage(data: data) else {
+            guard let image = self.decodeImage(data: data, for: url) else {
                 throw AppError.decoding("Invalid image payload.")
             }
 
@@ -150,7 +151,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         guard let data = await diskCache.data(forKey: url.absoluteString) else {
             return nil
         }
-        guard let image = UIImage(data: data) else {
+        guard let image = decodeImage(data: data, for: url) else {
             return nil
         }
         memoryCache.setObject(image, forKey: url as NSURL, cost: data.count)
@@ -172,5 +173,37 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         Task {
             await taskRegistry.cancel(url: url)
         }
+    }
+
+    private func decodeImage(data: Data, for url: URL) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return UIImage(data: data)
+        }
+
+        let maxPixelSize = max(requestedPixelSize(for: url), 320)
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+
+        if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+            return UIImage(cgImage: cgImage)
+        }
+
+        return UIImage(data: data)
+    }
+
+    private func requestedPixelSize(for url: URL) -> Int {
+        guard
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            let rawWidth = components.queryItems?.first(where: { $0.name == "maxWidth" })?.value,
+            let width = Int(rawWidth)
+        else {
+            return 1_280
+        }
+
+        return width
     }
 }

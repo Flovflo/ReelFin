@@ -59,33 +59,25 @@ public struct ReelFinRootView: View {
     #if os(tvOS)
     private var tvLayout: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack {
-                HomeView(dependencies: dependencies)
-            }
-            .tag(0)
-            .tabItem {
-                Label("Home", systemImage: "play.tv.fill")
-            }
-
-            NavigationStack {
-                LibraryView(dependencies: dependencies)
-            }
-            .tag(1)
-            .tabItem {
-                Label("Library", systemImage: "rectangle.stack.fill")
-            }
-
-            NavigationStack {
-                ServerSettingsView(dependencies: dependencies) {
-                    viewModel.signOut()
+            Tab("Watch Now", systemImage: "play.rectangle.fill", value: 0) {
+                NavigationStack {
+                    HomeView(dependencies: dependencies)
                 }
             }
-            .tag(2)
-            .tabItem {
-                Label("Settings", systemImage: "gearshape.fill")
+            Tab("Search", systemImage: "magnifyingglass", value: 1) {
+                NavigationStack {
+                    TVSearchView(dependencies: dependencies)
+                }
+            }
+            Tab("Library", systemImage: "rectangle.stack.fill", value: 2) {
+                NavigationStack {
+                    LibraryView(dependencies: dependencies)
+                }
             }
         }
+        .tabViewStyle(.sidebarAdaptable)
         .tint(.white)
+        .preferredColorScheme(.dark)
     }
     #endif
 

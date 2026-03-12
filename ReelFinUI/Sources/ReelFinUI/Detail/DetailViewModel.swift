@@ -3,140 +3,107 @@ import Shared
 
 @MainActor
 final class DetailViewModel: ObservableObject {
+    enum LoadPhase: Int {
+        case shell
+        case hero
+        case content
+        case playbackWarm
+    }
+
     @Published var detail: MediaDetail
+    @Published var loadPhase: LoadPhase = .shell
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var playbackProgress: PlaybackProgress?
     @Published var isInWatchlist = false
     @Published var isWatched = false
-    @Published var playbackSources: [MediaSource] = []
+    @Published var preferredPlaybackSource: MediaSource?
+    @Published var isPlaybackWarm = false
+    @Published var isWarmingPlayback = false
 
     @Published var seasons: [MediaItem] = []
     @Published var episodes: [MediaItem] = []
     @Published var selectedSeason: MediaItem?
     @Published var isLoadingEpisodes = false
-    /// For series: the episode that should be played (either in-progress or first episode)
     @Published var nextUpEpisode: MediaItem?
 
     private let dependencies: ReelFinDependencies
     private var preferredEpisode: MediaItem?
+    private var activeLoadToken = UUID()
+    private var backgroundTasks: [Task<Void, Never>] = []
+    private var loadedItemID: String?
 
     init(item: MediaItem, preferredEpisode: MediaItem? = nil, dependencies: ReelFinDependencies) {
         self.detail = MediaDetail(item: item)
         self.preferredEpisode = preferredEpisode
         self.dependencies = dependencies
+        syncDerivedFlags()
     }
 
     func setDetailItem(_ item: MediaItem, preferredEpisode: MediaItem? = nil) {
+        cancelBackgroundTasks()
+        activeLoadToken = UUID()
+        loadedItemID = nil
         detail = MediaDetail(item: item)
         self.preferredEpisode = preferredEpisode
         playbackProgress = nil
-        playbackSources = []
+        preferredPlaybackSource = nil
+        isPlaybackWarm = false
+        isWarmingPlayback = false
         seasons = []
         episodes = []
         selectedSeason = nil
         nextUpEpisode = nil
         errorMessage = nil
+        loadPhase = .shell
+        syncDerivedFlags()
     }
 
     func load() async {
-        isLoading = true
-        defer { isLoading = false }
+        let itemID = detail.item.id
+        guard loadedItemID != itemID else { return }
 
-        do {
-            if let cached = try await dependencies.repository.fetchItem(id: detail.item.id) {
-                detail.item = cached
-            }
-            playbackProgress = await resolvedPlaybackProgress(for: detail.item)
+        cancelBackgroundTasks()
+        loadedItemID = itemID
+        activeLoadToken = UUID()
+        let loadToken = activeLoadToken
 
-            let freshDetail = try await dependencies.apiClient.fetchItemDetail(id: detail.item.id)
-            detail = freshDetail
-            try await dependencies.repository.upsertItems([freshDetail.item] + freshDetail.similar)
-            
-            if freshDetail.item.mediaType == .series {
-                await loadSeasons()
-            } else {
-                await loadPlaybackSources(for: freshDetail.item)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
+        errorMessage = nil
+        isLoading = false
+        loadPhase = .shell
+
+        if let cached = await dependencies.detailRepository.cachedItem(id: itemID) {
+            detail.item = mergedItem(current: detail.item, incoming: cached)
         }
-    }
+        syncDerivedFlags()
+        playbackProgress = await resolvedPlaybackProgress(for: detail.item)
 
-    private func loadSeasons() async {
-        do {
-            let fetchedSeasons = try await dependencies.apiClient.fetchSeasons(seriesID: detail.item.id)
-            self.seasons = fetchedSeasons
-
-            let preferredSeason = preferredEpisode.flatMap { episode in
-                seasonMatching(preferredEpisode: episode, seasons: fetchedSeasons)
-            }
-
-            if let preferredSeason {
-                await select(season: preferredSeason)
-                nextUpEpisode = episodes.first(where: { $0.id == preferredEpisode?.id }) ?? preferredEpisode
-            } else if let firstSeason = fetchedSeasons.first {
-                await select(season: firstSeason)
-                await resolveNextUpEpisode()
-            }
-
-            if let episode = nextUpEpisode {
-                playbackProgress = await resolvedPlaybackProgress(for: episode)
-                await loadPlaybackSources(for: episode)
-            } else {
-                playbackSources = []
-            }
-        } catch {
-            print("Failed to load seasons: \(error)")
-        }
-    }
-    
-    private func resolveNextUpEpisode() async {
-        // Ask Jellyfin for the next episode to watch for this series.
-        // The /Shows/NextUp endpoint returns the in-progress or next unplayed episode server-side.
-        if let apiEpisode = try? await dependencies.apiClient.fetchNextUpEpisode(seriesID: detail.item.id) {
-            nextUpEpisode = apiEpisode
-        } else {
-            // Fallback: first episode of the first season
-            nextUpEpisode = episodes.first
-        }
+        backgroundTasks = buildLoadTasks(itemID: itemID, loadToken: loadToken)
     }
 
     func select(season: MediaItem) async {
-        selectedSeason = season
-        isLoadingEpisodes = true
-        defer { isLoadingEpisodes = false }
-        
-        do {
-            let fetchedEpisodes = try await dependencies.apiClient.fetchEpisodes(seriesID: detail.item.id, seasonID: season.id)
-            self.episodes = fetchedEpisodes
-            if let preferredEpisode,
-               fetchedEpisodes.contains(where: { $0.id == preferredEpisode.id }) {
-                if let matched = fetchedEpisodes.first(where: { $0.id == preferredEpisode.id }) {
-                    nextUpEpisode = mergedEpisode(matched, preferred: preferredEpisode)
-                } else {
-                    nextUpEpisode = preferredEpisode
-                }
-                playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode ?? preferredEpisode)
-            } else if nextUpEpisode == nil {
-                nextUpEpisode = fetchedEpisodes.first
-                if let nextUpEpisode {
-                    playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode)
-                }
-            }
-        } catch {
-            print("Failed to load episodes: \(error)")
-        }
+        await loadEpisodes(for: season, loadToken: activeLoadToken)
+    }
+
+    func selectSeasonIfNeeded(_ season: MediaItem) async {
+        guard selectedSeason?.id != season.id || episodes.isEmpty else { return }
+        await loadEpisodes(for: season, loadToken: activeLoadToken)
     }
 
     func prepareEpisodePlayback(_ episode: MediaItem) {
         preferredEpisode = episode
         nextUpEpisode = episode
+        syncDerivedFlags()
+
         Task {
             let progress = await resolvedPlaybackProgress(for: episode)
             await MainActor.run {
                 self.playbackProgress = progress
             }
+        }
+
+        Task(priority: .utility) {
+            await warmPlayback(for: episode, loadToken: activeLoadToken)
         }
     }
 
@@ -144,23 +111,27 @@ final class DetailViewModel: ObservableObject {
         guard let playbackProgress else { return false }
         return playbackProgress.positionTicks > 0 && playbackProgress.progressRatio < 0.97
     }
-    
-    /// The label for the main play button
+
     var playButtonLabel: String {
         if detail.item.mediaType == .series {
-            if let ep = nextUpEpisode,
-               let s = ep.parentIndexNumber,
-               let e = ep.indexNumber {
-                return shouldShowResume ? "Resume S\(s) E\(e)" : "Play S\(s) E\(e)"
+            if let episode = nextUpEpisode,
+               let season = episode.parentIndexNumber,
+               let index = episode.indexNumber {
+                return shouldShowResume ? "Resume S\(season) E\(index)" : "Play S\(season) E\(index)"
             }
             return shouldShowResume ? "Resume" : "Play"
         }
+
         return shouldShowResume ? "Resume" : "Play"
     }
 
     var playbackStatusText: String? {
-        if shouldShowResume, let item = itemToPlay.playbackPositionDisplayText ?? playbackProgressDisplayText {
-            return "Stopped at \(item)"
+        if shouldShowResume, let displayText = itemToPlay.playbackPositionDisplayText ?? playbackProgressDisplayText {
+            return "Stopped at \(displayText)"
+        }
+
+        if isPlaybackWarm {
+            return "Ready to play"
         }
 
         if itemToPlay.isPlayed || detail.item.isPlayed || isWatched {
@@ -169,36 +140,224 @@ final class DetailViewModel: ObservableObject {
 
         return nil
     }
-    
-    /// The item that should actually be passed to the player when the main button is tapped
+
     var itemToPlay: MediaItem {
-        if detail.item.mediaType == .series, let ep = nextUpEpisode {
-            return ep
+        if detail.item.mediaType == .series, let nextUpEpisode {
+            return nextUpEpisode
         }
         return detail.item
     }
 
-    var preferredPlaybackSource: MediaSource? {
-        playbackSources.sorted { lhs, rhs in
-            playbackSourceRank(lhs) > playbackSourceRank(rhs)
-        }.first
+    var selectedEpisodeID: String? {
+        detail.item.mediaType == .series ? nextUpEpisode?.id : detail.item.id
     }
 
     func toggleWatchlist() {
-        isInWatchlist.toggle()
+        let targetValue = !isInWatchlist
+        detail.item.isFavorite = targetValue
+        isInWatchlist = targetValue
+
+        Task {
+            do {
+                try await dependencies.apiClient.setFavorite(itemID: detail.item.id, isFavorite: targetValue)
+            } catch {
+                await MainActor.run {
+                    self.detail.item.isFavorite.toggle()
+                    self.isInWatchlist.toggle()
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 
     func toggleWatched() {
-        isWatched.toggle()
+        let targetItemID = itemToPlay.id
+        let targetValue = !isWatched
+        let snapshot = watchedMutationSnapshot(for: targetItemID)
+
+        applyWatchedState(targetValue, to: targetItemID)
+
+        Task {
+            do {
+                try await dependencies.apiClient.setPlayedState(itemID: targetItemID, isPlayed: targetValue)
+            } catch {
+                await MainActor.run {
+                    self.restoreWatchedSnapshot(snapshot)
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 
-    private func loadPlaybackSources(for item: MediaItem) async {
-        do {
-            let sources = try await dependencies.apiClient.fetchPlaybackSources(itemID: item.id)
-            playbackSources = sources
-        } catch {
-            playbackSources = []
+    private func buildLoadTasks(itemID: String, loadToken: UUID) -> [Task<Void, Never>] {
+        var tasks: [Task<Void, Never>] = []
+
+        tasks.append(Task(priority: .userInitiated) { [weak self] in
+            await self?.refreshHeroItem(itemID: itemID, loadToken: loadToken)
+        })
+
+        tasks.append(Task(priority: .utility) { [weak self] in
+            await self?.refreshEditorialContent(itemID: itemID, loadToken: loadToken)
+        })
+
+        if detail.item.mediaType == .series {
+            tasks.append(Task(priority: .userInitiated) { [weak self] in
+                await self?.loadSeriesContext(seriesID: itemID, loadToken: loadToken)
+            })
+        } else {
+            tasks.append(Task(priority: .utility) { [weak self] in
+                guard let self else { return }
+                await self.warmPlayback(for: self.detail.item, loadToken: loadToken)
+            })
         }
+
+        return tasks
+    }
+
+    private func refreshHeroItem(itemID: String, loadToken: UUID) async {
+        do {
+            let refreshedItem = try await dependencies.detailRepository.refreshItem(id: itemID)
+            guard isActive(loadToken: loadToken, itemID: itemID) else { return }
+
+            detail.item = mergedItem(current: detail.item, incoming: refreshedItem)
+            syncDerivedFlags()
+            playbackProgress = await resolvedPlaybackProgress(for: detail.item)
+            advancePhase(to: .hero)
+        } catch {
+            guard isActive(loadToken: loadToken, itemID: itemID) else { return }
+            if detail.item.overview == nil {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshEditorialContent(itemID: String, loadToken: UUID) async {
+        do {
+            let refreshedDetail = try await dependencies.detailRepository.loadDetail(id: itemID)
+            guard isActive(loadToken: loadToken, itemID: itemID) else { return }
+
+            detail.item = mergedItem(current: detail.item, incoming: refreshedDetail.item)
+            detail.similar = refreshedDetail.similar
+            detail.cast = refreshedDetail.cast
+            syncDerivedFlags()
+            advancePhase(to: .content)
+            await DetailPresentationTelemetry.shared.markMetadataReady(for: itemID)
+
+            await dependencies.apiClient.prefetchImages(for: refreshedDetail.similar.prefix(8).map { $0 })
+        } catch {
+            guard isActive(loadToken: loadToken, itemID: itemID) else { return }
+            if detail.cast.isEmpty, detail.similar.isEmpty {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func loadSeriesContext(seriesID: String, loadToken: UUID) async {
+        do {
+            async let seasonsRequest = dependencies.detailRepository.loadSeasons(seriesID: seriesID)
+            async let nextUpRequest = dependencies.detailRepository.loadNextUpEpisode(seriesID: seriesID)
+
+            let fetchedSeasons = try await seasonsRequest
+            guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+
+            seasons = fetchedSeasons
+            advancePhase(to: .content)
+
+            let preferredSeason = preferredEpisode.flatMap {
+                seasonMatching(preferredEpisode: $0, seasons: fetchedSeasons)
+            }
+
+            if let preferredSeason {
+                await loadEpisodes(for: preferredSeason, loadToken: loadToken)
+                nextUpEpisode = episodes.first(where: { $0.id == preferredEpisode?.id }) ?? preferredEpisode
+            } else if let firstSeason = fetchedSeasons.first {
+                await loadEpisodes(for: firstSeason, loadToken: loadToken)
+                if isActive(loadToken: loadToken, itemID: seriesID) {
+                    let serverNextUp = try await nextUpRequest
+                    if let serverNextUp,
+                       let matchingEpisode = episodes.first(where: { $0.id == serverNextUp.id }) {
+                        nextUpEpisode = mergedEpisode(matchingEpisode, preferred: serverNextUp)
+                    } else {
+                        nextUpEpisode = serverNextUp ?? episodes.first
+                    }
+                }
+            }
+
+            guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+
+            if let nextUpEpisode {
+                playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode)
+                await warmPlayback(for: nextUpEpisode, loadToken: loadToken)
+            }
+            syncDerivedFlags()
+        } catch {
+            guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+            AppLog.ui.error("Series context load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func loadEpisodes(for season: MediaItem, loadToken: UUID) async {
+        selectedSeason = season
+        isLoadingEpisodes = true
+        defer { isLoadingEpisodes = false }
+
+        do {
+            let fetchedEpisodes = try await dependencies.detailRepository.loadEpisodes(
+                seriesID: detail.item.id,
+                seasonID: season.id
+            )
+            guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+
+            episodes = fetchedEpisodes
+
+            if let preferredEpisode,
+               let matchedEpisode = fetchedEpisodes.first(where: { $0.id == preferredEpisode.id }) {
+                nextUpEpisode = mergedEpisode(matchedEpisode, preferred: preferredEpisode)
+            } else if nextUpEpisode == nil {
+                nextUpEpisode = fetchedEpisodes.first
+            }
+
+            if let nextUpEpisode {
+                playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode)
+            }
+            syncDerivedFlags()
+        } catch {
+            guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+            AppLog.ui.error("Episodes load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func warmPlayback(for item: MediaItem, loadToken: UUID) async {
+        guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+
+        isWarmingPlayback = true
+        await dependencies.playbackWarmupManager.warm(itemID: item.id)
+        let selection = await dependencies.playbackWarmupManager.selection(for: item.id)
+
+        guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+
+        preferredPlaybackSource = selection?.source
+        isPlaybackWarm = selection != nil
+        isWarmingPlayback = false
+
+        if selection != nil {
+            advancePhase(to: .playbackWarm)
+            await DetailPresentationTelemetry.shared.markPlayReady(for: item.id)
+        }
+    }
+
+    private func cancelBackgroundTasks() {
+        backgroundTasks.forEach { $0.cancel() }
+        backgroundTasks.removeAll()
+    }
+
+    private func isActive(loadToken: UUID, itemID: String) -> Bool {
+        activeLoadToken == loadToken && detail.item.id == itemID
+    }
+
+    private func advancePhase(to phase: LoadPhase) {
+        guard phase.rawValue > loadPhase.rawValue else { return }
+        loadPhase = phase
     }
 
     private func seasonMatching(preferredEpisode: MediaItem, seasons: [MediaItem]) -> MediaItem? {
@@ -206,6 +365,7 @@ final class DetailViewModel: ObservableObject {
            let exact = seasons.first(where: { $0.indexNumber == seasonNumber }) {
             return exact
         }
+
         return seasons.first
     }
 
@@ -213,9 +373,11 @@ final class DetailViewModel: ObservableObject {
         if let local = try? await dependencies.repository.fetchPlaybackProgress(itemID: item.id) {
             return local
         }
+
         guard let positionTicks = item.playbackPositionTicks, positionTicks > 0 else {
             return nil
         }
+
         let totalTicks = max(item.runtimeTicks ?? 0, positionTicks)
         return PlaybackProgress(
             itemID: item.id,
@@ -227,6 +389,9 @@ final class DetailViewModel: ObservableObject {
 
     private func mergedEpisode(_ item: MediaItem, preferred: MediaItem) -> MediaItem {
         var merged = item
+        if merged.isFavorite == false {
+            merged.isFavorite = preferred.isFavorite
+        }
         if merged.playbackPositionTicks == nil {
             merged.playbackPositionTicks = preferred.playbackPositionTicks
         }
@@ -242,18 +407,27 @@ final class DetailViewModel: ObservableObject {
         return merged
     }
 
-    private func playbackSourceRank(_ source: MediaSource) -> Int {
-        var score = source.bitrate ?? 0
-        if source.supportsDirectPlay {
-            score += 10_000_000
+    private func mergedItem(current: MediaItem, incoming: MediaItem) -> MediaItem {
+        var merged = incoming
+        if merged.isFavorite == false {
+            merged.isFavorite = current.isFavorite
         }
-        if source.supportsDirectStream {
-            score += 5_000_000
+        if merged.playbackPositionTicks == nil {
+            merged.playbackPositionTicks = current.playbackPositionTicks
         }
-        if source.isPremiumVideoSource {
-            score += 100_000
+        if merged.runtimeTicks == nil {
+            merged.runtimeTicks = current.runtimeTicks
         }
-        return score
+        if merged.seriesName == nil {
+            merged.seriesName = current.seriesName
+        }
+        if merged.seriesPosterTag == nil {
+            merged.seriesPosterTag = current.seriesPosterTag
+        }
+        if merged.parentID == nil {
+            merged.parentID = current.parentID
+        }
+        return merged
     }
 
     private var playbackProgressDisplayText: String? {
@@ -269,5 +443,75 @@ final class DetailViewModel: ObservableObject {
             return "\(hours)h"
         }
         return String(format: "%dh%02d", hours, minutes)
+    }
+
+    private func syncDerivedFlags() {
+        isInWatchlist = detail.item.isFavorite
+        isWatched = itemToPlay.isPlayed
+    }
+
+    private func applyWatchedState(_ isPlayed: Bool, to itemID: String) {
+        updateEpisode(itemID: itemID) { item in
+            item.isPlayed = isPlayed
+            item.playbackPositionTicks = isPlayed ? nil : item.playbackPositionTicks
+        }
+
+        if detail.item.id == itemID {
+            detail.item.isPlayed = isPlayed
+            if isPlayed {
+                detail.item.playbackPositionTicks = nil
+            }
+        }
+
+        if nextUpEpisode?.id == itemID {
+            if isPlayed, detail.item.mediaType == .series {
+                nextUpEpisode = nextUnplayedEpisode(after: itemID)
+                    ?? episodes.first(where: { !$0.isPlayed })
+                    ?? episodes.first(where: { $0.id == itemID })
+                    ?? nextUpEpisode
+            } else {
+                nextUpEpisode = episodes.first(where: { $0.id == itemID }) ?? nextUpEpisode
+            }
+        }
+
+        preferredEpisode = nextUpEpisode
+        playbackProgress = nil
+        syncDerivedFlags()
+    }
+
+    private func updateEpisode(itemID: String, transform: (inout MediaItem) -> Void) {
+        guard let index = episodes.firstIndex(where: { $0.id == itemID }) else { return }
+        transform(&episodes[index])
+    }
+
+    private func nextUnplayedEpisode(after itemID: String) -> MediaItem? {
+        guard let currentIndex = episodes.firstIndex(where: { $0.id == itemID }) else {
+            return episodes.first(where: { !$0.isPlayed })
+        }
+
+        let tail = episodes.suffix(from: episodes.index(after: currentIndex))
+        return tail.first(where: { !$0.isPlayed })
+    }
+
+    private func watchedMutationSnapshot(for itemID: String) -> (detailItem: MediaItem, episodes: [MediaItem], nextUp: MediaItem?, preferred: MediaItem?, itemID: String) {
+        (detail.item, episodes, nextUpEpisode, preferredEpisode, itemID)
+    }
+
+    private func restoreWatchedSnapshot(_ snapshot: (detailItem: MediaItem, episodes: [MediaItem], nextUp: MediaItem?, preferred: MediaItem?, itemID: String)) {
+        detail.item = snapshot.detailItem
+        episodes = snapshot.episodes
+        nextUpEpisode = snapshot.nextUp
+        preferredEpisode = snapshot.preferred
+        if let current = nextUpEpisode ?? (detail.item.id == snapshot.itemID ? detail.item : nil) {
+            Task {
+                let progress = await resolvedPlaybackProgress(for: current)
+                await MainActor.run {
+                    self.playbackProgress = progress
+                    self.syncDerivedFlags()
+                }
+            }
+        } else {
+            syncDerivedFlags()
+        }
     }
 }

@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.reelfin
   deploymentTarget:
     iOS: "26.0"
-    tvOS: "17.0"
+    tvOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -152,7 +152,7 @@ targets:
   ReelFinTVApp:
     type: application
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: ReelFinApp/AppTV
       - path: ReelFinApp/App/ErrorTracking.swift
@@ -170,7 +170,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.tv
         PRODUCT_NAME: ReelFin
-        TVOS_DEPLOYMENT_TARGET: 17.0
+        TVOS_DEPLOYMENT_TARGET: 26.0
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: ReelFin
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
@@ -183,7 +183,7 @@ targets:
   SharedTV:
     type: framework
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: Shared/Sources/Shared
     settings:
@@ -193,7 +193,7 @@ targets:
   JellyfinAPITV:
     type: framework
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: JellyfinAPI/Sources/JellyfinAPI
     dependencies:
@@ -205,7 +205,7 @@ targets:
   DataStoreTV:
     type: framework
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: DataStore/Sources/DataStore
     dependencies:
@@ -220,7 +220,7 @@ targets:
   ImageCacheTV:
     type: framework
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: ImageCache/Sources/ImageCache
     dependencies:
@@ -232,7 +232,7 @@ targets:
   SyncEngineTV:
     type: framework
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: SyncEngine/Sources/SyncEngine
     dependencies:
@@ -247,7 +247,7 @@ targets:
   PlaybackEngineTV:
     type: framework
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: PlaybackEngine/Sources/PlaybackEngine
       - path: PlaybackEngine/Sources/PlaybackEngine/NativeBridge/EBMLParser.swift
@@ -263,7 +263,7 @@ targets:
   ReelFinUITV:
     type: framework
     platform: tvOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: ReelFinUI/Sources/ReelFinUI
     dependencies:

@@ -182,6 +182,7 @@ public final class PlaybackSessionController {
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let repository: MetadataRepositoryProtocol
     private let coordinator: PlaybackCoordinator
+    private let warmupManager: (any PlaybackWarmupManaging)?
     private let playbackDiagnostics = PlaybackDiagnostics()
     private let fallbackPlanner = FallbackPlanner()
 
@@ -291,11 +292,13 @@ public final class PlaybackSessionController {
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
         repository: MetadataRepositoryProtocol,
+        warmupManager: (any PlaybackWarmupManaging)? = nil,
         decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
     ) {
         self.apiClient = apiClient
         self.repository = repository
         self.coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
+        self.warmupManager = warmupManager
         self.preferredProfilesByItemID = Self.loadStoredPreferredProfiles()
         configurePlayerBase()
         setupLifecycleObservers()
@@ -380,19 +383,30 @@ public final class PlaybackSessionController {
         let infoStartDate = Date()
 
         do {
-            // Always resolve with balanced mode so DirectStreamUrl is available for NativeBridge.
-            // Performance mode disables transcoding — the coordinator handles the fallback internally.
-            var selection = try await coordinator.resolvePlayback(
-                itemID: item.id,
-                mode: .balanced,
-                allowTranscodingFallbackInPerformance: !usesDirectRemuxOnly,
-                transcodeProfile: activeTranscodeProfile
-            )
+            let warmedSelection = await warmupManager?.selection(for: item.id)
+            let warmedSelectionStart = Date()
+            var selection: PlaybackAssetSelection
 
-            // Mark PlaybackInfo phase complete
-            ttffInfoInterval?.end(name: "ttff_playback_info", message: "info_received")
-            ttffInfoInterval = nil
-            ttffInfoMs = Date().timeIntervalSince(infoStartDate) * 1000
+            if let warmedSelection {
+                selection = warmedSelection
+                ttffInfoInterval?.end(name: "ttff_playback_info", message: "warm_cache_hit")
+                ttffInfoInterval = nil
+                ttffInfoMs = Date().timeIntervalSince(warmedSelectionStart) * 1000
+            } else {
+                // Always resolve with balanced mode so DirectStreamUrl is available for NativeBridge.
+                // Performance mode disables transcoding — the coordinator handles the fallback internally.
+                selection = try await coordinator.resolvePlayback(
+                    itemID: item.id,
+                    mode: .balanced,
+                    allowTranscodingFallbackInPerformance: !usesDirectRemuxOnly,
+                    transcodeProfile: activeTranscodeProfile
+                )
+
+                // Mark PlaybackInfo phase complete
+                ttffInfoInterval?.end(name: "ttff_playback_info", message: "info_received")
+                ttffInfoInterval = nil
+                ttffInfoMs = Date().timeIntervalSince(infoStartDate) * 1000
+            }
 
             ttffResolveInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_url_resolution")
             let resolveStartDate = Date()

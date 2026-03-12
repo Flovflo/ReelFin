@@ -14,6 +14,7 @@ public struct CachedRemoteImage: View {
     private let contentMode: CachedRemoteImageContentMode
     private let apiClient: JellyfinAPIClientProtocol
     private let imagePipeline: ImagePipelineProtocol
+    private let onImageLoaded: (() -> Void)?
 
     @State private var image: UIImage?
     @State private var requestURL: URL?
@@ -25,7 +26,8 @@ public struct CachedRemoteImage: View {
         quality: Int = 82,
         contentMode: CachedRemoteImageContentMode = .fill,
         apiClient: JellyfinAPIClientProtocol,
-        imagePipeline: ImagePipelineProtocol
+        imagePipeline: ImagePipelineProtocol,
+        onImageLoaded: (() -> Void)? = nil
     ) {
         self.itemID = itemID
         self.type = type
@@ -34,6 +36,7 @@ public struct CachedRemoteImage: View {
         self.contentMode = contentMode
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
+        self.onImageLoaded = onImageLoaded
     }
 
     public var body: some View {
@@ -78,12 +81,14 @@ public struct CachedRemoteImage: View {
 
         if let cached = await imagePipeline.cachedImage(for: url) {
             image = cached
+            onImageLoaded?()
             return
         }
 
         do {
             let downloaded = try await imagePipeline.image(for: url)
             image = downloaded
+            onImageLoaded?()
         } catch {
             if shouldIgnoreImageError(error) {
                 return
@@ -95,6 +100,7 @@ public struct CachedRemoteImage: View {
                 do {
                     let fallbackImage = try await imagePipeline.image(for: fallbackURL)
                     image = fallbackImage
+                    onImageLoaded?()
                     return
                 } catch {
                     if shouldIgnoreImageError(error) {

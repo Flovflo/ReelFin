@@ -158,6 +158,7 @@ struct ServerSettingsView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                 }
+                .frame(maxWidth: tvContentWidth, alignment: .leading)
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, 16)
             }
@@ -166,7 +167,19 @@ struct ServerSettingsView: View {
     }
 
     private var horizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 14 : 22
+        #if os(tvOS)
+        return 32
+        #else
+        return horizontalSizeClass == .compact ? 14 : 22
+        #endif
+    }
+
+    private var tvContentWidth: CGFloat? {
+        #if os(tvOS)
+        return 920
+        #else
+        return nil
+        #endif
     }
 
     private func supportLinkButton(title: String, subtitle: String, action: @escaping () -> Void) -> some View {

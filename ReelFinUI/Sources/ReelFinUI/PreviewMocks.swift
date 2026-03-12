@@ -37,6 +37,14 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         session = nil
     }
 
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState {
+        QuickConnectState(code: "1234", secret: "mock-secret")
+    }
+
+    func pollQuickConnect(secret: String) async throws -> UserSession? {
+        nil
+    }
+
     func fetchUserViews() async throws -> [Shared.LibraryView] {
         [Shared.LibraryView(id: "movies", name: "Movies", collectionType: "movies")]
     }
@@ -407,20 +415,34 @@ public enum ReelFinPreviewFactory {
     @MainActor public static func dependencies(authenticated: Bool = true) -> ReelFinDependencies {
         let api = MockJellyfinAPIClient(authenticated: authenticated)
         let repository = MockMetadataRepository()
+        let detailRepository = DefaultMediaDetailRepository(
+            apiClient: api,
+            repository: repository,
+            itemTTL: 60,
+            detailTTL: 60,
+            collectionTTL: 60
+        )
         let images = MockImagePipeline()
         let sync = MockSyncEngine()
         let settings = MockSettingsStore(authenticated: authenticated)
         let seriesCache = SeriesLookupCache(apiClient: api)
+        let warmupManager = PlaybackWarmupManager(apiClient: api, ttl: 60)
 
         return ReelFinDependencies(
             apiClient: api,
             repository: repository,
+            detailRepository: detailRepository,
             imagePipeline: images,
             syncEngine: sync,
             settingsStore: settings,
             seriesCache: seriesCache,
+            playbackWarmupManager: warmupManager,
             makePlaybackSession: {
-                PlaybackSessionController(apiClient: api, repository: repository)
+                PlaybackSessionController(
+                    apiClient: api,
+                    repository: repository,
+                    warmupManager: warmupManager
+                )
             }
         )
     }

@@ -423,6 +423,8 @@ private final class CapturePlaybackAPIClient: JellyfinAPIClientProtocol, @unchec
     func testConnection(serverURL: URL) async throws { _ = serverURL }
     func authenticate(credentials: UserCredentials) async throws -> UserSession { _ = credentials; return sessionValue }
     func signOut() async {}
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
+    func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
     func fetchUserViews() async throws -> [LibraryView] { [] }
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed { _ = since; return .empty }
     func fetchItem(id: String) async throws -> MediaItem { throw AppError.network("Not implemented") }
