@@ -21,10 +21,16 @@ struct TVRootShellView: View {
             )
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+        .environment(\.tvTopNavigationFocusAction, focusTopNavigation)
         .onPreferenceChange(TVTopNavigationVisibilityPreferenceKey.self) { isVisible in
             isTopNavigationVisible = isVisible
         }
         .preferredColorScheme(.dark)
+    }
+
+    private func focusTopNavigation(_ destination: TVRootDestination) {
+        guard isTopNavigationVisible else { return }
+        focusedDestination = destination
     }
 }
 

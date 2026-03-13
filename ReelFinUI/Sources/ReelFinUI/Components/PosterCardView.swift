@@ -288,6 +288,9 @@ public struct PosterCardMetadataView: View {
                 .foregroundStyle(titleColor)
                 .lineLimit(resolvedTitleLineLimit)
                 .fixedSize(horizontal: false, vertical: true)
+                #if os(tvOS)
+                .frame(maxWidth: .infinity, minHeight: titleBlockHeight, maxHeight: titleBlockHeight, alignment: .topLeading)
+                #endif
 
             if item.mediaType == .episode, let index = item.indexNumber {
                 let seasonText = item.parentIndexNumber.map { "S\($0)" } ?? ""
@@ -383,10 +386,15 @@ public struct PosterCardMetadataView: View {
 
     private var resolvedTitleLineLimit: Int {
         #if os(tvOS)
-        return max(titleLineLimit, layoutStyle == .landscape ? 2 : 1)
+        return max(titleLineLimit, 2)
         #else
         return titleLineLimit
         #endif
+    }
+
+    private var titleBlockHeight: CGFloat {
+        let lineHeight = titleFontSize * 1.18
+        return ceil(lineHeight * CGFloat(resolvedTitleLineLimit))
     }
 }
 

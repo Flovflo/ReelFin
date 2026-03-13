@@ -627,6 +627,7 @@ public struct HeroCarouselView: View {
 
 #if os(tvOS)
 private struct TVHeroCapsuleButton: View {
+    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
 
     let title: String
@@ -657,6 +658,7 @@ private struct TVHeroCapsuleButton: View {
         .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
+        .onMoveCommand(perform: handleMoveCommand)
         .onTapGesture(perform: action)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
@@ -665,9 +667,15 @@ private struct TVHeroCapsuleButton: View {
     private var backgroundFill: Color {
         isFocused ? .white : Color.white.opacity(0.10)
     }
+
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        guard direction == .up else { return }
+        requestTopNavigationFocus?(.watchNow)
+    }
 }
 
 private struct TVHeroCircleButton: View {
+    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
 
     let systemImage: String
@@ -690,6 +698,7 @@ private struct TVHeroCircleButton: View {
             .focusable(true, interactions: .activate)
             .focused($isFocused)
             .focusEffectDisabled(true)
+            .onMoveCommand(perform: handleMoveCommand)
             .onTapGesture(perform: action)
             .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
             .accessibilityAddTraits(.isButton)
@@ -707,6 +716,11 @@ private struct TVHeroCircleButton: View {
             return .white
         }
         return isLight ? Color.white.opacity(0.90) : Color.white.opacity(0.10)
+    }
+
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        guard direction == .up else { return }
+        requestTopNavigationFocus?(.watchNow)
     }
 }
 #endif
