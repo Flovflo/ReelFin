@@ -22,6 +22,9 @@ private struct DetailNavigationContext: Equatable {
     static let empty = DetailNavigationContext(title: nil, items: [])
 }
 
+private let rowContentHorizontalPadding: CGFloat = 6
+private let rowContentVerticalPadding: CGFloat = 6
+
 struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -354,7 +357,10 @@ struct DetailView: View {
                             )
                         }
                     }
+                    .padding(.horizontal, rowContentHorizontalPadding)
+                    .padding(.vertical, rowContentVerticalPadding)
                 }
+                .scrollClipDisabled()
             }
         }
     }
@@ -482,7 +488,7 @@ struct DetailView: View {
 
     private var horizontalPadding: CGFloat {
 #if os(tvOS)
-        return 72
+        return ReelFinTheme.tvSectionHorizontalPadding
 #else
         return horizontalSizeClass == .compact ? 24 : 40
 #endif
@@ -490,7 +496,7 @@ struct DetailView: View {
 
     private var sectionSpacing: CGFloat {
 #if os(tvOS)
-        return 36
+        return ReelFinTheme.tvSectionSpacing
 #else
         return 28
 #endif
@@ -514,7 +520,7 @@ struct DetailView: View {
 
     private var episodeCardWidth: CGFloat {
 #if os(tvOS)
-        return 470
+        return 480
 #else
         return horizontalSizeClass == .compact ? 330 : 380
 #endif
@@ -522,7 +528,7 @@ struct DetailView: View {
 
     private var episodeCardSpacing: CGFloat {
 #if os(tvOS)
-        return 22
+        return 30
 #else
         return 16
 #endif
@@ -714,61 +720,64 @@ private struct TVDetailContextPreviewCard: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            ZStack(alignment: overlayAlignment) {
-                CachedRemoteImage(
-                    itemID: previewItemID,
-                    type: previewImageType,
-                    width: Int(width * 3),
-                    quality: 84,
-                    contentMode: .fill,
-                    apiClient: apiClient,
-                    imagePipeline: imagePipeline
-                )
-                .frame(width: width, height: height)
-                .clipped()
-
-                LinearGradient(
-                    stops: [
-                        .init(color: .black.opacity(0.38), location: 0.0),
-                        .init(color: .clear, location: 0.22),
-                        .init(color: .clear, location: 0.58),
-                        .init(color: .black.opacity(0.78), location: 1.0)
-                    ],
-                    startPoint: edge == .leading ? .leading : .trailing,
-                    endPoint: edge == .leading ? .trailing : .leading
-                )
-
-                VStack(alignment: edge == .leading ? .leading : .trailing, spacing: 10) {
-                    Image(systemName: edge == .leading ? "chevron.left.circle.fill" : "chevron.right.circle.fill")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.96))
-
-                    Text(previewTitle)
-                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(4)
-                        .minimumScaleFactor(0.88)
-                        .multilineTextAlignment(edge == .leading ? .leading : .trailing)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let subtitle = previewSubtitle {
-                        Text(subtitle)
-                            .font(.system(size: 15, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.74))
-                            .lineLimit(2)
-                            .multilineTextAlignment(edge == .leading ? .leading : .trailing)
-                    }
-                }
-                .padding(18)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: overlayAlignment)
-            }
+        ZStack(alignment: overlayAlignment) {
+            CachedRemoteImage(
+                itemID: previewItemID,
+                type: previewImageType,
+                width: Int(width * 3),
+                quality: 84,
+                contentMode: .fill,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline
+            )
             .frame(width: width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-            .shadow(color: .black.opacity(0.22), radius: 14, x: 0, y: 10)
+            .clipped()
+
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0.38), location: 0.0),
+                    .init(color: .clear, location: 0.22),
+                    .init(color: .clear, location: 0.58),
+                    .init(color: .black.opacity(0.78), location: 1.0)
+                ],
+                startPoint: edge == .leading ? .leading : .trailing,
+                endPoint: edge == .leading ? .trailing : .leading
+            )
+
+            VStack(alignment: edge == .leading ? .leading : .trailing, spacing: 10) {
+                Image(systemName: edge == .leading ? "chevron.left.circle.fill" : "chevron.right.circle.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.96))
+
+                Text(previewTitle)
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(4)
+                    .minimumScaleFactor(0.88)
+                    .multilineTextAlignment(edge == .leading ? .leading : .trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let subtitle = previewSubtitle {
+                    Text(subtitle)
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(2)
+                        .multilineTextAlignment(edge == .leading ? .leading : .trailing)
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: overlayAlignment)
         }
-        .buttonStyle(.plain)
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .scaleEffect(isFocused ? 1.05 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.22), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 16 : 10)
+        .focusable(true, interactions: .activate)
+        .onTapGesture(perform: action)
+        .focusEffectDisabled(true)
         .focused($isFocused)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel("Open \(previewTitle)")
     }
 
@@ -1043,40 +1052,61 @@ private struct PrimaryActionsRow: View {
 }
 
 private struct HeroPrimaryButton: View {
+    #if os(tvOS)
+    @FocusState private var isFocused: Bool
+    #else
+    @Environment(\.isFocused) private var isFocused
+    #endif
+
     let title: String
     let isLoading: Bool
     let action: () -> Void
 
     var body: some View {
 #if os(tvOS)
-        Button(action: action) {
-            HStack(spacing: 12) {
-                if isLoading {
-                    ProgressView()
-                    Text("Preparing")
-                } else {
-                    Image(systemName: "play.fill")
-                    Text(title)
-                }
+        HStack(spacing: 12) {
+            if isLoading {
+                ProgressView()
+                Text("Preparing")
+            } else {
+                Image(systemName: "play.fill")
+                Text(title)
             }
-            .font(.system(size: 24, weight: .semibold, design: .rounded))
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            .frame(minWidth: 318)
-            .padding(.horizontal, 26)
-            .padding(.vertical, 18)
         }
-        .tint(.white)
-        .buttonStyle(.glassProminent)
+        .font(.system(size: 24, weight: .semibold, design: .rounded))
+        .foregroundStyle(isFocused ? Color.black.opacity(0.92) : .white)
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+        .frame(minWidth: 318)
+        .padding(.horizontal, 26)
+        .padding(.vertical, 18)
+        .background(backgroundFill, in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+        }
+        .contentShape(Capsule(style: .continuous))
+        .scaleEffect(isFocused ? 1.04 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.16), radius: isFocused ? 22 : 10, x: 0, y: isFocused ? 12 : 6)
+        .focusable(!isLoading, interactions: .activate)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .onTapGesture(perform: action)
         .disabled(isLoading)
+        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .accessibilityAddTraits(.isButton)
 #else
         buttonContent
 #endif
     }
 
-    #if os(iOS)
-    @Environment(\.isFocused) private var isFocused
+    #if os(tvOS)
+    private var backgroundFill: Color {
+        isFocused ? .white : Color.white.opacity(0.14)
+    }
+    #endif
 
+    #if os(iOS)
     private var buttonContent: some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -1109,7 +1139,9 @@ private struct HeroPrimaryButton: View {
 }
 
 private struct HeroSecondaryButton: View {
-    #if os(iOS)
+    #if os(tvOS)
+    @FocusState private var isFocused: Bool
+    #else
     @Environment(\.isFocused) private var isFocused
     #endif
 
@@ -1120,17 +1152,28 @@ private struct HeroSecondaryButton: View {
 
     var body: some View {
 #if os(tvOS)
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
+        Label(title, systemImage: systemImage)
             .font(.system(size: 20, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(isFocused ? 0.96 : 0.88))
             .lineLimit(1)
             .minimumScaleFactor(0.86)
             .frame(minWidth: 180)
             .padding(.horizontal, 20)
             .padding(.vertical, 15)
-        }
-        .tint(isActive ? .white : .gray)
-        .buttonStyle(.glass)
+            .background(backgroundFill, in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(borderColor, lineWidth: 1)
+            }
+            .contentShape(Capsule(style: .continuous))
+            .scaleEffect(isFocused ? 1.035 : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.28 : 0.14), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
+            .focusable(true, interactions: .activate)
+            .focused($isFocused)
+            .focusEffectDisabled(true)
+            .onTapGesture(perform: action)
+            .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+            .accessibilityAddTraits(.isButton)
 #else
         Button(action: action) {
             HStack(spacing: 10) {
@@ -1155,6 +1198,18 @@ private struct HeroSecondaryButton: View {
     }
 
 
+
+    #if os(tvOS)
+    private var backgroundFill: Color {
+        if isFocused { return Color.white.opacity(0.18) }
+        if isActive { return Color.white.opacity(0.14) }
+        return Color.white.opacity(0.08)
+    }
+
+    private var borderColor: Color {
+        isFocused ? Color.white.opacity(0.28) : Color.white.opacity(isActive ? 0.18 : 0.10)
+    }
+    #endif
 
     #if os(iOS)
     private var backgroundFill: Color {
@@ -1298,7 +1353,7 @@ private struct SeasonPickerView: View {
             subtitle: seasons.first(where: { $0.id == selectedSeasonID })?.name
         ) {
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
+                LazyHStack(spacing: chipSpacing) {
                     ForEach(seasons) { season in
                         SeasonChipButton(
                             title: season.name,
@@ -1309,8 +1364,19 @@ private struct SeasonPickerView: View {
                         )
                     }
                 }
+                .padding(.horizontal, rowContentHorizontalPadding)
+                .padding(.vertical, rowContentVerticalPadding)
             }
+            .scrollClipDisabled()
         }
+    }
+
+    private var chipSpacing: CGFloat {
+        #if os(tvOS)
+        return 14
+        #else
+        return 12
+        #endif
     }
 }
 
@@ -1459,6 +1525,14 @@ private struct RelatedRowView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 18) {
                     ForEach(items) { item in
+                        #if os(tvOS)
+                        TVRelatedRowItem(
+                            item: item,
+                            apiClient: apiClient,
+                            imagePipeline: imagePipeline,
+                            action: { onSelect(item) }
+                        )
+                        #else
                         Button {
                             onSelect(item)
                         } label: {
@@ -1472,12 +1546,43 @@ private struct RelatedRowView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        #endif
                     }
                 }
+                .padding(.horizontal, rowContentHorizontalPadding)
+                .padding(.vertical, rowContentVerticalPadding)
             }
+            .scrollClipDisabled()
         }
     }
 }
+
+#if os(tvOS)
+private struct TVRelatedRowItem: View {
+    @FocusState private var isFocused: Bool
+
+    let item: MediaItem
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let action: () -> Void
+
+    var body: some View {
+        PosterCardView(
+            item: item,
+            apiClient: apiClient,
+            imagePipeline: imagePipeline,
+            layoutStyle: .row,
+            focusStyle: .subtle,
+            titleLineLimit: 2
+        )
+        .focusable(true, interactions: .activate)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .onTapGesture(perform: action)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+#endif
 
 private struct DetailPageSkeletonView: View {
     enum SectionKind {
@@ -1568,7 +1673,7 @@ private struct DetailRowContainer<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: contentSpacing) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(title)
                     .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
@@ -1583,6 +1688,12 @@ private struct DetailRowContainer<Content: View>: View {
 
             content
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, containerVerticalPadding)
+        #if os(tvOS)
+        .padding(.horizontal, 28)
+        .tvSectionPanel(cornerRadius: 30)
+        #endif
     }
 
     private var titleFontSize: CGFloat {
@@ -1599,6 +1710,22 @@ private struct DetailRowContainer<Content: View>: View {
 #else
         return 15
 #endif
+    }
+
+    private var contentSpacing: CGFloat {
+        #if os(tvOS)
+        return 20
+        #else
+        return 16
+        #endif
+    }
+
+    private var containerVerticalPadding: CGFloat {
+        #if os(tvOS)
+        return 8
+        #else
+        return 0
+        #endif
     }
 }
 
@@ -1754,4 +1881,25 @@ private extension MediaItem {
         )
     }
     .environment(\.dynamicTypeSize, .accessibility5)
+}
+#Preview("Detail - Apple TV", traits: .fixedLayout(width: 1920, height: 1080)) {
+    NavigationStack {
+        DetailView(
+            dependencies: ReelFinPreviewFactory.dependencies(),
+            item: MediaItem(
+                id: "series-continue-1",
+                name: "Continue Series",
+                overview: "A mock series container for continue watching playback resolution.",
+                mediaType: .series,
+                year: 2025,
+                runtimeTicks: Int64(48 * 60 * 10_000_000),
+                genres: ["Drama", "Thriller"],
+                communityRating: 8.3,
+                posterTag: "poster",
+                backdropTag: "backdrop",
+                libraryID: "shows"
+            )
+        )
+    }
+    .preferredColorScheme(.dark)
 }

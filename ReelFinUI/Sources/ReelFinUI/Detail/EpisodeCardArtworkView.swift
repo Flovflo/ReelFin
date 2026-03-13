@@ -6,9 +6,10 @@ import SwiftUI
 struct EpisodeCardArtworkView: View {
     let episode: MediaItem
     let width: CGFloat
-    let selectionLabel: String?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
+
+    private var artworkHeight: CGFloat { width * 0.56 }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -21,54 +22,87 @@ struct EpisodeCardArtworkView: View {
                 apiClient: apiClient,
                 imagePipeline: imagePipeline
             )
-            .frame(width: width, height: width * 0.56)
+            .frame(width: width, height: artworkHeight)
             .clipped()
 
+            // Subtle bottom gradient for badge readability
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.10), location: 0.58),
-                    .init(color: .black.opacity(0.68), location: 1)
+                    .init(color: .black.opacity(0.05), location: 0.45),
+                    .init(color: .black.opacity(0.45), location: 1)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
 
-            if episode.isPlayed {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(16)
-                    .accessibilityHidden(true)
-            }
-
-            if let selectionLabel {
-                Text(selectionLabel)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.88))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.white, in: Capsule())
-                    .padding(16)
-                    .accessibilityHidden(true)
-            }
-
-            if let progress = episode.playbackProgress, progress > 0, !episode.isPlayed {
-                GeometryReader { proxy in
-                    Capsule()
-                        .fill(Color.white.opacity(0.16))
-                        .overlay(alignment: .leading) {
-                            Capsule()
-                                .fill(Color.white)
-                                .frame(width: proxy.size.width * CGFloat(progress))
-                        }
+            // ── Runtime badge (play ▶ Xm) — bottom-left ────────────────────
+            if let runtime = episode.runtimeDisplayText {
+                HStack(spacing: 5) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: runtimeIconSize, weight: .bold))
+                    Text(runtime)
+                        .font(.system(size: runtimeFontSize, weight: .semibold, design: .rounded))
                 }
-                .frame(height: 4)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 16)
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.black.opacity(0.40), in: Capsule(style: .continuous))
+                .padding(runtimeBadgePadding)
+            }
+
+            // ── Progress bar — thin, at very bottom ─────────────────────────
+            if let progress = episode.playbackProgress, progress > 0, !episode.isPlayed {
+                VStack {
+                    Spacer()
+                    GeometryReader { proxy in
+                        Capsule()
+                            .fill(Color.white.opacity(0.20))
+                            .overlay(alignment: .leading) {
+                                Capsule()
+                                    .fill(Color.white.opacity(0.88))
+                                    .frame(width: proxy.size.width * CGFloat(progress))
+                            }
+                    }
+                    .frame(height: 3)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                }
             }
         }
-        .frame(width: width, height: width * 0.56)
-        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .frame(width: width, height: artworkHeight)
+        .clipShape(RoundedRectangle(cornerRadius: artworkCornerRadius, style: .continuous))
+    }
+
+    private var artworkCornerRadius: CGFloat {
+        #if os(tvOS)
+        return 16
+        #else
+        return 28
+        #endif
+    }
+
+    private var runtimeIconSize: CGFloat {
+        #if os(tvOS)
+        return 12
+        #else
+        return 10
+        #endif
+    }
+
+    private var runtimeFontSize: CGFloat {
+        #if os(tvOS)
+        return 16
+        #else
+        return 13
+        #endif
+    }
+
+    private var runtimeBadgePadding: CGFloat {
+        #if os(tvOS)
+        return 16
+        #else
+        return 14
+        #endif
     }
 }
