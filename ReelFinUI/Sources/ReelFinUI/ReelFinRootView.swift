@@ -58,26 +58,7 @@ public struct ReelFinRootView: View {
 
     #if os(tvOS)
     private var tvLayout: some View {
-        TabView(selection: $selectedTab) {
-            Tab("Watch Now", systemImage: "play.rectangle.fill", value: 0) {
-                NavigationStack {
-                    HomeView(dependencies: dependencies)
-                }
-            }
-            Tab("Search", systemImage: "magnifyingglass", value: 1) {
-                NavigationStack {
-                    TVSearchView(dependencies: dependencies)
-                }
-            }
-            Tab("Library", systemImage: "rectangle.stack.fill", value: 2) {
-                NavigationStack {
-                    LibraryView(dependencies: dependencies)
-                }
-            }
-        }
-        .tabViewStyle(.sidebarAdaptable)
-        .tint(.white)
-        .preferredColorScheme(.dark)
+        TVRootShellView(dependencies: dependencies)
     }
     #endif
 

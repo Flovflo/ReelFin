@@ -232,7 +232,9 @@ struct HomeView: View {
                 imagePipeline: dependencies.imagePipeline,
                 sharpnessOpacity: 0.78,
                 blurOpacity: 0.56,
-                bottomFadeStart: 0.5
+                bottomFadeStart: 0.5,
+                leadingScrimOpacity: tvHomeLeadingScrimOpacity,
+                edgeVignetteOpacity: tvHomeEdgeVignetteOpacity
             )
             .overlay {
                 Color.black.opacity(0.18).ignoresSafeArea()
@@ -282,6 +284,9 @@ struct HomeView: View {
                 .animation(.snappy(duration: 0.35), value: viewModel.visibleRows.map(\.id))
             }
             .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+#if os(tvOS)
+            .contentMargins(.zero, for: .scrollContent)
+#endif
 #if os(iOS)
             .refreshable {
                 await viewModel.manualRefresh()
@@ -300,6 +305,10 @@ struct HomeView: View {
             )
 #endif
         }
+#if os(tvOS)
+        .toolbar(.hidden, for: .navigationBar)
+        .ignoresSafeArea(.container, edges: [.top, .horizontal])
+#endif
         .navigationDestination(
             isPresented: Binding(
                 get: { viewModel.selectedItem != nil },
@@ -454,6 +463,22 @@ struct HomeView: View {
 
     private var featuredItems: [MediaItem] {
         Array(viewModel.feed.featured.prefix(10))
+    }
+
+    private var tvHomeLeadingScrimOpacity: Double {
+        #if os(tvOS)
+        return 0.42
+        #else
+        return 0.82
+        #endif
+    }
+
+    private var tvHomeEdgeVignetteOpacity: Double {
+        #if os(tvOS)
+        return 0.08
+        #else
+        return 0.58
+        #endif
     }
 
     private var firstRowByItemID: [String: String] {

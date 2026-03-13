@@ -8,6 +8,8 @@ struct CinematicBackdropView: View {
     var sharpnessOpacity: Double = 0.84
     var blurOpacity: Double = 0.52
     var bottomFadeStart: Double = 0.58
+    var leadingScrimOpacity: Double = 0.82
+    var edgeVignetteOpacity: Double = 0.58
     var onHeroImageVisible: (() -> Void)? = nil
 
     var body: some View {
@@ -115,8 +117,8 @@ struct CinematicBackdropView: View {
         ZStack {
             LinearGradient(
                 stops: [
-                    .init(color: Color.black.opacity(0.82), location: 0.0),
-                    .init(color: Color.black.opacity(0.46), location: 0.18),
+                    .init(color: Color.black.opacity(leadingScrimOpacity), location: 0.0),
+                    .init(color: Color.black.opacity(leadingScrimOpacity * 0.56), location: 0.18),
                     .init(color: Color.black.opacity(0.12), location: 0.42),
                     .init(color: .clear, location: 0.66)
                 ],
@@ -126,10 +128,10 @@ struct CinematicBackdropView: View {
 
             LinearGradient(
                 stops: [
-                    .init(color: Color.black.opacity(0.58), location: 0.0),
+                    .init(color: Color.black.opacity(edgeVignetteOpacity), location: 0.0),
                     .init(color: .clear, location: 0.1),
                     .init(color: .clear, location: 0.9),
-                    .init(color: Color.black.opacity(0.58), location: 1.0)
+                    .init(color: Color.black.opacity(edgeVignetteOpacity), location: 1.0)
                 ],
                 startPoint: .leading,
                 endPoint: .trailing

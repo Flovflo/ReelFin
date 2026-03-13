@@ -80,6 +80,10 @@ public enum ReelFinTheme {
     public static let tvSectionSpacing: CGFloat = 36
     public static let tvRailSpacing: CGFloat = 28
     public static let tvSectionHorizontalPadding: CGFloat = 56
+    public static let tvTopNavigationBarMaxWidth: CGFloat = 760
+    public static let tvTopNavigationBarHeight: CGFloat = 64
+    public static let tvTopNavigationItemHeight: CGFloat = 52
+    public static let tvTopNavigationHorizontalPadding: CGFloat = 14
 
     // tvOS Focus & State Design Tokens
     public static let tvFocusScale: CGFloat = 1.06

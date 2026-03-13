@@ -394,36 +394,18 @@ public struct HeroCarouselView: View {
 
     @ViewBuilder
     private func tvActionButtons(for item: MediaItem) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Button {
-                (onPlay ?? onTap)(item)
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 20, weight: .bold))
-                    Text(primaryActionTitle(for: item))
-                }
-                .font(.system(size: 20, weight: .bold))
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
-            }
-            .tint(.white)
-            .buttonStyle(.glassProminent)
+        HStack(spacing: 16) {
+            TVHeroCapsuleButton(
+                title: primaryActionTitle(for: item),
+                systemImage: "play.fill",
+                action: { (onPlay ?? onTap)(item) }
+            )
 
-            Button {
-                onTap(item)
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 20, weight: .bold))
-                    Text("Details")
-                }
-                .font(.system(size: 20, weight: .bold))
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
-            }
-            .tint(.white.opacity(0.92))
-            .buttonStyle(.glass)
+            TVHeroCircleButton(
+                systemImage: "info.circle.fill",
+                isLight: true,
+                action: { onTap(item) }
+            )
         }
     }
 
@@ -642,6 +624,92 @@ public struct HeroCarouselView: View {
         return min(max(requestedWidth, 720), 2200)
     }
 }
+
+#if os(tvOS)
+private struct TVHeroCapsuleButton: View {
+    @FocusState private var isFocused: Bool
+
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 20, weight: .bold))
+
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.86)
+        }
+        .font(.system(size: 22, weight: .semibold, design: .rounded))
+        .foregroundStyle(isFocused ? Color.black.opacity(0.92) : .white)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 16)
+        .background(backgroundFill, in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+        }
+        .contentShape(Capsule(style: .continuous))
+        .scaleEffect(isFocused ? 1.04 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.16), radius: isFocused ? 22 : 10, x: 0, y: isFocused ? 12 : 6)
+        .focusable(true, interactions: .activate)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .onTapGesture(perform: action)
+        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var backgroundFill: Color {
+        isFocused ? .white : Color.white.opacity(0.10)
+    }
+}
+
+private struct TVHeroCircleButton: View {
+    @FocusState private var isFocused: Bool
+
+    let systemImage: String
+    let isLight: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 22, weight: .bold))
+            .foregroundStyle(foregroundColor)
+            .frame(width: 58, height: 58)
+            .background(backgroundFill, in: Circle())
+            .overlay {
+                Circle()
+                    .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+            }
+            .contentShape(Circle())
+            .scaleEffect(isFocused ? 1.05 : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.32 : 0.14), radius: isFocused ? 18 : 8, x: 0, y: isFocused ? 10 : 4)
+            .focusable(true, interactions: .activate)
+            .focused($isFocused)
+            .focusEffectDisabled(true)
+            .onTapGesture(perform: action)
+            .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private var foregroundColor: Color {
+        if isFocused {
+            return Color.black.opacity(0.92)
+        }
+        return isLight ? Color.black.opacity(0.92) : .white
+    }
+
+    private var backgroundFill: Color {
+        if isFocused {
+            return .white
+        }
+        return isLight ? Color.white.opacity(0.90) : Color.white.opacity(0.10)
+    }
+}
+#endif
 
 // ──────────────────────────────────────────────
 // MARK: - tvOS Hero Title (Logo image → text fallback)

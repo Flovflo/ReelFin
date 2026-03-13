@@ -295,6 +295,7 @@ struct DetailView: View {
                     seasons: viewModel.seasons,
                     selectedSeasonID: viewModel.selectedSeason?.id,
                     focusedSeasonID: $focusedSeasonID,
+                    onMoveUp: focusHeroPrimaryActionFromSeasonPicker,
                     onSelect: { season in
                         Task {
                             await viewModel.selectSeasonIfNeeded(season)
@@ -422,6 +423,14 @@ struct DetailView: View {
                     hasAnimatedIn = true
                 }
             }
+        }
+    }
+
+    private func focusHeroPrimaryActionFromSeasonPicker() {
+        focusedSeasonID = nil
+
+        Task { @MainActor in
+            focusedHeroAction = .play
         }
     }
 
@@ -1353,6 +1362,7 @@ private struct SeasonPickerView: View {
     let seasons: [MediaItem]
     let selectedSeasonID: String?
     let focusedSeasonID: FocusState<String?>.Binding
+    let onMoveUp: () -> Void
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
@@ -1371,6 +1381,10 @@ private struct SeasonPickerView: View {
                     guard isFocused else { return }
                     focusedSeasonID.wrappedValue = selectedSeasonID ?? seasons.first?.id
                 }
+                .onMoveCommand { direction in
+                    guard direction == .up else { return }
+                    onMoveUp()
+                }
             #endif
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1384,6 +1398,10 @@ private struct SeasonPickerView: View {
                             }
                         )
                         .focused(focusedSeasonID, equals: season.id)
+                        .onMoveCommand { direction in
+                            guard direction == .up else { return }
+                            onMoveUp()
+                        }
                     }
                 }
                 .padding(.horizontal, rowContentHorizontalPadding)
