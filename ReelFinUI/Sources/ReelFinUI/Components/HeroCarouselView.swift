@@ -164,8 +164,6 @@ public struct HeroCarouselView: View {
     // ──────────────────────────────────────────────
 
     #if os(tvOS)
-    @FocusState private var focusedButton: TVHeroButton?
-
     private var tvBody: some View {
         GeometryReader { proxy in
             ZStack(alignment: .bottom) {
@@ -423,20 +421,19 @@ public struct HeroCarouselView: View {
             }
             .tint(.white)
             .buttonStyle(.glassProminent)
-            .focused($focusedButton, equals: .play)
 
             // Checkmark (watched toggle)
-            tvCircleButton(symbol: "checkmark", tag: .watched) {
+            tvCircleButton(symbol: "checkmark") {
                 onTap(item)
             }
 
             // Info
-            tvCircleButton(symbol: "info.circle", tag: .info) {
+            tvCircleButton(symbol: "info.circle") {
                 onTap(item)
             }
 
             // Chevron (more)
-            tvCircleButton(symbol: "chevron.right", tag: .more) {
+            tvCircleButton(symbol: "chevron.right") {
                 onTap(item)
             }
         }
@@ -444,16 +441,15 @@ public struct HeroCarouselView: View {
 
     private func tvCircleButton(
         symbol: String,
-        tag: TVHeroButton,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 22, weight: .semibold))
+                .frame(width: 68, height: 68)
         }
-        .tint(.gray)
+        .tint(.white)
         .buttonStyle(.glass)
-        .focused($focusedButton, equals: tag)
     }
 
     // MARK: Page Control
@@ -666,10 +662,6 @@ public struct HeroCarouselView: View {
 // ──────────────────────────────────────────────
 
 #if os(tvOS)
-private enum TVHeroButton: Hashable {
-    case play, watched, info, more
-}
-
 /// Attempts to load a transparent logo image from Jellyfin.
 /// Falls back to a large bold text title if unavailable.
 private struct TVHeroTitleView: View {

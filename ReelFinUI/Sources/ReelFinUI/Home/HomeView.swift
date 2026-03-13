@@ -4,8 +4,10 @@ import SwiftUI
 // MARK: - Components (Merged here to avoid missing .pbxproj references)
 
 #if os(tvOS)
-/// A focusable card button optimized for Apple TV Siri Remote navigation.
-/// Provides a natural scale + shadow focus animation matching tvOS design patterns.
+/// A focusable card for Apple TV Siri Remote navigation.
+/// Uses .focusable(interactions: .activate) on the VStack directly — no Button wrapper.
+/// This prevents tvOS 26 Liquid Glass from applying its glass container, which it does
+/// automatically around any focused Button regardless of focusEffectDisabled.
 private struct TVCardButton: View {
     @FocusState private var isFocused: Bool
 
@@ -22,28 +24,43 @@ private struct TVCardButton: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                onSelect(item)
-            } label: {
-                PosterCardArtworkView(
-                    item: item,
-                    apiClient: apiClient,
-                    imagePipeline: imagePipeline,
-                    layoutStyle: isLandscapeRail ? .landscape : .row,
-                    namespace: namespaceProvider(item.id),
-                    ranking: isTop10 ? (index + 1) : nil,
-                    progress: progress
-                )
-            }
-            .buttonStyle(.plain)
-            .focused($isFocused)
+        VStack(alignment: .leading, spacing: 14) {
+            // Artwork — scale/shadow applied directly, no Button glass container
+            PosterCardArtworkView(
+                item: item,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
+                layoutStyle: isLandscapeRail ? .landscape : .row,
+                namespace: namespaceProvider(item.id),
+                ranking: isTop10 ? (index + 1) : nil,
+                progress: progress
+            )
+            .scaleEffect(isFocused ? 1.05 : 1)
+            .shadow(
+                color: .black.opacity(isFocused ? 0.42 : 0.20),
+                radius: isFocused ? 32 : 14,
+                x: 0,
+                y: isFocused ? 20 : 8
+            )
+            .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
 
             PosterCardMetadataView(
                 item: item,
-                layoutStyle: isLandscapeRail ? .landscape : .row
+                layoutStyle: isLandscapeRail ? .landscape : .row,
+                titleLineLimit: isLandscapeRail ? 2 : 1
             )
+            .padding(.horizontal, 4)
+            .opacity(isFocused ? 1.0 : 0.68)
+            .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
         }
+        // focusable on the VStack itself — no Button = no Liquid Glass container.
+        // onTapGesture fires when the Siri Remote touchpad is clicked on the focused element.
+        .focusable(true, interactions: .activate)
+        .onTapGesture { onSelect(item) }
+        .focusEffectDisabled(true)
+        .focused($isFocused)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
         .onChange(of: isFocused) { _, focused in
             guard focused else { return }
@@ -153,7 +170,7 @@ public struct SectionRow: View {
 
     private var cardSpacing: CGFloat {
 #if os(tvOS)
-        return 32
+        return ReelFinTheme.tvRailSpacing
 #else
         return 16
 #endif
@@ -176,7 +193,7 @@ public struct SectionRow: View {
 
     private var horizontalPadding: CGFloat {
         #if os(tvOS)
-        return 32
+        return ReelFinTheme.tvSectionHorizontalPadding
         #else
         return horizontalSizeClass == .compact ? 24 : 40
         #endif
@@ -494,7 +511,7 @@ struct HomeView: View {
 
     private var horizontalPadding: CGFloat {
         #if os(tvOS)
-        return 32
+        return ReelFinTheme.tvSectionHorizontalPadding
         #else
         return isCompact ? 24 : 40
         #endif

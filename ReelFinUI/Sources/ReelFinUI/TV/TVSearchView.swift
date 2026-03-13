@@ -185,25 +185,19 @@ private struct TVSearchCardButton: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                onSelect(item)
-            } label: {
-                PosterCardArtworkView(
-                    item: item,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline,
-                    layoutStyle: .grid
-                )
-            }
-            .buttonStyle(.plain)
-            .focused($isFocused)
-
-            PosterCardMetadataView(
+        Button {
+            onSelect(item)
+        } label: {
+            PosterCardView(
                 item: item,
-                layoutStyle: .grid
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                layoutStyle: .grid,
+                titleLineLimit: 2
             )
         }
+        .buttonStyle(.plain)
+        .focused($isFocused)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.name)
         .accessibilityAddTraits(.isButton)

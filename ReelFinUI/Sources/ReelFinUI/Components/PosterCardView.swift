@@ -14,6 +14,9 @@ public enum PosterCardFocusStyle: Sendable, Equatable {
 
 public struct PosterCardView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #if os(tvOS)
+    @Environment(\.isFocused) private var isFocused
+    #endif
 
     private let item: MediaItem
     private let apiClient: JellyfinAPIClientProtocol
@@ -51,7 +54,7 @@ public struct PosterCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: tvMetadataSpacing) {
             PosterCardArtworkView(
                 item: item,
                 apiClient: apiClient,
@@ -69,14 +72,31 @@ public struct PosterCardView: View {
                 titleLineLimit: titleLineLimit,
                 subtitleLineLimit: subtitleLineLimit
             )
+            #if os(tvOS)
+            .padding(.horizontal, 6)
+            .padding(.bottom, 4)
+            #endif
         }
         .frame(width: PosterCardMetrics.posterWidth(for: layoutStyle, compact: isCompact), alignment: .leading)
+        #if os(tvOS)
+        .scaleEffect(isFocused ? 1.05 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 28 : 14, x: 0, y: isFocused ? 18 : 8)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
+        #endif
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("media_card_\(item.id)")
     }
 
     private var isCompact: Bool {
         horizontalSizeClass == .compact
+    }
+
+    private var tvMetadataSpacing: CGFloat {
+        #if os(tvOS)
+        return 14
+        #else
+        return 10
+        #endif
     }
 }
 
@@ -241,6 +261,9 @@ public struct PosterCardArtworkView: View {
 
 public struct PosterCardMetadataView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #if os(tvOS)
+    @Environment(\.isFocused) private var isFocused
+    #endif
     private let item: MediaItem
     private let layoutStyle: PosterCardLayoutStyle
     private let titleLineLimit: Int
@@ -262,23 +285,23 @@ public struct PosterCardMetadataView: View {
         VStack(alignment: .leading, spacing: metadataSpacing) {
             Text(item.seriesName ?? item.name)
                 .font(.system(size: titleFontSize, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .lineLimit(titleLineLimit)
+                .foregroundStyle(titleColor)
+                .lineLimit(resolvedTitleLineLimit)
                 .fixedSize(horizontal: false, vertical: true)
 
             if item.mediaType == .episode, let index = item.indexNumber {
                 let seasonText = item.parentIndexNumber.map { "S\($0)" } ?? ""
                 Text("\(seasonText) E\(index)")
                     .font(.system(size: badgeFontSize, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(badgeForeground)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.15))
+                    .background(badgeBackground)
                     .clipShape(Capsule())
             } else if let year = item.year {
                 Text(String(year))
                     .font(.system(size: subtitleFontSize, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(subtitleColor)
                     .lineLimit(subtitleLineLimit)
             }
         }
@@ -287,7 +310,7 @@ public struct PosterCardMetadataView: View {
 
     private var titleFontSize: CGFloat {
         #if os(tvOS)
-        return 20
+        return layoutStyle == .landscape ? 24 : 22
         #else
         return 15
         #endif
@@ -295,7 +318,7 @@ public struct PosterCardMetadataView: View {
 
     private var subtitleFontSize: CGFloat {
         #if os(tvOS)
-        return 16
+        return layoutStyle == .landscape ? 18 : 17
         #else
         return 13
         #endif
@@ -303,7 +326,7 @@ public struct PosterCardMetadataView: View {
 
     private var badgeFontSize: CGFloat {
         #if os(tvOS)
-        return 14
+        return 15
         #else
         return 11
         #endif
@@ -311,9 +334,58 @@ public struct PosterCardMetadataView: View {
 
     private var metadataSpacing: CGFloat {
         #if os(tvOS)
-        return 4
+        return 8
         #else
         return 2
+        #endif
+    }
+
+    private var titleColor: Color {
+        #if os(tvOS)
+        return isFocused ? ReelFinTheme.tvBrightText : .white
+        #else
+        return .white
+        #endif
+    }
+
+    private var subtitleColor: Color {
+        #if os(tvOS)
+        return isFocused ? ReelFinTheme.tvMutedText : ReelFinTheme.tvSoftText
+        #else
+        return .white.opacity(0.5)
+        #endif
+    }
+
+    private var badgeForeground: Color {
+        #if os(tvOS)
+        return isFocused ? .white : ReelFinTheme.tvBrightText
+        #else
+        return .white
+        #endif
+    }
+
+    private var badgeBackground: some ShapeStyle {
+        #if os(tvOS)
+        return AnyShapeStyle(
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(isFocused ? 0.22 : 0.16),
+                    Color.white.opacity(isFocused ? 0.12 : 0.08)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        #else
+        return AnyShapeStyle(Color.white.opacity(0.15))
+        #endif
+    }
+
+    private var resolvedTitleLineLimit: Int {
+        #if os(tvOS)
+        return max(titleLineLimit, layoutStyle == .landscape ? 2 : 1)
+        #else
+        return titleLineLimit
         #endif
     }
 }
