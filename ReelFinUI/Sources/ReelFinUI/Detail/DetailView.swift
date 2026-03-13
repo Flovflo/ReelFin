@@ -1646,6 +1646,7 @@ private struct TVRelatedRowItem: View {
                     .foregroundStyle(isFocused ? .white : .white.opacity(0.92))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(height: titleBlockHeight, alignment: .topLeading)
 
                 if let year = item.year {
                     Text(String(year))
@@ -1655,6 +1656,7 @@ private struct TVRelatedRowItem: View {
                 }
             }
             .padding(.horizontal, 4)
+            .frame(height: metadataBlockHeight, alignment: .topLeading)
         }
         .frame(width: relatedCardWidth, alignment: .leading)
         .scaleEffect(isFocused ? 1.045 : 1)
@@ -1670,6 +1672,14 @@ private struct TVRelatedRowItem: View {
 
     private var relatedCardWidth: CGFloat {
         220
+    }
+
+    private var titleBlockHeight: CGFloat {
+        64
+    }
+
+    private var metadataBlockHeight: CGFloat {
+        96
     }
 }
 #endif
