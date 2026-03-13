@@ -11,6 +11,7 @@ public struct HeroCarouselView: View {
     private let apiClient: JellyfinAPIClientProtocol
     private let imagePipeline: ImagePipelineProtocol
     private let onTap: (MediaItem) -> Void
+    private let onPlay: ((MediaItem) -> Void)?
     private let onVisibleItemChange: ((MediaItem) -> Void)?
 
     @State private var currentIndex = 0
@@ -21,12 +22,14 @@ public struct HeroCarouselView: View {
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         onVisibleItemChange: ((MediaItem) -> Void)? = nil,
+        onPlay: ((MediaItem) -> Void)? = nil,
         onTap: @escaping (MediaItem) -> Void
     ) {
         self.items = items
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
         self.onVisibleItemChange = onVisibleItemChange
+        self.onPlay = onPlay
         self.onTap = onTap
     }
 
@@ -187,6 +190,7 @@ public struct HeroCarouselView: View {
         .frame(height: heroHeight)
         .ignoresSafeArea(edges: .top)
         .focusSection()
+        .onMoveCommand(perform: handleMoveCommand)
         .onReceive(timer) { _ in
             guard items.count > 1 else { return }
             withAnimation(.easeInOut(duration: 0.8)) {
@@ -390,30 +394,14 @@ public struct HeroCarouselView: View {
 
     @ViewBuilder
     private func tvActionButtons(for item: MediaItem) -> some View {
-        HStack(spacing: 14) {
-            // Primary: Play / Resume
+        VStack(alignment: .leading, spacing: 14) {
             Button {
-                onTap(item)
+                (onPlay ?? onTap)(item)
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "play.fill")
                         .font(.system(size: 20, weight: .bold))
-
-                    if let progress = item.playbackProgress, progress > 0,
-                       let remaining = remainingTimeText(for: item) {
-                        // Progress dash + remaining time
-                        Capsule()
-                            .fill(.black.opacity(0.25))
-                            .frame(width: 44, height: 4)
-                            .overlay(alignment: .leading) {
-                                Capsule()
-                                    .fill(.black.opacity(0.6))
-                                    .frame(width: 44 * progress)
-                            }
-                        Text(remaining)
-                    } else {
-                        Text(primaryActionTitle(for: item))
-                    }
+                    Text(primaryActionTitle(for: item))
                 }
                 .font(.system(size: 20, weight: .bold))
                 .padding(.horizontal, 24)
@@ -422,34 +410,21 @@ public struct HeroCarouselView: View {
             .tint(.white)
             .buttonStyle(.glassProminent)
 
-            // Checkmark (watched toggle)
-            tvCircleButton(symbol: "checkmark") {
+            Button {
                 onTap(item)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 20, weight: .bold))
+                    Text("Details")
+                }
+                .font(.system(size: 20, weight: .bold))
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
             }
-
-            // Info
-            tvCircleButton(symbol: "info.circle") {
-                onTap(item)
-            }
-
-            // Chevron (more)
-            tvCircleButton(symbol: "chevron.right") {
-                onTap(item)
-            }
+            .tint(.white.opacity(0.92))
+            .buttonStyle(.glass)
         }
-    }
-
-    private func tvCircleButton(
-        symbol: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .semibold))
-                .frame(width: 68, height: 68)
-        }
-        .tint(.white)
-        .buttonStyle(.glass)
     }
 
     // MARK: Page Control
@@ -478,6 +453,17 @@ public struct HeroCarouselView: View {
         guard items.count > 1 else { return }
         withAnimation(.easeInOut(duration: 0.5)) {
             currentIndex = (currentIndex - 1 + items.count) % items.count
+        }
+    }
+
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left:
+            pageBackward()
+        case .right:
+            pageForward()
+        default:
+            break
         }
     }
     #endif

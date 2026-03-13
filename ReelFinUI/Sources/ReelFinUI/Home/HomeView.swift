@@ -1,3 +1,4 @@
+import PlaybackEngine
 import Shared
 import SwiftUI
 
@@ -212,6 +213,11 @@ struct HomeView: View {
     @State private var selectedDetailContextItems: [MediaItem] = []
     @State private var selectedDetailContextTitle: String?
     @State private var ambientItem: MediaItem?
+    @State private var playerSession: PlaybackSessionController?
+    @State private var playerItem: MediaItem?
+    @State private var showPlayer = false
+    @State private var isPreparingPlayback = false
+    @State private var playbackErrorMessage: String?
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
@@ -321,6 +327,30 @@ struct HomeView: View {
         .task {
             await viewModel.load()
         }
+        .fullScreenCover(isPresented: $showPlayer) {
+            if let playerSession, let playerItem {
+                PlayerView(session: playerSession, item: playerItem) {
+                    showPlayer = false
+                }
+            }
+        }
+        .alert(
+            "Playback Error",
+            isPresented: Binding(
+                get: { playbackErrorMessage != nil },
+                set: { newValue in
+                    if !newValue {
+                        playbackErrorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                playbackErrorMessage = nil
+            }
+        } message: {
+            Text(playbackErrorMessage ?? "Unknown error")
+        }
         .sheet(isPresented: $isCustomizationPresented) {
             HomeCustomizationSheet(viewModel: viewModel)
 #if os(iOS)
@@ -339,7 +369,7 @@ struct HomeView: View {
         if !viewModel.feed.featured.isEmpty {
             #if os(tvOS)
             HeroCarouselView(
-                items: Array(viewModel.feed.featured.prefix(10)),
+                items: featuredItems,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 onVisibleItemChange: { item in
@@ -348,17 +378,8 @@ struct HomeView: View {
                         await primePresentation(for: item, neighbors: Array(viewModel.feed.featured.prefix(3)))
                     }
                 },
-                onTap: { item in
-                    selectedDetailNamespace = nil
-                    selectedDetailContextItems = Array(viewModel.feed.featured.prefix(10))
-                    selectedDetailContextTitle = "Featured"
-                    ambientItem = item
-                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
-                    Task {
-                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
-                    }
-                    viewModel.select(item: item)
-                }
+                onPlay: handleFeaturedPlay,
+                onTap: handleFeaturedSelection
             )
             #else
             ZStack(alignment: .top) {
@@ -429,6 +450,10 @@ struct HomeView: View {
 
     private func namespaceForCard(itemID: String, rowID: String) -> Namespace.ID? {
         firstRowByItemID[itemID] == rowID ? posterNamespace : nil
+    }
+
+    private var featuredItems: [MediaItem] {
+        Array(viewModel.feed.featured.prefix(10))
     }
 
     private var firstRowByItemID: [String: String] {
@@ -545,6 +570,68 @@ struct HomeView: View {
         ambientItem = item
         Task(priority: .utility) {
             await primePresentation(for: item, neighbors: neighbors)
+        }
+    }
+
+    private func handleFeaturedSelection(_ item: MediaItem) {
+        selectedDetailNamespace = nil
+        selectedDetailContextItems = featuredItems
+        selectedDetailContextTitle = "Featured"
+        ambientItem = item
+
+        let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+        Task {
+            await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+        }
+
+        viewModel.select(item: item)
+    }
+
+    private func handleFeaturedPlay(_ item: MediaItem) {
+        guard !isPreparingPlayback else { return }
+        isPreparingPlayback = true
+
+        Task {
+            let playbackItem = await resolvePlaybackItem(for: item)
+            await MainActor.run {
+                isPreparingPlayback = false
+            }
+
+            guard let playbackItem else {
+                await MainActor.run {
+                    handleFeaturedSelection(item)
+                }
+                return
+            }
+
+            await launchPlayback(for: playbackItem)
+        }
+    }
+
+    private func resolvePlaybackItem(for item: MediaItem) async -> MediaItem? {
+        guard item.mediaType == .series else { return item }
+
+        do {
+            return try await dependencies.detailRepository.loadNextUpEpisode(seriesID: item.id)
+        } catch {
+            return nil
+        }
+    }
+
+    @MainActor
+    private func launchPlayback(for item: MediaItem) async {
+        let session = dependencies.makePlaybackSession()
+        playerSession = session
+        playerItem = item
+
+        do {
+            try await session.load(item: item)
+            showPlayer = true
+        } catch {
+            playerSession = nil
+            playerItem = nil
+            showPlayer = false
+            playbackErrorMessage = error.localizedDescription
         }
     }
 

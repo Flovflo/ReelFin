@@ -1390,6 +1390,16 @@ private struct CastRowView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 18) {
                     ForEach(cast) { person in
+                        #if os(tvOS)
+                        TVCastRowItem(
+                            person: person,
+                            itemWidth: itemWidth,
+                            nameFontSize: nameFontSize,
+                            roleFontSize: roleFontSize,
+                            apiClient: apiClient,
+                            imagePipeline: imagePipeline
+                        )
+                        #else
                         VStack(spacing: 10) {
                             CastAvatarView(
                                 person: person,
@@ -1414,9 +1424,15 @@ private struct CastRowView: View {
                         }
                         .frame(width: itemWidth)
                         .accessibilityElement(children: .combine)
+                        #endif
                     }
                 }
+                .scrollTargetLayout()
+                .padding(.horizontal, rowContentHorizontalPadding)
+                .padding(.vertical, rowContentVerticalPadding)
             }
+            .scrollClipDisabled()
+            .scrollTargetBehavior(.viewAligned)
         }
     }
 
@@ -1444,6 +1460,52 @@ private struct CastRowView: View {
 #endif
     }
 }
+
+#if os(tvOS)
+private struct TVCastRowItem: View {
+    @FocusState private var isFocused: Bool
+
+    let person: PersonCredit
+    let itemWidth: CGFloat
+    let nameFontSize: CGFloat
+    let roleFontSize: CGFloat
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+
+    var body: some View {
+        VStack(spacing: 10) {
+            CastAvatarView(
+                person: person,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline
+            )
+
+            Text(person.name)
+                .font(.system(size: nameFontSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(width: itemWidth)
+
+            if let role = person.role, !role.isEmpty {
+                Text(role)
+                    .font(.system(size: roleFontSize, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.56))
+                    .lineLimit(1)
+                    .frame(width: itemWidth)
+            }
+        }
+        .frame(width: itemWidth)
+        .scaleEffect(isFocused ? 1.04 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 20 : 10, x: 0, y: isFocused ? 10 : 5)
+        .focusable()
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isFocused)
+        .accessibilityElement(children: .combine)
+    }
+}
+#endif
 
 private struct CastAvatarView: View {
     let person: PersonCredit
@@ -1549,10 +1611,12 @@ private struct RelatedRowView: View {
                         #endif
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, rowContentHorizontalPadding)
                 .padding(.vertical, rowContentVerticalPadding)
             }
             .scrollClipDisabled()
+            .scrollTargetBehavior(.viewAligned)
         }
     }
 }
@@ -1567,19 +1631,45 @@ private struct TVRelatedRowItem: View {
     let action: () -> Void
 
     var body: some View {
-        PosterCardView(
-            item: item,
-            apiClient: apiClient,
-            imagePipeline: imagePipeline,
-            layoutStyle: .row,
-            focusStyle: .subtle,
-            titleLineLimit: 2
-        )
+        VStack(alignment: .leading, spacing: 14) {
+            PosterCardArtworkView(
+                item: item,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
+                layoutStyle: .row,
+                focusStyle: .subtle
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.name)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(isFocused ? .white : .white.opacity(0.92))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let year = item.year {
+                    Text(String(year))
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.white.opacity(isFocused ? 0.68 : 0.48))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+        .frame(width: relatedCardWidth, alignment: .leading)
+        .scaleEffect(isFocused ? 1.045 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 26 : 12, x: 0, y: isFocused ? 16 : 8)
         .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
         .onTapGesture(perform: action)
+        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+    }
+
+    private var relatedCardWidth: CGFloat {
+        220
     }
 }
 #endif
@@ -1734,37 +1824,47 @@ private struct FileDetailsSection: View {
 
     var body: some View {
         DetailRowContainer(title: "File Details") {
-            VStack(alignment: .leading, spacing: 18) {
-                if let fileName {
-                    Text(fileName)
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                }
-
-                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 14) {
-                    if let codec = codecSummary {
-                        fileMetric(label: "Codec", value: codec)
-                    }
-                    if let resolution = resolutionSummary {
-                        fileMetric(label: "Resolution", value: resolution)
-                    }
-                    if let frameRate = frameRateSummary {
-                        fileMetric(label: "Frame Rate", value: frameRate)
-                    }
-                    if let bitrate = formattedBitrate {
-                        fileMetric(label: "Bitrate", value: bitrate)
-                    }
-                    if let size = formattedFileSize {
-                        fileMetric(label: "Size", value: size)
-                    }
-                }
+            #if os(tvOS)
+            TVFileDetailsPanel {
+                fileDetailsContent
             }
-            .padding(22)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+            #else
+            fileDetailsContent
+                .padding(22)
+                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+                }
+            #endif
+        }
+    }
+
+    private var fileDetailsContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let fileName {
+                Text(fileName)
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+            }
+
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 14) {
+                if let codec = codecSummary {
+                    fileMetric(label: "Codec", value: codec)
+                }
+                if let resolution = resolutionSummary {
+                    fileMetric(label: "Resolution", value: resolution)
+                }
+                if let frameRate = frameRateSummary {
+                    fileMetric(label: "Frame Rate", value: frameRate)
+                }
+                if let bitrate = formattedBitrate {
+                    fileMetric(label: "Bitrate", value: bitrate)
+                }
+                if let size = formattedFileSize {
+                    fileMetric(label: "Size", value: size)
+                }
             }
         }
     }
@@ -1826,6 +1926,34 @@ private struct FileDetailsSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+#if os(tvOS)
+private struct TVFileDetailsPanel<Content: View>: View {
+    @FocusState private var isFocused: Bool
+    @ViewBuilder let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(22)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.white.opacity(isFocused ? 0.18 : 0.08), lineWidth: isFocused ? 1.1 : 0.8)
+            }
+            .scaleEffect(isFocused ? 1.01 : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.26 : 0.12), radius: isFocused ? 22 : 12, x: 0, y: isFocused ? 10 : 5)
+            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .focusable()
+            .focused($isFocused)
+            .focusEffectDisabled(true)
+            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isFocused)
+        }
+}
+#endif
 
 private extension MediaType {
     var detailDisplayName: String {
