@@ -1791,8 +1791,7 @@ private struct DetailRowContainer<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, containerVerticalPadding)
         #if os(tvOS)
-        .padding(.horizontal, 28)
-        .tvSectionPanel(cornerRadius: 30)
+        .padding(.horizontal, rowContentHorizontalPadding)
         #endif
     }
 
@@ -1835,9 +1834,7 @@ private struct FileDetailsSection: View {
     var body: some View {
         DetailRowContainer(title: "File Details") {
             #if os(tvOS)
-            TVFileDetailsPanel {
-                fileDetailsContent
-            }
+            fileDetailsContent
             #else
             fileDetailsContent
                 .padding(22)
@@ -1877,6 +1874,9 @@ private struct FileDetailsSection: View {
                 }
             }
         }
+        #if os(tvOS)
+        .padding(.vertical, 4)
+        #endif
     }
 
     private var fileName: String? {
@@ -1936,34 +1936,6 @@ private struct FileDetailsSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
-
-#if os(tvOS)
-private struct TVFileDetailsPanel<Content: View>: View {
-    @FocusState private var isFocused: Bool
-    @ViewBuilder let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .padding(22)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(Color.white.opacity(isFocused ? 0.18 : 0.08), lineWidth: isFocused ? 1.1 : 0.8)
-            }
-            .scaleEffect(isFocused ? 1.01 : 1)
-            .shadow(color: .black.opacity(isFocused ? 0.26 : 0.12), radius: isFocused ? 22 : 12, x: 0, y: isFocused ? 10 : 5)
-            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .focusable()
-            .focused($isFocused)
-            .focusEffectDisabled(true)
-            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isFocused)
-        }
-}
-#endif
 
 private extension MediaType {
     var detailDisplayName: String {
