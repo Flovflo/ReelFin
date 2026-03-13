@@ -1,5 +1,4 @@
-// TVSearchView.swift – Apple TV search with real Jellyfin API
-// ReelFin – tvOS 18+
+// TVSearchView.swift – Apple TV search with controlled tvOS layout
 
 #if os(tvOS)
 import Shared
@@ -22,7 +21,7 @@ final class TVSearchViewModel: ObservableObject {
 
     func search() {
         searchTask?.cancel()
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmed.isEmpty else {
             results = []
@@ -32,9 +31,8 @@ final class TVSearchViewModel: ObservableObject {
         }
 
         isSearching = true
-
         searchTask = Task {
-            try? await Task.sleep(for: .milliseconds(350))
+            try? await Task.sleep(for: .milliseconds(260))
             guard !Task.isCancelled else { return }
 
             do {
@@ -45,15 +43,16 @@ final class TVSearchViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 results = []
             }
+
             hasSearched = true
             isSearching = false
         }
     }
 
     func select(item: MediaItem) {
-        if item.mediaType == .episode, let seriesId = item.parentID {
+        if item.mediaType == .episode, let seriesID = item.parentID {
             selectedItem = MediaItem(
-                id: seriesId,
+                id: seriesID,
                 name: item.seriesName ?? item.name,
                 overview: item.overview,
                 mediaType: .series,
@@ -76,38 +75,31 @@ final class TVSearchViewModel: ObservableObject {
 }
 
 struct TVSearchView: View {
+    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
+    @FocusState private var isSearchFieldFocused: Bool
     @StateObject private var viewModel: TVSearchViewModel
     private let dependencies: ReelFinDependencies
+
+    private let columns = [GridItem(.adaptive(minimum: 220, maximum: 260), spacing: 30)]
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
         _viewModel = StateObject(wrappedValue: TVSearchViewModel(dependencies: dependencies))
     }
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 200, maximum: 240), spacing: 28),
-    ]
-
     var body: some View {
-        VStack(spacing: 0) {
-            if viewModel.isSearching {
-                ProgressView()
-                    .tint(.white)
-                    .padding(.top, 40)
-                Spacer()
-            } else if viewModel.hasSearched && viewModel.results.isEmpty {
-                emptyState
-            } else if viewModel.results.isEmpty {
-                browsePrompt
-            } else {
-                resultGrid
-            }
+        VStack(alignment: .leading, spacing: 28) {
+            searchHeader
+            searchContent
         }
-        .searchable(text: $viewModel.query, prompt: "Movies, Shows, Cast, Directors")
+        .padding(.horizontal, 72)
+        .padding(.top, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.black.ignoresSafeArea())
         .onChange(of: viewModel.query) { _, _ in
             viewModel.search()
         }
-        .navigationTitle("Search")
+        .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(
             isPresented: Binding(
                 get: { viewModel.selectedItem != nil },
@@ -120,63 +112,98 @@ struct TVSearchView: View {
         }
     }
 
-    // MARK: - Browse Prompt
+    private var searchHeader: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Search")
+                .font(.system(size: 48, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
 
-    @ViewBuilder
-    private var browsePrompt: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 64, weight: .thin))
-                .foregroundStyle(.secondary)
-            Text("Search your library")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-    }
+            HStack(spacing: 18) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.66))
 
-    // MARK: - Empty State
-
-    @ViewBuilder
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "film.stack")
-                .font(.system(size: 64, weight: .thin))
-                .foregroundStyle(.secondary)
-            Text("No results for \"\(viewModel.query)\"")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Text("Try a different search term.")
-                .font(.body)
-                .foregroundStyle(.tertiary)
-            Spacer()
-        }
-    }
-
-    // MARK: - Result Grid
-
-    @ViewBuilder
-    private var resultGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: columns, spacing: 36) {
-                ForEach(viewModel.results) { item in
-                    TVSearchCardButton(
-                        item: item,
-                        dependencies: dependencies,
-                        onSelect: { viewModel.select(item: $0) }
-                    )
-                }
+                TextField("Movies, shows, cast, directors", text: $viewModel.query)
+                    .focused($isSearchFieldFocused)
+                    .font(.system(size: 34, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .submitLabel(.search)
+                    .onMoveCommand { direction in
+                        guard direction == .up else { return }
+                        requestTopNavigationFocus?(.search)
+                    }
             }
-            .padding(.horizontal, 48)
-            .padding(.vertical, 24)
+            .padding(.horizontal, 28)
+            .frame(width: 920, height: 84, alignment: .leading)
+            .background(ReelFinTheme.tvSurfaceMutedFill, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(isSearchFieldFocused ? ReelFinTheme.tvStrongStroke : ReelFinTheme.tvStroke, lineWidth: isSearchFieldFocused ? 1.4 : 1)
+            }
         }
-        .focusSection()
+    }
+
+    @ViewBuilder
+    private var searchContent: some View {
+        if viewModel.isSearching {
+            TVSearchStateView(
+                icon: "progress.indicator",
+                title: "Searching",
+                subtitle: "Looking through your library."
+            )
+        } else if viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            TVSearchStateView(
+                icon: "magnifyingglass",
+                title: "Search your library",
+                subtitle: "Type a title, actor, series, or movie."
+            )
+        } else if viewModel.hasSearched && viewModel.results.isEmpty {
+            TVSearchStateView(
+                icon: "film.stack",
+                title: "No results",
+                subtitle: "Try a shorter term or another spelling."
+            )
+        } else {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 34) {
+                    ForEach(viewModel.results) { item in
+                        TVSearchCardButton(
+                            item: item,
+                            dependencies: dependencies,
+                            onSelect: { viewModel.select(item: $0) }
+                        )
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .focusSection()
+        }
     }
 }
 
-/// Focusable card for search results – uses the shared PosterCardArtworkView with real images.
+private struct TVSearchStateView: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            Image(systemName: icon)
+                .font(.system(size: 62, weight: .thin))
+                .foregroundStyle(.white.opacity(0.46))
+            Text(title)
+                .font(.system(size: 34, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.86))
+            Text(subtitle)
+                .font(.system(size: 22, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.46))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 private struct TVSearchCardButton: View {
     @FocusState private var isFocused: Bool
 
@@ -185,19 +212,17 @@ private struct TVSearchCardButton: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        Button {
-            onSelect(item)
-        } label: {
-            PosterCardView(
-                item: item,
-                apiClient: dependencies.apiClient,
-                imagePipeline: dependencies.imagePipeline,
-                layoutStyle: .grid,
-                titleLineLimit: 2
-            )
-        }
-        .buttonStyle(.plain)
+        PosterCardView(
+            item: item,
+            apiClient: dependencies.apiClient,
+            imagePipeline: dependencies.imagePipeline,
+            layoutStyle: .grid,
+            titleLineLimit: 2
+        )
+        .focusable(true, interactions: .activate)
         .focused($isFocused)
+        .focusEffectDisabled(true)
+        .onTapGesture { onSelect(item) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.name)
         .accessibilityAddTraits(.isButton)

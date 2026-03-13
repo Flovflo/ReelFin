@@ -11,26 +11,18 @@ private struct TVLibraryCardButton: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                onSelect(item)
-            } label: {
-                PosterCardArtworkView(
-                    item: item,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline,
-                    layoutStyle: .grid
-                )
-            }
-            .accessibilityIdentifier("media_card_button_\(item.id)")
-            .buttonStyle(.plain)
-            .focused($isFocused)
-
-            PosterCardMetadataView(
-                item: item,
-                layoutStyle: .grid
-            )
-        }
+        PosterCardView(
+            item: item,
+            apiClient: dependencies.apiClient,
+            imagePipeline: dependencies.imagePipeline,
+            layoutStyle: .grid,
+            titleLineLimit: 2
+        )
+        .focusable(true, interactions: .activate)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .onTapGesture { onSelect(item) }
+        .accessibilityIdentifier("media_card_button_\(item.id)")
         .onChange(of: isFocused) { _, focused in
             guard focused else { return }
             onFocus(item)
@@ -52,17 +44,7 @@ struct LibraryView: View {
 
     var body: some View {
         ZStack {
-            CinematicBackdropView(
-                item: ambientItem ?? viewModel.items.first,
-                apiClient: dependencies.apiClient,
-                imagePipeline: dependencies.imagePipeline,
-                sharpnessOpacity: 0.68,
-                blurOpacity: 0.52,
-                bottomFadeStart: 0.46
-            )
-            .overlay {
-                Color.black.opacity(0.34).ignoresSafeArea()
-            }
+            ReelFinTheme.pageGradient.ignoresSafeArea()
 
             VStack(spacing: 14) {
                 topBar
@@ -162,7 +144,9 @@ struct LibraryView: View {
         .onChange(of: viewModel.sortMode) { _, _ in
             Task { await viewModel.loadInitial() }
         }
-#if os(iOS)
+#if os(tvOS)
+        .toolbar(.hidden, for: .navigationBar)
+#elseif os(iOS)
         .toolbar(.hidden, for: .navigationBar)
 #endif
     }
@@ -183,21 +167,18 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Library")
                     .reelFinTitleStyle()
-                Text("Browse instantly. Rich metadata and playback readiness fill in behind the shell.")
+                Text("Browse movies and series with a clean focus-first layout.")
                     .font(.system(size: 18, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.62))
             }
 
             Spacer()
 
-            filterChip(title: "All", isActive: viewModel.selectedFilter == nil) {
-                viewModel.selectedFilter = nil
-            }
             filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
-                viewModel.selectedFilter = .movie
+                toggleTVFilter(.movie)
             }
             filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
-                viewModel.selectedFilter = .series
+                toggleTVFilter(.series)
             }
 
             Menu {
@@ -210,12 +191,12 @@ struct LibraryView: View {
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.system(size: 20, weight: .semibold))
                     .padding(14)
-                    .background(ReelFinTheme.card.opacity(0.9))
+                    .background(ReelFinTheme.tvSurfaceMutedFill)
                     .clipShape(Circle())
             }
         }
         .padding(.horizontal, horizontalPadding)
-        .padding(.top, 8)
+        .padding(.top, 22)
     }
 
     // MARK: - iOS top bar: full search bar + filter chips
@@ -353,5 +334,9 @@ struct LibraryView: View {
             await dependencies.playbackWarmupManager.trim(keeping: [item.id])
             await dependencies.playbackWarmupManager.warm(itemID: item.id)
         }
+    }
+
+    private func toggleTVFilter(_ filter: MediaType) {
+        viewModel.selectedFilter = viewModel.selectedFilter == filter ? nil : filter
     }
 }

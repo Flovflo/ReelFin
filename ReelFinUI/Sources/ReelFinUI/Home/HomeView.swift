@@ -10,6 +10,7 @@ import SwiftUI
 /// This prevents tvOS 26 Liquid Glass from applying its glass container, which it does
 /// automatically around any focused Button regardless of focusEffectDisabled.
 private struct TVCardButton: View {
+    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
 
     let item: MediaItem
@@ -57,6 +58,7 @@ private struct TVCardButton: View {
         // focusable on the VStack itself — no Button = no Liquid Glass container.
         // onTapGesture fires when the Siri Remote touchpad is clicked on the focused element.
         .focusable(true, interactions: .activate)
+        .onMoveCommand(perform: handleMoveCommand)
         .onTapGesture { onSelect(item) }
         .focusEffectDisabled(true)
         .focused($isFocused)
@@ -67,6 +69,11 @@ private struct TVCardButton: View {
             guard focused else { return }
             onFocus?(item)
         }
+    }
+
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        guard direction == .up, kind == .continueWatching else { return }
+        requestTopNavigationFocus?(.watchNow)
     }
 }
 #endif
