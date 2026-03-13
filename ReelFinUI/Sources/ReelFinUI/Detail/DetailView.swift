@@ -86,6 +86,7 @@ struct DetailView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
 #elseif os(tvOS)
         .toolbar(.hidden, for: .tabBar)
+        .preference(key: TVTopNavigationVisibilityPreferenceKey.self, value: false)
 #endif
         .task {
             await viewModel.load()

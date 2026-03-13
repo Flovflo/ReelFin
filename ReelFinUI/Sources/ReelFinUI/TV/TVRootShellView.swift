@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TVRootShellView: View {
     @State private var selectedDestination: TVRootDestination = .watchNow
+    @State private var isTopNavigationVisible = true
     @FocusState private var focusedDestination: TVRootDestination?
 
     let dependencies: ReelFinDependencies
@@ -13,15 +14,16 @@ struct TVRootShellView: View {
                 dependencies: dependencies
             )
 
-            TVTopBackdropOverlay()
-
-            TVTopNavigationBar(
+            TVTopNavigationOverlayView(
                 selectedDestination: $selectedDestination,
-                focusedDestination: $focusedDestination
+                focusedDestination: $focusedDestination,
+                isVisible: isTopNavigationVisible
             )
-            .padding(.top, 22)
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+        .onPreferenceChange(TVTopNavigationVisibilityPreferenceKey.self) { isVisible in
+            isTopNavigationVisible = isVisible
+        }
         .preferredColorScheme(.dark)
     }
 }
