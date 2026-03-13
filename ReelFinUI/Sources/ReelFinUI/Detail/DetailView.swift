@@ -37,6 +37,7 @@ struct DetailView: View {
     @State private var hasAnimatedIn = false
     @State private var navigationContext: DetailNavigationContext
     @FocusState private var focusedHeroAction: DetailHeroAction?
+    @FocusState private var focusedSeasonID: String?
 
     init(
         dependencies: ReelFinDependencies,
@@ -293,6 +294,7 @@ struct DetailView: View {
                 SeasonPickerView(
                     seasons: viewModel.seasons,
                     selectedSeasonID: viewModel.selectedSeason?.id,
+                    focusedSeasonID: $focusedSeasonID,
                     onSelect: { season in
                         Task {
                             await viewModel.selectSeasonIfNeeded(season)
@@ -405,6 +407,7 @@ struct DetailView: View {
         navigationContext = context ?? navigationContext
         hasAnimatedIn = false
         focusedHeroAction = .play
+        focusedSeasonID = nil
 
         let detailItem = makePresentedDetailItem(from: item)
         let preferredEpisode = item.mediaType == .episode ? item : nil
@@ -1343,8 +1346,13 @@ private struct HeroProgressView: View {
 }
 
 private struct SeasonPickerView: View {
+    #if os(tvOS)
+    @FocusState private var isFocusBridgeActive: Bool
+    #endif
+
     let seasons: [MediaItem]
     let selectedSeasonID: String?
+    let focusedSeasonID: FocusState<String?>.Binding
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
@@ -1352,6 +1360,19 @@ private struct SeasonPickerView: View {
             title: "Seasons",
             subtitle: seasons.first(where: { $0.id == selectedSeasonID })?.name
         ) {
+            #if os(tvOS)
+            Color.white
+                .opacity(0.001)
+                .frame(maxWidth: .infinity, minHeight: 10, maxHeight: 10)
+                .focusable()
+                .focused($isFocusBridgeActive)
+                .focusEffectDisabled(true)
+                .onChange(of: isFocusBridgeActive) { _, isFocused in
+                    guard isFocused else { return }
+                    focusedSeasonID.wrappedValue = selectedSeasonID ?? seasons.first?.id
+                }
+            #endif
+
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: chipSpacing) {
                     ForEach(seasons) { season in
@@ -1362,6 +1383,7 @@ private struct SeasonPickerView: View {
                                 onSelect(season)
                             }
                         )
+                        .focused(focusedSeasonID, equals: season.id)
                     }
                 }
                 .padding(.horizontal, rowContentHorizontalPadding)
