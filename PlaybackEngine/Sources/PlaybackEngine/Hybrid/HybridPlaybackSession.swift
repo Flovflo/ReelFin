@@ -87,14 +87,15 @@ public final class HybridPlaybackSession {
     private var fallbackAttempted = false
     private var currentItemID: String?
     private var currentItem: MediaItem?
+    private var currentSource: MediaSource?
     private var currentMediaCharacteristics: MediaCharacteristics?
     private var startupWatchdogTask: Task<Void, Never>?
+    private var hasRecordedFirstFrame = false
+    private var hasLoggedStartupMetrics = false
+    private var startupBufferingObserved = false
 
     /// Maximum native startup time before falling back to VLC (seconds).
     private let nativeStartupTimeoutSeconds: TimeInterval = 15
-
-    /// Maximum fallback attempts.
-    private let maxFallbackAttempts = 1
 
     // MARK: - Init
 
@@ -117,9 +118,13 @@ public final class HybridPlaybackSession {
         // Reset state
         currentItemID = item.id
         currentItem = item
+        currentSource = nil
         fallbackAttempted = false
         playbackErrorMessage = nil
-        playbackState = .preparing
+        hasRecordedFirstFrame = false
+        hasLoggedStartupMetrics = false
+        startupBufferingObserved = false
+        updatePlaybackState(.preparing)
         startupWatchdogTask?.cancel()
         metricsCollector.reset()
         metricsCollector.markTap()
@@ -130,19 +135,22 @@ public final class HybridPlaybackSession {
             sources = try await apiClient.fetchPlaybackSources(itemID: item.id)
         } catch {
             playbackErrorMessage = error.localizedDescription
-            playbackState = .failed
+            updatePlaybackState(.failed)
+            finalizeStartupMetricsIfNeeded()
             throw error
         }
 
         guard let bestSource = sources.first else {
             let msg = "No playback source available."
             playbackErrorMessage = msg
-            playbackState = .failed
+            updatePlaybackState(.failed)
+            finalizeStartupMetricsIfNeeded()
             throw AppError.network(msg)
         }
 
         // Step 2: Capability analysis
         let media = MediaCharacteristics.from(source: bestSource)
+        currentSource = bestSource
         currentMediaCharacteristics = media
         let decision = capabilityEngine.evaluate(media)
         engineDecision = decision
@@ -153,6 +161,7 @@ public final class HybridPlaybackSession {
             engine: engineToUse,
             reason: decision.recommendation.rawValue
         )
+        refreshStartupMetrics()
 
         diagnosticsLogger.logDecision(
             itemID: item.id,
@@ -186,27 +195,13 @@ public final class HybridPlaybackSession {
         } catch {
             // If native failed and fallback is allowed, try VLC
             if engineToUse == .native && !fallbackAttempted && shouldAttemptFallback(decision: decision) {
-                fallbackAttempted = true
-                metricsCollector.markFallback(reason: error.localizedDescription)
-                diagnosticsLogger.logFallback(
-                    from: .native,
-                    to: .vlc,
-                    reason: error.localizedDescription,
-                    itemID: item.id
-                )
-
-                do {
-                    try await startVLCPlayback(item: item, source: bestSource, autoPlay: autoPlay)
-                    return
-                } catch {
-                    playbackErrorMessage = error.localizedDescription
-                    playbackState = .failed
-                    throw error
-                }
+                try await performFallbackToVLC(reason: error.localizedDescription, item: item, source: bestSource, autoPlay: autoPlay)
+                return
             }
 
             playbackErrorMessage = error.localizedDescription
-            playbackState = .failed
+            updatePlaybackState(.failed)
+            finalizeStartupMetricsIfNeeded()
             throw error
         }
     }
@@ -218,6 +213,7 @@ public final class HybridPlaybackSession {
             activeEngine?.play()
         }
         isPlaying = true
+        updatePlaybackState(.playing)
     }
 
     public func pause() {
@@ -227,9 +223,11 @@ public final class HybridPlaybackSession {
             activeEngine?.pause()
         }
         isPlaying = false
+        updatePlaybackState(.paused)
     }
 
     public func seek(to seconds: TimeInterval) async {
+        updatePlaybackState(.seeking)
         if nativeSessionController != nil {
             let time = CMTime(seconds: seconds, preferredTimescale: 600)
             let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
@@ -250,7 +248,7 @@ public final class HybridPlaybackSession {
         activeEngineType = nil
         nativeSyncTimer?.invalidate()
         nativeSyncTimer = nil
-        playbackState = .idle
+        updatePlaybackState(.idle)
         isPlaying = false
     }
 
@@ -261,6 +259,7 @@ public final class HybridPlaybackSession {
             activeEngine?.selectAudioTrack(id: id)
         }
         selectedAudioTrackID = id
+        logSelectedAudioTrack()
     }
 
     public func selectSubtitleTrack(id: String?) {
@@ -270,6 +269,7 @@ public final class HybridPlaybackSession {
             activeEngine?.selectSubtitleTrack(id: id)
         }
         selectedSubtitleTrackID = id
+        logSelectedSubtitleTrack()
     }
 
     // MARK: - Convenience Accessors
@@ -333,6 +333,7 @@ public final class HybridPlaybackSession {
         self.nativeSessionController = controller
         self.activeEngineType = .native
         metricsCollector.markPlayerSetup()
+        refreshStartupMetrics()
 
         diagnosticsLogger.logEngineStartup(engine: .native, url: item.id, itemID: item.id)
 
@@ -341,6 +342,7 @@ public final class HybridPlaybackSession {
         // Sync state from native controller
         syncNativeState()
         scheduleNativeStateSync()
+        scheduleStartupWatchdogIfNeeded(decision: engineDecision)
 
         diagnosticsLogger.logEngineReady(
             engine: .native,
@@ -362,20 +364,29 @@ public final class HybridPlaybackSession {
         self.activeEngineType = .vlc
         self.nativeSessionController = nil
         metricsCollector.markPlayerSetup()
+        refreshStartupMetrics()
 
         // Wire callbacks
         engine.onStateChange = { [weak self] state in
-            self?.playbackState = state
+            self?.updatePlaybackState(state)
+            if state == .buffering && self?.hasRecordedFirstFrame == false {
+                self?.metricsCollector.markBufferingEvent()
+                self?.refreshStartupMetrics()
+            }
         }
         engine.onTimeUpdate = { [weak self] time in
             self?.currentTime = time
+            self?.markFirstFrameIfNeeded(trigger: "vlc_time_update")
         }
         engine.onPlaybackEnded = { [weak self] in
             self?.isPlaying = false
-            self?.playbackState = .ended
+            self?.updatePlaybackState(.ended)
         }
         engine.onError = { [weak self] message in
             self?.playbackErrorMessage = message
+            self?.diagnosticsLogger.logEngineError(engine: .vlc, error: message, itemID: item.id)
+            self?.updatePlaybackState(.failed)
+            self?.finalizeStartupMetricsIfNeeded()
         }
 
         diagnosticsLogger.logEngineStartup(engine: .vlc, url: url.absoluteString, itemID: item.id)
@@ -388,9 +399,10 @@ public final class HybridPlaybackSession {
         if autoPlay {
             engine.play()
             isPlaying = true
-            playbackState = .playing
+            updatePlaybackState(.playing)
         }
 
+        markFirstFrameIfNeeded(trigger: "vlc_ready")
         diagnosticsLogger.logEngineReady(
             engine: .vlc,
             setupMs: metricsCollector.snapshot().decisionToPlayerSetupMs ?? 0,
@@ -431,16 +443,36 @@ public final class HybridPlaybackSession {
 
         if let error = controller.playbackErrorMessage {
             playbackErrorMessage = error
+            if shouldEscalateNativeFailure(error) {
+                diagnosticsLogger.logEngineError(engine: .native, error: error, itemID: currentItemID ?? "unknown")
+                Task { @MainActor [weak self] in
+                    await self?.handleNativeStartupFailure(reason: error)
+                }
+            }
         }
 
         // Map native controller's effective state
+        if !hasRecordedFirstFrame, controller.player.timeControlStatus == .waitingToPlayAtSpecifiedRate, !startupBufferingObserved {
+            startupBufferingObserved = true
+            metricsCollector.markBufferingEvent()
+            refreshStartupMetrics()
+        } else if controller.player.timeControlStatus != .waitingToPlayAtSpecifiedRate {
+            startupBufferingObserved = false
+        }
+
+        if controller.metrics.timeToFirstFrameMs != nil || controller.currentTime > 0 {
+            markFirstFrameIfNeeded(trigger: "native_first_frame")
+        }
+
         if controller.isPlaying {
-            playbackState = .playing
+            updatePlaybackState(.playing)
+        } else if controller.player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+            updatePlaybackState(.buffering)
         }
     }
 
     private func syncVLCState() {
-        guard let engine = vlcEngine, let item = currentItem else { return }
+        guard let engine = vlcEngine else { return }
 
         // Prefer Jellyfin metadata for track info (richer than VLC track names)
         // Fall back to engine-provided tracks
@@ -471,5 +503,132 @@ public final class HybridPlaybackSession {
         }
 
         duration = engine.duration
+    }
+
+    // MARK: - Diagnostics + Startup Handling
+
+    private func updatePlaybackState(_ newState: UnifiedPlaybackState) {
+        guard playbackState != newState else { return }
+        let oldState = playbackState
+        playbackState = newState
+        if let itemID = currentItemID, let engine = activeEngineType {
+            diagnosticsLogger.logStateTransition(from: oldState, to: newState, engine: engine, itemID: itemID)
+        }
+        if newState == .failed || newState == .ended {
+            finalizeStartupMetricsIfNeeded()
+        }
+    }
+
+    private func refreshStartupMetrics() {
+        startupMetrics = metricsCollector.snapshot()
+    }
+
+    private func markFirstFrameIfNeeded(trigger: String) {
+        guard !hasRecordedFirstFrame, let itemID = currentItemID else { return }
+        hasRecordedFirstFrame = true
+        metricsCollector.markFirstFrame()
+        refreshStartupMetrics()
+        diagnosticsLogger.logStartupMetrics(startupMetrics, itemID: itemID)
+        hasLoggedStartupMetrics = true
+        startupWatchdogTask?.cancel()
+        AppLog.playback.notice("[PLAYBACK-STARTUP] item=\(itemID, privacy: .public) event=first_frame trigger=\(trigger, privacy: .public)")
+    }
+
+    private func finalizeStartupMetricsIfNeeded() {
+        guard !hasLoggedStartupMetrics, let itemID = currentItemID else { return }
+        refreshStartupMetrics()
+        diagnosticsLogger.logStartupMetrics(startupMetrics, itemID: itemID)
+        hasLoggedStartupMetrics = true
+    }
+
+    private func shouldEscalateNativeFailure(_ message: String) -> Bool {
+        guard !hasRecordedFirstFrame else { return false }
+        guard activeEngineType == .native else { return false }
+        return !message.isEmpty
+    }
+
+    private func scheduleStartupWatchdogIfNeeded(decision: EngineCapabilityDecision?) {
+        guard let decision, activeEngineType == .native else { return }
+        startupWatchdogTask?.cancel()
+        let timeout = startupTimeout(for: decision)
+        startupWatchdogTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                guard !self.hasRecordedFirstFrame else { return }
+                guard self.activeEngineType == .native else { return }
+                Task { @MainActor [weak self] in
+                    await self?.handleNativeStartupFailure(reason: "hybrid_startup_watchdog_\(Int(timeout))s")
+                }
+            }
+        }
+    }
+
+    private func startupTimeout(for decision: EngineCapabilityDecision) -> TimeInterval {
+        switch decision.startupRisk {
+        case .none:
+            return nativeStartupTimeoutSeconds
+        case .low:
+            return min(nativeStartupTimeoutSeconds, 12)
+        case .medium:
+            return min(nativeStartupTimeoutSeconds, 10)
+        case .high, .critical:
+            return min(nativeStartupTimeoutSeconds, 8)
+        }
+    }
+
+    private func handleNativeStartupFailure(reason: String) async {
+        guard let item = currentItem, let source = currentSource else { return }
+        guard activeEngineType == .native else { return }
+        guard !hasRecordedFirstFrame else { return }
+        if shouldAttemptFallback(decision: engineDecision ?? EngineCapabilityDecision(recommendation: .nativePreferred, reasons: [])) {
+            do {
+                try await performFallbackToVLC(reason: reason, item: item, source: source, autoPlay: true)
+            } catch {
+                playbackErrorMessage = error.localizedDescription
+                updatePlaybackState(.failed)
+                finalizeStartupMetricsIfNeeded()
+            }
+        } else {
+            playbackErrorMessage = reason
+            updatePlaybackState(.failed)
+            finalizeStartupMetricsIfNeeded()
+        }
+    }
+
+    private func performFallbackToVLC(
+        reason: String,
+        item: MediaItem,
+        source: MediaSource,
+        autoPlay: Bool
+    ) async throws {
+        guard !fallbackAttempted else { return }
+        fallbackAttempted = true
+        metricsCollector.markRetry()
+        metricsCollector.markFallback(reason: reason)
+        refreshStartupMetrics()
+        diagnosticsLogger.logFallback(from: .native, to: .vlc, reason: reason, itemID: item.id)
+        startupWatchdogTask?.cancel()
+        nativeSyncTimer?.invalidate()
+        nativeSyncTimer = nil
+        nativeSessionController?.pause()
+        nativeSessionController = nil
+        activeEngine = nil
+        activeEngineType = nil
+        updatePlaybackState(.retrying)
+        try await startVLCPlayback(item: item, source: source, autoPlay: autoPlay)
+    }
+
+    private func logSelectedAudioTrack() {
+        guard let itemID = currentItemID, let engine = activeEngineType else { return }
+        let codec = availableAudioTracks.first(where: { $0.id == selectedAudioTrackID })?.codec
+        diagnosticsLogger.logAudioSelection(itemID: itemID, engine: engine, trackID: selectedAudioTrackID, codec: codec)
+    }
+
+    private func logSelectedSubtitleTrack() {
+        guard let itemID = currentItemID, let engine = activeEngineType else { return }
+        let codec = availableSubtitleTracks.first(where: { $0.id == selectedSubtitleTrackID })?.codec
+        diagnosticsLogger.logSubtitleSelection(itemID: itemID, engine: engine, trackID: selectedSubtitleTrackID, codec: codec)
     }
 }
