@@ -401,6 +401,8 @@ public final class HybridPlaybackSession {
 
         // Wire callbacks
         engine.onStateChange = { [weak self] state in
+            self?.isBuffering = state.isLoading
+            self?.isPlaying = state == .playing
             self?.updatePlaybackState(state)
             if state == .buffering && self?.hasRecordedFirstFrame == false {
                 self?.metricsCollector.markBufferingEvent()
@@ -413,10 +415,13 @@ public final class HybridPlaybackSession {
         }
         engine.onPlaybackEnded = { [weak self] in
             self?.isPlaying = false
+            self?.isBuffering = false
             self?.updatePlaybackState(.ended)
         }
         engine.onError = { [weak self] message in
             self?.playbackErrorMessage = message
+            self?.isPlaying = false
+            self?.isBuffering = false
             self?.diagnosticsLogger.logEngineError(engine: .vlc, error: message, itemID: item.id)
             self?.updatePlaybackState(.failed)
             self?.finalizeStartupMetricsIfNeeded()
