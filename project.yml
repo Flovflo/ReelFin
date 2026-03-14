@@ -126,6 +126,7 @@ targets:
     sources:
       - path: PlaybackEngine/Sources/PlaybackEngine
       - path: PlaybackEngine/Sources/PlaybackEngine/Hybrid/HybridSourceSelector.swift
+      - path: PlaybackEngine/Sources/PlaybackEngine/Hybrid/HybridVLCURLResolver.swift
       - path: PlaybackEngine/Sources/PlaybackEngine/NativeBridge/EBMLParser.swift
       - path: PlaybackEngine/Sources/PlaybackEngine/NativeBridge/MP4BoxWriter.swift
     dependencies:
@@ -324,6 +325,7 @@ targets:
     sources:
       - path: Tests/PlaybackEngineTests
       - path: Tests/PlaybackEngineTests/Hybrid/HybridSourceSelectorTests.swift
+      - path: Tests/PlaybackEngineTests/Hybrid/HybridVLCURLResolverTests.swift
     dependencies:
       - target: PlaybackEngine
       - target: JellyfinAPI

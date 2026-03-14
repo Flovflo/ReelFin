@@ -66,6 +66,7 @@ public final class HybridPlaybackSession {
     private let warmupManager: (any PlaybackWarmupManaging)?
     private let capabilityEngine = HybridCapabilityEngine()
     private let sourceSelector = HybridSourceSelector()
+    private let vlcURLResolver = HybridVLCURLResolver()
     private let diagnosticsLogger = PlaybackDiagnosticsLogger()
     private let metricsCollector = StartupMetricsCollector()
     private let playbackCoordinator: PlaybackCoordinator
@@ -381,9 +382,14 @@ public final class HybridPlaybackSession {
     }
 
     private func startVLCPlayback(item: MediaItem, source: MediaSource, autoPlay: Bool) async throws {
-        guard let url = source.directPlayURL ?? source.directStreamURL ?? source.transcodeURL else {
+        guard
+            let configuration = await apiClient.currentConfiguration(),
+            let session = await apiClient.currentSession(),
+            let endpoint = vlcURLResolver.resolve(source: source, configuration: configuration, session: session)
+        else {
             throw AppError.network("No playable URL for VLC engine.")
         }
+        let url = endpoint.url
 
         let engine = VLCPlaybackEngine()
         self.vlcEngine = engine
@@ -418,7 +424,7 @@ public final class HybridPlaybackSession {
 
         diagnosticsLogger.logEngineStartup(engine: .vlc, url: url.absoluteString, itemID: item.id)
 
-        try await engine.prepare(url: url, headers: source.requiredHTTPHeaders)
+        try await engine.prepare(url: url, headers: endpoint.headers)
 
         // Map Jellyfin tracks (richer metadata) + engine tracks
         syncVLCState()
