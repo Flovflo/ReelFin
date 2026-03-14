@@ -17,7 +17,7 @@ public struct PlaybackDiagnosticsLogger: Sendable {
         media: MediaCharacteristics,
         selectedEngine: PlaybackEngineType
     ) {
-        let reasons = decision.reasons.map(\.rawValue).joined(separator: ",")
+        let reasons = deduplicated(decision.reasons).map(\.rawValue).joined(separator: ",")
         AppLog.playback.notice(
             """
             [PLAYBACK-DECISION] item=\(itemID, privacy: .public) \
@@ -40,8 +40,20 @@ public struct PlaybackDiagnosticsLogger: Sendable {
     // MARK: - Engine Events
 
     public func logEngineStartup(engine: PlaybackEngineType, url: String, itemID: String) {
+        let sanitizedURL = URL(string: url).map(PlaybackLogSanitizer.sanitize(_:)) ?? url
         AppLog.playback.notice(
-            "[PLAYBACK-ENGINE] event=startup engine=\(engine.rawValue, privacy: .public) item=\(itemID, privacy: .public) url=\(url, privacy: .public)"
+            "[PLAYBACK-ENGINE] event=startup engine=\(engine.rawValue, privacy: .public) item=\(itemID, privacy: .public) url=\(sanitizedURL, privacy: .public)"
+        )
+    }
+
+    public func logEngineOverride(
+        itemID: String,
+        requestedEngine: PlaybackEngineType,
+        selectedEngine: PlaybackEngineType,
+        reason: String
+    ) {
+        AppLog.playback.warning(
+            "[PLAYBACK-ENGINE] event=override item=\(itemID, privacy: .public) requested=\(requestedEngine.rawValue, privacy: .public) selected=\(selectedEngine.rawValue, privacy: .public) reason=\(reason, privacy: .public)"
         )
     }
 
@@ -123,5 +135,10 @@ public struct PlaybackDiagnosticsLogger: Sendable {
         AppLog.playback.debug(
             "[PLAYBACK-SUBS] item=\(itemID, privacy: .public) engine=\(engine.rawValue, privacy: .public) trackID=\(trackID ?? "disabled", privacy: .public) codec=\(codec ?? "unknown", privacy: .public)"
         )
+    }
+
+    private func deduplicated(_ reasons: [ReasonCode]) -> [ReasonCode] {
+        var seen = Set<ReasonCode>()
+        return reasons.filter { seen.insert($0).inserted }
     }
 }

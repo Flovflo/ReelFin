@@ -152,7 +152,8 @@ public final class HybridPlaybackSession {
         let media = MediaCharacteristics.from(source: bestSource)
         currentSource = bestSource
         currentMediaCharacteristics = media
-        let decision = capabilityEngine.evaluate(media)
+        let rawDecision = capabilityEngine.evaluate(media)
+        let decision = HybridEngineRuntimePolicy.normalize(rawDecision, vlcAvailable: isVLCAvailable)
         engineDecision = decision
 
         // Step 3: Determine engine to use
@@ -162,6 +163,19 @@ public final class HybridPlaybackSession {
             reason: decision.recommendation.rawValue
         )
         refreshStartupMetrics()
+
+        let requestedEngine = HybridEngineRuntimePolicy.resolveEngine(
+            for: rawDecision,
+            vlcAvailable: true
+        )
+        if requestedEngine != engineToUse {
+            diagnosticsLogger.logEngineOverride(
+                itemID: item.id,
+                requestedEngine: requestedEngine,
+                selectedEngine: engineToUse,
+                reason: "VLCKit is not linked in this build; falling back to Apple-native playback coordination."
+            )
+        }
 
         diagnosticsLogger.logDecision(
             itemID: item.id,
@@ -282,20 +296,7 @@ public final class HybridPlaybackSession {
     // MARK: - Engine Resolution
 
     private func resolveEngine(from decision: EngineCapabilityDecision) -> PlaybackEngineType {
-        switch decision.recommendation {
-        case .nativePreferred:
-            return .native
-        case .nativeAllowedButRisky:
-            return .vlc
-        case .nativeThenFallbackIfStartupFails:
-            return .vlc
-        case .vlcRequired:
-            return .vlc
-        case .serverTranscodePreferred:
-            return .vlc
-        case .unsupported:
-            return .vlc
-        }
+        HybridEngineRuntimePolicy.resolveEngine(for: decision, vlcAvailable: isVLCAvailable)
     }
 
     private var isVLCAvailable: Bool {
@@ -308,7 +309,7 @@ public final class HybridPlaybackSession {
 
     private func shouldAttemptFallback(decision: EngineCapabilityDecision) -> Bool {
         guard isVLCAvailable else { return false }
-        return decision.recommendation == .nativePreferred
+        return decision.recommendation == .nativeThenFallbackIfStartupFails
     }
 
     // MARK: - Native Playback

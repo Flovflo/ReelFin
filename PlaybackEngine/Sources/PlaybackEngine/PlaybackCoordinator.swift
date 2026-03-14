@@ -281,7 +281,8 @@ public actor PlaybackCoordinator {
         AppLog.playback.info(
             "Playback selected method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) profile=\(profileLabel, privacy: .public)"
         )
-        AppLog.playback.debug("Playback URL \(assetURL.absoluteString, privacy: .private(mask: .hash))")
+        let sanitizedAssetURL = PlaybackLogSanitizer.sanitize(assetURL)
+        AppLog.playback.debug("Playback URL \(sanitizedAssetURL, privacy: .public)")
 
         return PlaybackAssetSelection(
             source: source,
