@@ -11,7 +11,11 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.player = player
+#if os(tvOS)
+        controller.showsPlaybackControls = true
+#else
         controller.showsPlaybackControls = false
+#endif
 #if os(iOS)
         // Already presented full-screen by SwiftUI; avoid nested full-screen transitions.
         controller.entersFullScreenWhenPlaybackBegins = false

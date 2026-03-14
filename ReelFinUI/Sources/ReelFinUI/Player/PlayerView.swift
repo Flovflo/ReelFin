@@ -12,6 +12,38 @@ struct PlayerView: View {
     @State private var presentedError: String?
 
     var body: some View {
+#if os(tvOS)
+        tvOSBody
+#else
+        iOSBody
+#endif
+    }
+
+#if os(tvOS)
+    private var tvOSBody: some View {
+        NativePlayerViewController(player: session.player)
+            .background(.black)
+            .ignoresSafeArea()
+            .accessibilityIdentifier("native_player_screen")
+            .alert(
+                "Playback Error",
+                isPresented: Binding(
+                    get: { presentedError != nil },
+                    set: { if !$0 { presentedError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(presentedError ?? "Unknown error")
+            }
+            .onDisappear(perform: handleDisappear)
+            .onChange(of: session.playbackErrorMessage) { _, newValue in
+                presentedError = newValue
+            }
+            .onExitCommand(perform: dismissPlayer)
+    }
+#else
+    private var iOSBody: some View {
         ZStack {
             PlayerSurfaceView(session: session)
             PlayerControlsOverlay(
@@ -56,11 +88,8 @@ struct PlayerView: View {
         .onChange(of: session.playbackErrorMessage) { _, newValue in
             presentedError = newValue
         }
-#if os(tvOS)
-        .onPlayPauseCommand(perform: togglePlayback)
-        .onExitCommand(perform: dismissPlayer)
-#endif
     }
+#endif
 
     private func togglePlayback() {
         session.isPlaying ? session.pause() : session.play()
