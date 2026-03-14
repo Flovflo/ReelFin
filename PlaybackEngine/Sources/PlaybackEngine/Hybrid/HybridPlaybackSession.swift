@@ -286,15 +286,15 @@ public final class HybridPlaybackSession {
         case .nativePreferred:
             return .native
         case .nativeAllowedButRisky:
-            return .native
+            return .vlc
         case .nativeThenFallbackIfStartupFails:
-            return .native
+            return .vlc
         case .vlcRequired:
-            return isVLCAvailable ? .vlc : .native // Graceful degradation if VLC not linked
+            return .vlc
         case .serverTranscodePreferred:
-            return .native // Server transcode produces Apple-friendly output
+            return .vlc
         case .unsupported:
-            return .native // Let it fail with a clear error
+            return .vlc
         }
     }
 
@@ -308,16 +308,7 @@ public final class HybridPlaybackSession {
 
     private func shouldAttemptFallback(decision: EngineCapabilityDecision) -> Bool {
         guard isVLCAvailable else { return false }
-
-        switch decision.recommendation {
-        case .nativeThenFallbackIfStartupFails, .nativeAllowedButRisky:
-            return true
-        case .nativePreferred:
-            // Even for nativePreferred, allow fallback if startup actually fails
-            return true
-        default:
-            return false
-        }
+        return decision.recommendation == .nativePreferred
     }
 
     // MARK: - Native Playback
@@ -342,7 +333,6 @@ public final class HybridPlaybackSession {
         // Sync state from native controller
         syncNativeState()
         scheduleNativeStateSync()
-        scheduleStartupWatchdogIfNeeded(decision: engineDecision)
 
         diagnosticsLogger.logEngineReady(
             engine: .native,

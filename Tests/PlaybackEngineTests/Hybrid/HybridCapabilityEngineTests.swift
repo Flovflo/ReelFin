@@ -145,9 +145,9 @@ final class HybridCapabilityEngineTests: XCTestCase {
     func testMissingMetadata_fallsBackSafely() {
         let media = MediaCharacteristics()
         let decision = engine.evaluate(media)
-        XCTAssertEqual(decision.recommendation, .nativeThenFallbackIfStartupFails)
+        XCTAssertEqual(decision.recommendation, .vlcRequired)
         XCTAssertTrue(decision.reasons.contains(.metadataMissing))
-        XCTAssertTrue(decision.startupRisk >= .medium)
+        XCTAssertEqual(decision.startupRisk, .none)
     }
 
     // MARK: - D. Borderline Cases
@@ -160,11 +160,7 @@ final class HybridCapabilityEngineTests: XCTestCase {
             supportsDirectPlay: true
         )
         let decision = engine.evaluate(media)
-        // AV1 native support exists on newer chips; low risk
-        XCTAssertTrue(
-            decision.recommendation == .nativePreferred ||
-            decision.recommendation == .nativeAllowedButRisky
-        )
+        XCTAssertEqual(decision.recommendation, .nativePreferred)
     }
 
     func testTS_H264_isNativePreferred() {
@@ -175,11 +171,7 @@ final class HybridCapabilityEngineTests: XCTestCase {
             supportsDirectPlay: true
         )
         let decision = engine.evaluate(media)
-        // TS container with H264 should be native-safe
-        XCTAssertTrue(
-            decision.recommendation == .nativePreferred ||
-            decision.recommendation == .nativeAllowedButRisky
-        )
+        XCTAssertEqual(decision.recommendation, .nativePreferred)
     }
 
     // MARK: - E. HDR Degradation When VLC Required
@@ -212,7 +204,7 @@ final class HybridCapabilityEngineTests: XCTestCase {
             hasTranscodeURL: true
         )
         let decision = engine.evaluate(media)
-        XCTAssertEqual(decision.recommendation, .serverTranscodePreferred)
+        XCTAssertEqual(decision.recommendation, .vlcRequired)
         XCTAssertTrue(decision.reasons.contains(.fallbackToServerTranscode))
     }
 
@@ -227,12 +219,7 @@ final class HybridCapabilityEngineTests: XCTestCase {
             supportsDirectPlay: true
         )
         let decision = engine.evaluate(media)
-        // ASS subtitles prefer VLC, but native codec path works
-        // So it should try native first with fallback
-        XCTAssertTrue(
-            decision.recommendation == .nativeThenFallbackIfStartupFails ||
-            decision.recommendation == .nativePreferred
-        )
+        XCTAssertEqual(decision.recommendation, .vlcRequired)
         XCTAssertTrue(decision.reasons.contains(.subtitleASSRequiresVLC))
     }
 
@@ -245,6 +232,7 @@ final class HybridCapabilityEngineTests: XCTestCase {
             supportsDirectPlay: true
         )
         let decision = engine.evaluate(media)
+        XCTAssertEqual(decision.recommendation, .vlcRequired)
         XCTAssertTrue(decision.reasons.contains(.subtitleVobSubRequiresVLC))
     }
 

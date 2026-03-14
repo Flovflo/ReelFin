@@ -12,11 +12,10 @@ public struct HybridCapabilityEngine: Sendable {
     /// Analyze media characteristics and produce a deterministic engine recommendation.
     public func evaluate(_ media: MediaCharacteristics) -> EngineCapabilityDecision {
         var reasons: [ReasonCode] = []
-        var startupRisk: RiskLevel = .none
+        let startupRisk: RiskLevel = .none
         var subtitleRisk: RiskLevel = .none
         var audioRisk: RiskLevel = .none
         var hdrExpectation: HDRExpectation = .sdr
-        var featureCompleteness: Double = 1.0
 
         // ── Container Analysis ──
         let containerResult = evaluateContainer(media.container)
@@ -45,59 +44,30 @@ public struct HybridCapabilityEngine: Sendable {
         reasons.append(sourceReason(for: media.sourceType))
 
         // ── Determine Recommendation ──
-        let vlcRequired = containerResult.requiresVLC || videoResult.requiresVLC || audioResult.requiresVLC
+        let directSourceAvailable = media.supportsDirectPlay || media.supportsDirectStream
         let vlcPreferred = subtitleResult.prefersVLC
         let nativeSafe = containerResult.nativeSafe && videoResult.nativeSafe && audioResult.nativeSafe
         let hasMetadata = media.videoCodec != nil || media.container != nil
+        let nativeDirectSafe = hasMetadata && directSourceAvailable && nativeSafe && !vlcPreferred
 
         let recommendation: EngineRecommendation
-        if !hasMetadata {
-            // Insufficient metadata: try native with fallback
-            recommendation = .nativeThenFallbackIfStartupFails
-            reasons.append(.metadataMissing)
-            startupRisk = .medium
-            featureCompleteness = 0.5
-        } else if media.hasTranscodeURL && !media.supportsDirectPlay && !media.supportsDirectStream {
-            // No direct path available but server can transcode
-            recommendation = .serverTranscodePreferred
-            reasons.append(.fallbackToServerTranscode)
-            startupRisk = .low
-        } else if vlcRequired {
+        let featureCompleteness: Double
+        if nativeDirectSafe {
+            recommendation = .nativePreferred
+            featureCompleteness = 1.0
+        } else {
             recommendation = .vlcRequired
-            startupRisk = .none
-            featureCompleteness = 0.9
+            featureCompleteness = hdrExpectation == .sdr ? 0.9 : 0.85
+            if !hasMetadata {
+                reasons.append(.metadataMissing)
+            }
+            if !directSourceAvailable && media.hasTranscodeURL {
+                reasons.append(.fallbackToServerTranscode)
+            }
             if hdrExpectation != .sdr {
                 reasons.append(.hdrDegradedByVLCFallback)
                 hdrExpectation = .hdrDegradedByEngine
-                featureCompleteness = 0.85
             }
-        } else if nativeSafe && !vlcPreferred {
-            if containerResult.risk > .low || videoResult.risk > .low {
-                recommendation = .nativeAllowedButRisky
-                startupRisk = max(containerResult.risk, videoResult.risk)
-                featureCompleteness = 0.9
-            } else {
-                recommendation = .nativePreferred
-                startupRisk = .none
-            }
-        } else if vlcPreferred {
-            // Subtitles or other features prefer VLC but native codec path works
-            if nativeSafe {
-                recommendation = .nativeThenFallbackIfStartupFails
-                startupRisk = .low
-                featureCompleteness = 0.9
-            } else {
-                recommendation = .vlcRequired
-                if hdrExpectation != .sdr {
-                    reasons.append(.hdrDegradedByVLCFallback)
-                    hdrExpectation = .hdrDegradedByEngine
-                }
-                featureCompleteness = 0.85
-            }
-        } else {
-            recommendation = .nativeThenFallbackIfStartupFails
-            startupRisk = .medium
-            featureCompleteness = 0.8
         }
 
         return EngineCapabilityDecision(
