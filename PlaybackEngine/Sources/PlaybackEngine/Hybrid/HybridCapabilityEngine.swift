@@ -95,21 +95,29 @@ public struct HybridCapabilityEngine: Sendable {
             return ContainerResult(reasons: [.containerUnsupported], nativeSafe: false, requiresVLC: false, risk: .medium)
         }
 
-        switch container {
-        case "mp4", "m4v", "mov", "fmp4":
+        let tokens = container
+            .split(whereSeparator: { [",", ";", "|", "/", " "].contains($0) })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        if tokens.contains(where: { ["mp4", "m4v", "mov", "fmp4", "m4a", "3gp", "3g2", "mj2"].contains($0) }) {
             return ContainerResult(reasons: [.containerAppleNative], nativeSafe: true, requiresVLC: false, risk: .none)
-        case "ts", "mpegts", "m2ts":
+        }
+        if tokens.contains(where: { ["ts", "mpegts", "m2ts"].contains($0) }) {
             // TS is native-safe for HLS but raw TS is risky
             return ContainerResult(reasons: [.containerTS], nativeSafe: true, requiresVLC: false, risk: .low)
-        case "mkv", "matroska":
-            return ContainerResult(reasons: [.containerMKV], nativeSafe: false, requiresVLC: true, risk: .high)
-        case "webm":
-            return ContainerResult(reasons: [.containerWebM], nativeSafe: false, requiresVLC: true, risk: .high)
-        case "avi":
-            return ContainerResult(reasons: [.containerAVI], nativeSafe: false, requiresVLC: true, risk: .high)
-        default:
-            return ContainerResult(reasons: [.containerUnsupported], nativeSafe: false, requiresVLC: true, risk: .high)
         }
+        if tokens.contains(where: { ["mkv", "matroska"].contains($0) }) {
+            return ContainerResult(reasons: [.containerMKV], nativeSafe: false, requiresVLC: true, risk: .high)
+        }
+        if tokens.contains("webm") {
+            return ContainerResult(reasons: [.containerWebM], nativeSafe: false, requiresVLC: true, risk: .high)
+        }
+        if tokens.contains("avi") {
+            return ContainerResult(reasons: [.containerAVI], nativeSafe: false, requiresVLC: true, risk: .high)
+        }
+
+        return ContainerResult(reasons: [.containerUnsupported], nativeSafe: false, requiresVLC: true, risk: .high)
     }
 
     // MARK: - Video Codec Evaluation

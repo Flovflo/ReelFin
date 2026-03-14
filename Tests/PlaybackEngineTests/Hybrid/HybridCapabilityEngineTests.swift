@@ -65,6 +65,22 @@ final class HybridCapabilityEngineTests: XCTestCase {
         XCTAssertTrue(decision.reasons.contains(.dolbyVisionNativePreserved))
     }
 
+    func testAppleContainerList_HEVC_EAC3_isNativePreferred() {
+        let media = MediaCharacteristics(
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true
+        )
+        let decision = engine.evaluate(media)
+        XCTAssertEqual(decision.recommendation, .nativePreferred)
+        XCTAssertTrue(decision.reasons.contains(.containerAppleNative))
+        XCTAssertTrue(decision.reasons.contains(.videoHEVCNative))
+        XCTAssertTrue(decision.reasons.contains(.audioEAC3Native))
+    }
+
     // MARK: - B. VLC Required Cases
 
     func testMKV_PGS_requiresVLC() {
