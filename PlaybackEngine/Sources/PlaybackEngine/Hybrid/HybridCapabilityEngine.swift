@@ -44,11 +44,11 @@ public struct HybridCapabilityEngine: Sendable {
         reasons.append(sourceReason(for: media.sourceType))
 
         // ── Determine Recommendation ──
-        let directSourceAvailable = media.supportsDirectPlay || media.supportsDirectStream
+        let directPlayAvailable = media.supportsDirectPlay
         let vlcPreferred = subtitleResult.prefersVLC
         let nativeSafe = containerResult.nativeSafe && videoResult.nativeSafe && audioResult.nativeSafe
         let hasMetadata = media.videoCodec != nil || media.container != nil
-        let nativeDirectSafe = hasMetadata && directSourceAvailable && nativeSafe && !vlcPreferred
+        let nativeDirectSafe = hasMetadata && directPlayAvailable && nativeSafe && !vlcPreferred
 
         let recommendation: EngineRecommendation
         let featureCompleteness: Double
@@ -61,7 +61,7 @@ public struct HybridCapabilityEngine: Sendable {
             if !hasMetadata {
                 reasons.append(.metadataMissing)
             }
-            if !directSourceAvailable && media.hasTranscodeURL {
+            if !directPlayAvailable && media.hasTranscodeURL {
                 reasons.append(.fallbackToServerTranscode)
             }
             if hdrExpectation != .sdr {

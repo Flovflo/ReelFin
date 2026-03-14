@@ -65,8 +65,10 @@ public final class HybridPlaybackSession {
     private let repository: MetadataRepositoryProtocol
     private let warmupManager: (any PlaybackWarmupManaging)?
     private let capabilityEngine = HybridCapabilityEngine()
+    private let sourceSelector = HybridSourceSelector()
     private let diagnosticsLogger = PlaybackDiagnosticsLogger()
     private let metricsCollector = StartupMetricsCollector()
+    private let playbackCoordinator: PlaybackCoordinator
 
     // MARK: - Engine State
 
@@ -108,6 +110,7 @@ public final class HybridPlaybackSession {
         self.apiClient = apiClient
         self.repository = repository
         self.warmupManager = warmupManager
+        self.playbackCoordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
     }
 
     // MARK: - Public API
@@ -140,7 +143,7 @@ public final class HybridPlaybackSession {
             throw error
         }
 
-        guard let bestSource = sources.first else {
+        guard let analysisSource = sourceSelector.analysisSource(from: sources) else {
             let msg = "No playback source available."
             playbackErrorMessage = msg
             updatePlaybackState(.failed)
@@ -149,11 +152,16 @@ public final class HybridPlaybackSession {
         }
 
         // Step 2: Capability analysis
-        let media = MediaCharacteristics.from(source: bestSource)
-        currentSource = bestSource
+        let media = MediaCharacteristics.from(source: analysisSource)
+        currentSource = analysisSource
         currentMediaCharacteristics = media
         let rawDecision = capabilityEngine.evaluate(media)
-        let decision = HybridEngineRuntimePolicy.normalize(rawDecision, vlcAvailable: isVLCAvailable)
+        let vlcAvailable = isVLCAvailable
+        let decision = if vlcAvailable {
+            rawDecision
+        } else {
+            HybridEngineRuntimePolicy.normalize(rawDecision, vlcAvailable: false)
+        }
         engineDecision = decision
 
         // Step 3: Determine engine to use
@@ -164,11 +172,15 @@ public final class HybridPlaybackSession {
         )
         refreshStartupMetrics()
 
-        let requestedEngine = HybridEngineRuntimePolicy.resolveEngine(
-            for: rawDecision,
-            vlcAvailable: true
-        )
-        if requestedEngine != engineToUse {
+        if !vlcAvailable, rawDecision.recommendation == .vlcRequired {
+            diagnosticsLogger.logEngineAvailability(
+                itemID: item.id,
+                vlcAvailable: false,
+                reason: "VLCKit is not linked in this build; VLC-required media is being normalized to the Apple-native server pipeline."
+            )
+        }
+        let requestedEngine = HybridEngineRuntimePolicy.resolveEngine(for: rawDecision, vlcAvailable: true)
+        if !vlcAvailable, requestedEngine != engineToUse {
             diagnosticsLogger.logEngineOverride(
                 itemID: item.id,
                 requestedEngine: requestedEngine,
@@ -185,7 +197,7 @@ public final class HybridPlaybackSession {
         )
 
         // Log HDR decision
-        if decision.hdrExpectation != .sdr {
+        if decision.hdrExpectation != HDRExpectation.sdr {
             let preserved = engineToUse == .native
             diagnosticsLogger.logHDRDecision(
                 itemID: item.id,
@@ -198,18 +210,25 @@ public final class HybridPlaybackSession {
             )
         }
 
+        let playbackSource = sourceSelector.playbackSource(
+            for: engineToUse,
+            from: sources,
+            preferred: analysisSource
+        ) ?? analysisSource
+
         // Step 4: Start playback with the chosen engine
         do {
             switch engineToUse {
             case .native:
-                try await startNativePlayback(item: item, autoPlay: autoPlay)
+                let selection = try await resolveNativeSelection(itemID: item.id)
+                try await startNativePlayback(item: item, selection: selection, autoPlay: autoPlay)
             case .vlc:
-                try await startVLCPlayback(item: item, source: bestSource, autoPlay: autoPlay)
+                try await startVLCPlayback(item: item, source: playbackSource, autoPlay: autoPlay)
             }
         } catch {
             // If native failed and fallback is allowed, try VLC
             if engineToUse == .native && !fallbackAttempted && shouldAttemptFallback(decision: decision) {
-                try await performFallbackToVLC(reason: error.localizedDescription, item: item, source: bestSource, autoPlay: autoPlay)
+                try await performFallbackToVLC(reason: error.localizedDescription, item: item, source: playbackSource, autoPlay: autoPlay)
                 return
             }
 
@@ -309,12 +328,16 @@ public final class HybridPlaybackSession {
 
     private func shouldAttemptFallback(decision: EngineCapabilityDecision) -> Bool {
         guard isVLCAvailable else { return false }
-        return decision.recommendation == .nativeThenFallbackIfStartupFails
+        return decision.recommendation != .unsupported
     }
 
     // MARK: - Native Playback
 
-    private func startNativePlayback(item: MediaItem, autoPlay: Bool) async throws {
+    private func startNativePlayback(
+        item: MediaItem,
+        selection: PlaybackAssetSelection,
+        autoPlay: Bool
+    ) async throws {
         // Use the full PlaybackSessionController for native path.
         // This preserves all existing behavior: watchdog, recovery, HLS, NativeBridge, etc.
         let controller = PlaybackSessionController(
@@ -329,7 +352,7 @@ public final class HybridPlaybackSession {
 
         diagnosticsLogger.logEngineStartup(engine: .native, url: item.id, itemID: item.id)
 
-        try await controller.load(item: item, autoPlay: autoPlay)
+        try await controller.load(item: item, preparedSelection: selection, autoPlay: autoPlay)
 
         // Sync state from native controller
         syncNativeState()
@@ -343,6 +366,19 @@ public final class HybridPlaybackSession {
     }
 
     // MARK: - VLC Playback
+
+    private func resolveNativeSelection(itemID: String) async throws -> PlaybackAssetSelection {
+        let selection = try await playbackCoordinator.resolvePlayback(
+            itemID: itemID,
+            mode: .performance,
+            allowTranscodingFallbackInPerformance: false,
+            transcodeProfile: .serverDefault
+        )
+        guard case .directPlay = selection.decision.route else {
+            throw AppError.network("Native playback requires Apple direct play; falling back to VLC.")
+        }
+        return selection
+    }
 
     private func startVLCPlayback(item: MediaItem, source: MediaSource, autoPlay: Bool) async throws {
         guard let url = source.directPlayURL ?? source.directStreamURL ?? source.transcodeURL else {

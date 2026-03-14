@@ -57,6 +57,12 @@ public struct PlaybackDiagnosticsLogger: Sendable {
         )
     }
 
+    public func logEngineAvailability(itemID: String, vlcAvailable: Bool, reason: String) {
+        AppLog.playback.notice(
+            "[PLAYBACK-ENGINE] event=availability item=\(itemID, privacy: .public) vlcAvailable=\(vlcAvailable, privacy: .public) reason=\(reason, privacy: .public)"
+        )
+    }
+
     public func logEngineReady(engine: PlaybackEngineType, setupMs: Double, itemID: String) {
         AppLog.playback.notice(
             "[PLAYBACK-ENGINE] event=ready engine=\(engine.rawValue, privacy: .public) item=\(itemID, privacy: .public) setupMs=\(setupMs, format: .fixed(precision: 1))"

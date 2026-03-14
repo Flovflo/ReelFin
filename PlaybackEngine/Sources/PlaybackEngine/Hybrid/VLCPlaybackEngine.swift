@@ -110,8 +110,8 @@ public final class VLCPlaybackEngine: PlaybackEngineAdapter {
                 continuation.resume(throwing: AppError.network(error))
             }
 
-            // Trigger parse
-            media.parse(withOptions: VLCMediaParsingOptions(VLCMediaParseLocal | VLCMediaParseNetwork), timeout: 10)
+            // Trigger parse. VLCKit 3.7.x exposes the Objective-C parse entrypoint without Swift options.
+            media.parse()
 
             // Also start play to trigger state changes (VLC needs play to detect tracks)
             player.play()
@@ -237,7 +237,7 @@ public final class VLCPlaybackEngine: PlaybackEngineAdapter {
         #if canImport(MobileVLCKit) || canImport(TVVLCKit)
         guard let player = mediaPlayer else { return }
 
-        let timeMs = player.time?.intValue ?? 0
+        let timeMs = player.time.value?.intValue ?? 0
         let seconds = Double(timeMs) / 1000.0
         if seconds >= 0 {
             currentTime = seconds

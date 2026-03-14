@@ -125,6 +125,7 @@ targets:
     platform: iOS
     sources:
       - path: PlaybackEngine/Sources/PlaybackEngine
+      - path: PlaybackEngine/Sources/PlaybackEngine/Hybrid/HybridSourceSelector.swift
       - path: PlaybackEngine/Sources/PlaybackEngine/NativeBridge/EBMLParser.swift
       - path: PlaybackEngine/Sources/PlaybackEngine/NativeBridge/MP4BoxWriter.swift
     dependencies:
@@ -322,6 +323,7 @@ targets:
     platform: iOS
     sources:
       - path: Tests/PlaybackEngineTests
+      - path: Tests/PlaybackEngineTests/Hybrid/HybridSourceSelectorTests.swift
     dependencies:
       - target: PlaybackEngine
       - target: JellyfinAPI

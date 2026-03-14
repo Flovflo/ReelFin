@@ -28,6 +28,7 @@
 		10B13F1186AE357809B44F0D /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 07D6EAF04B9167170678DF63 /* Sentry */; };
 		10C03DED85BAF574B4027A9E /* ReelFinUI.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		129807F85755524EAF0051FB /* PlaybackWarmupManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58F09B228B899303864E42EF /* PlaybackWarmupManager.swift */; };
+		13109F546FF7A280F6F71E49 /* Pods_ReelFinUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B2819D8A6255691A34671F4 /* Pods_ReelFinUI.framework */; };
 		13223BC9BEE608D9DB618D3A /* DolbyVisionGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605434F5CC8C201626C04D2B /* DolbyVisionGate.swift */; };
 		1337AF93A201060033676C74 /* PlaybackEngine.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B401679A75C0322BF1EC2E0D /* PlaybackEngine.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		135105D1561BD549A144DAC5 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C9AE4A0724FEDF4FE5F86E /* PlaybackCoordinator.swift */; };
@@ -40,6 +41,7 @@
 		1AACB66D9F920D45F0259771 /* TVTopNavigationFocusAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F8F27FCA48F8248145A642 /* TVTopNavigationFocusAction.swift */; };
 		1B04A876AFE41A4B97F40942 /* DolbyVisionPackagingMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF615B9F765B5BDB05B3D698 /* DolbyVisionPackagingMode.swift */; };
 		1B38ECD5E598971F1EE2FE73 /* ReelFinApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6F24B53C7764E6BEEC84610 /* ReelFinApp.swift */; };
+		1C20A46DC6AC908E81C343DA /* Pods_PlaybackEngineTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 454B0ADE265426F9963808D0 /* Pods_PlaybackEngineTV.framework */; };
 		1EAC50B3D32749A37A523E86 /* DefaultSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102FF4EAEF0063502203BF54 /* DefaultSyncEngine.swift */; };
 		20D4EB800F1ABD77C225A691 /* ReelFinUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */; };
 		21851FEDB109944558CF68B4 /* ServerSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFFFBE3EA26B16718648D902 /* ServerSettingsViewModel.swift */; };
@@ -108,6 +110,7 @@
 		5207671D4BF894EAD6740B5D /* SyncEngineTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B2E4963C8A4C2D2DB5841DAA /* SyncEngineTV.framework */; };
 		52BA116450A40B87E9CAFDF1 /* PlaybackDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41D70958D4A83E0ADD8FEBE2 /* PlaybackDiagnostics.swift */; };
 		52DA7596019B184B581727AC /* HTTPRangeReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AE76255A48C2A67DF3B42B9 /* HTTPRangeReader.swift */; };
+		530EB91A392BC0E3A6ED110C /* HybridSourceSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F3F9019C37AC535210348BD /* HybridSourceSelector.swift */; };
 		531723B4A1654040713C0C9B /* ServerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC61363CEB8253845567E5D /* ServerSettingsView.swift */; };
 		53A7C9BA1285C6D29F000217 /* Shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; };
 		5461BABB4FE7A311B1947B63 /* TVSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFCE3B582F6BD7B017D1F1CA /* TVSearchView.swift */; };
@@ -126,6 +129,7 @@
 		58E176D4873862D1213BA556 /* PlaybackEngineTV.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B6AEA6DA46F05EB596E337B9 /* PlaybackEngineTV.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		58E7C6141D36E148AFA0BEFC /* ImageCacheTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2E30E991FB7D72EE23D67CAC /* ImageCacheTV.framework */; };
 		59BCE39A66DAA53428FFF666 /* PlaybackStartupMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF21B2BDC13FF90961209658 /* PlaybackStartupMetricsTests.swift */; };
+		59CB4DBF11D53A1F4A8B990E /* HybridSourceSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F3F9019C37AC535210348BD /* HybridSourceSelector.swift */; };
 		5C068B81FDA17176969F66C2 /* DomainModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F3F10DA8B1866FF58564479 /* DomainModels.swift */; };
 		5CCE2FAE5496B84D4B7771EC /* MatroskaDemuxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB866E5FBCE2122BB44F1A3C /* MatroskaDemuxer.swift */; };
 		5E67973F018BCEDE7E680AEB /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 5E687C50C88B01A739B36062 /* LaunchScreen.storyboard */; };
@@ -224,6 +228,7 @@
 		ABB32F2A94D1BAE07B80CB3D /* NativeBridgeFailureCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAD82E0AA43F45D974F295A4 /* NativeBridgeFailureCache.swift */; };
 		ABF51FE3C99A907321FDF067 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD64F7FC44A0E3E4CCA8AB0 /* KeychainTokenStore.swift */; };
 		AC02442FD37DF14D9CA3E1E8 /* AppMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE38E7DBA58C8F1E6C8C22F9 /* AppMetadata.swift */; };
+		AD56EA94DA4C1A88D107C077 /* Pods_PlaybackEngine.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D5A94DEA9C13DF62067ED85C /* Pods_PlaybackEngine.framework */; };
 		ADBDB5733D2ACFFCD8047713 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBBAA01A1CA072D54CE02F11 /* HomeViewModel.swift */; };
 		AE44830CEFA31743C2FD35D6 /* Shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; };
 		AF3377714AEB283B8ECCAB9C /* NativeBridgeResourceLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56968675F38E305C5D2818B3 /* NativeBridgeResourceLoader.swift */; };
@@ -238,6 +243,7 @@
 		B4711BA0A54596E044DFACE3 /* TVRootShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE6C8B1A53BCDD1611150FCA /* TVRootShellView.swift */; };
 		B487EA9B3D0E974E730393F7 /* NativeAVPlayerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E45416911272861EA995AA4D /* NativeAVPlayerEngine.swift */; };
 		B6ED15A6FDD4558088CEE4A5 /* UnifiedPlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47003B2A2CD3A101E7A26475 /* UnifiedPlaybackState.swift */; };
+		B7062481C7E41FDAF7D7CAC2 /* Pods_ReelFinApp.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D92C98F1092F44A30A1194C /* Pods_ReelFinApp.framework */; };
 		B783E02716E5A95C0C4DC439 /* CinematicBackdropView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 494437190B761932A9CBBD32 /* CinematicBackdropView.swift */; };
 		B7E0ED55EDB6C1A598EEDA4B /* PlaybackDecisionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F46167E03AF4E373161BF10 /* PlaybackDecisionEngine.swift */; };
 		B7E21C4024EE3933D610FD97 /* PosterCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A4DFEEC2DEF8B88131E08A /* PosterCardView.swift */; };
@@ -276,6 +282,7 @@
 		D21215B67F94EB39BC7C5F8F /* PlaybackSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */; };
 		D2768D6B04BA67BD4F9D87FF /* HLSVariantSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99C396B3D89F262119F0A7D5 /* HLSVariantSelector.swift */; };
 		D465A868C24B771DBA43F31A /* MediaDetailRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2DD85E6E8B9DD18419361A /* MediaDetailRepository.swift */; };
+		D4F742583444AD24C22F96A4 /* Pods_ReelFinTVApp.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F858B531260E62C5337F9828 /* Pods_ReelFinTVApp.framework */; };
 		D5A8703773A85345AF4DF86E /* RepackagerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4273F2D9C70001B6A2F1D9E /* RepackagerProtocol.swift */; };
 		D5ABCB7EF8B183E6D40DCACE /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C9AE4A0724FEDF4FE5F86E /* PlaybackCoordinator.swift */; };
 		D601533475B0092FE21FC5FC /* PlaybackStartupMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77ABB711F9D06BB540CCB383 /* PlaybackStartupMetrics.swift */; };
@@ -285,6 +292,7 @@
 		D8A21CB55FC90589D40FEBE1 /* Shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; };
 		D8E10E3DDE2A3F9D42A279BA /* HybridPlaybackSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8752F77E8C2755A664E2F52 /* HybridPlaybackSession.swift */; };
 		D9AE3F5D889519A077A86444 /* Shared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		D9B86DB40A4EF29CD0A0F1E6 /* HybridSourceSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC84BDD8CAC4F24D956E43BE /* HybridSourceSelectorTests.swift */; };
 		D9C3B3BAD8B1ADE048C5D602 /* NullMetadataRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD6ED4D4AB09FFDCAB5EB872 /* NullMetadataRepository.swift */; };
 		D9DAF9FD4AFA9BD12E3A0CD0 /* ImageCache.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 612DF7C0B11D453DFED1600E /* ImageCache.framework */; };
 		DB19AA711084331DBE31786D /* ImageCache.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 612DF7C0B11D453DFED1600E /* ImageCache.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -295,12 +303,14 @@
 		DEFDCF4816032E3ECAD6270D /* DataStoreTV.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0ADDF5F85C2BC8BB678D3B83 /* DataStoreTV.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		E0F99FA82B7E607591393572 /* HTTPRangeReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 619E387F8C72261BEEEF0E35 /* HTTPRangeReaderTests.swift */; };
 		E16FF48842A50E1B6B748D13 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDAC4C8B5042AE3BD2EE76F4 /* PlayerView.swift */; };
+		E1AA24D1F0CCC59BAD3EFDA9 /* Pods_PlaybackEngineTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6744D2DF0ECE8E0181A24119 /* Pods_PlaybackEngineTests.framework */; };
 		E230E38ABC6188AF5218AC36 /* TVTopNavigationVisibilityPreferenceKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB841FC8396289B6E71E484 /* TVTopNavigationVisibilityPreferenceKey.swift */; };
 		E2DBA0CF4EA4BD53DB3761C2 /* PlaybackStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD880912577E669699303318 /* PlaybackStateMachineTests.swift */; };
 		E31D89963E7E7FB73732A2BC /* SharedTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A6CD00B2E7BEF6765C51F19F /* SharedTV.framework */; };
 		E35488A605AF393E6F8AF425 /* JellyfinAPI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; };
 		E4585934C546F433D046169D /* JellyfinAPI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; };
 		E541BDE74CF94B36A6DEE4F6 /* JellyfinAPI.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		E566EF0493D8087E7481CB10 /* Pods_ReelFinUITV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A970B4DE4AD1E94E116407DE /* Pods_ReelFinUITV.framework */; };
 		E5B51100CAD1A489D39930E9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7296CD841C25226EE03F6120 /* AppDelegate.swift */; };
 		E5C08ED30BE74E6DB14915E8 /* TVTopNavigationOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF81D832398BA7F35C3FA385 /* TVTopNavigationOverlayView.swift */; };
 		E665CD63A10D0C33F737B065 /* PlaybackReason.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C583A3BEB2C7FD148EC5B1 /* PlaybackReason.swift */; };
@@ -819,6 +829,7 @@
 		08A483F2699C0AFD53718AE6 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		0952A2134D63D08EA37908EC /* SyntheticHLSSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntheticHLSSessionTests.swift; sourceTree = "<group>"; };
 		0ADDF5F85C2BC8BB678D3B83 /* DataStoreTV.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = DataStoreTV.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		0C8C3FBB22A44272BEE275A8 /* Pods-PlaybackEngineTV.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PlaybackEngineTV.release.xcconfig"; path = "Target Support Files/Pods-PlaybackEngineTV/Pods-PlaybackEngineTV.release.xcconfig"; sourceTree = "<group>"; };
 		0E3C933365CE1D59A997DE21 /* PlaybackLogSanitizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackLogSanitizerTests.swift; sourceTree = "<group>"; };
 		0EB33AD6FE01EADFB4DB014B /* NativeBridgeLiveURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeLiveURLTests.swift; sourceTree = "<group>"; };
 		0EF678192D458ACAFDBC08F5 /* BMFFValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BMFFValidatorTests.swift; sourceTree = "<group>"; };
@@ -827,20 +838,25 @@
 		102FF4EAEF0063502203BF54 /* DefaultSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultSyncEngine.swift; sourceTree = "<group>"; };
 		1178F490712C59598B44CF6B /* ShimmerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShimmerView.swift; sourceTree = "<group>"; };
 		11A3F6A208F49DB98E159AD5 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
+		12EF8EFBF6FE4FE0DC7F45D2 /* Pods-PlaybackEngineTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PlaybackEngineTests.release.xcconfig"; path = "Target Support Files/Pods-PlaybackEngineTests/Pods-PlaybackEngineTests.release.xcconfig"; sourceTree = "<group>"; };
+		137F8889040BA5F9AAA1FECE /* Pods-PlaybackEngineTV.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PlaybackEngineTV.debug.xcconfig"; path = "Target Support Files/Pods-PlaybackEngineTV/Pods-PlaybackEngineTV.debug.xcconfig"; sourceTree = "<group>"; };
 		149076460A171CB703967EEE /* ReelFinIcon.icon */ = {isa = PBXFileReference; path = ReelFinIcon.icon; sourceTree = "<group>"; };
 		15DE2D104F921BBEE9E36D05 /* DetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailView.swift; sourceTree = "<group>"; };
 		17D215E9FDB3612A8E87031C /* NativePlayerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerViewController.swift; sourceTree = "<group>"; };
 		182B92FAC25F8AEE1B813EA9 /* ReelFinTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinTVApp.swift; sourceTree = "<group>"; };
 		197D1C629D760580747C700B /* TTFFTuningConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTFFTuningConfiguration.swift; sourceTree = "<group>"; };
 		1A0E370A1B8DDD9E94B1F167 /* DefaultImagePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultImagePipeline.swift; sourceTree = "<group>"; };
+		1B2819D8A6255691A34671F4 /* Pods_ReelFinUI.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ReelFinUI.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		1CD64F7FC44A0E3E4CCA8AB0 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
 		1F0EF79EB4162473FD3D69F9 /* SRTWebVTTConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SRTWebVTTConverter.swift; sourceTree = "<group>"; };
 		1F16D541D874EE714F96B420 /* CMAFSegmentTimelineBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMAFSegmentTimelineBuilder.swift; sourceTree = "<group>"; };
+		1F3F9019C37AC535210348BD /* HybridSourceSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSourceSelector.swift; sourceTree = "<group>"; };
 		1F732AEE0B13E2B1494A8A49 /* PlaybackDiagnosticsLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackDiagnosticsLogger.swift; sourceTree = "<group>"; };
 		1F83CBA96B4D8E249D2882AE /* SyncEngine.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SyncEngine.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		22816F1747FC380C2F569328 /* DetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailViewModel.swift; sourceTree = "<group>"; };
 		236D58C45CCE2BF9415E4FA3 /* MP4AudioSampleEntryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP4AudioSampleEntryTests.swift; sourceTree = "<group>"; };
 		24B3034DA8A68BB551341CFD /* PlaybackPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackPolicyTests.swift; sourceTree = "<group>"; };
+		258A214E60954E95D38811DD /* Pods-ReelFinApp.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinApp.debug.xcconfig"; path = "Target Support Files/Pods-ReelFinApp/Pods-ReelFinApp.debug.xcconfig"; sourceTree = "<group>"; };
 		2819989736E2EE16CE9EFB8C /* JellyfinAPITV.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = JellyfinAPITV.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		2A006AE71205F703BBDEF633 /* NativeBridgeTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeTypes.swift; sourceTree = "<group>"; };
 		2A35C22C38C67694B324D66D /* RootViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewModel.swift; sourceTree = "<group>"; };
@@ -855,13 +871,18 @@
 		39C9950B248327294D7B1F12 /* HLSManifestBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSManifestBuilderTests.swift; sourceTree = "<group>"; };
 		3B7A4C3B018207E57E97039A /* RequestDeduplicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestDeduplicator.swift; sourceTree = "<group>"; };
 		3C2DD85E6E8B9DD18419361A /* MediaDetailRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaDetailRepository.swift; sourceTree = "<group>"; };
+		3D3BD8B5934943BF8688D8F1 /* Pods-PlaybackEngineTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PlaybackEngineTests.debug.xcconfig"; path = "Target Support Files/Pods-PlaybackEngineTests/Pods-PlaybackEngineTests.debug.xcconfig"; sourceTree = "<group>"; };
+		3D92C98F1092F44A30A1194C /* Pods_ReelFinApp.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ReelFinApp.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DD5A6F662188000C2B16CDC /* Pods-PlaybackEngine.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PlaybackEngine.release.xcconfig"; path = "Target Support Files/Pods-PlaybackEngine/Pods-PlaybackEngine.release.xcconfig"; sourceTree = "<group>"; };
 		41D70958D4A83E0ADD8FEBE2 /* PlaybackDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackDiagnostics.swift; sourceTree = "<group>"; };
 		423061893D83BA407DCA4E7F /* ReelFinDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinDependencies.swift; sourceTree = "<group>"; };
 		43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSessionController.swift; sourceTree = "<group>"; };
 		43B61DC916BBE48C488EC64A /* HLSVariantSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSVariantSelectorTests.swift; sourceTree = "<group>"; };
+		454B0ADE265426F9963808D0 /* Pods_PlaybackEngineTV.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_PlaybackEngineTV.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		47003B2A2CD3A101E7A26475 /* UnifiedPlaybackState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedPlaybackState.swift; sourceTree = "<group>"; };
 		494437190B761932A9CBBD32 /* CinematicBackdropView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CinematicBackdropView.swift; sourceTree = "<group>"; };
 		49C9AE4A0724FEDF4FE5F86E /* PlaybackCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinator.swift; sourceTree = "<group>"; };
+		4AACFBBD6E1FA2EE084AE9DD /* Pods-PlaybackEngine.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PlaybackEngine.debug.xcconfig"; path = "Target Support Files/Pods-PlaybackEngine/Pods-PlaybackEngine.debug.xcconfig"; sourceTree = "<group>"; };
 		4AE76255A48C2A67DF3B42B9 /* HTTPRangeReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPRangeReader.swift; sourceTree = "<group>"; };
 		4AEA75482E4F64438855A4DE /* DemuxerProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemuxerProtocol.swift; sourceTree = "<group>"; };
 		4C6D4FA684C28988F1CC7054 /* VLCPlaybackEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLCPlaybackEngine.swift; sourceTree = "<group>"; };
@@ -881,14 +902,17 @@
 		619E387F8C72261BEEEF0E35 /* HTTPRangeReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPRangeReaderTests.swift; sourceTree = "<group>"; };
 		655EC0BE8518E68BB83484C5 /* PlaybackEngineProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEngineProtocol.swift; sourceTree = "<group>"; };
 		670C2A6259BEFF7CB7C88734 /* NativeBridgeCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeCoreTests.swift; sourceTree = "<group>"; };
+		6744D2DF0ECE8E0181A24119 /* Pods_PlaybackEngineTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_PlaybackEngineTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		68853A66EE574A91E1CEABE1 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
 		6A130C98F66989CB1662E30C /* ReelFinWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinWidgets.swift; sourceTree = "<group>"; };
 		6A98F48FA191E633B4CFD244 /* EngineCapabilityDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineCapabilityDecision.swift; sourceTree = "<group>"; };
 		6D4953E6C6E30F10DAB1D582 /* TVRootDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVRootDestination.swift; sourceTree = "<group>"; };
 		7296CD841C25226EE03F6120 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		72C583A3BEB2C7FD148EC5B1 /* PlaybackReason.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackReason.swift; sourceTree = "<group>"; };
+		73BB449452ED4975EDA241E8 /* Pods-ReelFinUI.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinUI.debug.xcconfig"; path = "Target Support Files/Pods-ReelFinUI/Pods-ReelFinUI.debug.xcconfig"; sourceTree = "<group>"; };
 		772F152F17A37E7C179F4F11 /* MediaDetailRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaDetailRepositoryTests.swift; sourceTree = "<group>"; };
 		77ABB711F9D06BB540CCB383 /* PlaybackStartupMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStartupMetrics.swift; sourceTree = "<group>"; };
+		792D8BC5E27A77D1C7ACEC88 /* Pods-ReelFinUITV.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinUITV.debug.xcconfig"; path = "Target Support Files/Pods-ReelFinUITV/Pods-ReelFinUITV.debug.xcconfig"; sourceTree = "<group>"; };
 		7B233DF87AF6E0167EA771DA /* ReelFinRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinRootView.swift; sourceTree = "<group>"; };
 		7C78B83DC7FFFD2985F48173 /* TVTopNavigationItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTopNavigationItem.swift; sourceTree = "<group>"; };
 		7C9797B547A9CFADD7A5B9B4 /* Protocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocols.swift; sourceTree = "<group>"; };
@@ -897,6 +921,7 @@
 		7F3D5AF190B72A5D423090D6 /* Shared.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Shared.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		81135C6ECBCC1EF65EFF7EC7 /* DolbyVisionPackagingDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DolbyVisionPackagingDecisionTests.swift; sourceTree = "<group>"; };
 		8263D17251B4545771D4C295 /* SeriesLookupCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeriesLookupCache.swift; sourceTree = "<group>"; };
+		82A423EBD3AA00907087329A /* Pods-ReelFinTVApp.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinTVApp.release.xcconfig"; path = "Target Support Files/Pods-ReelFinTVApp/Pods-ReelFinTVApp.release.xcconfig"; sourceTree = "<group>"; };
 		83C0B60D311E69CA40D16402 /* DeviceCapabilityFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCapabilityFingerprint.swift; sourceTree = "<group>"; };
 		86B6AA972FCFFB6E3E2E5B14 /* ReelFinApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ReelFinApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		87845ECDB05ACF3E08A8616B /* HeroCarouselView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroCarouselView.swift; sourceTree = "<group>"; };
@@ -906,6 +931,7 @@
 		905182D0689DB6FCD9960AED /* PlaybackPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackPlan.swift; sourceTree = "<group>"; };
 		9102230AF45615307CE1B58A /* LRUDiskCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LRUDiskCacheTests.swift; sourceTree = "<group>"; };
 		91E947B29760F1595A9D44DF /* DetailPresentationTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPresentationTelemetry.swift; sourceTree = "<group>"; };
+		92D9058C40A1F7060B268FA3 /* Pods-ReelFinUITV.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinUITV.release.xcconfig"; path = "Target Support Files/Pods-ReelFinUITV/Pods-ReelFinUITV.release.xcconfig"; sourceTree = "<group>"; };
 		94D2E8F3A55FAB3F9ECCB251 /* JellyfinAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JellyfinAPIClient.swift; sourceTree = "<group>"; };
 		95867E21CA3B9B46945431C5 /* SRTWebVTTConverterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SRTWebVTTConverterTests.swift; sourceTree = "<group>"; };
 		973D34D32FF00D900CB0D2EB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -922,6 +948,7 @@
 		A5FA65414CC033FC848F3531 /* FMP4Repackager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FMP4Repackager.swift; sourceTree = "<group>"; };
 		A6CD00B2E7BEF6765C51F19F /* SharedTV.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SharedTV.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9676C3B1A4A3A6ECF4BA02D /* FMP4RepackagerFilteringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FMP4RepackagerFilteringTests.swift; sourceTree = "<group>"; };
+		A970B4DE4AD1E94E116407DE /* Pods_ReelFinUITV.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ReelFinUITV.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD6ED4D4AB09FFDCAB5EB872 /* NullMetadataRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NullMetadataRepository.swift; sourceTree = "<group>"; };
 		AEDC064B9A4591D327C892D6 /* JellyfinDTODecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JellyfinDTODecodingTests.swift; sourceTree = "<group>"; };
 		AFB841FC8396289B6E71E484 /* TVTopNavigationVisibilityPreferenceKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTopNavigationVisibilityPreferenceKey.swift; sourceTree = "<group>"; };
@@ -948,7 +975,10 @@
 		CE38E7DBA58C8F1E6C8C22F9 /* AppMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMetadata.swift; sourceTree = "<group>"; };
 		CE6905AE3EDADB8922B13187 /* BMFFValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BMFFValidator.swift; sourceTree = "<group>"; };
 		CF21B2BDC13FF90961209658 /* PlaybackStartupMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStartupMetricsTests.swift; sourceTree = "<group>"; };
+		D396C979F4E95B17B27EA339 /* Pods-ReelFinUI.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinUI.release.xcconfig"; path = "Target Support Files/Pods-ReelFinUI/Pods-ReelFinUI.release.xcconfig"; sourceTree = "<group>"; };
 		D5856409E4884E7A94EBF081 /* MediaSourceDTOURLResolutionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSourceDTOURLResolutionTests.swift; sourceTree = "<group>"; };
+		D5A94DEA9C13DF62067ED85C /* Pods_PlaybackEngine.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_PlaybackEngine.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		D5F3C97B36F4F94226F74711 /* Pods-ReelFinTVApp.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinTVApp.debug.xcconfig"; path = "Target Support Files/Pods-ReelFinTVApp/Pods-ReelFinTVApp.debug.xcconfig"; sourceTree = "<group>"; };
 		D77A3EA380093EF9244F0173 /* JellyfinAPITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = JellyfinAPITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		DAD82E0AA43F45D974F295A4 /* NativeBridgeFailureCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeFailureCache.swift; sourceTree = "<group>"; };
 		DB866E5FBCE2122BB44F1A3C /* MatroskaDemuxer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatroskaDemuxer.swift; sourceTree = "<group>"; };
@@ -964,7 +994,9 @@
 		E8752F77E8C2755A664E2F52 /* HybridPlaybackSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridPlaybackSession.swift; sourceTree = "<group>"; };
 		E8CBA1E97EA8E5720B51C319 /* SubtitleStrategyResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleStrategyResolver.swift; sourceTree = "<group>"; };
 		EA00058358D2298F6ADE8A19 /* RetryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetryPolicy.swift; sourceTree = "<group>"; };
+		EA3B09BBB738204F77274F29 /* Pods-ReelFinApp.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ReelFinApp.release.xcconfig"; path = "Target Support Files/Pods-ReelFinApp/Pods-ReelFinApp.release.xcconfig"; sourceTree = "<group>"; };
 		EB1BD154EC0D9E7CF7D9B6D1 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		EC84BDD8CAC4F24D956E43BE /* HybridSourceSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSourceSelectorTests.swift; sourceTree = "<group>"; };
 		ECA81D8CFA51C0160EE48A4E /* LocalHLSServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalHLSServer.swift; sourceTree = "<group>"; };
 		EF615B9F765B5BDB05B3D698 /* DolbyVisionPackagingMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DolbyVisionPackagingMode.swift; sourceTree = "<group>"; };
 		F163B6CB9831E7DF8D15BA8F /* SyntheticHLSSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntheticHLSSession.swift; sourceTree = "<group>"; };
@@ -972,6 +1004,7 @@
 		F27506953AE715563C54C917 /* UnifiedTrackModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedTrackModelTests.swift; sourceTree = "<group>"; };
 		F6E20B79D83C704F4FFA2659 /* PlaybackEngineTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PlaybackEngineTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F74744C380624FAD62FD6EA9 /* TVTopBackdropOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTopBackdropOverlay.swift; sourceTree = "<group>"; };
+		F858B531260E62C5337F9828 /* Pods_ReelFinTVApp.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ReelFinTVApp.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		F9F04066CAD78124C021630E /* ReelFinUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ReelFinUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF3931F310FA6DB22BD97F81 /* PreviewMocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewMocks.swift; sourceTree = "<group>"; };
 		FF8888C7FB1BB219DBD781C5 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -1001,6 +1034,7 @@
 				58E7C6141D36E148AFA0BEFC /* ImageCacheTV.framework in Frameworks */,
 				505976061D8BC73A4C5FE206 /* PlaybackEngineTV.framework in Frameworks */,
 				10B13F1186AE357809B44F0D /* Sentry in Frameworks */,
+				D4F742583444AD24C22F96A4 /* Pods_ReelFinTVApp.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1026,6 +1060,7 @@
 			files = (
 				408ACCBBB6B9D2CE96C7317E /* PlaybackEngine.framework in Frameworks */,
 				E4585934C546F433D046169D /* JellyfinAPI.framework in Frameworks */,
+				E1AA24D1F0CCC59BAD3EFDA9 /* Pods_PlaybackEngineTests.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1044,6 +1079,7 @@
 				A9AB9E6C1EFF20D3EE4BF53B /* SharedTV.framework in Frameworks */,
 				47CDE0758047D0C7BC069B24 /* JellyfinAPITV.framework in Frameworks */,
 				3533A2A8A6B085E7147B7339 /* DataStoreTV.framework in Frameworks */,
+				1C20A46DC6AC908E81C343DA /* Pods_PlaybackEngineTV.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1078,6 +1114,7 @@
 				6857CE6CADED2482441C56F5 /* ImageCacheTV.framework in Frameworks */,
 				5207671D4BF894EAD6740B5D /* SyncEngineTV.framework in Frameworks */,
 				EFCAB895C97A04168881EE68 /* PlaybackEngineTV.framework in Frameworks */,
+				E566EF0493D8087E7481CB10 /* Pods_ReelFinUITV.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1099,6 +1136,7 @@
 				2F223E9783AEBBBBD8950637 /* ImageCache.framework in Frameworks */,
 				F4CBCD7B5A46A8DE4BFD6C13 /* SyncEngine.framework in Frameworks */,
 				3A550BFD86FFCCF07D5AD56B /* PlaybackEngine.framework in Frameworks */,
+				13109F546FF7A280F6F71E49 /* Pods_ReelFinUI.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1122,6 +1160,7 @@
 				BA024F79296F6B1D9234D0D7 /* ImageCache.framework in Frameworks */,
 				89DB2445B9A13D9A24149E04 /* PlaybackEngine.framework in Frameworks */,
 				BD03D9F2EB3C6ACB4A17EA31 /* Sentry in Frameworks */,
+				B7062481C7E41FDAF7D7CAC2 /* Pods_ReelFinApp.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1142,6 +1181,7 @@
 				E67F4BCAD9005743C6FCC3DF /* Shared.framework in Frameworks */,
 				727793DD9CD7E9EA922651C8 /* JellyfinAPI.framework in Frameworks */,
 				637B98F71FEB495CA65A0BB3 /* DataStore.framework in Frameworks */,
+				AD56EA94DA4C1A88D107C077 /* Pods_PlaybackEngine.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1333,6 +1373,28 @@
 				055E48E0B61BC477B82D6A92 /* CapabilityEngineTests.swift */,
 			);
 			path = Planning;
+			sourceTree = "<group>";
+		};
+		2D42FCEA559C9A30FB9CE084 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				4AACFBBD6E1FA2EE084AE9DD /* Pods-PlaybackEngine.debug.xcconfig */,
+				3DD5A6F662188000C2B16CDC /* Pods-PlaybackEngine.release.xcconfig */,
+				137F8889040BA5F9AAA1FECE /* Pods-PlaybackEngineTV.debug.xcconfig */,
+				0C8C3FBB22A44272BEE275A8 /* Pods-PlaybackEngineTV.release.xcconfig */,
+				3D3BD8B5934943BF8688D8F1 /* Pods-PlaybackEngineTests.debug.xcconfig */,
+				12EF8EFBF6FE4FE0DC7F45D2 /* Pods-PlaybackEngineTests.release.xcconfig */,
+				258A214E60954E95D38811DD /* Pods-ReelFinApp.debug.xcconfig */,
+				EA3B09BBB738204F77274F29 /* Pods-ReelFinApp.release.xcconfig */,
+				D5F3C97B36F4F94226F74711 /* Pods-ReelFinTVApp.debug.xcconfig */,
+				82A423EBD3AA00907087329A /* Pods-ReelFinTVApp.release.xcconfig */,
+				73BB449452ED4975EDA241E8 /* Pods-ReelFinUI.debug.xcconfig */,
+				D396C979F4E95B17B27EA339 /* Pods-ReelFinUI.release.xcconfig */,
+				792D8BC5E27A77D1C7ACEC88 /* Pods-ReelFinUITV.debug.xcconfig */,
+				92D9058C40A1F7060B268FA3 /* Pods-ReelFinUITV.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
 			sourceTree = "<group>";
 		};
 		316A21B35CC3B5C5891D0AAE /* ReelFinUITests */ = {
@@ -1554,6 +1616,7 @@
 				2BCF9C40F9C2A2CBB351CB9C /* HybridCapabilityEngine.swift */,
 				CD44E578EFC66731AC0C2691 /* HybridEngineRuntimePolicy.swift */,
 				E8752F77E8C2755A664E2F52 /* HybridPlaybackSession.swift */,
+				1F3F9019C37AC535210348BD /* HybridSourceSelector.swift */,
 				E45416911272861EA995AA4D /* NativeAVPlayerEngine.swift */,
 				1F732AEE0B13E2B1494A8A49 /* PlaybackDiagnosticsLogger.swift */,
 				655EC0BE8518E68BB83484C5 /* PlaybackEngineProtocol.swift */,
@@ -1612,6 +1675,7 @@
 			children = (
 				06E4B622168E276F4132C74D /* HybridCapabilityEngineTests.swift */,
 				05480DF462A8967AA977F184 /* HybridEngineRuntimePolicyTests.swift */,
+				EC84BDD8CAC4F24D956E43BE /* HybridSourceSelectorTests.swift */,
 				CF21B2BDC13FF90961209658 /* PlaybackStartupMetricsTests.swift */,
 				BD880912577E669699303318 /* PlaybackStateMachineTests.swift */,
 				F27506953AE715563C54C917 /* UnifiedTrackModelTests.swift */,
@@ -1733,6 +1797,8 @@
 				7B09335FE2361E8146A9A901 /* Tests */,
 				F55C911D13250DA0FBE91A58 /* Widgets */,
 				6A24F8F432068C844C455216 /* Products */,
+				2D42FCEA559C9A30FB9CE084 /* Pods */,
+				F17234BCA94202C2E7247D5B /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -1771,6 +1837,20 @@
 			path = SyncEngine;
 			sourceTree = "<group>";
 		};
+		F17234BCA94202C2E7247D5B /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				D5A94DEA9C13DF62067ED85C /* Pods_PlaybackEngine.framework */,
+				454B0ADE265426F9963808D0 /* Pods_PlaybackEngineTV.framework */,
+				6744D2DF0ECE8E0181A24119 /* Pods_PlaybackEngineTests.framework */,
+				3D92C98F1092F44A30A1194C /* Pods_ReelFinApp.framework */,
+				F858B531260E62C5337F9828 /* Pods_ReelFinTVApp.framework */,
+				1B2819D8A6255691A34671F4 /* Pods_ReelFinUI.framework */,
+				A970B4DE4AD1E94E116407DE /* Pods_ReelFinUITV.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		F55C911D13250DA0FBE91A58 /* Widgets */ = {
 			isa = PBXGroup;
 			children = (
@@ -1802,8 +1882,6 @@
 				E4A6099E814D6754A8627456 /* PBXTargetDependency */,
 			);
 			name = ReelFinUITests;
-			packageProductDependencies = (
-			);
 			productName = ReelFinUITests;
 			productReference = F9F04066CAD78124C021630E /* ReelFinUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -1812,6 +1890,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9E6A4D1ACC540C484B5ECB65 /* Build configuration list for PBXNativeTarget "PlaybackEngineTV" */;
 			buildPhases = (
+				B6BCF13D015F8C0513898C22 /* [CP] Check Pods Manifest.lock */,
 				F021B9E03C5B4D850FF7F424 /* Sources */,
 				1A0F3FAC4015A60CA88A5707 /* Frameworks */,
 			);
@@ -1823,8 +1902,6 @@
 				26205954884A58CF21C700B2 /* PBXTargetDependency */,
 			);
 			name = PlaybackEngineTV;
-			packageProductDependencies = (
-			);
 			productName = PlaybackEngineTV;
 			productReference = B6AEA6DA46F05EB596E337B9 /* PlaybackEngineTV.framework */;
 			productType = "com.apple.product-type.framework";
@@ -1840,8 +1917,6 @@
 			dependencies = (
 			);
 			name = SharedTV;
-			packageProductDependencies = (
-			);
 			productName = SharedTV;
 			productReference = A6CD00B2E7BEF6765C51F19F /* SharedTV.framework */;
 			productType = "com.apple.product-type.framework";
@@ -1860,8 +1935,6 @@
 				E7343CEBA290A4A1E79AAC65 /* PBXTargetDependency */,
 			);
 			name = ImageCacheTests;
-			packageProductDependencies = (
-			);
 			productName = ImageCacheTests;
 			productReference = 55B0F5407FF15D3F4D62D5BE /* ImageCacheTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -1882,8 +1955,6 @@
 				65AB9F8694B4BA539D5DFBCC /* PBXTargetDependency */,
 			);
 			name = ReelFinWidgetsExtension;
-			packageProductDependencies = (
-			);
 			productName = ReelFinWidgetsExtension;
 			productReference = 37D2CD441A924785F27CF9F1 /* ReelFinWidgetsExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -1892,6 +1963,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = AAB923BA344E8E214E5612C8 /* Build configuration list for PBXNativeTarget "ReelFinUI" */;
 			buildPhases = (
+				DE8E8A4CE85AF0788ED78AC2 /* [CP] Check Pods Manifest.lock */,
 				3A6970E1CFBC969CA763AE0D /* Sources */,
 				9034623B5C8CD5C6D42E6416 /* Frameworks */,
 			);
@@ -1906,8 +1978,6 @@
 				9053E55A51282EAAD380AEED /* PBXTargetDependency */,
 			);
 			name = ReelFinUI;
-			packageProductDependencies = (
-			);
 			productName = ReelFinUI;
 			productReference = 34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */;
 			productType = "com.apple.product-type.framework";
@@ -1916,10 +1986,12 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2C771B9D73298A564C7B7A91 /* Build configuration list for PBXNativeTarget "ReelFinApp" */;
 			buildPhases = (
+				208E2DB76AD4E2CA0CA6FB06 /* [CP] Check Pods Manifest.lock */,
 				F7B8AFFEFB3EE350F664D72E /* Sources */,
 				CEEF6AE2FB76A137ACB6F9D7 /* Resources */,
 				BD1A0223FF51319CDD36A66F /* Frameworks */,
 				94FC7D962967DC8CF651C140 /* Embed Frameworks */,
+				206D46D421D2C589404C0F69 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -1953,8 +2025,6 @@
 				798235A09D54B6199C9E5595 /* PBXTargetDependency */,
 			);
 			name = ImageCacheTV;
-			packageProductDependencies = (
-			);
 			productName = ImageCacheTV;
 			productReference = 2E30E991FB7D72EE23D67CAC /* ImageCacheTV.framework */;
 			productType = "com.apple.product-type.framework";
@@ -1973,8 +2043,6 @@
 				0FE216AD73256F41ECDC4FD8 /* PBXTargetDependency */,
 			);
 			name = JellyfinAPITests;
-			packageProductDependencies = (
-			);
 			productName = JellyfinAPITests;
 			productReference = D77A3EA380093EF9244F0173 /* JellyfinAPITests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -1983,6 +2051,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 10CF8D2543693C8CCEE8FF3A /* Build configuration list for PBXNativeTarget "PlaybackEngine" */;
 			buildPhases = (
+				FD661EDB47B97AD98FD9562E /* [CP] Check Pods Manifest.lock */,
 				C1A498DB5ED97BB119440B97 /* Sources */,
 				C3CF61E00C5C295A2292705F /* Frameworks */,
 			);
@@ -1994,8 +2063,6 @@
 				8A7F2E02DF048270323BE54B /* PBXTargetDependency */,
 			);
 			name = PlaybackEngine;
-			packageProductDependencies = (
-			);
 			productName = PlaybackEngine;
 			productReference = B401679A75C0322BF1EC2E0D /* PlaybackEngine.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2004,9 +2071,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 11BFFE336C714DA414AB6E0E /* Build configuration list for PBXNativeTarget "PlaybackEngineTests" */;
 			buildPhases = (
+				00755BC98235A47C42BCEB55 /* [CP] Check Pods Manifest.lock */,
 				3A6419ABC3EC9088AD9BCAEE /* Sources */,
 				13E64D7E97B394161D8BF12D /* Frameworks */,
 				3D43EA448251F1198AF27EF0 /* Embed Frameworks */,
+				5D31131725779197B352187D /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -2015,8 +2084,6 @@
 				5A0DF1482F20691B4193D18C /* PBXTargetDependency */,
 			);
 			name = PlaybackEngineTests;
-			packageProductDependencies = (
-			);
 			productName = PlaybackEngineTests;
 			productReference = F6E20B79D83C704F4FFA2659 /* PlaybackEngineTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -2037,8 +2104,6 @@
 				7D2EE58AB62554B2E8F297B7 /* PBXTargetDependency */,
 			);
 			name = SyncEngineTV;
-			packageProductDependencies = (
-			);
 			productName = SyncEngineTV;
 			productReference = B2E4963C8A4C2D2DB5841DAA /* SyncEngineTV.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2059,8 +2124,6 @@
 				83978B7831E41D2FD047068D /* PBXTargetDependency */,
 			);
 			name = SyncEngine;
-			packageProductDependencies = (
-			);
 			productName = SyncEngine;
 			productReference = 1F83CBA96B4D8E249D2882AE /* SyncEngine.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2078,8 +2141,6 @@
 				0204BD668242B28BD5C54BE6 /* PBXTargetDependency */,
 			);
 			name = ImageCache;
-			packageProductDependencies = (
-			);
 			productName = ImageCache;
 			productReference = 612DF7C0B11D453DFED1600E /* ImageCache.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2109,10 +2170,12 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9B910DE2527187A66260820C /* Build configuration list for PBXNativeTarget "ReelFinTVApp" */;
 			buildPhases = (
+				2F44FF5A59B217CFE26C8DFA /* [CP] Check Pods Manifest.lock */,
 				A8D68A3076A93D6241FC1328 /* Sources */,
 				6663E1F3C730DC49CCDDEDB4 /* Resources */,
 				0230BEC8FC11BB8606075DFC /* Frameworks */,
 				79B23C81A8898D753E198570 /* Embed Frameworks */,
+				88881DCC7F1013C2BB57D5ED /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -2146,8 +2209,6 @@
 				D6257F908ED5A9831A55866F /* PBXTargetDependency */,
 			);
 			name = JellyfinAPI;
-			packageProductDependencies = (
-			);
 			productName = JellyfinAPI;
 			productReference = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2156,6 +2217,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6138BBD2520CC8C8C0F1F092 /* Build configuration list for PBXNativeTarget "ReelFinUITV" */;
 			buildPhases = (
+				5721B69591605E1B1A2564B3 /* [CP] Check Pods Manifest.lock */,
 				2005673BC70B9DDA1FEFB57D /* Sources */,
 				727770AF85BFA0447220A7BB /* Frameworks */,
 			);
@@ -2170,8 +2232,6 @@
 				46454D8F53CB7662B792665C /* PBXTargetDependency */,
 			);
 			name = ReelFinUITV;
-			packageProductDependencies = (
-			);
 			productName = ReelFinUITV;
 			productReference = A028B89BC50AE4CF30D9038B /* ReelFinUITV.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2210,8 +2270,6 @@
 				0693E4AEBAF69FAF6CF78EC9 /* PBXTargetDependency */,
 			);
 			name = JellyfinAPITV;
-			packageProductDependencies = (
-			);
 			productName = JellyfinAPITV;
 			productReference = 2819989736E2EE16CE9EFB8C /* JellyfinAPITV.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2227,8 +2285,6 @@
 			dependencies = (
 			);
 			name = Shared;
-			packageProductDependencies = (
-			);
 			productName = Shared;
 			productReference = 7F3D5AF190B72A5D423090D6 /* Shared.framework */;
 			productType = "com.apple.product-type.framework";
@@ -2262,6 +2318,7 @@
 				F61F1D62269CA717489BB040 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 			preferredProjectObjectVersion = 77;
+			productRefGroup = 6A24F8F432068C844C455216 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -2311,6 +2368,214 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		00755BC98235A47C42BCEB55 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-PlaybackEngineTests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		206D46D421D2C589404C0F69 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-ReelFinApp/Pods-ReelFinApp-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-ReelFinApp/Pods-ReelFinApp-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-ReelFinApp/Pods-ReelFinApp-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		208E2DB76AD4E2CA0CA6FB06 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-ReelFinApp-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		2F44FF5A59B217CFE26C8DFA /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-ReelFinTVApp-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		5721B69591605E1B1A2564B3 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-ReelFinUITV-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		5D31131725779197B352187D /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-PlaybackEngineTests/Pods-PlaybackEngineTests-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-PlaybackEngineTests/Pods-PlaybackEngineTests-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-PlaybackEngineTests/Pods-PlaybackEngineTests-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		88881DCC7F1013C2BB57D5ED /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-ReelFinTVApp/Pods-ReelFinTVApp-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-ReelFinTVApp/Pods-ReelFinTVApp-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-ReelFinTVApp/Pods-ReelFinTVApp-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		B6BCF13D015F8C0513898C22 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-PlaybackEngineTV-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		DE8E8A4CE85AF0788ED78AC2 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-ReelFinUI-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		FD661EDB47B97AD98FD9562E /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-PlaybackEngine-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		106FEE61F1488DD79E14E196 /* Sources */ = {
@@ -2435,6 +2700,7 @@
 				E0F99FA82B7E607591393572 /* HTTPRangeReaderTests.swift in Sources */,
 				589286747BA27B276A447116 /* HybridCapabilityEngineTests.swift in Sources */,
 				8863917BE1890C36F78A7F65 /* HybridEngineRuntimePolicyTests.swift in Sources */,
+				D9B86DB40A4EF29CD0A0F1E6 /* HybridSourceSelectorTests.swift in Sources */,
 				F92D55F4D99A0DD084A48278 /* LocalHLSServerTests.swift in Sources */,
 				C951A655C1854BE8EECFFD2A /* MP4AudioSampleEntryTests.swift in Sources */,
 				379240D7D7697F6400FB6A25 /* MediaSourceDTOURLResolutionTests.swift in Sources */,
@@ -2580,6 +2846,7 @@
 				0FBF175BE404FD8F70810E46 /* HybridCapabilityEngine.swift in Sources */,
 				104124F46EF696B0ACC0DE72 /* HybridEngineRuntimePolicy.swift in Sources */,
 				D8E10E3DDE2A3F9D42A279BA /* HybridPlaybackSession.swift in Sources */,
+				530EB91A392BC0E3A6ED110C /* HybridSourceSelector.swift in Sources */,
 				ED9BF7BC52E7EC150ACACBC5 /* JellyfinMediaProbe.swift in Sources */,
 				E7800154397AD6C999F17461 /* LocalHLSServer.swift in Sources */,
 				79AD81B71C1A88C4926F30B3 /* MP4BoxWriter.swift in Sources */,
@@ -2660,6 +2927,7 @@
 				23DA834889041960A8FDFDC3 /* HybridCapabilityEngine.swift in Sources */,
 				822339241C79C9B2280A2686 /* HybridEngineRuntimePolicy.swift in Sources */,
 				2E649DD0FC2F873343656677 /* HybridPlaybackSession.swift in Sources */,
+				59CB4DBF11D53A1F4A8B990E /* HybridSourceSelector.swift in Sources */,
 				43E5573A58CAB4D39BC9E872 /* JellyfinMediaProbe.swift in Sources */,
 				B3AC4B2847898208486548F5 /* LocalHLSServer.swift in Sources */,
 				81F827BEB1306855F95BFB26 /* MP4BoxWriter.swift in Sources */,
@@ -2996,6 +3264,7 @@
 /* Begin XCBuildConfiguration section */
 		011A97CE18BDB388078F8B3E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0C8C3FBB22A44272BEE275A8 /* Pods-PlaybackEngineTV.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3068,6 +3337,7 @@
 		};
 		2BEBE6703DE4F9312CCC200E /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 258A214E60954E95D38811DD /* Pods-ReelFinApp.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = ReelFinIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -3096,6 +3366,7 @@
 		};
 		2CFB28C5380BC60B7EE52386 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 792D8BC5E27A77D1C7ACEC88 /* Pods-ReelFinUITV.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3190,6 +3461,7 @@
 		};
 		36A94B7F9ECBD51B851BA6D7 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 73BB449452ED4975EDA241E8 /* Pods-ReelFinUI.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3355,6 +3627,7 @@
 		};
 		705CED9F8A80E456D33677A9 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = EA3B09BBB738204F77274F29 /* Pods-ReelFinApp.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = ReelFinIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -3405,6 +3678,7 @@
 		};
 		74FBA6C2A82F113F1EDB8DBE /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 12EF8EFBF6FE4FE0DC7F45D2 /* Pods-PlaybackEngineTests.release.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -3457,6 +3731,7 @@
 		};
 		7F61DC5D0A7851A79C7C4D08 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D5F3C97B36F4F94226F74711 /* Pods-ReelFinTVApp.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
@@ -3564,6 +3839,7 @@
 		};
 		88DE8B25889C015CA227E8E6 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 137F8889040BA5F9AAA1FECE /* Pods-PlaybackEngineTV.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3588,6 +3864,7 @@
 		};
 		9010030DF2F75CA546E3A450 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D396C979F4E95B17B27EA339 /* Pods-ReelFinUI.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3688,6 +3965,7 @@
 		};
 		999453966D1E5B8FA53025BD /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 92D9058C40A1F7060B268FA3 /* Pods-ReelFinUITV.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3795,6 +4073,7 @@
 		};
 		A9F1DC55A3BDE2F0859D4FF2 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3D3BD8B5934943BF8688D8F1 /* Pods-PlaybackEngineTests.debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -3872,6 +4151,7 @@
 		};
 		DCC37739D2AE3451514E181B /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4AACFBBD6E1FA2EE084AE9DD /* Pods-PlaybackEngine.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3916,6 +4196,7 @@
 		};
 		E9DECE17501CE368AB1ECFA7 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3DD5A6F662188000C2B16CDC /* Pods-PlaybackEngine.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				CURRENT_PROJECT_VERSION = 1;
@@ -3960,6 +4241,7 @@
 		};
 		F700419BBE09693C310AE965 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 82A423EBD3AA00907087329A /* Pods-ReelFinTVApp.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;

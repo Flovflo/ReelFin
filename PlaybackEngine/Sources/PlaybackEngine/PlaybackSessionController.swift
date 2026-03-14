@@ -325,7 +325,7 @@ public final class PlaybackSessionController {
         localHLSServer?.stop(reason: "controller_deinit")
     }
 
-    public func load(item: MediaItem, autoPlay: Bool = true) async throws {
+    private func prepareForLoad(item: MediaItem) async -> Date {
         currentItemID = item.id
         currentItemHasDolbyVision = item.hasDolbyVision
         startDate = Date()
@@ -380,7 +380,11 @@ public final class PlaybackSessionController {
         // Start the overall TTFF pipeline signpost
         ttffPipelineInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_total")
         ttffInfoInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_playback_info")
-        let infoStartDate = Date()
+        return Date()
+    }
+
+    public func load(item: MediaItem, autoPlay: Bool = true) async throws {
+        let infoStartDate = await prepareForLoad(item: item)
 
         do {
             let warmedSelection = await warmupManager?.selection(for: item.id)
@@ -434,104 +438,12 @@ public final class PlaybackSessionController {
                     source: selection.source
                 )
             )
-            activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
-            if !registerAttempt(selection: selection, profile: activeTranscodeProfile) {
-                throw AppError.network("Playback attempt already tried with the same profile and URL.")
-            }
-
-            if case let .nativeBridge(plan) = selection.decision.route {
-                do {
-                    if Self.prefersLocalSyntheticHLS {
-                        let localURL = try await prepareSyntheticLocalHLS(plan: plan)
-                        selection.assetURL = localURL
-                        selection.headers = [:]
-                        self.nativeBridgeSession = nil
-                    } else {
-                        let session = NativeBridgeSession(plan: plan, token: await apiClient.currentSession()?.token)
-                        try await session.prepare()
-                        self.nativeBridgeSession = session
-                        self.syntheticHLSSession = nil
-                        self.localHLSServer?.stop(reason: "switch_to_resource_loader")
-                        self.localHLSServer = nil
-                        self.localHLSStartupSummary = nil
-                    }
-                } catch {
-                    // NativeBridge failed — fall back to transcode instead of failing entirely
-                    NativeBridgeFailureCache.recordFailure(itemID: item.id)
-                    AppLog.playback.warning("NativeBridge prepare failed: \(error.localizedDescription, privacy: .public). Falling back to transcode.")
-                    activeTranscodeProfile = isMKVHEVCSource(selection.source) ? .appleOptimizedHEVC : .serverDefault
-                    selection = try await coordinator.resolvePlayback(
-                        itemID: item.id,
-                        mode: .balanced,
-                        allowTranscodingFallbackInPerformance: true,
-                        transcodeProfile: activeTranscodeProfile
-                    )
-                    selection = try await pinPreferredVariantIfNeeded(
-                        selection: selection,
-                        itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
-                            itemPrefersDolbyVision: item.hasDolbyVision,
-                            source: selection.source
-                        )
-                    )
-                    selection = try await stabilizeInitialSelectionIfNeeded(
-                        itemID: item.id,
-                        selection: selection,
-                        itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
-                            itemPrefersDolbyVision: item.hasDolbyVision,
-                            source: selection.source
-                        )
-                    )
-                    selection = try await upgradeRiskyInitialSelectionIfNeeded(
-                        itemID: item.id,
-                        selection: selection,
-                        itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
-                            itemPrefersDolbyVision: item.hasDolbyVision,
-                            source: selection.source
-                        )
-                    )
-                    activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
-                    _ = registerAttempt(selection: selection, profile: activeTranscodeProfile)
-                    await self.nativeBridgeSession?.invalidate()
-                    self.nativeBridgeSession = nil
-                    self.syntheticHLSSession = nil
-                    self.localHLSServer?.stop(reason: "nativebridge_prepare_failed")
-                    self.localHLSServer = nil
-                    self.localHLSStartupSummary = nil
-                }
-            } else {
-                await self.nativeBridgeSession?.invalidate()
-                self.nativeBridgeSession = nil
-                self.syntheticHLSSession = nil
-                self.localHLSServer?.stop(reason: "non_nativebridge_route")
-                self.localHLSServer = nil
-                self.localHLSStartupSummary = nil
-            }
-
-            prepareAndLoadSelection(selection, resumeSeconds: nil)
-
-            // Mark URL resolution phase complete
-            ttffResolveInterval?.end(name: "ttff_url_resolution", message: "url_resolved")
-            ttffResolveInterval = nil
-            ttffResolveMs = Date().timeIntervalSince(resolveStartDate) * 1000
-
-            // Retrieve TTFF tuning from coordinator
-            ttffTuning = coordinator.ttffTuning
-
-            if let seconds = try await resumeSeconds(for: item), seconds > 0 {
-                if shouldDeferResumeSeek(route: selection.decision.route, seconds: seconds) {
-                    pendingResumeSeconds = seconds
-                } else {
-                    let seekTime = CMTime(seconds: seconds, preferredTimescale: 600)
-                    let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-                    _ = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
-                }
-            }
-
-            if autoPlay {
-                play()
-                scheduleDecodedFrameWatchdog()
-            }
-            scheduleStartupWatchdog()
+            try await finalizeSelectionLoad(
+                item: item,
+                selection: selection,
+                autoPlay: autoPlay,
+                resolveStartDate: resolveStartDate
+            )
         } catch {
             if usesDirectRemuxOnly {
                 throw AppError.network(
@@ -540,6 +452,158 @@ public final class PlaybackSessionController {
             }
             throw error
         }
+    }
+
+    func load(item: MediaItem, preparedSelection: PlaybackAssetSelection, autoPlay: Bool = true) async throws {
+        let infoStartDate = await prepareForLoad(item: item)
+        ttffInfoInterval?.end(name: "ttff_playback_info", message: "selection_injected")
+        ttffInfoInterval = nil
+        ttffInfoMs = Date().timeIntervalSince(infoStartDate) * 1000
+        ttffResolveInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_url_resolution")
+        let resolveStartDate = Date()
+
+        do {
+            var selection = preparedSelection
+            selection = try await pinPreferredVariantIfNeeded(
+                selection: selection,
+                itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                    itemPrefersDolbyVision: item.hasDolbyVision,
+                    source: selection.source
+                )
+            )
+            selection = try await stabilizeInitialSelectionIfNeeded(
+                itemID: item.id,
+                selection: selection,
+                itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                    itemPrefersDolbyVision: item.hasDolbyVision,
+                    source: selection.source
+                )
+            )
+            selection = try await upgradeRiskyInitialSelectionIfNeeded(
+                itemID: item.id,
+                selection: selection,
+                itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                    itemPrefersDolbyVision: item.hasDolbyVision,
+                    source: selection.source
+                )
+            )
+
+            try await finalizeSelectionLoad(
+                item: item,
+                selection: selection,
+                autoPlay: autoPlay,
+                resolveStartDate: resolveStartDate
+            )
+        } catch {
+            if usesDirectRemuxOnly {
+                throw AppError.network(
+                    "Direct/Remux only mode is enabled. This file requires transcoding on iOS. Disable the mode to play it."
+                )
+            }
+            throw error
+        }
+    }
+
+    private func finalizeSelectionLoad(
+        item: MediaItem,
+        selection initialSelection: PlaybackAssetSelection,
+        autoPlay: Bool,
+        resolveStartDate: Date
+    ) async throws {
+        var selection = initialSelection
+        activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
+        if !registerAttempt(selection: selection, profile: activeTranscodeProfile) {
+            throw AppError.network("Playback attempt already tried with the same profile and URL.")
+        }
+
+        if case let .nativeBridge(plan) = selection.decision.route {
+            do {
+                if Self.prefersLocalSyntheticHLS {
+                    let localURL = try await prepareSyntheticLocalHLS(plan: plan)
+                    selection.assetURL = localURL
+                    selection.headers = [:]
+                    self.nativeBridgeSession = nil
+                } else {
+                    let session = NativeBridgeSession(plan: plan, token: await apiClient.currentSession()?.token)
+                    try await session.prepare()
+                    self.nativeBridgeSession = session
+                    self.syntheticHLSSession = nil
+                    self.localHLSServer?.stop(reason: "switch_to_resource_loader")
+                    self.localHLSServer = nil
+                    self.localHLSStartupSummary = nil
+                }
+            } catch {
+                NativeBridgeFailureCache.recordFailure(itemID: item.id)
+                AppLog.playback.warning("NativeBridge prepare failed: \(error.localizedDescription, privacy: .public). Falling back to transcode.")
+                activeTranscodeProfile = isMKVHEVCSource(selection.source) ? .appleOptimizedHEVC : .serverDefault
+                selection = try await coordinator.resolvePlayback(
+                    itemID: item.id,
+                    mode: .balanced,
+                    allowTranscodingFallbackInPerformance: true,
+                    transcodeProfile: activeTranscodeProfile
+                )
+                selection = try await pinPreferredVariantIfNeeded(
+                    selection: selection,
+                    itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                        itemPrefersDolbyVision: item.hasDolbyVision,
+                        source: selection.source
+                    )
+                )
+                selection = try await stabilizeInitialSelectionIfNeeded(
+                    itemID: item.id,
+                    selection: selection,
+                    itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                        itemPrefersDolbyVision: item.hasDolbyVision,
+                        source: selection.source
+                    )
+                )
+                selection = try await upgradeRiskyInitialSelectionIfNeeded(
+                    itemID: item.id,
+                    selection: selection,
+                    itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                        itemPrefersDolbyVision: item.hasDolbyVision,
+                        source: selection.source
+                    )
+                )
+                activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
+                _ = registerAttempt(selection: selection, profile: activeTranscodeProfile)
+                await self.nativeBridgeSession?.invalidate()
+                self.nativeBridgeSession = nil
+                self.syntheticHLSSession = nil
+                self.localHLSServer?.stop(reason: "nativebridge_prepare_failed")
+                self.localHLSServer = nil
+                self.localHLSStartupSummary = nil
+            }
+        } else {
+            await self.nativeBridgeSession?.invalidate()
+            self.nativeBridgeSession = nil
+            self.syntheticHLSSession = nil
+            self.localHLSServer?.stop(reason: "non_nativebridge_route")
+            self.localHLSServer = nil
+            self.localHLSStartupSummary = nil
+        }
+
+        prepareAndLoadSelection(selection, resumeSeconds: nil)
+        ttffResolveInterval?.end(name: "ttff_url_resolution", message: "url_resolved")
+        ttffResolveInterval = nil
+        ttffResolveMs = Date().timeIntervalSince(resolveStartDate) * 1000
+        ttffTuning = coordinator.ttffTuning
+
+        if let seconds = try await resumeSeconds(for: item), seconds > 0 {
+            if shouldDeferResumeSeek(route: selection.decision.route, seconds: seconds) {
+                pendingResumeSeconds = seconds
+            } else {
+                let seekTime = CMTime(seconds: seconds, preferredTimescale: 600)
+                let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
+                _ = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
+            }
+        }
+
+        if autoPlay {
+            play()
+            scheduleDecodedFrameWatchdog()
+        }
+        scheduleStartupWatchdog()
     }
 
     private func resumeSeconds(for item: MediaItem) async throws -> Double? {

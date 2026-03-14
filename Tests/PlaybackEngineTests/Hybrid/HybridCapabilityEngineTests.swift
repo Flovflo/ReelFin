@@ -174,6 +174,20 @@ final class HybridCapabilityEngineTests: XCTestCase {
         XCTAssertEqual(decision.recommendation, .nativePreferred)
     }
 
+    func testMP4_H264_AAC_withoutDirectPlay_requiresVLC() {
+        let media = MediaCharacteristics(
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: false,
+            supportsDirectStream: true,
+            hasTranscodeURL: true
+        )
+        let decision = engine.evaluate(media)
+        XCTAssertEqual(decision.recommendation, .vlcRequired)
+        XCTAssertTrue(decision.reasons.contains(.fallbackToServerTranscode))
+    }
+
     // MARK: - E. HDR Degradation When VLC Required
 
     func testMKV_HEVC_HDR10_DTS_degradesHDR() {
