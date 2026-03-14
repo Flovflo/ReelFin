@@ -220,7 +220,7 @@ struct HomeView: View {
     @State private var selectedDetailContextItems: [MediaItem] = []
     @State private var selectedDetailContextTitle: String?
     @State private var ambientItem: MediaItem?
-    @State private var playerSession: PlaybackSessionController?
+    @State private var playerSession: HybridPlaybackSession?
     @State private var playerItem: MediaItem?
     @State private var showPlayer = false
     @State private var isPreparingPlayback = false

@@ -6,7 +6,7 @@ import UIKit
 #endif
 
 struct PlayerView: View {
-    var session: PlaybackSessionController
+    var session: HybridPlaybackSession
     let item: MediaItem
     let onDismiss: () -> Void
 
@@ -14,9 +14,20 @@ struct PlayerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            // Native iOS/tvOS player controls (scrubber, audio/subtitle menu, PiP, AirPlay).
-            NativePlayerViewController(player: session.player)
-                .ignoresSafeArea()
+            // Engine-agnostic video surface:
+            // Native AVPlayer → AVPlayerViewController
+            // VLC → UIView wrapper (transparent to user)
+            if session.isNativeEngine, let player = session.nativePlayer {
+                NativePlayerViewController(player: player)
+                    .ignoresSafeArea()
+            } else if let vlcView = session.vlcVideoView {
+                VLCVideoViewRepresentable(videoView: vlcView)
+                    .ignoresSafeArea()
+            } else {
+                // Fallback: native player with whatever AVPlayer is available
+                NativePlayerViewController(player: session.player)
+                    .ignoresSafeArea()
+            }
         }
         .accessibilityIdentifier("native_player_screen")
         .onDisappear {
@@ -35,4 +46,19 @@ struct PlayerView: View {
 #endif
         }
     }
+}
+
+// MARK: - VLC Video View Representable
+
+/// Wraps VLCKit's UIView drawable into SwiftUI.
+/// The user sees no difference from the native player.
+private struct VLCVideoViewRepresentable: UIViewRepresentable {
+    let videoView: UIView
+
+    func makeUIView(context: Context) -> UIView {
+        videoView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        return videoView
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }

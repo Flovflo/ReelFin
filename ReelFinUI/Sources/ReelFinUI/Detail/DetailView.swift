@@ -31,7 +31,7 @@ struct DetailView: View {
     @StateObject private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
 
-    @State private var playerSession: PlaybackSessionController?
+    @State private var playerSession: HybridPlaybackSession?
     @State private var showPlayer = false
     @State private var isLoadingPlayback = false
     @State private var hasAnimatedIn = false
@@ -1399,10 +1399,12 @@ private struct SeasonPickerView: View {
                             }
                         )
                         .focused(focusedSeasonID, equals: season.id)
+                        #if os(tvOS)
                         .onMoveCommand { direction in
                             guard direction == .up else { return }
                             onMoveUp()
                         }
+                        #endif
                     }
                 }
                 .padding(.horizontal, rowContentHorizontalPadding)

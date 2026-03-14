@@ -63,7 +63,7 @@ final class AppContainer {
             seriesCache: seriesCache,
             playbackWarmupManager: playbackWarmupManager,
             makePlaybackSession: {
-                PlaybackSessionController(
+                HybridPlaybackSession(
                     apiClient: self.apiClient,
                     repository: self.repository,
                     warmupManager: self.playbackWarmupManager

@@ -11,7 +11,7 @@ public struct ReelFinDependencies {
     public let settingsStore: SettingsStoreProtocol
     public let seriesCache: SeriesLookupCache
     public let playbackWarmupManager: PlaybackWarmupManaging
-    public let makePlaybackSession: @MainActor () -> PlaybackSessionController
+    public let makePlaybackSession: @MainActor () -> HybridPlaybackSession
 
     public init(
         apiClient: JellyfinAPIClientProtocol,
@@ -22,7 +22,7 @@ public struct ReelFinDependencies {
         settingsStore: SettingsStoreProtocol,
         seriesCache: SeriesLookupCache,
         playbackWarmupManager: PlaybackWarmupManaging,
-        makePlaybackSession: @escaping @MainActor () -> PlaybackSessionController
+        makePlaybackSession: @escaping @MainActor () -> HybridPlaybackSession
     ) {
         self.apiClient = apiClient
         self.repository = repository

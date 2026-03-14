@@ -438,7 +438,7 @@ public enum ReelFinPreviewFactory {
             seriesCache: seriesCache,
             playbackWarmupManager: warmupManager,
             makePlaybackSession: {
-                PlaybackSessionController(
+                HybridPlaybackSession(
                     apiClient: api,
                     repository: repository,
                     warmupManager: warmupManager
