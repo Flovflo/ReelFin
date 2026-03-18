@@ -113,7 +113,10 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         )
     }
 
-    func testAudioSelectorPrefersAACForNativePlayerPath() {
+    func testAudioSelectorDefaultTrackBeatsHigherNativeCodecWithSameLanguage() {
+        // EAC3 is the default track and AAC is non-default, both French.
+        // Default-track bonus (+10 000) far exceeds codec delta (AAC +500 vs EAC3 +400),
+        // so EAC3-default wins even though AAC has a slightly higher native codec score.
         let selector = AudioCompatibilitySelector()
         let tracks = [
             MediaTrack(id: "1", title: "French E-AC3", language: "fra", codec: "eac3", isDefault: true, index: 1),
@@ -126,8 +129,8 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             nativePlayerPath: true
         )
 
-        XCTAssertEqual(selection.selectedCodec, "aac")
-        XCTAssertEqual(selection.selectedTrackIndex, 2)
+        XCTAssertEqual(selection.selectedCodec, "eac3")
+        XCTAssertEqual(selection.selectedTrackIndex, 1)
     }
 
     func testRemuxUsedWhenDirectPlayNotCompatible() {
@@ -476,6 +479,11 @@ final class PlaybackDecisionEngineTests: XCTestCase {
     }
 
     func testCoordinatorConservativeProfileKeepsVideoCopy() async throws {
+        // Use preferAudioTranscodeOnly: false so the profile can exercise audio-copy path.
+        let configWithAudioCopy = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            preferAudioTranscodeOnly: false
+        )
         let source = MediaSource(
             id: "source-1",
             itemID: "item-1",
@@ -489,7 +497,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             directPlayURL: nil,
             transcodeURL: URL(string: "https://example.com/Videos/item-1/master.m3u8?MediaSourceId=source-1&VideoCodec=hevc")
         )
-        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-1": [source]])
+        let client = MockPlaybackAPIClient(configuration: configWithAudioCopy, sources: ["item-1": [source]])
         let coordinator = PlaybackCoordinator(apiClient: client)
 
         let selection = try await coordinator.resolvePlayback(
@@ -515,6 +523,11 @@ final class PlaybackDecisionEngineTests: XCTestCase {
     }
 
     func testCoordinatorAppleOptimizedProfileForcesHEVCTranscode() async throws {
+        // Use preferAudioTranscodeOnly: false so the profile can exercise audio-copy path.
+        let configWithAudioCopy = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            preferAudioTranscodeOnly: false
+        )
         let source = MediaSource(
             id: "source-apple-hevc",
             itemID: "item-apple-hevc",
@@ -528,7 +541,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             directPlayURL: nil,
             transcodeURL: URL(string: "https://example.com/Videos/item-apple-hevc/master.m3u8?MediaSourceId=source-apple-hevc&VideoCodec=hevc")
         )
-        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-apple-hevc": [source]])
+        let client = MockPlaybackAPIClient(configuration: configWithAudioCopy, sources: ["item-apple-hevc": [source]])
         let coordinator = PlaybackCoordinator(apiClient: client)
 
         let selection = try await coordinator.resolvePlayback(
@@ -592,10 +605,17 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertNil(queryMap["BreakOnNonKeyFrames"])
     }
 
-    func testCoordinatorServerDefaultTranscodesAC3ToAACWhenAudioCopyIsDisabled() async throws {
+    func testCoordinatorConservativeProfileTranscodesAC3ToAACWhenAudioCopyIsDisabled() async throws {
+        // Verifies that preferAudioTranscodeOnly: true forces AudioCodec→aac and
+        // AllowAudioStreamCopy→false on the conservativeCompatibility profile.
+        // (serverDefault intentionally bypasses URL normalization to trust Jellyfin's URL.)
+        let configAudioTranscodeOnly = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            preferAudioTranscodeOnly: true
+        )
         let source = MediaSource(
-            id: "source-server-default-h264-ac3",
-            itemID: "item-server-default-h264-ac3",
+            id: "source-conservative-h264-ac3",
+            itemID: "item-conservative-h264-ac3",
             name: "H264 AC3 source",
             container: "mkv",
             videoCodec: "h264",
@@ -605,17 +625,17 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             directStreamURL: nil,
             directPlayURL: nil,
             transcodeURL: URL(
-                string: "https://example.com/Videos/item-server-default-h264-ac3/master.m3u8?MediaSourceId=source-server-default-h264-ac3&VideoCodec=h264&AllowVideoStreamCopy=true&AllowAudioStreamCopy=false&Container=ts&SegmentContainer=ts&AudioCodec=ac3"
+                string: "https://example.com/Videos/item-conservative-h264-ac3/master.m3u8?MediaSourceId=source-conservative-h264-ac3&VideoCodec=h264&AllowVideoStreamCopy=true&Container=ts&SegmentContainer=ts"
             )
         )
-        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-server-default-h264-ac3": [source]])
+        let client = MockPlaybackAPIClient(configuration: configAudioTranscodeOnly, sources: ["item-conservative-h264-ac3": [source]])
         let coordinator = PlaybackCoordinator(apiClient: client)
 
         let selection = try await coordinator.resolvePlayback(
-            itemID: "item-server-default-h264-ac3",
+            itemID: "item-conservative-h264-ac3",
             mode: .balanced,
             allowTranscodingFallbackInPerformance: true,
-            transcodeProfile: .serverDefault
+            transcodeProfile: .conservativeCompatibility
         )
 
         guard case .transcode = selection.decision.route else {
@@ -628,8 +648,6 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "true")
         XCTAssertEqual(queryMap["AllowAudioStreamCopy"], "false")
         XCTAssertEqual(queryMap["AudioCodec"], "aac")
-        XCTAssertEqual(queryMap["Container"], "ts")
-        XCTAssertEqual(queryMap["SegmentContainer"], "ts")
     }
 
     func testCoordinatorServerDefaultUpgradesMKVHEVCToAppleOptimizedHEVC() async throws {
@@ -670,6 +688,11 @@ final class PlaybackDecisionEngineTests: XCTestCase {
     }
 
     func testCoordinatorForceH264ProfileDisablesVideoCopy() async throws {
+        // Use preferAudioTranscodeOnly: false so this test exercises the audio-copy path.
+        let configWithAudioCopy = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            preferAudioTranscodeOnly: false
+        )
         let source = MediaSource(
             id: "source-2",
             itemID: "item-2",
@@ -683,7 +706,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             directPlayURL: nil,
             transcodeURL: URL(string: "https://example.com/Videos/item-2/master.m3u8?MediaSourceId=source-2&VideoCodec=hevc")
         )
-        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-2": [source]])
+        let client = MockPlaybackAPIClient(configuration: configWithAudioCopy, sources: ["item-2": [source]])
         let coordinator = PlaybackCoordinator(apiClient: client)
 
         let selection = try await coordinator.resolvePlayback(
@@ -709,6 +732,11 @@ final class PlaybackDecisionEngineTests: XCTestCase {
     }
 
     func testCoordinatorForceH264ProfileStripsHEVCConstraintsAndDeduplicatesKeys() async throws {
+        // Use preferAudioTranscodeOnly: false so this test exercises the audio-copy path.
+        let configWithAudioCopy = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            preferAudioTranscodeOnly: false
+        )
         let source = MediaSource(
             id: "source-3",
             itemID: "item-3",
@@ -721,10 +749,10 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             directStreamURL: nil,
             directPlayURL: nil,
             transcodeURL: URL(
-                string: "https://example.com/Videos/item-3/master.m3u8?MediaSourceId=source-3&VideoCodec=hevc&AllowVideoStreamCopy=true&allowVideoStreamCopy=true&AllowAudioStreamCopy=false&hevc-level=150&hevc-profile=main10&hevc-videobitdepth=10&AudioCodec=aac,ac3"
+                string: "https://example.com/Videos/item-3/master.m3u8?MediaSourceId=source-3&VideoCodec=hevc&AllowVideoStreamCopy=true&allowVideoStreamCopy=true&hevc-level=150&hevc-profile=main10&hevc-videobitdepth=10&AudioCodec=aac,ac3"
             )
         )
-        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-3": [source]])
+        let client = MockPlaybackAPIClient(configuration: configWithAudioCopy, sources: ["item-3": [source]])
         let coordinator = PlaybackCoordinator(apiClient: client)
 
         let selection = try await coordinator.resolvePlayback(

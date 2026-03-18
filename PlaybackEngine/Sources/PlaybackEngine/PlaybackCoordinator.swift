@@ -180,7 +180,8 @@ public actor PlaybackCoordinator {
         let audioSelection = AudioCompatibilitySelector().selectPreferredAudioTrack(
             from: source.audioTracks,
             fallbackCodec: source.normalizedAudioCodec,
-            nativePlayerPath: true
+            nativePlayerPath: true,
+            preferredLanguage: configuration.preferredAudioLanguage
         )
         switch decision.route {
         case let .directPlay(url):
@@ -492,7 +493,9 @@ public actor PlaybackCoordinator {
             if let explicit = queryValue("AllowAudioStreamCopy")?.lowercased() {
                 return explicit == "true"
             }
-            return !configuration.preferAudioTranscodeOnly && profile == .serverDefault
+            // Honor preferAudioTranscodeOnly for all profiles.
+            // (serverDefault + auto policy already returns early above, so is never reached here.)
+            return !configuration.preferAudioTranscodeOnly
         }()
         let preferBitstreamAudio = allowAudioCopy && (normalizedAudio == "eac3" || normalizedAudio == "ac3")
         if configuration.preferAudioTranscodeOnly || profile != .serverDefault {

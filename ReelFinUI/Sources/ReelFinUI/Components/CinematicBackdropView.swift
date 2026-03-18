@@ -111,6 +111,10 @@ struct CinematicBackdropView: View {
         }
         .frame(width: size.width, height: size.height)
         .clipped()
+        // Rasterise the three composited blur layers into a single Metal texture so
+        // the GPU doesn't re-blend them on every frame. Only redrawn when the item
+        // (and therefore the image task IDs) actually change.
+        .drawingGroup()
     }
 
     private var overlayWash: some View {

@@ -354,10 +354,168 @@ final class PlaybackPolicyTests: XCTestCase {
         )
     }
 
-    func testAudioSelectorPrefersEAC3ForNativePath() {
+    // MARK: - Audio Selection Tests
+
+    func testAudioSelectorPenalizesTrueHDOnNativePath() {
+        // TrueHD is not natively decodable by AVPlayer; even when marked default it
+        // must lose to any natively-playable codec. This prevents black audio output.
         let tracks = [
             MediaTrack(id: "a1", title: "English TrueHD Atmos", language: "en", codec: "truehd", isDefault: true, index: 1),
-            MediaTrack(id: "a2", title: "French E-AC-3 7.1", language: "fr", codec: "eac3", isDefault: false, index: 2)
+            MediaTrack(id: "a2", title: "French E-AC-3 7.1", language: "fr", codec: "eac3", isDefault: false, index: 2),
+        ]
+
+        let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "truehd",
+            nativePlayerPath: true
+        )
+
+        XCTAssertEqual(selection.selectedCodec, "eac3", "EAC3 must beat TrueHD default on native path")
+        XCTAssertEqual(selection.selectedTrackIndex, 2)
+        XCTAssertTrue(selection.trueHDWasDeprioritized)
+    }
+
+    func testAudioSelectorDefaultTrackBeatsHigherCodecWithNoLanguagePref() {
+        // Without an explicit language preference, the `isDefault` flag (10 000 pts)
+        // must outweigh codec prestige (400 pts for EAC3 vs 300 pts for AC3).
+        // French AC3 marked default should beat English EAC3 non-default.
+        let tracks = [
+            MediaTrack(id: "a1", title: "English E-AC-3 Atmos", language: "en", codec: "eac3", isDefault: false, index: 1),
+            MediaTrack(id: "a2", title: "French AC-3", language: "fr", codec: "ac3", isDefault: true, index: 2),
+        ]
+
+        let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "eac3",
+            nativePlayerPath: true
+        )
+
+        XCTAssertEqual(selection.selectedCodec, "ac3", "Default AC3 must beat non-default EAC3")
+        XCTAssertEqual(selection.selectedTrackIndex, 2)
+        XCTAssertFalse(selection.trueHDWasDeprioritized)
+    }
+
+    func testAudioSelectorLanguageMatchBeatsDefault() {
+        // Preferred language match (+100 000) must beat default bonus (+10 000).
+        // Even if French track is not marked default, it wins when user prefers French.
+        let tracks = [
+            MediaTrack(id: "a1", title: "English EAC3 Atmos", language: "en", codec: "eac3", isDefault: true, index: 1),
+            MediaTrack(id: "a2", title: "French AC3", language: "fr", codec: "ac3", isDefault: false, index: 2),
+        ]
+
+        let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "eac3",
+            nativePlayerPath: true,
+            preferredLanguage: "fr"
+        )
+
+        XCTAssertEqual(selection.selectedCodec, "ac3", "Preferred-language French AC3 must beat default English EAC3")
+        XCTAssertEqual(selection.selectedTrackIndex, 2)
+    }
+
+    func testAudioSelectorHardCase_FrenchAC3DefaultBeatsEnglishEAC3Atmos_WithLanguagePref() {
+        // THE hard case from MEGA PROMPT:
+        // MKV / HEVC Main10 / DV 8.1 with:
+        //   - Track 1: French AC-3 (default)
+        //   - Track 2: English E-AC-3 Atmos (non-default)
+        // User preferred language: French → French AC3 must win.
+        let tracks = [
+            MediaTrack(id: "a1", title: "Français AC-3", language: "fr", codec: "ac3", isDefault: true, index: 1),
+            MediaTrack(id: "a2", title: "English E-AC-3 Atmos", language: "en", codec: "eac3", isDefault: false, index: 2),
+        ]
+
+        let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "eac3",
+            nativePlayerPath: true,
+            preferredLanguage: "fr"
+        )
+
+        XCTAssertEqual(selection.selectedCodec, "ac3")
+        XCTAssertEqual(selection.selectedTrackIndex, 1)
+    }
+
+    func testAudioSelectorHardCase_FrenchAC3DefaultBeatsEnglishEAC3Atmos_NoLanguagePref() {
+        // Same hard case, no language pref set.
+        // Default bonus (10 000) must outweigh codec gap (100 pts).
+        // French AC3 default must still win.
+        let tracks = [
+            MediaTrack(id: "a1", title: "Français AC-3", language: "fr", codec: "ac3", isDefault: true, index: 1),
+            MediaTrack(id: "a2", title: "English E-AC-3 Atmos", language: "en", codec: "eac3", isDefault: false, index: 2),
+        ]
+
+        let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "eac3",
+            nativePlayerPath: true,
+            preferredLanguage: nil
+        )
+
+        XCTAssertEqual(selection.selectedCodec, "ac3", "Default track must win with no language preference")
+        XCTAssertEqual(selection.selectedTrackIndex, 1)
+    }
+
+    func testAudioSelectorLanguageNormalizationISO6392() {
+        // ISO 639-2 three-letter codes ("fre", "fra", "eng") must be treated the
+        // same as ISO 639-1 two-letter codes ("fr", "en") when matching a preference.
+        let tracks = [
+            MediaTrack(id: "a1", title: "English AC-3", language: "eng", codec: "ac3", isDefault: false, index: 1),
+            MediaTrack(id: "a2", title: "French EAC3", language: "fre", codec: "eac3", isDefault: false, index: 2),
+        ]
+
+        let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "ac3",
+            nativePlayerPath: true,
+            preferredLanguage: "fr"    // two-letter preference must match three-letter tag "fre"
+        )
+
+        XCTAssertEqual(selection.selectedCodec, "eac3", "ISO 639-2 'fre' must match ISO 639-1 'fr' preference")
+        XCTAssertEqual(selection.selectedTrackIndex, 2)
+    }
+
+    func testAudioSelectorLanguageNormalizerRoundTrips() {
+        // Smoke test for the normalizer to make sure common tags collapse correctly.
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("fre"), "fr")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("fra"), "fr")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("fr-FR"), "fr")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("fr-CA"), "fr")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("eng"), "en")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("en-US"), "en")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("deu"), "de")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("ger"), "de")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("jpn"), "ja")
+        XCTAssertEqual(AudioTrackLanguageNormalizer.normalize("zho"), "zh")
+        XCTAssertTrue(AudioTrackLanguageNormalizer.matches("fre", "fr"))
+        XCTAssertTrue(AudioTrackLanguageNormalizer.matches("fr-CA", "fr"))
+        XCTAssertFalse(AudioTrackLanguageNormalizer.matches("fre", "en"))
+    }
+
+    func testAudioSelectorFallsBackToFirstTrackWhenNoMatch() {
+        // When no track matches any preference tier, the first track (stream order 0)
+        // should win as the tie-breaker.
+        let tracks = [
+            MediaTrack(id: "a1", title: "AAC Stereo", language: "und", codec: "aac", isDefault: false, index: 1),
+            MediaTrack(id: "a2", title: "AAC Stereo", language: "und", codec: "aac", isDefault: false, index: 2),
+        ]
+
+        let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
+            from: tracks,
+            fallbackCodec: "aac",
+            nativePlayerPath: true,
+            preferredLanguage: "fr"    // no French track — falls through to stream order
+        )
+
+        // Either track is acceptable, but index 1 (stream order 0) must be preferred
+        XCTAssertEqual(selection.selectedTrackIndex, 1)
+    }
+
+    func testAudioSelectorPrefersEAC3ForNativePath() {
+        // Legacy name kept for back-compat.  Now validated by testAudioSelectorPenalizesTrueHDOnNativePath.
+        let tracks = [
+            MediaTrack(id: "a1", title: "English TrueHD Atmos", language: "en", codec: "truehd", isDefault: true, index: 1),
+            MediaTrack(id: "a2", title: "French E-AC-3 7.1", language: "fr", codec: "eac3", isDefault: false, index: 2),
         ]
 
         let selection = AudioCompatibilitySelector().selectPreferredAudioTrack(
@@ -381,6 +539,160 @@ final class PlaybackPolicyTests: XCTestCase {
         let message = PlaybackFailureReason.missingDolbyVisionBoxesFallingBackToHDR10.localizedDescription ?? ""
         XCTAssertTrue(message.lowercased().contains("falling back"))
         XCTAssertTrue(message.lowercased().contains("hdr10"))
+    }
+
+    // MARK: - StartupFailureReason Tests
+
+    func testStartupFailureReasonReadyButNoVideoFrameTriggersRecovery() {
+        XCTAssertTrue(StartupFailureReason.readyButNoVideoFrame.shouldTriggerRecovery)
+    }
+
+    func testStartupFailureReasonDecoderStallTriggersRecovery() {
+        XCTAssertTrue(StartupFailureReason.decoderStall.shouldTriggerRecovery)
+    }
+
+    func testStartupFailureReasonTransientDoesNotTriggerRecovery() {
+        XCTAssertFalse(StartupFailureReason.playerItemFailedTransient.shouldTriggerRecovery)
+    }
+
+    func testStartupFailureReasonNativeBridgeDoesNotTriggerRecovery() {
+        XCTAssertFalse(StartupFailureReason.nativeBridgePackagingFailure.shouldTriggerRecovery)
+    }
+
+    func testStartupFailureReasonRawValueRoundTrip() {
+        for reason in [
+            StartupFailureReason.manifestLoadFailed,
+            .firstSegmentTimeout,
+            .readyButNoVideoFrame,
+            .decoderStall,
+            .presentationSizeZero,
+            .playerItemFailed,
+            .startupWatchdogExpired,
+            .nativeBridgePackagingFailure,
+            .unknownStartupFailure
+        ] {
+            XCTAssertEqual(StartupFailureReason(rawValue: reason.rawValue), reason)
+        }
+    }
+
+    // MARK: - Recovery Ordering Tests
+
+    func testRecoveryAfterForceH264HasNoFurtherFallback() {
+        let profiles = PlaybackSessionController.recoveryPlan(
+            after: .forceH264Transcode,
+            policy: .auto,
+            allowSDRFallback: true
+        )
+        XCTAssertTrue(profiles.isEmpty)
+    }
+
+    func testFallbackOrderIsDeterministic() {
+        let p1 = PlaybackSessionController.recoveryPlan(after: .serverDefault, policy: .auto, allowSDRFallback: true)
+        let p2 = PlaybackSessionController.recoveryPlan(after: .serverDefault, policy: .auto, allowSDRFallback: true)
+        XCTAssertEqual(p1, p2)
+    }
+
+    func testFallbackOrderNeverRepeatsActiveProfile() {
+        for active in [TranscodeURLProfile.serverDefault, .appleOptimizedHEVC, .conservativeCompatibility, .forceH264Transcode] {
+            let profiles = PlaybackSessionController.recoveryPlan(after: active, policy: .auto, allowSDRFallback: true)
+            XCTAssertFalse(profiles.contains(active))
+        }
+    }
+
+    func testNoSyntheticDirectPlayURLForMKVWithoutExplicitURL() {
+        let engine = PlaybackDecisionEngine()
+        let sources = [
+            MediaSource(
+                id: "no-urls",
+                itemID: "item",
+                name: "No URLs",
+                container: "mkv",
+                videoCodec: "hevc",
+                audioCodec: "eac3",
+                supportsDirectPlay: false,
+                supportsDirectStream: false,
+                directStreamURL: nil,
+                directPlayURL: nil,
+                transcodeURL: URL(string: "https://example.com/master.m3u8")
+            )
+        ]
+        let decision = engine.decide(
+            itemID: "item",
+            sources: sources,
+            configuration: ServerConfiguration(serverURL: URL(string: "https://example.com")!),
+            token: "abc"
+        )
+        if let decision {
+            if case .directPlay = decision.route {
+                XCTFail("Should not synthesize directPlay URL for MKV without explicit server URL")
+            }
+        }
+    }
+
+    // MARK: - ServerConfiguration language fields
+
+    func testServerConfigurationPreferredLanguageRoundTrips() throws {
+        let config = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            preferredAudioLanguage: "fr",
+            preferredSubtitleLanguage: "en"
+        )
+
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(ServerConfiguration.self, from: data)
+
+        XCTAssertEqual(decoded.preferredAudioLanguage, "fr")
+        XCTAssertEqual(decoded.preferredSubtitleLanguage, "en")
+    }
+
+    func testServerConfigurationDefaultsToNilLanguages() {
+        let config = ServerConfiguration(serverURL: URL(string: "https://example.com")!)
+        XCTAssertNil(config.preferredAudioLanguage)
+        XCTAssertNil(config.preferredSubtitleLanguage)
+    }
+
+    // MARK: - Playback decision with preferred language
+
+    func testPlaybackCoordinatorPassesPreferredLanguageToAudioSelection() async throws {
+        // When the server configuration carries a preferred audio language,
+        // the coordinator must respect it when selecting the AudioStreamIndex.
+        let configuration = ServerConfiguration(
+            serverURL: URL(string: "https://example.com")!,
+            playbackPolicy: .auto,
+            allowSDRFallback: true,
+            preferAudioTranscodeOnly: false,
+            preferredAudioLanguage: "fr"
+        )
+
+        let frTrack = MediaTrack(id: "t-fr", title: "Français AC-3", language: "fr", codec: "ac3", isDefault: true, index: 1)
+        let enTrack = MediaTrack(id: "t-en", title: "English EAC3 Atmos", language: "en", codec: "eac3", isDefault: false, index: 2)
+
+        let source = MediaSource(
+            id: "src-lang",
+            itemID: "item-lang",
+            name: "Lang Test",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "ac3",
+            bitrate: 15_000_000,
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/videos/item-lang/master.m3u8?Container=fmp4&VideoCodec=hevc")!,
+            audioTracks: [frTrack, enTrack]
+        )
+
+        let api = CapturePlaybackAPIClient(configuration: configuration, sources: ["item-lang": [source]])
+        let coordinator = PlaybackCoordinator(apiClient: api)
+        let selection = try await coordinator.resolvePlayback(itemID: "item-lang", mode: .balanced)
+
+        // AudioStreamIndex should point to the French track (index 1), not the English one.
+        let url = selection.assetURL.absoluteString
+        XCTAssertTrue(
+            url.contains("AudioStreamIndex=1"),
+            "Expected AudioStreamIndex=1 (French AC3) in URL, got: \(url)"
+        )
     }
 
     private func makeHEVCTrack() -> TrackInfo {

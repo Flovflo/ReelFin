@@ -84,10 +84,11 @@ public enum PlaybackTrackMatcher {
             }
 
             if !targetLanguage.isEmpty, !optionLanguage.isEmpty {
-                if optionLanguage == targetLanguage {
-                    score += 80
-                } else if optionLanguage.hasPrefix(targetLanguage) || targetLanguage.hasPrefix(optionLanguage) {
-                    score += 55
+                if AudioTrackLanguageNormalizer.matches(targetLanguage, optionLanguage) {
+                    // Exact canonical match (e.g. "eng"↔"en", "fra"↔"fr", "spa"↔"es").
+                    let t = AudioTrackLanguageNormalizer.normalize(targetLanguage)
+                    let o = AudioTrackLanguageNormalizer.normalize(optionLanguage)
+                    score += (t == o) ? 80 : 55
                 }
             }
 
@@ -117,6 +118,7 @@ public enum PlaybackTrackMatcher {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
     }
+
 }
 
 public struct DeviceCapabilities: Sendable {
@@ -245,25 +247,107 @@ public struct AudioCompatibilitySelection: Sendable, Equatable {
     public let trueHDWasDeprioritized: Bool
 }
 
+// MARK: - Language Normalizer
+
+/// Normalizes audio/subtitle language tags to a compact BCP-47 base for comparison.
+/// Handles ISO 639-1 (fr), ISO 639-2 (fre/fra), and full tags (fr-FR, en-US).
+public enum AudioTrackLanguageNormalizer {
+    /// Returns the normalized 2-letter base code, or the original lowercase string
+    /// when no known mapping exists.  Example: "fre" → "fr", "fr-FR" → "fr", "en-US" → "en".
+    public static func normalize(_ raw: String) -> String {
+        let lower = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Extract base code before any region subtag (hyphen or underscore)
+        let base = String(lower.prefix(while: { $0 != "-" && $0 != "_" }))
+        return iso6392to1[base] ?? base
+    }
+
+    /// Whether two language tags refer to the same base language.
+    public static func matches(_ a: String, _ b: String) -> Bool {
+        let na = normalize(a)
+        let nb = normalize(b)
+        if na == nb { return true }
+        // Allow prefix match for regional variants: "zh" matches "zh-hant"
+        return na.hasPrefix(nb) || nb.hasPrefix(na)
+    }
+
+    // Common ISO 639-2 bibliographic / terminological → ISO 639-1 map.
+    private static let iso6392to1: [String: String] = [
+        "fre": "fr", "fra": "fr",
+        "eng": "en",
+        "ger": "de", "deu": "de",
+        "spa": "es", "esp": "es",
+        "ita": "it",
+        "jpn": "ja",
+        "kor": "ko",
+        "chi": "zh", "zho": "zh",
+        "por": "pt",
+        "rus": "ru",
+        "ara": "ar",
+        "pol": "pl",
+        "dut": "nl", "nld": "nl",
+        "swe": "sv",
+        "nor": "no",
+        "dan": "da",
+        "fin": "fi",
+        "heb": "he",
+        "tur": "tr",
+        "tha": "th",
+        "vie": "vi",
+        "ind": "id",
+        "may": "ms", "msa": "ms",
+        "cat": "ca",
+        "cze": "cs", "ces": "cs",
+        "hun": "hu",
+        "rum": "ro", "ron": "ro",
+        "gre": "el", "ell": "el",
+        "ukr": "uk",
+        "hrv": "hr",
+        "slv": "sl",
+        "slk": "sk",
+        "bul": "bg",
+        "srp": "sr",
+    ]
+}
+
+// MARK: - Audio Selector
+
 public struct AudioCompatibilitySelector: Sendable {
     public init() {}
 
+    /// Select the best audio track using a deterministic, layered scoring model.
+    ///
+    /// Priority order (highest to lowest):
+    ///  1. Exact preferred-language match               (+100 000)
+    ///  2. Prefix / regional preferred-language match  (+50 000)
+    ///  3. Track marked `isDefault`                    (+10 000)
+    ///  4. Non-commentary codec that is natively playable (codec tier, max +500)
+    ///  5. Codecs that require server-side transcoding on nativePath (penalty −50 000)
+    ///  6. Stream-order tie-breaker (earlier stream = lower index preferred)
+    ///
+    /// This means language + default beats codec prestige.
+    /// French AC-3 (default) always beats English E-AC-3 (non-default) regardless of
+    /// language preference, because the default bonus (10 000) vastly exceeds the
+    /// codec gap (500 − 300 = 200).
     public func selectPreferredAudioTrack(
         from tracks: [MediaTrack],
         fallbackCodec: String,
-        nativePlayerPath: Bool
+        nativePlayerPath: Bool,
+        preferredLanguage: String? = nil
     ) -> AudioCompatibilitySelection {
+
         struct Candidate {
             let codec: String
-            let index: Int?
+            let streamOrder: Int
+            let trackIndex: Int?
             let score: Int
             let isTrueHD: Bool
+            let selectionReasons: [String]
         }
 
-        func codec(from track: MediaTrack) -> String {
-            if let explicit = track.codec?.lowercased(), !explicit.isEmpty {
-                return explicit
-            }
+        let normalizedPreferred = preferredLanguage.map { AudioTrackLanguageNormalizer.normalize($0) }
+
+        func inferCodec(from track: MediaTrack) -> String {
+            if let explicit = track.codec?.lowercased(), !explicit.isEmpty { return explicit }
             let title = track.title.lowercased()
             if title.contains("e-ac-3") || title.contains("eac3") || title.contains("ec3") { return "eac3" }
             if title.contains("truehd") || title.contains("mlp") { return "truehd" }
@@ -273,58 +357,92 @@ public struct AudioCompatibilitySelector: Sendable {
             return fallbackCodec.lowercased()
         }
 
-        let candidates: [Candidate] = tracks.map { track in
-            let codecValue = codec(from: track)
+        let candidates: [Candidate] = tracks.enumerated().map { streamOrder, track in
+            let codecValue = inferCodec(from: track)
             var score = 0
-            if nativePlayerPath {
-                // For AVPlayer-first playback, prioritize AAC for fastest/most reliable startup.
-                if codecValue.contains("aac") {
-                    score += 10_500
-                } else if codecValue.contains("eac3") || codecValue.contains("ec3") {
-                    score += 9_500
-                } else if codecValue.contains("ac3") {
-                    score += 8_500
-                } else if codecValue.contains("truehd") {
-                    score += 100
+            var reasons: [String] = []
+
+            // ── TIER 1: Language preference ──────────────────────────────────────
+            if let preferred = normalizedPreferred, let rawLang = track.language, !rawLang.isEmpty {
+                let trackLang = AudioTrackLanguageNormalizer.normalize(rawLang)
+                if trackLang == preferred {
+                    score += 100_000
+                    reasons.append("lang_exact(\(preferred))")
+                } else if AudioTrackLanguageNormalizer.matches(rawLang, preferred) {
+                    score += 50_000
+                    reasons.append("lang_prefix(\(rawLang))")
                 }
-            } else if codecValue.contains("eac3") || codecValue.contains("ec3") {
-                score += 10_000
-            } else if codecValue.contains("ac3") {
-                score += 8_000
-            } else if codecValue.contains("aac") {
-                score += 7_000
-            } else if codecValue.contains("truehd") {
-                score += 100
             }
+
+            // ── TIER 2: Default track flag ────────────────────────────────────────
             if track.isDefault {
-                score += 500
+                score += 10_000
+                reasons.append("is_default")
             }
+
+            // ── TIER 3: Codec compatibility ───────────────────────────────────────
+            if nativePlayerPath {
+                // Codecs that require server-side transcoding on this path get a heavy
+                // penalty so they never win unless no other track exists.
+                if codecValue.contains("truehd") || codecValue.contains("dts") {
+                    score -= 50_000
+                    reasons.append("codec_penalty(\(codecValue))")
+                } else if codecValue.contains("aac") {
+                    score += 500
+                    reasons.append("codec_aac")
+                } else if codecValue.contains("eac3") || codecValue.contains("ec3") {
+                    score += 400
+                    reasons.append("codec_eac3")
+                } else if codecValue.contains("ac3") {
+                    score += 300
+                    reasons.append("codec_ac3")
+                }
+            } else {
+                // Transcode path: server can handle any codec; prefer lossless quality.
+                if codecValue.contains("eac3") || codecValue.contains("ec3") {
+                    score += 500; reasons.append("codec_eac3")
+                } else if codecValue.contains("ac3") {
+                    score += 400; reasons.append("codec_ac3")
+                } else if codecValue.contains("truehd") {
+                    score += 300; reasons.append("codec_truehd")
+                } else if codecValue.contains("aac") {
+                    score += 200; reasons.append("codec_aac")
+                }
+            }
+
+            // ── TIER 4: Stream order (earlier track = more likely primary) ────────
+            score -= streamOrder
+
             return Candidate(
                 codec: codecValue,
-                index: track.index,
+                streamOrder: streamOrder,
+                trackIndex: track.index,
                 score: score,
-                isTrueHD: codecValue.contains("truehd")
+                isTrueHD: codecValue.contains("truehd"),
+                selectionReasons: reasons
             )
         }
 
         let fallback = fallbackCodec.lowercased()
         let winner = candidates.max(by: { $0.score < $1.score })
-        let selectedCodec = winner?.codec.isEmpty == false ? winner!.codec : (fallback.isEmpty ? "aac" : fallback)
+        let selectedCodec = winner.map { $0.codec.isEmpty ? fallback : $0.codec } ?? (fallback.isEmpty ? "aac" : fallback)
         let prefersDirectCopy = selectedCodec.contains("eac3") || selectedCodec.contains("ac3") || selectedCodec.contains("aac")
-        let trueHDDeprioritized = nativePlayerPath && (winner?.isTrueHD == false) && fallback.contains("truehd")
 
+        // TrueHD was deprioritized if any TrueHD track exists and was not chosen on native path.
+        let hasTrueHDTrack = candidates.contains { $0.isTrueHD }
+        let trueHDDeprioritized = nativePlayerPath && hasTrueHDTrack && !selectedCodec.contains("truehd")
+
+        let reasonDetail = winner?.selectionReasons.joined(separator: "+") ?? "fallback"
         let reason: String
         if trueHDDeprioritized {
-            reason = "E-AC-3/AC-3 preferred over TrueHD for Apple native playback compatibility"
-        } else if selectedCodec.contains("eac3") || selectedCodec.contains("ec3") {
-            reason = "E-AC-3 selected for native Apple playback"
+            reason = "TrueHD deprioritized for Apple-native path; selected \(selectedCodec) [\(reasonDetail)]"
         } else {
-            reason = "Selected best compatible audio codec (\(selectedCodec))"
+            reason = "Selected \(selectedCodec) [\(reasonDetail)]"
         }
 
         return AudioCompatibilitySelection(
             selectedCodec: selectedCodec,
-            selectedTrackIndex: winner?.index,
+            selectedTrackIndex: winner?.trackIndex,
             reason: reason,
             prefersDirectCopy: prefersDirectCopy,
             trueHDWasDeprioritized: trueHDDeprioritized
@@ -759,7 +877,8 @@ public struct PlaybackDecisionEngine: Sendable {
         let audioSelection = audioSelector.selectPreferredAudioTrack(
             from: source.audioTracks,
             fallbackCodec: source.normalizedAudioCodec,
-            nativePlayerPath: true
+            nativePlayerPath: true,
+            preferredLanguage: configuration.preferredAudioLanguage
         )
         let audioCodec = audioSelection.selectedCodec
 
@@ -956,7 +1075,8 @@ public struct PlaybackDecisionEngine: Sendable {
         let audioSelection = audioSelector.selectPreferredAudioTrack(
             from: source.audioTracks,
             fallbackCodec: source.normalizedAudioCodec,
-            nativePlayerPath: true
+            nativePlayerPath: true,
+            preferredLanguage: configuration.preferredAudioLanguage
         )
         let selectedAudioCodec = audioSelection.selectedCodec.isEmpty ? "aac" : audioSelection.selectedCodec
         let allowAudioCopyInStrict = mode == .strictQuality && audioSelection.prefersDirectCopy && !selectedAudioCodec.contains("truehd")

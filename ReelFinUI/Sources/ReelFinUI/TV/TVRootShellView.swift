@@ -1,3 +1,4 @@
+#if os(tvOS)
 import SwiftUI
 
 struct TVRootShellView: View {
@@ -62,3 +63,4 @@ private struct TVRootContentView: View {
         ReelFinTheme.tvTopNavigationBarHeight + 34
     }
 }
+#endif

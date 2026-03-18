@@ -1399,10 +1399,12 @@ private struct SeasonPickerView: View {
                             }
                         )
                         .focused(focusedSeasonID, equals: season.id)
+                        #if os(tvOS)
                         .onMoveCommand { direction in
                             guard direction == .up else { return }
                             onMoveUp()
                         }
+                        #endif
                     }
                 }
                 .padding(.horizontal, rowContentHorizontalPadding)

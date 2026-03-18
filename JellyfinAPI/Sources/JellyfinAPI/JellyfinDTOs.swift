@@ -461,6 +461,7 @@ struct MediaStreamDTO: Decodable {
     let displayTitle: String?
     let language: String?
     let isDefault: Bool?
+    let isForced: Bool?
     let codec: String?
     let profile: String?
     let bitDepth: Int?
@@ -494,6 +495,7 @@ struct MediaStreamDTO: Decodable {
         displayTitle: String?,
         language: String?,
         isDefault: Bool?,
+        isForced: Bool? = nil,
         codec: String?,
         profile: String?,
         bitDepth: Int?,
@@ -526,6 +528,7 @@ struct MediaStreamDTO: Decodable {
         self.displayTitle = displayTitle
         self.language = language
         self.isDefault = isDefault
+        self.isForced = isForced
         self.codec = codec
         self.profile = profile
         self.bitDepth = bitDepth
@@ -560,6 +563,7 @@ struct MediaStreamDTO: Decodable {
         case displayTitle = "DisplayTitle"
         case language = "Language"
         case isDefault = "IsDefault"
+        case isForced = "IsForced"
         case codec = "Codec"
         case profile = "Profile"
         case bitDepth = "BitDepth"
@@ -607,6 +611,7 @@ struct MediaStreamDTO: Decodable {
         displayTitle = try container.decodeIfPresent(String.self, forKey: .displayTitle)
         language = try container.decodeIfPresent(String.self, forKey: .language)
         isDefault = Self.flexibleBool(from: container, forKey: .isDefault)
+        isForced = Self.flexibleBool(from: container, forKey: .isForced)
         codec = try container.decodeIfPresent(String.self, forKey: .codec)
         profile = try container.decodeIfPresent(String.self, forKey: .profile)
         bitDepth = try container.decodeIfPresent(Int.self, forKey: .bitDepth)
@@ -642,6 +647,7 @@ struct MediaStreamDTO: Decodable {
             language: language,
             codec: streamCodec ?? codec,
             isDefault: isDefault ?? false,
+            isForced: isForced ?? false,
             index: trackIndex
         )
     }

@@ -61,6 +61,13 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
     public var preferAudioTranscodeOnly: Bool
     public var maxStreamingBitrateOverride: Int?
     public var forceH264FallbackWhenNotDirectPlay: Bool
+    /// BCP-47 / ISO 639 language tag for preferred audio track selection (e.g. "fr", "en", "de").
+    /// When set this is the primary signal for audio track choice — it beats codec prestige.
+    /// nil means "use the track flagged as default, or the first native-compatible track".
+    public var preferredAudioLanguage: String?
+    /// BCP-47 / ISO 639 language tag for preferred subtitle track selection (e.g. "fr", "en").
+    /// Used for initial auto-selection of forced or default subtitle tracks at startup.
+    public var preferredSubtitleLanguage: String?
 
     public init(
         serverURL: URL,
@@ -71,7 +78,9 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         allowSDRFallback: Bool? = nil,
         preferAudioTranscodeOnly: Bool = true,
         maxStreamingBitrateOverride: Int? = nil,
-        forceH264FallbackWhenNotDirectPlay: Bool = false
+        forceH264FallbackWhenNotDirectPlay: Bool = false,
+        preferredAudioLanguage: String? = nil,
+        preferredSubtitleLanguage: String? = nil
     ) {
         self.serverURL = serverURL
         self.allowCellularStreaming = allowCellularStreaming
@@ -82,6 +91,8 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         self.preferAudioTranscodeOnly = preferAudioTranscodeOnly
         self.maxStreamingBitrateOverride = maxStreamingBitrateOverride
         self.forceH264FallbackWhenNotDirectPlay = forceH264FallbackWhenNotDirectPlay
+        self.preferredAudioLanguage = preferredAudioLanguage
+        self.preferredSubtitleLanguage = preferredSubtitleLanguage
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -94,6 +105,8 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         case preferAudioTranscodeOnly
         case maxStreamingBitrateOverride
         case forceH264FallbackWhenNotDirectPlay
+        case preferredAudioLanguage
+        case preferredSubtitleLanguage
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,6 +121,8 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         preferAudioTranscodeOnly = try container.decodeIfPresent(Bool.self, forKey: .preferAudioTranscodeOnly) ?? true
         maxStreamingBitrateOverride = try container.decodeIfPresent(Int.self, forKey: .maxStreamingBitrateOverride)
         forceH264FallbackWhenNotDirectPlay = try container.decodeIfPresent(Bool.self, forKey: .forceH264FallbackWhenNotDirectPlay) ?? false
+        preferredAudioLanguage = try container.decodeIfPresent(String.self, forKey: .preferredAudioLanguage)
+        preferredSubtitleLanguage = try container.decodeIfPresent(String.self, forKey: .preferredSubtitleLanguage)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -121,6 +136,8 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         try container.encode(preferAudioTranscodeOnly, forKey: .preferAudioTranscodeOnly)
         try container.encodeIfPresent(maxStreamingBitrateOverride, forKey: .maxStreamingBitrateOverride)
         try container.encode(forceH264FallbackWhenNotDirectPlay, forKey: .forceH264FallbackWhenNotDirectPlay)
+        try container.encodeIfPresent(preferredAudioLanguage, forKey: .preferredAudioLanguage)
+        try container.encodeIfPresent(preferredSubtitleLanguage, forKey: .preferredSubtitleLanguage)
     }
 
     public var effectiveMaxStreamingBitrate: Int {
@@ -322,6 +339,7 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
     public var language: String?
     public var codec: String?
     public var isDefault: Bool
+    public var isForced: Bool
     public var index: Int
 
     public init(
@@ -330,6 +348,7 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         language: String? = nil,
         codec: String? = nil,
         isDefault: Bool,
+        isForced: Bool = false,
         index: Int
     ) {
         self.id = id
@@ -337,6 +356,7 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         self.language = language
         self.codec = codec
         self.isDefault = isDefault
+        self.isForced = isForced
         self.index = index
     }
 }

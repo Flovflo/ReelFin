@@ -20,7 +20,6 @@ struct TVTopBackdropOverlay: View {
                     .fill(Color.white.opacity(0.018))
                     .frame(height: 1)
             }
-            .blur(radius: 10)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

@@ -215,6 +215,7 @@ struct HomeView: View {
 
     private let dependencies: ReelFinDependencies
     @State private var scrollInterval: SignpostInterval?
+    @State private var ambientItemTask: Task<Void, Never>?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
     @State private var selectedDetailContextItems: [MediaItem] = []
@@ -599,9 +600,16 @@ struct HomeView: View {
     }
 
     private func handleFocusedItem(_ item: MediaItem, neighbors: [MediaItem]) {
-        ambientItem = item
-        Task(priority: .utility) {
-            await primePresentation(for: item, neighbors: neighbors)
+        // Debounce: rapid focus changes during scroll must not trigger a full
+        // CinematicBackdropView reload (which blurs large images) on every frame.
+        // Only commit the new ambient item when focus settles for 150 ms.
+        ambientItemTask?.cancel()
+        ambientItemTask = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            ambientItem = item
+            Task(priority: .utility) {
+                await primePresentation(for: item, neighbors: neighbors)
+            }
         }
     }
 
