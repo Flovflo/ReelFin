@@ -23,6 +23,7 @@ struct TVTopNavigationItem: View {
         .padding(.horizontal, 24)
         .frame(height: ReelFinTheme.tvTopNavigationItemHeight)
         .frame(minWidth: destination == .search ? 170 : 210)
+        .compositingGroup()
         .background { highlightBackground }
         .contentShape(Capsule(style: .continuous))
         .scaleEffect(isFocused ? 1.03 : 1)
@@ -50,45 +51,61 @@ struct TVTopNavigationItem: View {
     @ViewBuilder
     private var highlightBackground: some View {
         if isHighlighted {
-            if #available(tvOS 26.0, *) {
-                Capsule(style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                appearance.highlightBaseColor,
-                                appearance.highlightGlowColor
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            appearance.highlightBaseColor.opacity(isFocused ? 0.98 : 0.94),
+                            appearance.highlightBaseColor.opacity(isFocused ? 0.88 : 0.82)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .fill(Color.white.opacity(0.04))
-                            .glassEffect(activeGlass, in: .capsule)
-                    }
-                    .glassEffectID("tv-top-nav-highlight", in: highlightNamespace)
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [Color.white.opacity(0.34), appearance.railStrokeColor.opacity(0.28)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
+                )
+                .background { highlightGlass }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.16), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
                             )
-                    }
-            } else {
-                Capsule(style: .continuous)
-                    .fill(appearance.highlightBaseColor.opacity(isFocused ? 1 : 0.92))
-            }
+                        )
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.34), appearance.railStrokeColor.opacity(0.28)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                }
+                .shadow(
+                    color: appearance.highlightGlowColor.opacity(isFocused ? 0.24 : 0.16),
+                    radius: isFocused ? 14 : 8,
+                    x: 0,
+                    y: isFocused ? 6 : 4
+                )
+                .matchedGeometryEffect(id: "tv-top-nav-highlight", in: highlightNamespace)
+        }
+    }
+
+    @ViewBuilder
+    private var highlightGlass: some View {
+        if #available(tvOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(Color.clear)
+                .glassEffect(activeGlass, in: .capsule)
         }
     }
 
     @available(tvOS 26.0, *)
     private var activeGlass: Glass {
-        let tint = appearance.highlightGlassTint.opacity(isFocused ? 0.42 : 0.28)
+        let tint = appearance.highlightGlassTint.opacity(isFocused ? 0.22 : 0.14)
         return Glass.regular.tint(tint).interactive()
     }
 }
