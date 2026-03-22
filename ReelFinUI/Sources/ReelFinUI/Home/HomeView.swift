@@ -364,11 +364,9 @@ struct HomeView: View {
         .task {
             await viewModel.load()
         }
-        .fullScreenCover(isPresented: $showPlayer) {
+        .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession, let playerItem {
-                PlayerView(session: playerSession, item: playerItem) {
-                    showPlayer = false
-                }
+                PlayerView(session: playerSession, item: playerItem)
             }
         }
         .alert(
@@ -726,6 +724,15 @@ struct HomeView: View {
             guard !Task.isCancelled else { return }
             await primePresentation(for: item, neighbors: neighbors)
         }
+    }
+
+    @MainActor
+    private func handlePlayerDismissal() {
+        playerSession?.stop()
+        playerSession = nil
+        playerItem = nil
+        showPlayer = false
+        isPreparingPlayback = false
     }
 }
 

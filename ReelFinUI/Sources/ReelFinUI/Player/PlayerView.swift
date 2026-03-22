@@ -8,7 +8,6 @@ import UIKit
 struct PlayerView: View {
     var session: PlaybackSessionController
     let item: MediaItem
-    let onDismiss: () -> Void
 
 #if os(iOS)
     @State private var showingTrackPicker = false
@@ -75,14 +74,13 @@ struct PlayerView: View {
         }
 #endif
         .onDisappear {
-            session.pause()
+            session.stop()
 #if os(iOS)
             OrientationManager.shared.lock = .portrait
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                 windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
             }
 #endif
-            onDismiss()
         }
         .onAppear {
 #if os(iOS)

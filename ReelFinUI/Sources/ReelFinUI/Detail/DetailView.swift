@@ -126,11 +126,9 @@ struct DetailView: View {
         } message: {
             Text(viewModel.errorMessage ?? "Unknown error")
         }
-        .fullScreenCover(isPresented: $showPlayer) {
+        .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession {
-                PlayerView(session: playerSession, item: viewModel.itemToPlay) {
-                    showPlayer = false
-                }
+                PlayerView(session: playerSession, item: viewModel.itemToPlay)
             }
         }
     }
@@ -476,6 +474,14 @@ struct DetailView: View {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func handlePlayerDismissal() {
+        playerSession?.stop()
+        playerSession = nil
+        showPlayer = false
+        isLoadingPlayback = false
     }
 
     private var shouldShowSeasonPicker: Bool {

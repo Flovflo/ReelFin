@@ -311,15 +311,7 @@ public final class PlaybackSessionController {
 
     @MainActor
     deinit {
-        if let periodicObserver {
-            player.removeTimeObserver(periodicObserver)
-        }
-
-        [endObserver, stalledObserver, accessLogObserver].forEach {
-            if let observer = $0 {
-                NotificationCenter.default.removeObserver(observer)
-            }
-        }
+        tearDownCurrentItemObservers()
 
         lifecycleObservers.forEach {
             NotificationCenter.default.removeObserver($0)
@@ -1040,6 +1032,82 @@ public final class PlaybackSessionController {
         }
     }
 
+    public func stop() {
+        let progressSnapshot = makeProgressSnapshot(isPaused: true, didFinish: false)
+        let bridgeSession = nativeBridgeSession
+
+        pause()
+        tearDownCurrentItemObservers()
+        player.replaceCurrentItem(with: nil)
+
+        currentTime = 0
+        duration = 0
+        availableAudioTracks = []
+        availableSubtitleTracks = []
+        selectedAudioTrackID = nil
+        selectedSubtitleTrackID = nil
+        routeDescription = ""
+        debugInfo = nil
+        currentPlaybackPlan = nil
+        runtimeHDRMode = .unknown
+        metrics = PlaybackPerformanceMetrics()
+        isExternalPlaybackActive = false
+        playbackErrorMessage = nil
+        playbackProof = PlaybackProofSnapshot()
+
+        currentItemID = nil
+        currentItemHasDolbyVision = false
+        currentSource = nil
+        pendingResumeSeconds = nil
+        didResumeAfterForeground = false
+        hasMarkedFirstFrame = false
+        hasDecodedVideoFrame = false
+        playMethodForReporting = "Transcode"
+        lastPreparedSelection = nil
+        videoOutput = nil
+        selectedVariantInfo = nil
+        selectedMasterPlaylistURL = nil
+        selectedVariantPlaylistInspection = nil
+        selectedInitSegmentInspection = nil
+        localHLSStartupSummary = nil
+
+        readyInterval = nil
+        firstFrameInterval = nil
+        activeStallInterval = nil
+        ttffPipelineInterval = nil
+        ttffInfoInterval = nil
+        ttffResolveInterval = nil
+        ttffFirstBytesInterval = nil
+        ttffReadyMs = 0
+        ttffInfoMs = 0
+        ttffResolveMs = 0
+        ttffFirstBytesMs = 0
+
+        startupWatchdogTask?.cancel()
+        startupWatchdogTask = nil
+        decodedFrameWatchdogTask?.cancel()
+        decodedFrameWatchdogTask = nil
+        videoOutputPollTask?.cancel()
+        videoOutputPollTask = nil
+
+        nativeBridgeSession = nil
+        syntheticHLSSession = nil
+        localHLSServer?.stop(reason: "session_stopped")
+        localHLSServer = nil
+
+        if let progressSnapshot {
+            Task { @MainActor [weak self] in
+                await self?.persistProgress(snapshot: progressSnapshot)
+            }
+        }
+
+        if let bridgeSession {
+            Task {
+                await bridgeSession.invalidate()
+            }
+        }
+    }
+
     public func play() {
         player.play()
     }
@@ -1513,16 +1581,7 @@ public final class PlaybackSessionController {
     }
 
     private func configureObservers(for item: AVPlayerItem) {
-        if let periodicObserver {
-            player.removeTimeObserver(periodicObserver)
-            self.periodicObserver = nil
-        }
-
-        [endObserver, stalledObserver, accessLogObserver].forEach {
-            if let observer = $0 {
-                NotificationCenter.default.removeObserver(observer)
-            }
-        }
+        tearDownCurrentItemObservers()
 
         periodicObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 1, preferredTimescale: 600),
@@ -3055,25 +3114,28 @@ public final class PlaybackSessionController {
     }
 
     private func persistProgress(isPaused: Bool, didFinish: Bool) async {
-        guard let itemID = currentItemID else { return }
+        guard let snapshot = makeProgressSnapshot(isPaused: isPaused, didFinish: didFinish) else { return }
+        await persistProgress(snapshot: snapshot)
+    }
+
+    private func makeProgressSnapshot(
+        isPaused: Bool,
+        didFinish: Bool
+    ) -> (local: PlaybackProgress, remote: PlaybackProgressUpdate)? {
+        guard let itemID = currentItemID else { return nil }
 
         let positionSeconds = max(0, player.currentTime().seconds)
         let totalSeconds = max(positionSeconds, player.currentItem?.duration.seconds ?? 0)
-
         let positionTicks = Int64(positionSeconds * 10_000_000)
         let totalTicks = Int64(totalSeconds * 10_000_000)
 
-        let localProgress = PlaybackProgress(
+        let local = PlaybackProgress(
             itemID: itemID,
             positionTicks: positionTicks,
             totalTicks: totalTicks,
             updatedAt: Date()
         )
-        if (try? await repository.fetchItem(id: itemID)) != nil {
-            try? await repository.savePlaybackProgress(localProgress)
-        }
-
-        let remoteProgress = PlaybackProgressUpdate(
+        let remote = PlaybackProgressUpdate(
             itemID: itemID,
             positionTicks: positionTicks,
             totalTicks: totalTicks,
@@ -3082,8 +3144,34 @@ public final class PlaybackSessionController {
             didFinish: didFinish,
             playMethod: playMethodForReporting
         )
+        return (local, remote)
+    }
 
-        try? await apiClient.reportPlayback(progress: remoteProgress)
+    private func persistProgress(
+        snapshot: (local: PlaybackProgress, remote: PlaybackProgressUpdate)
+    ) async {
+        if (try? await repository.fetchItem(id: snapshot.local.itemID)) != nil {
+            try? await repository.savePlaybackProgress(snapshot.local)
+        }
+        try? await apiClient.reportPlayback(progress: snapshot.remote)
+    }
+
+    private func tearDownCurrentItemObservers() {
+        if let periodicObserver {
+            player.removeTimeObserver(periodicObserver)
+            self.periodicObserver = nil
+        }
+
+        [endObserver, stalledObserver, accessLogObserver].forEach {
+            if let observer = $0 {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        endObserver = nil
+        stalledObserver = nil
+        accessLogObserver = nil
+        playerItemStatusObserver = nil
     }
 
     private func routeLabel(for route: PlaybackRoute) -> String {
