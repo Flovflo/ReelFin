@@ -5,6 +5,7 @@ struct TVTopNavigationBar: View {
 
     @Binding var selectedDestination: TVRootDestination
     let focusedDestination: FocusState<TVRootDestination?>.Binding
+    let appearance: TVTopNavigationAppearance
 
     var body: some View {
         Group {
@@ -30,6 +31,7 @@ struct TVTopNavigationBar: View {
                     destination: destination,
                     isHighlighted: highlightedDestination == destination,
                     isSelected: selectedDestination == destination,
+                    appearance: appearance,
                     highlightNamespace: highlightNamespace,
                     focusedDestination: focusedDestination,
                     action: { selectedDestination = destination }
@@ -40,10 +42,28 @@ struct TVTopNavigationBar: View {
     }
 
     private var railBackground: some View {
-        Color.clear
-            .reelFinGlassCapsule(
-                tint: Color(red: 0.79, green: 0.60, blue: 0.26).opacity(0.22),
-                stroke: Color.white.opacity(0.14),
+        ZStack {
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            appearance.railGlassTint.opacity(0.92),
+                            Color.black.opacity(0.40)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .blur(radius: 0.5)
+
+            Capsule(style: .continuous)
+                .fill(appearance.railGlowColor)
+                .padding(.horizontal, 22)
+                .blur(radius: 18)
+        }
+        .reelFinGlassCapsule(
+                tint: appearance.railGlassTint,
+                stroke: appearance.railStrokeColor,
                 shadowOpacity: 0,
                 shadowRadius: 0,
                 shadowYOffset: 0
@@ -54,7 +74,7 @@ struct TVTopNavigationBar: View {
         Capsule(style: .continuous)
             .stroke(
                 LinearGradient(
-                    colors: [Color.white.opacity(0.22), Color.white.opacity(0.06)],
+                    colors: [appearance.railStrokeColor.opacity(0.90), Color.white.opacity(0.06)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ),

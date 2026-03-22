@@ -394,19 +394,12 @@ public struct HeroCarouselView: View {
 
     @ViewBuilder
     private func tvActionButtons(for item: MediaItem) -> some View {
-        HStack(spacing: 16) {
-            TVHeroCapsuleButton(
-                title: primaryActionTitle(for: item),
-                systemImage: "play.fill",
-                action: { (onPlay ?? onTap)(item) }
-            )
-
-            TVHeroCircleButton(
-                systemImage: "info.circle.fill",
-                isLight: true,
-                action: { onTap(item) }
-            )
-        }
+        TVHeroCapsuleButton(
+            title: primaryActionTitle(for: item),
+            systemImage: "play.fill",
+            onMoveCommand: handleMoveCommand,
+            action: { (onPlay ?? onTap)(item) }
+        )
     }
 
     // MARK: Page Control
@@ -632,6 +625,7 @@ private struct TVHeroCapsuleButton: View {
 
     let title: String
     let systemImage: String
+    let onMoveCommand: (MoveCommandDirection) -> Void
     let action: () -> Void
 
     var body: some View {
@@ -662,6 +656,7 @@ private struct TVHeroCapsuleButton: View {
         .onTapGesture(perform: action)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Swipe left or right to browse featured titles.")
     }
 
     private var backgroundFill: Color {
@@ -669,58 +664,14 @@ private struct TVHeroCapsuleButton: View {
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
-        guard direction == .up else { return }
-        requestTopNavigationFocus?(.watchNow)
-    }
-}
-
-private struct TVHeroCircleButton: View {
-    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
-    @FocusState private var isFocused: Bool
-
-    let systemImage: String
-    let isLight: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 22, weight: .bold))
-            .foregroundStyle(foregroundColor)
-            .frame(width: 58, height: 58)
-            .background(backgroundFill, in: Circle())
-            .overlay {
-                Circle()
-                    .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
-            }
-            .contentShape(Circle())
-            .scaleEffect(isFocused ? 1.05 : 1)
-            .shadow(color: .black.opacity(isFocused ? 0.32 : 0.14), radius: isFocused ? 18 : 8, x: 0, y: isFocused ? 10 : 4)
-            .focusable(true, interactions: .activate)
-            .focused($isFocused)
-            .focusEffectDisabled(true)
-            .onMoveCommand(perform: handleMoveCommand)
-            .onTapGesture(perform: action)
-            .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
-            .accessibilityAddTraits(.isButton)
-    }
-
-    private var foregroundColor: Color {
-        if isFocused {
-            return Color.black.opacity(0.92)
+        switch direction {
+        case .up:
+            requestTopNavigationFocus?(.watchNow)
+        case .left, .right:
+            onMoveCommand(direction)
+        default:
+            break
         }
-        return isLight ? Color.black.opacity(0.92) : .white
-    }
-
-    private var backgroundFill: Color {
-        if isFocused {
-            return .white
-        }
-        return isLight ? Color.white.opacity(0.90) : Color.white.opacity(0.10)
-    }
-
-    private func handleMoveCommand(_ direction: MoveCommandDirection) {
-        guard direction == .up else { return }
-        requestTopNavigationFocus?(.watchNow)
     }
 }
 #endif

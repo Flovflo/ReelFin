@@ -1,36 +1,6 @@
 import Shared
 import SwiftUI
 
-#if os(tvOS)
-private struct TVLibraryCardButton: View {
-    @FocusState private var isFocused: Bool
-
-    let item: MediaItem
-    let dependencies: ReelFinDependencies
-    let onFocus: (MediaItem) -> Void
-    let onSelect: (MediaItem) -> Void
-
-    var body: some View {
-        PosterCardView(
-            item: item,
-            apiClient: dependencies.apiClient,
-            imagePipeline: dependencies.imagePipeline,
-            layoutStyle: .grid,
-            titleLineLimit: 2
-        )
-        .focusable(true, interactions: .activate)
-        .focused($isFocused)
-        .focusEffectDisabled(true)
-        .onTapGesture { onSelect(item) }
-        .accessibilityIdentifier("media_card_button_\(item.id)")
-        .onChange(of: isFocused) { _, focused in
-            guard focused else { return }
-            onFocus(item)
-        }
-    }
-}
-#endif
-
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel: LibraryViewModel
@@ -53,7 +23,7 @@ struct LibraryView: View {
                     LazyVGrid(columns: columns, spacing: gridSpacing) {
                         ForEach(viewModel.items) { item in
 #if os(tvOS)
-                            TVLibraryCardButton(
+                            TVLibraryPosterCard(
                                 item: item,
                                 dependencies: dependencies,
                                 onFocus: { focusedItem in
@@ -146,6 +116,7 @@ struct LibraryView: View {
         }
 #if os(tvOS)
         .toolbar(.hidden, for: .navigationBar)
+        .preference(key: TVTopNavigationAppearancePreferenceKey.self, value: .neutral)
 #elseif os(iOS)
         .toolbar(.hidden, for: .navigationBar)
 #endif
@@ -160,54 +131,16 @@ struct LibraryView: View {
 #endif
     }
 
-    // MARK: - tvOS top bar: searchable + filter chips side by side
-
+#if os(tvOS)
     private var tvTopBar: some View {
-        HStack(spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Library")
-                    .reelFinTitleStyle()
-                Text("Browse movies and series with a clean focus-first layout.")
-                    .font(.system(size: 18, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.62))
-            }
-
-            Spacer()
-
-            glassGroup(spacing: 12) {
-                HStack(spacing: 12) {
-                    filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
-                        toggleTVFilter(.movie)
-                    }
-                    filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
-                        toggleTVFilter(.series)
-                    }
-
-                    Menu {
-                        Picker("Sort", selection: $viewModel.sortMode) {
-                            ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue).tag(mode)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up.arrow.down")
-                            .font(.system(size: 20, weight: .semibold))
-                            .padding(14)
-                            .foregroundStyle(.white.opacity(0.96))
-                            .background {
-                                Color.clear.reelFinGlassCircle(
-                                    interactive: true,
-                                    tint: Color.white.opacity(0.10),
-                                    stroke: Color.white.opacity(0.14)
-                                )
-                            }
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, horizontalPadding)
-        .padding(.top, 22)
+        TVLibraryControlBar(
+            selectedFilter: viewModel.selectedFilter,
+            sortMode: viewModel.sortMode,
+            onFilterChange: setTVFilter,
+            onSortToggle: toggleTVSortMode
+        )
     }
+#endif
 
     // MARK: - iOS top bar: full search bar + filter chips
 
@@ -390,7 +323,13 @@ struct LibraryView: View {
         }
     }
 
-    private func toggleTVFilter(_ filter: MediaType) {
-        viewModel.selectedFilter = viewModel.selectedFilter == filter ? nil : filter
+#if os(tvOS)
+    private func setTVFilter(_ filter: MediaType?) {
+        viewModel.selectedFilter = filter
     }
+
+    private func toggleTVSortMode() {
+        viewModel.sortMode = viewModel.sortMode == .recent ? .title : .recent
+    }
+#endif
 }

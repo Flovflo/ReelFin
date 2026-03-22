@@ -6,6 +6,7 @@ struct TVTopNavigationItem: View {
     let destination: TVRootDestination
     let isHighlighted: Bool
     let isSelected: Bool
+    let appearance: TVTopNavigationAppearance
     let highlightNamespace: Namespace.ID
     let focusedDestination: FocusState<TVRootDestination?>.Binding
     let action: () -> Void
@@ -43,7 +44,7 @@ struct TVTopNavigationItem: View {
     }
 
     private var labelColor: Color {
-        isHighlighted ? Color.black.opacity(0.92) : Color.white.opacity(isSelected ? 0.98 : 0.94)
+        isHighlighted ? appearance.highlightLabelColor : Color.white.opacity(isSelected ? 0.98 : 0.94)
     }
 
     @ViewBuilder
@@ -51,14 +52,27 @@ struct TVTopNavigationItem: View {
         if isHighlighted {
             if #available(tvOS 26.0, *) {
                 Capsule(style: .continuous)
-                    .fill(Color.white.opacity(0.02))
-                    .glassEffect(activeGlass, in: .capsule)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                appearance.highlightBaseColor,
+                                appearance.highlightGlowColor
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.04))
+                            .glassEffect(activeGlass, in: .capsule)
+                    }
                     .glassEffectID("tv-top-nav-highlight", in: highlightNamespace)
                     .overlay {
                         Capsule(style: .continuous)
                             .stroke(
                                 LinearGradient(
-                                    colors: [Color.white.opacity(0.28), Color.white.opacity(0.06)],
+                                    colors: [Color.white.opacity(0.34), appearance.railStrokeColor.opacity(0.28)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
@@ -67,14 +81,14 @@ struct TVTopNavigationItem: View {
                     }
             } else {
                 Capsule(style: .continuous)
-                    .fill(Color.white.opacity(isFocused ? 0.96 : 0.88))
+                    .fill(appearance.highlightBaseColor.opacity(isFocused ? 1 : 0.92))
             }
         }
     }
 
     @available(tvOS 26.0, *)
     private var activeGlass: Glass {
-        let tint = Color.white.opacity(isFocused ? 0.42 : 0.30)
+        let tint = appearance.highlightGlassTint.opacity(isFocused ? 0.42 : 0.28)
         return Glass.regular.tint(tint).interactive()
     }
 }

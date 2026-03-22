@@ -228,10 +228,22 @@ struct HomeView: View {
 
 #if os(iOS)
     @State private var ambientItem: MediaItem?
+#elseif os(tvOS)
+    @State private var tvNavigationAppearance = TVTopNavigationAppearance.neutral
+    @State private var tvAppearanceTask: Task<Void, Never>?
+    @State private var tvNavigationAppearanceResolver: TVTopNavigationAppearanceResolver
 #endif
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
+#if os(tvOS)
+        _tvNavigationAppearanceResolver = State(
+            initialValue: TVTopNavigationAppearanceResolver(
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline
+            )
+        )
+#endif
         self.dependencies = dependencies
     }
 
@@ -333,9 +345,13 @@ struct HomeView: View {
 #if os(tvOS)
         .toolbar(.hidden, for: .navigationBar)
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
+        .preference(key: TVTopNavigationAppearancePreferenceKey.self, value: tvNavigationAppearance)
 #endif
         .onDisappear {
             warmupTask?.cancel()
+#if os(tvOS)
+            tvAppearanceTask?.cancel()
+#endif
         }
         .navigationDestination(
             isPresented: Binding(
@@ -363,6 +379,13 @@ struct HomeView: View {
         }
         .task {
             await viewModel.load()
+#if os(tvOS)
+            if let item = viewModel.feed.featured.first {
+                scheduleTVNavigationAppearance(for: item)
+            } else {
+                tvNavigationAppearance = .neutral
+            }
+#endif
         }
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession, let playerItem {
@@ -410,9 +433,10 @@ struct HomeView: View {
                 onVisibleItemChange: { item in
                     scheduleWarmup(
                         for: item,
-                        neighbors: Array(viewModel.feed.featured.prefix(3)),
+                        neighbors: featuredContextItems(around: item),
                         settleDelayNanoseconds: 0
                     )
+                    scheduleTVNavigationAppearance(for: item)
                 },
                 onPlay: handleFeaturedPlay,
                 onTap: handleFeaturedSelection
@@ -611,6 +635,15 @@ struct HomeView: View {
         scheduleWarmup(for: item, neighbors: neighbors, settleDelayNanoseconds: 150_000_000)
     }
 
+    private func featuredContextItems(around item: MediaItem) -> [MediaItem] {
+        guard let centerIndex = featuredItems.firstIndex(where: { $0.id == item.id }) else {
+            return Array(featuredItems.prefix(3))
+        }
+        let lowerBound = max(0, centerIndex - 1)
+        let upperBound = min(featuredItems.count, centerIndex + 3)
+        return Array(featuredItems[lowerBound..<upperBound])
+    }
+
     private func handleFeaturedSelection(_ item: MediaItem) {
 #if os(iOS)
         ambientItem = item
@@ -631,6 +664,22 @@ struct HomeView: View {
 
         viewModel.select(item: item)
     }
+
+#if os(tvOS)
+    private func scheduleTVNavigationAppearance(for item: MediaItem) {
+        tvAppearanceTask?.cancel()
+        tvNavigationAppearance = TVTopNavigationAppearance.fallback(for: item)
+        tvAppearanceTask = Task(priority: .utility) {
+            let appearance = await tvNavigationAppearanceResolver.appearance(for: item)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    tvNavigationAppearance = appearance
+                }
+            }
+        }
+    }
+#endif
 
     private func handleFeaturedPlay(_ item: MediaItem) {
         guard !isPreparingPlayback else { return }
