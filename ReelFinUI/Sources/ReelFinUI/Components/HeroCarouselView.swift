@@ -285,7 +285,7 @@ public struct HeroCarouselView: View {
                         .foregroundStyle(.white.opacity(0.95))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
+                        .background(promoBadgeBackground)
                 }
 
                 // Title – try logo image, fall back to large text
@@ -387,7 +387,37 @@ public struct HeroCarouselView: View {
             .foregroundStyle(.white.opacity(0.9))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(qualityBadgeBackground)
+    }
+
+    @ViewBuilder
+    private var promoBadgeBackground: some View {
+        if #available(tvOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.05))
+                .glassEffect(
+                    Glass.regular.tint(Color.white.opacity(0.08)),
+                    in: .capsule
+                )
+        } else {
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+        }
+    }
+
+    @ViewBuilder
+    private var qualityBadgeBackground: some View {
+        if #available(tvOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+                .glassEffect(
+                    Glass.regular.tint(Color.white.opacity(0.08)),
+                    in: .rect(cornerRadius: 6)
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.ultraThinMaterial)
+        }
     }
 
     // MARK: Action Buttons
@@ -641,11 +671,7 @@ private struct TVHeroCapsuleButton: View {
         .foregroundStyle(isFocused ? Color.black.opacity(0.92) : .white)
         .padding(.horizontal, 28)
         .padding(.vertical, 16)
-        .background(backgroundFill, in: Capsule(style: .continuous))
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
-        }
+        .background { backgroundView }
         .contentShape(Capsule(style: .continuous))
         .scaleEffect(isFocused ? 1.04 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.34 : 0.16), radius: isFocused ? 22 : 10, x: 0, y: isFocused ? 12 : 6)
@@ -659,8 +685,29 @@ private struct TVHeroCapsuleButton: View {
         .accessibilityHint("Swipe left or right to browse featured titles.")
     }
 
-    private var backgroundFill: Color {
-        isFocused ? .white : Color.white.opacity(0.10)
+    @ViewBuilder
+    private var backgroundView: some View {
+        if #available(tvOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(isFocused ? Color.white.opacity(0.08) : .clear)
+                .glassEffect(
+                    Glass.regular
+                        .tint(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.10))
+                        .interactive(),
+                    in: .capsule
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+                }
+        } else {
+            Capsule(style: .continuous)
+                .fill(isFocused ? .white : Color.white.opacity(0.10))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+                }
+        }
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {

@@ -36,6 +36,36 @@ struct TVTopNavigationItem: View {
     @ViewBuilder
     private var highlightBackground: some View {
         if isHighlighted {
+            selectedCapsule
+        }
+    }
+
+    @ViewBuilder
+    private var selectedCapsule: some View {
+        if #available(tvOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .glassEffect(
+                    Glass.regular.tint(appearance.highlightGlassTint).interactive(),
+                    in: .capsule
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.18), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(0.30), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 6)
+                .glassEffectID("tv-top-nav-highlight", in: highlightNamespace)
+        } else {
             Capsule(style: .continuous)
                 .fill(Color.white.opacity(0.94))
                 .overlay {

@@ -2,20 +2,34 @@ import SwiftUI
 
 struct TVTopNavigationBar: View {
     @Namespace private var highlightNamespace
+    @State private var visualHighlightedDestination: TVRootDestination?
 
     @Binding var selectedDestination: TVRootDestination
     let focusedDestination: FocusState<TVRootDestination?>.Binding
     let appearance: TVTopNavigationAppearance
 
     var body: some View {
-        navigationItems
-        .padding(.horizontal, ReelFinTheme.tvTopNavigationHorizontalPadding)
-        .padding(.vertical, 6)
-        .frame(height: ReelFinTheme.tvTopNavigationBarHeight)
-        .frame(maxWidth: ReelFinTheme.tvTopNavigationBarMaxWidth)
-        .background(railBackground)
-        .overlay(railStroke)
-        .shadow(color: .black.opacity(0.30), radius: 28, x: 0, y: 12)
+        Group {
+            if #available(tvOS 26.0, *) {
+                GlassEffectContainer(spacing: 8) { navigationItems }
+            } else {
+                navigationItems
+            }
+        }
+            .padding(.horizontal, ReelFinTheme.tvTopNavigationHorizontalPadding)
+            .padding(.vertical, 6)
+            .frame(height: ReelFinTheme.tvTopNavigationBarHeight)
+            .frame(maxWidth: ReelFinTheme.tvTopNavigationBarMaxWidth)
+            .background(railBackground)
+            .overlay(railStroke)
+            .shadow(color: .black.opacity(0.30), radius: 28, x: 0, y: 12)
+            .onAppear { syncVisualHighlight(animated: false) }
+            .onChange(of: focusedDestination.wrappedValue) { _, _ in
+                syncVisualHighlight()
+            }
+            .onChange(of: selectedDestination) { _, _ in
+                syncVisualHighlight()
+            }
     }
 
     private var navigationItems: some View {
@@ -23,7 +37,7 @@ struct TVTopNavigationBar: View {
             ForEach(TVRootDestination.allCases, id: \.self) { destination in
                 TVTopNavigationItem(
                     destination: destination,
-                    isHighlighted: highlightedDestination == destination,
+                    isHighlighted: renderedHighlightedDestination == destination,
                     isSelected: selectedDestination == destination,
                     appearance: appearance,
                     highlightNamespace: highlightNamespace,
@@ -33,8 +47,6 @@ struct TVTopNavigationBar: View {
             }
         }
         .padding(.horizontal, 8)
-        .animation(ReelFinTheme.tvFocusSpring, value: highlightedDestination)
-        .animation(ReelFinTheme.tvFocusSpring, value: selectedDestination)
     }
 
     private var railBackground: some View {
@@ -64,7 +76,19 @@ struct TVTopNavigationBar: View {
             )
     }
 
-    private var highlightedDestination: TVRootDestination {
-        focusedDestination.wrappedValue ?? selectedDestination
+    private var renderedHighlightedDestination: TVRootDestination {
+        visualHighlightedDestination ?? focusedDestination.wrappedValue ?? selectedDestination
+    }
+
+    private func syncVisualHighlight(animated: Bool = true) {
+        let target = focusedDestination.wrappedValue ?? selectedDestination
+        guard visualHighlightedDestination != target else { return }
+        if animated {
+            withAnimation(ReelFinTheme.tvFocusSpring) {
+                visualHighlightedDestination = target
+            }
+        } else {
+            visualHighlightedDestination = target
+        }
     }
 }

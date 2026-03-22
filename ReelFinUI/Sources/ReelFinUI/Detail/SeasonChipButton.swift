@@ -95,14 +95,32 @@ struct SeasonChipButton: View {
 
     #if os(tvOS)
     private var tvBackground: some View {
-        Color.clear.reelFinGlassCapsule(
-            interactive: true,
-            tint: tvTint,
-            stroke: Color.white.opacity(isFocused ? 0.26 : (isSelected ? 0.16 : 0.10)),
-            shadowOpacity: isFocused ? 0.18 : 0.10,
-            shadowRadius: isFocused ? 18 : 10,
-            shadowYOffset: isFocused ? 8 : 4
-        )
+        Group {
+            if #available(tvOS 26.0, *) {
+                Capsule(style: .continuous)
+                    .fill(isFocused || isSelected ? Color.white.opacity(0.08) : .clear)
+                    .glassEffect(
+                        Glass.regular
+                            .tint(tvTint)
+                            .interactive(),
+                        in: .capsule
+                    )
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(Color.white.opacity(isFocused ? 0.26 : (isSelected ? 0.16 : 0.10)), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(isFocused ? 0.18 : 0.10), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 8 : 4)
+            } else {
+                Color.clear.reelFinGlassCapsule(
+                    interactive: true,
+                    tint: tvTint,
+                    stroke: Color.white.opacity(isFocused ? 0.26 : (isSelected ? 0.16 : 0.10)),
+                    shadowOpacity: isFocused ? 0.18 : 0.10,
+                    shadowRadius: isFocused ? 18 : 10,
+                    shadowYOffset: isFocused ? 8 : 4
+                )
+            }
+        }
     }
 
     private var tvTint: Color {
