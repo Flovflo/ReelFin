@@ -8,13 +8,7 @@ struct TVTopNavigationBar: View {
     let appearance: TVTopNavigationAppearance
 
     var body: some View {
-        Group {
-            if #available(tvOS 26.0, *) {
-                GlassEffectContainer(spacing: 8) { navigationItems }
-            } else {
-                navigationItems
-            }
-        }
+        navigationItems
         .padding(.horizontal, ReelFinTheme.tvTopNavigationHorizontalPadding)
         .padding(.vertical, 6)
         .frame(height: ReelFinTheme.tvTopNavigationBarHeight)

@@ -10,60 +10,40 @@ struct TVTopNavigationItem: View {
     let action: () -> Void
 
     var body: some View {
-        Group {
-            if #available(tvOS 26.0, *) {
-                modernButton
-            } else {
-                legacyButton
-            }
-        }
+        Label(destination.title, systemImage: destination.systemImage)
+            .labelStyle(.titleAndIcon)
+            .symbolRenderingMode(.monochrome)
+            .font(.system(size: 22, weight: .semibold, design: .rounded))
+            .foregroundStyle(labelColor)
+            .padding(.horizontal, 24)
+            .frame(height: ReelFinTheme.tvTopNavigationItemHeight)
+            .frame(minWidth: destination == .search ? 170 : 210)
+            .background { highlightBackground }
+            .contentShape(Capsule(style: .continuous))
+            .focusable(true, interactions: .activate)
+            .focused(focusedDestination, equals: destination)
+            .focusEffectDisabled(true)
+            .onTapGesture(perform: action)
+            .animation(ReelFinTheme.tvFocusSpring, value: isHighlighted)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .accessibilityRepresentation { Button(destination.title, action: action) }
     }
 
-    private var baseButton: some View {
-        Button(action: action) {
-            Label(destination.title, systemImage: destination.systemImage)
-                .labelStyle(.titleAndIcon)
-                .symbolRenderingMode(.monochrome)
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 24)
-                .frame(height: ReelFinTheme.tvTopNavigationItemHeight)
-                .frame(minWidth: destination == .search ? 170 : 210)
-                .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .focused(focusedDestination, equals: destination)
-        .focusEffectDisabled(true)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    @available(tvOS 26.0, *)
-    @ViewBuilder
-    private var modernButton: some View {
-        if isHighlighted {
-            baseButton
-                .glassEffect(
-                    Glass.regular.tint(appearance.highlightGlassTint).interactive(),
-                    in: .capsule
-                )
-                .glassEffectID("tv-top-nav-highlight", in: highlightNamespace)
-        } else {
-            baseButton
-                .foregroundStyle(Color.white.opacity(isSelected ? 0.98 : 0.94))
-        }
+    private var labelColor: Color {
+        isHighlighted ? appearance.highlightLabelColor : Color.white.opacity(isSelected ? 0.98 : 0.94)
     }
 
     @ViewBuilder
-    private var legacyButton: some View {
+    private var highlightBackground: some View {
         if isHighlighted {
-            baseButton
-                .foregroundStyle(appearance.highlightLabelColor)
-                .background {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.94))
+                .overlay {
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.92))
+                        .stroke(Color.white.opacity(0.42), lineWidth: 1)
                 }
-        } else {
-            baseButton
-                .foregroundStyle(Color.white.opacity(isSelected ? 0.98 : 0.94))
+                .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 6)
+                .matchedGeometryEffect(id: "tv-top-nav-highlight", in: highlightNamespace)
         }
     }
 }
