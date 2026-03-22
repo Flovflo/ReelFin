@@ -10,7 +10,7 @@ struct TVTopNavigationBar: View {
     var body: some View {
         Group {
             if #available(tvOS 26.0, *) {
-                GlassEffectContainer(spacing: 10) { navigationItems }
+                GlassEffectContainer(spacing: 8) { navigationItems }
             } else {
                 navigationItems
             }
@@ -39,35 +39,23 @@ struct TVTopNavigationBar: View {
             }
         }
         .padding(.horizontal, 8)
+        .animation(ReelFinTheme.tvFocusSpring, value: highlightedDestination)
+        .animation(ReelFinTheme.tvFocusSpring, value: selectedDestination)
     }
 
     private var railBackground: some View {
-        ZStack {
-            Capsule(style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            appearance.railGlassTint.opacity(0.92),
-                            Color.black.opacity(0.40)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        Group {
+            if #available(tvOS 26.0, *) {
+                Color.clear
+                    .glassEffect(
+                        Glass.regular.tint(appearance.railTint.color(opacity: 0.20)),
+                        in: .capsule
                     )
-                )
-                .blur(radius: 0.5)
-
-            Capsule(style: .continuous)
-                .fill(appearance.railGlowColor)
-                .padding(.horizontal, 22)
-                .blur(radius: 18)
+            } else {
+                Capsule(style: .continuous)
+                    .fill(appearance.railTint.color(opacity: 0.18))
+            }
         }
-        .reelFinGlassCapsule(
-                tint: appearance.railGlassTint,
-                stroke: appearance.railStrokeColor,
-                shadowOpacity: 0,
-                shadowRadius: 0,
-                shadowYOffset: 0
-            )
     }
 
     private var railStroke: some View {
