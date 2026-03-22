@@ -128,13 +128,7 @@ public extension View {
     }
 
     func glassPanelStyle(cornerRadius: CGFloat = ReelFinTheme.glassPanelCornerRadius) -> some View {
-        self
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(ReelFinTheme.glassStrokeColor, lineWidth: ReelFinTheme.glassStrokeWidth)
-            }
-            .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
+        reelFinGlassPanel(cornerRadius: cornerRadius)
     }
 
     func tvCardSurface(focused: Bool, selected: Bool = false, cornerRadius: CGFloat = ReelFinTheme.tvCardCornerRadius) -> some View {

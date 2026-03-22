@@ -716,7 +716,7 @@ private struct HeroBackgroundView: View {
     }
 
     private func preferredWidth(for size: CGSize, multiplier: CGFloat) -> Int {
-        Int((max(size.width, 1) * multiplier * 2).rounded(.up))
+        min(Int((max(size.width, 1) * multiplier).rounded(.up)), 2_200)
     }
 }
 

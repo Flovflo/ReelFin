@@ -13,6 +13,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     private struct WarmEntry: Sendable {
         let selection: PlaybackAssetSelection
         let expirationDate: Date
+        let lastAccessDate: Date
 
         func isValid(at date: Date) -> Bool {
             expirationDate > date
@@ -26,7 +27,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     private var inFlight: [String: Task<PlaybackAssetSelection, Error>] = [:]
 
     public init(
-        ttl: TimeInterval = 120,
+        ttl: TimeInterval = 240,
         resolver: @escaping @Sendable (String) async throws -> PlaybackAssetSelection
     ) {
         self.ttl = ttl
@@ -35,7 +36,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
 
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
-        ttl: TimeInterval = 120,
+        ttl: TimeInterval = 240,
         decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
     ) {
         let coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
@@ -56,7 +57,15 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     public func selection(for itemID: String) async -> PlaybackAssetSelection? {
         let now = Date()
         if let entry = cache[itemID], entry.isValid(at: now) {
+            cache[itemID] = WarmEntry(
+                selection: entry.selection,
+                expirationDate: entry.expirationDate,
+                lastAccessDate: now
+            )
             return entry.selection
+        }
+        if let task = inFlight[itemID] {
+            return try? await task.value
         }
         cache[itemID] = nil
         return nil
@@ -68,7 +77,13 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     }
 
     public func trim(keeping itemIDs: [String]) async {
-        let keep = Set(itemIDs)
+        var keep = Set(itemIDs)
+
+        let recentKeys = cache
+            .sorted { lhs, rhs in lhs.value.lastAccessDate > rhs.value.lastAccessDate }
+            .prefix(4)
+            .map(\.key)
+        keep.formUnion(recentKeys)
 
         for key in inFlight.keys where !keep.contains(key) {
             inFlight[key]?.cancel()
@@ -101,7 +116,11 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
 
         do {
             let selection = try await task.value
-            cache[itemID] = WarmEntry(selection: selection, expirationDate: now.addingTimeInterval(ttl))
+            cache[itemID] = WarmEntry(
+                selection: selection,
+                expirationDate: now.addingTimeInterval(ttl),
+                lastAccessDate: now
+            )
             inFlight[itemID] = nil
             return selection
         } catch {

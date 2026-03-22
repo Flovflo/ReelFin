@@ -495,7 +495,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         queryItems.append(URLQueryItem(name: "format", value: "webp"))
 
         if let width {
-            queryItems.append(URLQueryItem(name: "maxWidth", value: String(width)))
+            queryItems.append(URLQueryItem(name: "maxWidth", value: String(type.normalizedImageWidth(width))))
         }
         if let quality {
             queryItems.append(URLQueryItem(name: "quality", value: String(quality)))
@@ -522,12 +522,14 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         // Speculative prefetching: Generate the most likely artwork requests up front.
         // This warms the server-side cache and improves perceived detail-page readiness.
         for item in items {
+            guard !Task.isCancelled else { return }
             let imageTargets: [(itemID: String, type: JellyfinImageType, width: Int, quality: Int)] = [
                 (item.id, .primary, 400, 80),
                 (item.mediaType == .episode ? (item.parentID ?? item.id) : item.id, .backdrop, 1280, 72)
             ]
 
             for target in imageTargets {
+                guard !Task.isCancelled else { return }
                 guard let imageURL = await imageURL(
                     for: target.itemID,
                     type: target.type,

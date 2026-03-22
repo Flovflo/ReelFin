@@ -50,7 +50,7 @@ public struct TVLoginView: View {
             Circle()
                 .fill(glowColor.opacity(0.22))
                 .frame(width: geo.size.width * 0.7, height: geo.size.width * 0.7)
-                .blur(radius: 180)
+                .blur(radius: 120)
                 .offset(x: geo.size.width * 0.15, y: -geo.size.height * 0.15)
                 .animation(.easeInOut(duration: 0.6), value: phase)
         }
@@ -297,10 +297,16 @@ public struct TVLoginView: View {
                     .tracking(8)
                     .padding(.horizontal, 32)
                     .padding(.vertical, 20)
-                    .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .stroke(.white.opacity(0.22), lineWidth: 2)
+                    .background {
+                        Color.clear.reelFinGlassRoundedRect(
+                            cornerRadius: 28,
+                            tint: Color.white.opacity(0.14),
+                            stroke: Color.white.opacity(0.22),
+                            strokeWidth: 2,
+                            shadowOpacity: 0.18,
+                            shadowRadius: 16,
+                            shadowYOffset: 8
+                        )
                     }
 
                 HStack(spacing: 10) {
@@ -585,15 +591,16 @@ private struct TVStageContainer<Content: View>: View {
         .padding(.horizontal, 34)
         .padding(.vertical, 38)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .background(
-            RoundedRectangle(cornerRadius: 36, style: .continuous)
-                .fill(Color.white.opacity(0.07))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 36, style: .continuous)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        .background {
+            Color.clear.reelFinGlassRoundedRect(
+                cornerRadius: 36,
+                tint: Color.white.opacity(0.09),
+                stroke: Color.white.opacity(0.10),
+                shadowOpacity: 0.28,
+                shadowRadius: 38,
+                shadowYOffset: 18
+            )
         }
-        .shadow(color: .black.opacity(0.28), radius: 38, x: 0, y: 18)
     }
 }
 
@@ -610,23 +617,12 @@ private struct TVButton: View {
     var isLoading: Bool = false
     let action: () -> Void
 
+    @ViewBuilder
     var body: some View {
-        switch style {
-        case .primary:
-            baseButton
-                .buttonStyle(.borderedProminent)
-                .tint(.white)
-                .foregroundStyle(Color.black)
-        case .secondary:
-            baseButton
-                .buttonStyle(.bordered)
-                .tint(.white.opacity(0.18))
-                .foregroundStyle(Color.white)
-        case .ghost:
-            baseButton
-                .buttonStyle(.bordered)
-                .tint(.white.opacity(0.08))
-                .foregroundStyle(Color.white.opacity(0.92))
+        if #available(tvOS 26.0, *) {
+            glassStyledButton
+        } else {
+            legacyStyledButton
         }
     }
 
@@ -651,6 +647,47 @@ private struct TVButton: View {
         .controlSize(.large)
         .disabled(isLoading)
     }
+
+    @available(tvOS 26.0, *)
+    @ViewBuilder
+    private var glassStyledButton: some View {
+        switch style {
+        case .primary:
+            baseButton
+                .buttonStyle(.glassProminent)
+                .tint(.white)
+                .foregroundStyle(Color.black)
+        case .secondary:
+            baseButton
+                .buttonStyle(.glass(.regular.tint(Color.white.opacity(0.10))))
+                .foregroundStyle(Color.white)
+        case .ghost:
+            baseButton
+                .buttonStyle(.glass(.regular.tint(Color.white.opacity(0.05))))
+                .foregroundStyle(Color.white.opacity(0.92))
+        }
+    }
+
+    @ViewBuilder
+    private var legacyStyledButton: some View {
+        switch style {
+        case .primary:
+            baseButton
+                .buttonStyle(.borderedProminent)
+                .tint(.white)
+                .foregroundStyle(Color.black)
+        case .secondary:
+            baseButton
+                .buttonStyle(.bordered)
+                .tint(.white.opacity(0.18))
+                .foregroundStyle(Color.white)
+        case .ghost:
+            baseButton
+                .buttonStyle(.bordered)
+                .tint(.white.opacity(0.08))
+                .foregroundStyle(Color.white.opacity(0.92))
+        }
+    }
 }
 
 private struct TVChip: View {
@@ -671,10 +708,15 @@ private struct TVChip: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
-        .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(.white.opacity(0.14), lineWidth: 1)
+        .background {
+            Color.clear.reelFinGlassRoundedRect(
+                cornerRadius: 22,
+                tint: Color.white.opacity(0.10),
+                stroke: Color.white.opacity(0.14),
+                shadowOpacity: 0.10,
+                shadowRadius: 10,
+                shadowYOffset: 4
+            )
         }
     }
 }
@@ -684,11 +726,16 @@ private extension View {
         self
             .padding(.horizontal, 24)
             .frame(height: 76)
-            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(.white.opacity(0.22), lineWidth: 1.5)
-            }
+            .reelFinGlassRoundedRect(
+                cornerRadius: 28,
+                interactive: true,
+                tint: Color.white.opacity(0.10),
+                stroke: Color.white.opacity(0.22),
+                strokeWidth: 1.5,
+                shadowOpacity: 0.12,
+                shadowRadius: 12,
+                shadowYOffset: 6
+            )
     }
 }
 

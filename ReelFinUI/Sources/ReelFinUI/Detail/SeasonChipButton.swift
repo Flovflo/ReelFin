@@ -28,20 +28,12 @@ struct SeasonChipButton: View {
     private var tvBody: some View {
         Text(title)
             .font(.system(size: 24, weight: isSelected ? .semibold : .regular))
-            .foregroundStyle(isFocused ? .white : (isSelected ? .white : .white.opacity(0.55)))
+            .foregroundStyle(isSelected || isFocused ? Color.black.opacity(0.92) : Color.white.opacity(0.72))
             .padding(.horizontal, 22)
             .padding(.vertical, 12)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(Color.white.opacity(isFocused ? 0.16 : (isSelected ? 0.10 : 0.04)))
-            }
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(isFocused ? 0.28 : (isSelected ? 0.14 : 0.08)), lineWidth: 1)
-            }
+            .background { tvBackground }
             .contentShape(Capsule(style: .continuous))
             .scaleEffect(isFocused ? 1.04 : 1)
-            .shadow(color: .black.opacity(isFocused ? 0.28 : 0.12), radius: isFocused ? 20 : 8, x: 0, y: isFocused ? 10 : 4)
             .focusable(true, interactions: .activate)
             .focused($isFocused)
             .focusEffectDisabled(true)
@@ -73,29 +65,55 @@ struct SeasonChipButton: View {
             .foregroundStyle(iosForeground)
             .frame(minHeight: 44)
             .padding(.horizontal, 16)
-            .background(iosBackground, in: Capsule(style: .continuous))
-            .overlay {
-                Capsule(style: .continuous)
-                    .strokeBorder(Color.white.opacity(isFocused ? 0.36 : 0.14), lineWidth: 0.8)
-            }
+            .background { iosBackground }
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
         .scaleEffect(isFocused ? 1.02 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.24 : 0.10), radius: isFocused ? 14 : 8, x: 0, y: 6)
         .animation(.easeOut(duration: 0.16), value: isFocused)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityValue(isSelected ? "Current season" : "")
     }
 
     private var iosForeground: Color {
-        if isSelected { return Color.black.opacity(0.90) }
+        if isSelected { return Color.black.opacity(0.92) }
         return isFocused ? .white : .white.opacity(0.86)
     }
 
-    private var iosBackground: Color {
-        if isSelected { return .white }
-        return isFocused ? Color.white.opacity(0.18) : Color.white.opacity(0.10)
+    private var iosBackground: some View {
+        Color.clear.reelFinGlassCapsule(
+            interactive: true,
+            tint: iosTint,
+            stroke: Color.white.opacity(isFocused ? 0.22 : 0.12),
+            strokeWidth: 0.8,
+            shadowOpacity: isFocused ? 0.16 : 0.08,
+            shadowRadius: isFocused ? 12 : 8,
+            shadowYOffset: 6
+        )
+    }
+    #endif
+
+    #if os(tvOS)
+    private var tvBackground: some View {
+        Color.clear.reelFinGlassCapsule(
+            interactive: true,
+            tint: tvTint,
+            stroke: Color.white.opacity(isFocused ? 0.26 : (isSelected ? 0.16 : 0.10)),
+            shadowOpacity: isFocused ? 0.18 : 0.10,
+            shadowRadius: isFocused ? 18 : 10,
+            shadowYOffset: isFocused ? 8 : 4
+        )
+    }
+
+    private var tvTint: Color {
+        if isFocused { return Color.white.opacity(0.26) }
+        if isSelected { return Color.white.opacity(0.18) }
+        return Color.white.opacity(0.06)
+    }
+    #else
+    private var iosTint: Color {
+        if isSelected { return Color.white.opacity(0.24) }
+        return isFocused ? Color.white.opacity(0.16) : Color.white.opacity(0.10)
     }
     #endif
 }

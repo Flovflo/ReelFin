@@ -542,26 +542,25 @@ private extension View {
         self
             .padding(.horizontal, 18)
             .frame(height: 56)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(0.08))
+            .reelFinGlassCapsule(
+                interactive: true,
+                tint: Color.white.opacity(0.10),
+                stroke: Color.white.opacity(0.10),
+                shadowOpacity: 0.10,
+                shadowRadius: 10,
+                shadowYOffset: 4
             )
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
-            }
     }
 
     func capsuleSurface() -> some View {
         self
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(0.06))
+            .reelFinGlassCapsule(
+                tint: Color.white.opacity(0.08),
+                stroke: Color.white.opacity(0.10),
+                shadowOpacity: 0.08,
+                shadowRadius: 8,
+                shadowYOffset: 4
             )
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
-            }
     }
 }
 

@@ -15,6 +15,7 @@ public actor LRUDiskCache {
 
     private var entries: [String: Entry] = [:]
     private var currentSizeBytes: Int = 0
+    private var persistTask: Task<Void, Never>?
 
     public init(
         directoryURL: URL? = nil,
@@ -62,17 +63,19 @@ public actor LRUDiskCache {
         let fileURL = directoryURL.appendingPathComponent(entry.fileName)
         guard let data = try? Data(contentsOf: fileURL) else {
             entries[key] = nil
-            persistIndex()
+            schedulePersistIndex()
             return nil
         }
 
         entry.lastAccess = Date()
         entries[key] = entry
-        persistIndex()
+        schedulePersistIndex()
         return data
     }
 
     public func setData(_ data: Data, forKey key: String) {
+        persistTask?.cancel()
+        persistTask = nil
         let fileName = hash(key)
         let fileURL = directoryURL.appendingPathComponent(fileName)
 
@@ -95,6 +98,8 @@ public actor LRUDiskCache {
     }
 
     public func remove(forKey key: String) {
+        persistTask?.cancel()
+        persistTask = nil
         guard let entry = entries[key] else { return }
 
         let fileURL = directoryURL.appendingPathComponent(entry.fileName)
@@ -105,6 +110,8 @@ public actor LRUDiskCache {
     }
 
     public func removeAll() {
+        persistTask?.cancel()
+        persistTask = nil
         for entry in entries.values {
             let fileURL = directoryURL.appendingPathComponent(entry.fileName)
             try? fileManager.removeItem(at: fileURL)
@@ -136,6 +143,21 @@ public actor LRUDiskCache {
     private func persistIndex() {
         guard let data = try? JSONEncoder().encode(entries) else { return }
         try? data.write(to: indexURL, options: .atomic)
+    }
+
+    private func schedulePersistIndex() {
+        persistTask?.cancel()
+        persistTask = Task { [entries, indexURL] in
+            do {
+                try await Task.sleep(nanoseconds: 300_000_000)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            guard let data = try? JSONEncoder().encode(entries) else { return }
+            try? data.write(to: indexURL, options: .atomic)
+        }
     }
 
     private func hash(_ value: String) -> String {

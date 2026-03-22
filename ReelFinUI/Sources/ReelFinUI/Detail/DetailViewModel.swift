@@ -243,7 +243,7 @@ final class DetailViewModel: ObservableObject {
             advancePhase(to: .content)
             await DetailPresentationTelemetry.shared.markMetadataReady(for: itemID)
 
-            await dependencies.apiClient.prefetchImages(for: refreshedDetail.similar.prefix(8).map { $0 })
+            await dependencies.apiClient.prefetchImages(for: refreshedDetail.similar.prefix(4).map { $0 })
         } catch {
             guard isActive(loadToken: loadToken, itemID: itemID) else { return }
             if detail.cast.isEmpty, detail.similar.isEmpty {

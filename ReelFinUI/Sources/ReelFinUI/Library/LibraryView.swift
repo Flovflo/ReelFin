@@ -35,7 +35,7 @@ struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
-    @State private var ambientItem: MediaItem?
+    @State private var warmupTask: Task<Void, Never>?
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: LibraryViewModel(dependencies: dependencies))
@@ -60,7 +60,6 @@ struct LibraryView: View {
                                     handleFocusedItem(focusedItem)
                                 },
                                 onSelect: { selectedItem in
-                                    ambientItem = selectedItem
                                     let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
                                     Task {
                                         await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
@@ -74,7 +73,6 @@ struct LibraryView: View {
 #else
                             VStack(alignment: .leading, spacing: 10) {
                                 Button {
-                                    ambientItem = item
                                     let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
                                     Task {
                                         await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
@@ -126,9 +124,11 @@ struct LibraryView: View {
                 )
             }
         }
+        .onDisappear {
+            warmupTask?.cancel()
+        }
         .task {
             await viewModel.loadInitial()
-            ambientItem = viewModel.items.first
         }
         .onChange(of: viewModel.searchQuery) { _, _ in
             Task {
@@ -174,25 +174,35 @@ struct LibraryView: View {
 
             Spacer()
 
-            filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
-                toggleTVFilter(.movie)
-            }
-            filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
-                toggleTVFilter(.series)
-            }
+            glassGroup(spacing: 12) {
+                HStack(spacing: 12) {
+                    filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
+                        toggleTVFilter(.movie)
+                    }
+                    filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
+                        toggleTVFilter(.series)
+                    }
 
-            Menu {
-                Picker("Sort", selection: $viewModel.sortMode) {
-                    ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+                    Menu {
+                        Picker("Sort", selection: $viewModel.sortMode) {
+                            ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 20, weight: .semibold))
+                            .padding(14)
+                            .foregroundStyle(.white.opacity(0.96))
+                            .background {
+                                Color.clear.reelFinGlassCircle(
+                                    interactive: true,
+                                    tint: Color.white.opacity(0.10),
+                                    stroke: Color.white.opacity(0.14)
+                                )
+                            }
                     }
                 }
-            } label: {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(.system(size: 20, weight: .semibold))
-                    .padding(14)
-                    .background(ReelFinTheme.tvSurfaceMutedFill)
-                    .clipShape(Circle())
             }
         }
         .padding(.horizontal, horizontalPadding)
@@ -208,32 +218,45 @@ struct LibraryView: View {
                     .reelFinTitleStyle()
                 Spacer()
 
-                Menu {
-                    Picker("Sort", selection: $viewModel.sortMode) {
-                        ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
-                            Text(mode.rawValue).tag(mode)
+                glassGroup(spacing: 10) {
+                    Menu {
+                        Picker("Sort", selection: $viewModel.sortMode) {
+                            ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
                         }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 15, weight: .semibold))
+                            .padding(10)
+                            .foregroundStyle(.white.opacity(0.96))
+                            .background {
+                                Color.clear.reelFinGlassCircle(
+                                    interactive: true,
+                                    tint: Color.white.opacity(0.10),
+                                    stroke: Color.white.opacity(0.12),
+                                    shadowOpacity: 0.10,
+                                    shadowRadius: 10,
+                                    shadowYOffset: 4
+                                )
+                            }
                     }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 15, weight: .semibold))
-                        .padding(10)
-                        .background(ReelFinTheme.card.opacity(0.9))
-                        .clipShape(Circle())
                 }
             }
 
-            HStack(spacing: 10) {
-                filterChip(title: "All", isActive: viewModel.selectedFilter == nil) {
-                    viewModel.selectedFilter = nil
+            glassGroup(spacing: 10) {
+                HStack(spacing: 10) {
+                    filterChip(title: "All", isActive: viewModel.selectedFilter == nil) {
+                        viewModel.selectedFilter = nil
+                    }
+                    filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
+                        viewModel.selectedFilter = .movie
+                    }
+                    filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
+                        viewModel.selectedFilter = .series
+                    }
+                    Spacer()
                 }
-                filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
-                    viewModel.selectedFilter = .movie
-                }
-                filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
-                    viewModel.selectedFilter = .series
-                }
-                Spacer()
             }
 
             TextField("Search your library", text: $viewModel.searchQuery)
@@ -243,9 +266,16 @@ struct LibraryView: View {
                 .autocorrectionDisabled(true)
                 .padding(.horizontal, 14)
                 .frame(height: 44)
-                .background(ReelFinTheme.card.opacity(0.95))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .foregroundStyle(.white)
+                .reelFinGlassRoundedRect(
+                    cornerRadius: 12,
+                    interactive: true,
+                    tint: Color.white.opacity(0.08),
+                    stroke: Color.white.opacity(0.10),
+                    shadowOpacity: 0.10,
+                    shadowRadius: 10,
+                    shadowYOffset: 4
+                )
         }
         .padding(.horizontal, horizontalPadding)
     }
@@ -256,11 +286,31 @@ struct LibraryView: View {
                 .font(.system(size: chipFontSize, weight: .semibold, design: .rounded))
                 .padding(.horizontal, chipHPad)
                 .padding(.vertical, chipVPad)
-                .background(isActive ? ReelFinTheme.accent : ReelFinTheme.card.opacity(0.9))
-                .clipShape(Capsule())
-                .foregroundStyle(isActive ? Color.black : Color.white)
+                .foregroundStyle(isActive ? Color.black.opacity(0.92) : Color.white.opacity(0.94))
+                .background {
+                    Color.clear.reelFinGlassCapsule(
+                        interactive: true,
+                        tint: isActive ? Color.white.opacity(0.24) : Color.white.opacity(0.08),
+                        stroke: Color.white.opacity(isActive ? 0.18 : 0.10),
+                        shadowOpacity: isActive ? 0.14 : 0.08,
+                        shadowRadius: isActive ? 14 : 8,
+                        shadowYOffset: isActive ? 6 : 4
+                    )
+                }
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func glassGroup<Content: View>(
+        spacing: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if #available(iOS 26.0, tvOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing, content: content)
+        } else {
+            content()
+        }
     }
 
     private var columns: [GridItem] {
@@ -315,12 +365,14 @@ struct LibraryView: View {
     }
 
     private func handleFocusedItem(_ item: MediaItem) {
-        ambientItem = item
-
-        Task(priority: .utility) {
+        warmupTask?.cancel()
+        warmupTask = Task(priority: .background) {
             await dependencies.detailRepository.primeItem(id: item.id)
+            guard !Task.isCancelled else { return }
             await dependencies.detailRepository.primeDetail(id: item.id)
+            guard !Task.isCancelled else { return }
             await dependencies.apiClient.prefetchImages(for: [item])
+            guard !Task.isCancelled else { return }
 
             if let heroURL = await dependencies.apiClient.imageURL(
                 for: item.id,
@@ -330,8 +382,10 @@ struct LibraryView: View {
             ) {
                 await dependencies.imagePipeline.prefetch(urls: [heroURL])
             }
+            guard !Task.isCancelled else { return }
 
             await dependencies.playbackWarmupManager.trim(keeping: [item.id])
+            guard !Task.isCancelled else { return }
             await dependencies.playbackWarmupManager.warm(itemID: item.id)
         }
     }

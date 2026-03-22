@@ -81,23 +81,50 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
             )
             let featured = featuredRows.compactMap(mediaItem(from:))
 
-            let rowRows = try Row.fetchAll(db, sql: "SELECT id, kind, title FROM home_rows ORDER BY position")
-            let rows: [HomeRow] = try rowRows.map { row in
-                let id: String = row["id"]
-                let kindRaw: String = row["kind"]
-                let title: String = row["title"]
-                let itemRows = try Row.fetchAll(
-                    db,
-                    sql: """
-                    SELECT m.* FROM home_row_items h
-                    JOIN media_items m ON m.id = h.item_id
-                    WHERE h.row_id = ?
-                    ORDER BY h.position
-                    """,
-                    arguments: [id]
+            let rowRows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT
+                    r.id AS row_id,
+                    r.kind AS row_kind,
+                    r.title AS row_title,
+                    r.position AS row_position,
+                    m.*
+                FROM home_rows r
+                LEFT JOIN home_row_items h ON h.row_id = r.id
+                LEFT JOIN media_items m ON m.id = h.item_id
+                ORDER BY r.position, h.position
+                """
+            )
+
+            var rowInfoByID: [String: (kind: String, title: String)] = [:]
+            var rowItemsByID: [String: [MediaItem]] = [:]
+            var rowOrder: [String] = []
+
+            for row in rowRows {
+                let rowID: String = row["row_id"]
+                if rowInfoByID[rowID] == nil {
+                    rowOrder.append(rowID)
+                    rowInfoByID[rowID] = (
+                        kind: row["row_kind"],
+                        title: row["row_title"]
+                    )
+                    rowItemsByID[rowID] = []
+                }
+
+                if let item = mediaItem(from: row) {
+                    rowItemsByID[rowID, default: []].append(item)
+                }
+            }
+
+            let rows: [HomeRow] = rowOrder.map { rowID in
+                let info = rowInfoByID[rowID] ?? (kind: HomeSectionKind.latest.rawValue, title: "")
+                return HomeRow(
+                    id: rowID,
+                    kind: HomeSectionKind(rawValue: info.kind) ?? .latest,
+                    title: info.title,
+                    items: rowItemsByID[rowID] ?? []
                 )
-                let items = itemRows.compactMap(mediaItem(from:))
-                return HomeRow(id: id, kind: HomeSectionKind(rawValue: kindRaw) ?? .latest, title: title, items: items)
             }
 
             return HomeFeed(featured: featured, rows: rows)

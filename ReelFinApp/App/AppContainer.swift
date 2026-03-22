@@ -17,6 +17,7 @@ final class AppContainer {
     let syncEngine: DefaultSyncEngine
     let seriesCache: SeriesLookupCache
     let playbackWarmupManager: PlaybackWarmupManager
+    private var sharedPlaybackSessionController: PlaybackSessionController?
 
     init() {
         settingsStore = DefaultSettingsStore()
@@ -63,12 +64,23 @@ final class AppContainer {
             seriesCache: seriesCache,
             playbackWarmupManager: playbackWarmupManager,
             makePlaybackSession: {
-                PlaybackSessionController(
-                    apiClient: self.apiClient,
-                    repository: self.repository,
-                    warmupManager: self.playbackWarmupManager
-                )
+                self.makeSharedPlaybackSessionController()
             }
         )
+    }
+
+    @MainActor
+    private func makeSharedPlaybackSessionController() -> PlaybackSessionController {
+        if let sharedPlaybackSessionController {
+            return sharedPlaybackSessionController
+        }
+
+        let controller = PlaybackSessionController(
+            apiClient: apiClient,
+            repository: repository,
+            warmupManager: playbackWarmupManager
+        )
+        sharedPlaybackSessionController = controller
+        return controller
     }
 }

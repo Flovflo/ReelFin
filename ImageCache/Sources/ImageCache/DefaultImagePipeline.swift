@@ -6,12 +6,17 @@ import ImageIO
 actor ImageTaskRegistry {
     private var tasks: [URL: Task<UIImage, Error>] = [:]
 
-    func existingTask(for url: URL) -> Task<UIImage, Error>? {
-        tasks[url]
-    }
+    func existingOrRegisterTask(
+        for url: URL,
+        makeTask: () -> Task<UIImage, Error>
+    ) -> (task: Task<UIImage, Error>, isNew: Bool) {
+        if let existing = tasks[url] {
+            return (existing, false)
+        }
 
-    func register(task: Task<UIImage, Error>, for url: URL) {
+        let task = makeTask()
         tasks[url] = task
+        return (task, true)
     }
 
     func removeTask(for url: URL) {
@@ -22,6 +27,10 @@ actor ImageTaskRegistry {
         tasks[url]?.cancel()
         tasks[url] = nil
     }
+}
+
+private final class ImageLoadTracker: @unchecked Sendable {
+    var source: StaticString = "loaded"
 }
 
 public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
@@ -69,39 +78,40 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
             return memoryImage
         }
 
-        if let diskData = await diskCache.data(forKey: url.absoluteString), let image = decodeImage(data: diskData, for: url) {
-            memoryCache.setObject(image, forKey: url as NSURL, cost: diskData.count)
-            interval.end(name: "image_request", message: "disk_hit")
-            return image
-        }
+        let tracker = ImageLoadTracker()
+        let registered = await registry.existingOrRegisterTask(for: url) {
+            Task {
+                if let diskData = await self.diskCache.data(forKey: url.absoluteString),
+                   let image = self.decodeImage(data: diskData, for: url) {
+                    tracker.source = "disk_hit"
+                    self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
+                    return image
+                }
 
-        if let task = await registry.existingTask(for: url) {
-            let image = try await task.value
-            interval.end(name: "image_request", message: "dedupe_hit")
-            return image
-        }
+                let data = try await self.fetchImageData(url: url)
 
-        let task = Task<UIImage, Error> {
-            let data = try await self.fetchImageData(url: url)
+                guard let image = self.decodeImage(data: data, for: url) else {
+                    throw AppError.decoding("Invalid image payload.")
+                }
 
-            guard let image = self.decodeImage(data: data, for: url) else {
-                throw AppError.decoding("Invalid image payload.")
+                tracker.source = "network_hit"
+                self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
+                await self.diskCache.setData(data, forKey: url.absoluteString)
+                return image
             }
-
-            self.memoryCache.setObject(image, forKey: url as NSURL, cost: data.count)
-            await self.diskCache.setData(data, forKey: url.absoluteString)
-            return image
         }
 
-        await registry.register(task: task, for: url)
+        defer {
+            Task {
+                await self.registry.removeTask(for: url)
+            }
+        }
 
         do {
-            let image = try await task.value
-            await registry.removeTask(for: url)
-            interval.end(name: "image_request", message: "network_hit")
+            let image = try await registered.task.value
+            interval.end(name: "image_request", message: registered.isNew ? tracker.source : "dedupe_hit")
             return image
         } catch {
-            await registry.removeTask(for: url)
             interval.end(name: "image_request", message: "network_error")
             throw error
         }
@@ -154,13 +164,14 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         guard let image = decodeImage(data: data, for: url) else {
             return nil
         }
-        memoryCache.setObject(image, forKey: url as NSURL, cost: data.count)
+        memoryCache.setObject(image, forKey: url as NSURL, cost: memoryCost(for: image))
         return image
     }
 
     public func prefetch(urls: [URL]) async {
         await withTaskGroup(of: Void.self) { group in
-            for url in urls.prefix(36) {
+            for url in urls.prefix(24) {
+                guard !Task.isCancelled else { return }
                 group.addTask {
                     _ = try? await self.image(for: url)
                 }
@@ -205,5 +216,16 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
 
         return width
+    }
+
+    private func memoryCost(for image: UIImage) -> Int {
+        if let cgImage = image.cgImage {
+            return cgImage.bytesPerRow * cgImage.height
+        }
+
+        let scale = max(image.scale, 1)
+        let width = max(Int((image.size.width * scale).rounded(.up)), 1)
+        let height = max(Int((image.size.height * scale).rounded(.up)), 1)
+        return width * height * 4
     }
 }

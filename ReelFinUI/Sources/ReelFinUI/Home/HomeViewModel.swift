@@ -13,6 +13,9 @@ final class HomeViewModel: ObservableObject {
     @Published var selectedEpisode: MediaItem?
     @Published var orderedSectionKinds: [HomeSectionKind]
     @Published var hiddenSectionKinds: Set<HomeSectionKind>
+    @Published private(set) var visibleRows: [HomeRow] = []
+    @Published private(set) var rowIDByItemID: [String: String] = [:]
+    @Published private(set) var visibleRowsRevision = 0
 
     private let dependencies: ReelFinDependencies
     private var feedEnrichmentTask: Task<Void, Never>?
@@ -103,31 +106,6 @@ final class HomeViewModel: ObservableObject {
         return uniqueKinds(orderedSectionKinds + dynamicKinds + Self.defaultSectionOrder)
     }
 
-    var visibleRows: [HomeRow] {
-        let filtered = feed.rows.filter { !hiddenSectionKinds.contains($0.kind) && !$0.items.isEmpty }
-        guard !filtered.isEmpty else { return [] }
-
-        var rowsByKind = Dictionary(grouping: filtered, by: \.kind)
-        var orderedRows: [HomeRow] = []
-
-        for kind in orderedSectionKinds {
-            if let rows = rowsByKind.removeValue(forKey: kind) {
-                orderedRows.append(contentsOf: rows)
-            }
-        }
-
-        if !rowsByKind.isEmpty {
-            let leftovers = rowsByKind.values
-                .flatMap { $0 }
-                .sorted { lhs, rhs in
-                    lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-                }
-            orderedRows.append(contentsOf: leftovers)
-        }
-
-        return orderedRows
-    }
-
     func sectionTitle(for kind: HomeSectionKind) -> String {
         if let title = feed.rows.first(where: { $0.kind == kind })?.title {
             return title
@@ -167,6 +145,7 @@ final class HomeViewModel: ObservableObject {
                 hiddenSectionKinds.insert(kind)
             }
         }
+        rebuildVisibleRowsCache()
         persistSectionPreferences()
     }
 
@@ -175,6 +154,7 @@ final class HomeViewModel: ObservableObject {
         withAnimation(.snappy(duration: 0.25)) {
             orderedSectionKinds.move(fromOffsets: source, toOffset: destination)
         }
+        rebuildVisibleRowsCache()
         persistSectionPreferences()
     }
 
@@ -183,6 +163,7 @@ final class HomeViewModel: ObservableObject {
             orderedSectionKinds = Self.defaultSectionOrder
             hiddenSectionKinds = []
         }
+        rebuildVisibleRowsCache()
         persistSectionPreferences()
     }
 
@@ -202,6 +183,7 @@ final class HomeViewModel: ObservableObject {
             ensureKnownSectionKinds(from: cached.rows)
             if feed != cached {
                 feed = cached
+                rebuildVisibleRowsCache()
             }
             scheduleFeedEnrichment(for: cached)
         } catch {
@@ -214,15 +196,45 @@ final class HomeViewModel: ObservableObject {
 
         let seriesCache = dependencies.seriesCache
         feedEnrichmentTask = Task(priority: .utility) { [weak self] in
+            let visibleRowLimit = min(feed.rows.count, 3)
+            let visibleFeed = HomeFeed(
+                featured: feed.featured,
+                rows: Array(feed.rows.prefix(visibleRowLimit))
+            )
+
+            let visibleProcessed = await HomeFeedProcessor.process(visibleFeed, seriesCache: seriesCache)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                guard let self else { return }
+                self.applyEnrichedFeed(visibleProcessed)
+            }
+
+            guard feed.rows.count > visibleRowLimit else { return }
+
+            do {
+                try await Task.sleep(nanoseconds: 1_250_000_000)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+
             let processed = await HomeFeedProcessor.process(feed, seriesCache: seriesCache)
             guard !Task.isCancelled else { return }
 
             await MainActor.run {
-                guard let self, self.feed == feed, self.feed != processed else { return }
-                self.ensureKnownSectionKinds(from: processed.rows)
-                self.feed = processed
+                guard let self else { return }
+                self.applyEnrichedFeed(processed)
             }
         }
+    }
+
+    private func applyEnrichedFeed(_ processed: HomeFeed) {
+        guard feed != processed else { return }
+        ensureKnownSectionKinds(from: processed.rows)
+        feed = processed
+        rebuildVisibleRowsCache()
     }
 
     private func ensureKnownSectionKinds(from rows: [HomeRow]) {
@@ -232,6 +244,7 @@ final class HomeViewModel: ObservableObject {
             .filter { !knownKinds.contains($0) }
         if !missing.isEmpty {
             orderedSectionKinds.append(contentsOf: missing)
+            rebuildVisibleRowsCache()
             persistSectionPreferences()
         }
     }
@@ -244,6 +257,29 @@ final class HomeViewModel: ObservableObject {
             result.append(kind)
         }
         return result
+    }
+
+    private func rebuildVisibleRowsCache() {
+        let derived = Self.deriveVisibleRows(
+            from: feed.rows,
+            orderedSectionKinds: orderedSectionKinds,
+            hiddenSectionKinds: hiddenSectionKinds
+        )
+
+        var didChange = false
+        if visibleRows != derived.rows {
+            visibleRows = derived.rows
+            didChange = true
+        }
+
+        if rowIDByItemID != derived.rowIDByItemID {
+            rowIDByItemID = derived.rowIDByItemID
+            didChange = true
+        }
+
+        if didChange {
+            visibleRowsRevision &+= 1
+        }
     }
 
     private func mergedSeriesShell(current: MediaItem, incoming: MediaItem) -> MediaItem {
@@ -280,6 +316,46 @@ final class HomeViewModel: ObservableObject {
             return HomeSectionPreferences(orderedKinds: defaultSectionOrder, hiddenKinds: [])
         }
         return prefs
+    }
+
+    private static func deriveVisibleRows(
+        from rows: [HomeRow],
+        orderedSectionKinds: [HomeSectionKind],
+        hiddenSectionKinds: Set<HomeSectionKind>
+    ) -> (rows: [HomeRow], rowIDByItemID: [String: String]) {
+        let filteredRows = rows.filter { !hiddenSectionKinds.contains($0.kind) && !$0.items.isEmpty }
+        guard !filteredRows.isEmpty else {
+            return ([], [:])
+        }
+
+        var rowsByKind = Dictionary(grouping: filteredRows, by: \.kind)
+        var orderedRows: [HomeRow] = []
+
+        for kind in orderedSectionKinds {
+            if let matchedRows = rowsByKind.removeValue(forKey: kind) {
+                orderedRows.append(contentsOf: matchedRows)
+            }
+        }
+
+        if !rowsByKind.isEmpty {
+            let leftovers = rowsByKind.values
+                .flatMap { $0 }
+                .sorted { lhs, rhs in
+                    lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                }
+            orderedRows.append(contentsOf: leftovers)
+        }
+
+        var rowIDByItemID: [String: String] = [:]
+        rowIDByItemID.reserveCapacity(orderedRows.reduce(into: 0) { $0 += $1.items.count })
+
+        for row in orderedRows {
+            for item in row.items where rowIDByItemID[item.id] == nil {
+                rowIDByItemID[item.id] = row.id
+            }
+        }
+
+        return (orderedRows, rowIDByItemID)
     }
 }
 

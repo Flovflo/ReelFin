@@ -152,7 +152,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? {
-        URL(string: "mock-image://\(itemID)?type=\(type.rawValue)&width=\(width ?? 400)")
+        let normalizedWidth = width.map { type.normalizedImageWidth($0) } ?? 400
+        return URL(string: "mock-image://\(itemID)?type=\(type.rawValue)&width=\(normalizedWidth)")
     }
 
     func reportPlayback(progress: PlaybackProgressUpdate) async throws {}

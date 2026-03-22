@@ -215,17 +215,20 @@ struct HomeView: View {
 
     private let dependencies: ReelFinDependencies
     @State private var scrollInterval: SignpostInterval?
-    @State private var ambientItemTask: Task<Void, Never>?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
     @State private var selectedDetailContextItems: [MediaItem] = []
     @State private var selectedDetailContextTitle: String?
-    @State private var ambientItem: MediaItem?
     @State private var playerSession: PlaybackSessionController?
     @State private var playerItem: MediaItem?
     @State private var showPlayer = false
     @State private var isPreparingPlayback = false
     @State private var playbackErrorMessage: String?
+    @State private var warmupTask: Task<Void, Never>?
+
+#if os(iOS)
+    @State private var ambientItem: MediaItem?
+#endif
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
@@ -233,7 +236,13 @@ struct HomeView: View {
     }
 
     var body: some View {
+        let visibleRows = viewModel.visibleRows
+        let rowIDByItemID = viewModel.rowIDByItemID
+
         ZStack(alignment: .bottom) {
+#if os(tvOS)
+            TVHomeBackdropView()
+#else
             CinematicBackdropView(
                 item: ambientItem ?? viewModel.feed.featured.first,
                 apiClient: dependencies.apiClient,
@@ -247,19 +256,20 @@ struct HomeView: View {
             .overlay {
                 Color.black.opacity(0.18).ignoresSafeArea()
             }
+#endif
 
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 32) {
-                    if viewModel.isInitialLoading && viewModel.feed.rows.isEmpty {
+                LazyVStack(alignment: .leading, spacing: 32) {
+                    if viewModel.isInitialLoading && visibleRows.isEmpty {
                         loadingSkeleton
                             .padding(.top, 48)
-                    } else if viewModel.visibleRows.isEmpty && viewModel.feed.featured.isEmpty {
+                    } else if visibleRows.isEmpty && viewModel.feed.featured.isEmpty {
                         emptyState
                             .padding(.top, 48)
                     } else {
                         featuredSection
 
-                        ForEach(viewModel.visibleRows) { row in
+                        ForEach(visibleRows) { row in
                             SectionRow(
                                 title: row.title,
                                 items: row.items,
@@ -267,16 +277,23 @@ struct HomeView: View {
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline,
                                 namespaceProvider: { itemID in
-                                    namespaceForCard(itemID: itemID, rowID: row.id)
+                                    rowIDByItemID[itemID] == row.id ? posterNamespace : nil
                                 },
                                 onFocus: { item, neighbors in
                                     handleFocusedItem(item, neighbors: neighbors)
                                 },
                                 onSelect: { item in
-                                    selectedDetailNamespace = namespaceForCard(itemID: item.id, rowID: row.id)
+                                    selectedDetailNamespace = rowIDByItemID[item.id] == row.id ? posterNamespace : nil
                                     selectedDetailContextItems = row.items
                                     selectedDetailContextTitle = row.title
+#if os(iOS)
                                     ambientItem = item
+                                    scheduleWarmup(
+                                        for: item,
+                                        neighbors: row.items,
+                                        settleDelayNanoseconds: 0
+                                    )
+#endif
                                     let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
                                     Task {
                                         await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
@@ -289,7 +306,7 @@ struct HomeView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .animation(.snappy(duration: 0.35), value: viewModel.visibleRows.map(\.id))
+                .animation(.snappy(duration: 0.35), value: viewModel.visibleRowsRevision)
             }
             .background(ReelFinTheme.pageGradient.ignoresSafeArea())
 #if os(tvOS)
@@ -317,6 +334,9 @@ struct HomeView: View {
         .toolbar(.hidden, for: .navigationBar)
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
 #endif
+        .onDisappear {
+            warmupTask?.cancel()
+        }
         .navigationDestination(
             isPresented: Binding(
                 get: { viewModel.selectedItem != nil },
@@ -390,10 +410,11 @@ struct HomeView: View {
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 onVisibleItemChange: { item in
-                    ambientItem = item
-                    Task(priority: .utility) {
-                        await primePresentation(for: item, neighbors: Array(viewModel.feed.featured.prefix(3)))
-                    }
+                    scheduleWarmup(
+                        for: item,
+                        neighbors: Array(viewModel.feed.featured.prefix(3)),
+                        settleDelayNanoseconds: 0
+                    )
                 },
                 onPlay: handleFeaturedPlay,
                 onTap: handleFeaturedSelection
@@ -405,6 +426,9 @@ struct HomeView: View {
                     apiClient: dependencies.apiClient,
                     imagePipeline: dependencies.imagePipeline,
                     onTap: { item in
+#if os(iOS)
+                        ambientItem = item
+#endif
                         selectedDetailNamespace = nil
                         selectedDetailContextItems = Array(viewModel.feed.featured.prefix(10))
                         selectedDetailContextTitle = "Featured"
@@ -465,10 +489,6 @@ struct HomeView: View {
             .accessibilityLabel(accessibilityLabel)
     }
 
-    private func namespaceForCard(itemID: String, rowID: String) -> Namespace.ID? {
-        firstRowByItemID[itemID] == rowID ? posterNamespace : nil
-    }
-
     private var featuredItems: [MediaItem] {
         Array(viewModel.feed.featured.prefix(10))
     }
@@ -487,16 +507,6 @@ struct HomeView: View {
         #else
         return 0.58
         #endif
-    }
-
-    private var firstRowByItemID: [String: String] {
-        var map: [String: String] = [:]
-        for row in viewModel.visibleRows {
-            for item in row.items where map[item.id] == nil {
-                map[item.id] = row.id
-            }
-        }
-        return map
     }
 
     private var loadingSkeleton: some View {
@@ -600,24 +610,21 @@ struct HomeView: View {
     }
 
     private func handleFocusedItem(_ item: MediaItem, neighbors: [MediaItem]) {
-        // Debounce: rapid focus changes during scroll must not trigger a full
-        // CinematicBackdropView reload (which blurs large images) on every frame.
-        // Only commit the new ambient item when focus settles for 150 ms.
-        ambientItemTask?.cancel()
-        ambientItemTask = Task { @MainActor in
-            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
-            ambientItem = item
-            Task(priority: .utility) {
-                await primePresentation(for: item, neighbors: neighbors)
-            }
-        }
+        scheduleWarmup(for: item, neighbors: neighbors, settleDelayNanoseconds: 150_000_000)
     }
 
     private func handleFeaturedSelection(_ item: MediaItem) {
+#if os(iOS)
+        ambientItem = item
+        scheduleWarmup(
+            for: item,
+            neighbors: featuredItems,
+            settleDelayNanoseconds: 0
+        )
+#endif
         selectedDetailNamespace = nil
         selectedDetailContextItems = featuredItems
         selectedDetailContextTitle = "Featured"
-        ambientItem = item
 
         let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
         Task {
@@ -678,10 +685,13 @@ struct HomeView: View {
     private func primePresentation(for item: MediaItem, neighbors: [MediaItem]) async {
         let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
         await dependencies.detailRepository.primeItem(id: detailItemID)
+        guard !Task.isCancelled else { return }
         await dependencies.detailRepository.primeDetail(id: detailItemID)
+        guard !Task.isCancelled else { return }
 
-        let nearbyItems = Array(neighbors.prefix(4))
+        let nearbyItems = Array(neighbors.prefix(2))
         await dependencies.apiClient.prefetchImages(for: nearbyItems)
+        guard !Task.isCancelled else { return }
 
         if let heroURL = await dependencies.apiClient.imageURL(
             for: item.mediaType == .episode ? (item.parentID ?? item.id) : item.id,
@@ -691,9 +701,31 @@ struct HomeView: View {
         ) {
             await dependencies.imagePipeline.prefetch(urls: [heroURL])
         }
+        guard !Task.isCancelled else { return }
 
         await dependencies.playbackWarmupManager.trim(keeping: [item.id] + nearbyItems.map(\.id))
+        guard !Task.isCancelled else { return }
         await dependencies.playbackWarmupManager.warm(itemID: item.id)
+    }
+
+    private func scheduleWarmup(
+        for item: MediaItem,
+        neighbors: [MediaItem],
+        settleDelayNanoseconds: UInt64
+    ) {
+        warmupTask?.cancel()
+        warmupTask = Task(priority: .background) {
+            if settleDelayNanoseconds > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: settleDelayNanoseconds)
+                } catch {
+                    return
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            await primePresentation(for: item, neighbors: neighbors)
+        }
     }
 }
 
