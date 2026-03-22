@@ -9,13 +9,7 @@ struct TVTopNavigationBar: View {
     let appearance: TVTopNavigationAppearance
 
     var body: some View {
-        Group {
-            if #available(tvOS 26.0, *) {
-                GlassEffectContainer(spacing: 8) { navigationItems }
-            } else {
-                navigationItems
-            }
-        }
+        navigationItems
             .padding(.horizontal, ReelFinTheme.tvTopNavigationHorizontalPadding)
             .padding(.vertical, 6)
             .frame(height: ReelFinTheme.tvTopNavigationBarHeight)
@@ -30,6 +24,7 @@ struct TVTopNavigationBar: View {
             .onChange(of: selectedDestination) { _, _ in
                 syncVisualHighlight()
             }
+            .animation(.easeInOut(duration: 0.32), value: appearance)
     }
 
     private var navigationItems: some View {
@@ -42,7 +37,11 @@ struct TVTopNavigationBar: View {
                     appearance: appearance,
                     highlightNamespace: highlightNamespace,
                     focusedDestination: focusedDestination,
-                    action: { selectedDestination = destination }
+                    action: {
+                        withAnimation(highlightAnimation) {
+                            selectedDestination = destination
+                        }
+                    }
                 )
             }
         }
@@ -80,11 +79,15 @@ struct TVTopNavigationBar: View {
         visualHighlightedDestination ?? focusedDestination.wrappedValue ?? selectedDestination
     }
 
+    private var highlightAnimation: Animation {
+        .spring(response: 0.42, dampingFraction: 0.82, blendDuration: 0.10)
+    }
+
     private func syncVisualHighlight(animated: Bool = true) {
         let target = focusedDestination.wrappedValue ?? selectedDestination
         guard visualHighlightedDestination != target else { return }
         if animated {
-            withAnimation(ReelFinTheme.tvFocusSpring) {
+            withAnimation(highlightAnimation) {
                 visualHighlightedDestination = target
             }
         } else {
