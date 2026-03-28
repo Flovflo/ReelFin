@@ -587,15 +587,20 @@ public actor PlaybackCoordinator {
         let codec = source.normalizedVideoCodec
         let hevcFamily = codec.contains("hevc") || codec.contains("h265") || codec.contains("dvhe") || codec.contains("dvh1")
 
-        if mkvFamily && hevcFamily {
-            #if os(tvOS)
-            // Apple TV hardware-decodes HEVC natively. Allow video stream copy
-            // so Jellyfin just repackages MKV→fMP4 without re-encoding.
-            return .conservativeCompatibility
-            #else
-            return .appleOptimizedHEVC
-            #endif
+        #if os(tvOS)
+        // tvOS: MKV containers always need profile override.
+        // HEVC can be stream-copied (conservativeCompatibility) since Apple TV
+        // hardware-decodes HEVC natively. All other codecs (H264, mpeg4, etc.)
+        // must be re-encoded (appleOptimizedHEVC) because stream-copied H264
+        // from MKV produces fMP4 segments that AVPlayer cannot decode on tvOS.
+        if mkvFamily {
+            return hevcFamily ? .conservativeCompatibility : .appleOptimizedHEVC
         }
+        #else
+        if mkvFamily && hevcFamily {
+            return .appleOptimizedHEVC
+        }
+        #endif
 
         // Guardrail for URLs already carrying HEVC + video copy on server-default profile.
         // This avoids unstable startup loops on some Jellyfin/Apple combinations.
