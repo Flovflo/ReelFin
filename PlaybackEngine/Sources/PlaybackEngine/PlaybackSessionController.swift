@@ -168,6 +168,8 @@ public final class PlaybackSessionController {
     public private(set) var availableSubtitleTracks: [MediaTrack] = []
     public private(set) var selectedAudioTrackID: String?
     public private(set) var selectedSubtitleTrackID: String?
+    /// External subtitle deferred until first frame to avoid HLS reload during startup.
+    private var pendingExternalSubtitleID: String?
     public private(set) var routeDescription: String = ""
     public private(set) var debugInfo: PlaybackDebugInfo?
     public private(set) var currentPlaybackPlan: PlaybackPlan?
@@ -1534,6 +1536,17 @@ public final class PlaybackSessionController {
         }
     }
 
+    /// Check if a subtitle track is available as an embedded option in the AVPlayer item.
+    /// Embedded tracks can be selected instantly; external tracks (SRT/ASS) require an HLS reload.
+    private func isSubtitleEmbedded(id: String, in item: AVPlayerItem) -> Bool {
+        guard let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible),
+              let track = availableSubtitleTracks.first(where: { $0.id == id }) else {
+            return false
+        }
+        let descriptors = makeSelectionDescriptors(options: group.options)
+        return PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) != nil
+    }
+
     private func makeSelectionDescriptors(options: [AVMediaSelectionOption]) -> [MediaSelectionOptionDescriptor] {
         options.enumerated().map { index, option in
             MediaSelectionOptionDescriptor(
@@ -1672,8 +1685,15 @@ public final class PlaybackSessionController {
                     self.emitLocalHLSStartupSummary(avplayerResult: "readyToPlay")
                     // Apply the initial subtitle selection now that AVFoundation media
                     // selection groups are available. This is a no-op if nil.
+                    // Only select embedded subtitles immediately; external subtitles
+                    // (SRT/ASS) trigger a full HLS reload which would interrupt first-frame
+                    // decoding. Defer those until after the first frame is displayed.
                     if let initialSubID = self.selectedSubtitleTrackID {
-                        self.selectSubtitleTrack(id: initialSubID)
+                        if self.isSubtitleEmbedded(id: initialSubID, in: observedItem) {
+                            self.selectSubtitleTrack(id: initialSubID)
+                        } else {
+                            self.pendingExternalSubtitleID = initialSubID
+                        }
                     }
                 } else if observedItem.status == .failed {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_failed")
@@ -1761,6 +1781,14 @@ public final class PlaybackSessionController {
 
         if playMethodForReporting == "NativeBridge", let itemID = currentItemID {
             NativeBridgeFailureCache.clearFailure(itemID: itemID)
+        }
+
+        // Apply deferred external subtitle selection now that the first frame is displayed.
+        // This avoids the HLS reload (player item replacement) during startup which would
+        // abort first-frame decoding and trigger the startup watchdog.
+        if let deferredSubID = pendingExternalSubtitleID {
+            pendingExternalSubtitleID = nil
+            selectSubtitleTrack(id: deferredSubID)
         }
     }
 
@@ -1921,7 +1949,9 @@ public final class PlaybackSessionController {
             // Give more room before switching to an SDR fallback profile.
             return currentItemHasDolbyVision ? 14_000_000_000 : 10_000_000_000
         case .conservativeCompatibility:
-            return 8_000_000_000
+            // Stream-copy DV/HDR content may take longer for AVPlayer to parse
+            // the init segment and produce the first decoded frame.
+            return currentItemHasDolbyVision ? 12_000_000_000 : 8_000_000_000
         case .forceH264Transcode:
             // H264 compatibility fallback may legitimately take longer to produce
             // the first video frame; avoid premature recovery loops.
