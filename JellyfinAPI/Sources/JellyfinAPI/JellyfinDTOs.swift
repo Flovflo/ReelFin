@@ -826,6 +826,77 @@ struct DeviceProfileRequestDTO: Encodable {
             ]
         )
     }
+
+    /// tvOS-optimized profile for Apple TV 4K.
+    /// DirectPlay: mp4/m4v/mov with H.264/HEVC/DV + AAC/AC3/EAC3/ALAC/FLAC.
+    /// Jellyfin will use DirectStream (remux) for MKV with compatible codecs.
+    /// Transcode: HLS fMP4 HEVC + EAC3/AAC for incompatible sources.
+    static func tvOSOptimized(maxStreamingBitrate: Int, maxAudioChannels: Int) -> DeviceProfileRequestDTO {
+        DeviceProfileRequestDTO(
+            name: "ReelFin tvOS Apple TV (DV/HDR/Atmos)",
+            id: "a3c1f8e2-7b5d-4a9e-b6c0-d2e4f8a1b3c5",
+            maxStreamingBitrate: maxStreamingBitrate,
+            musicStreamingTranscodingBitrate: 192_000,
+            directPlayProfiles: [
+                // MP4-family: full codec support
+                DirectPlayProfileRequestDTO(
+                    container: "mp4,m4v,mov",
+                    audioCodec: "aac,ac3,eac3,mp3,alac,flac",
+                    videoCodec: "hevc,h265,hvc1,dvh1,dvhe,h264,avc1",
+                    type: .video
+                ),
+                // MPEG-TS: H.264/HEVC with common audio
+                DirectPlayProfileRequestDTO(
+                    container: "mpegts",
+                    audioCodec: "aac,ac3,eac3",
+                    videoCodec: "hevc,h264",
+                    type: .video
+                )
+            ],
+            transcodingProfiles: [
+                // Server-side transcode: HLS fMP4 with HEVC video.
+                // Jellyfin will use this when codecs are incompatible.
+                TranscodingProfileRequestDTO(
+                    container: "fmp4",
+                    type: .video,
+                    videoCodec: "hevc,h264",
+                    audioCodec: "eac3,aac",
+                    protocolValue: .hls,
+                    context: .streaming,
+                    maxAudioChannels: String(maxAudioChannels),
+                    enableSubtitlesInManifest: false,
+                    estimateContentLength: false,
+                    copyTimestamps: true,
+                    enableAudioVbrEncoding: true
+                )
+            ],
+            subtitleProfiles: [
+                SubtitleProfileRequestDTO(
+                    format: "srt",
+                    method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "vtt",
+                    method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "ass",
+                    method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "ssa",
+                    method: .external
+                )
+            ],
+            responseProfiles: [
+                ResponseProfileRequestDTO(
+                    type: .video,
+                    container: "m4v",
+                    mimeType: "video/mp4"
+                )
+            ]
+        )
+    }
 }
 
 struct DirectPlayProfileRequestDTO: Encodable {

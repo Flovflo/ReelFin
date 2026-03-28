@@ -531,6 +531,7 @@ public enum PlaybackDeviceProfile: String, Codable, CaseIterable, Sendable {
     case automatic
     case iosOptimizedHEVC
     case iosCompatibilityH264
+    case tvOSOptimized
 }
 
 public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
@@ -616,6 +617,24 @@ public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
             allowAudioStreamCopy: false,
             maxAudioChannels: 2,
             deviceProfile: .iosCompatibilityH264
+        )
+    }
+
+    /// tvOS-optimized profile for Apple TV 4K.
+    /// Enables direct play for compatible containers, DirectStream (remux) for MKV,
+    /// and requests server-side HLS fMP4 HEVC transcode for incompatible codecs.
+    public static func tvOSOptimized(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
+        let bitrate = min(maxStreamingBitrate ?? 80_000_000, 80_000_000)
+        return PlaybackInfoOptions(
+            mode: .balanced,
+            enableDirectPlay: true,
+            enableDirectStream: true,
+            allowTranscoding: true,
+            maxStreamingBitrate: bitrate,
+            allowVideoStreamCopy: true,
+            allowAudioStreamCopy: true,
+            maxAudioChannels: 8,
+            deviceProfile: .tvOSOptimized
         )
     }
 }

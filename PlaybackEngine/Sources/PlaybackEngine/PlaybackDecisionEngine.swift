@@ -720,7 +720,21 @@ public struct PlaybackDecisionEngine: Sendable {
             }
 
             // NativeBridge is intentionally disabled for production playback.
-            // Route this lane to server-provided remux/transcode outputs only.
+            // For MKV with compatible codecs, prefer DirectStream (remux) which
+            // lets Jellyfin repackage MKV→MP4 without re-encoding video/audio.
+            // Only fall back to transcode when codecs are truly incompatible.
+            if source.supportsDirectStream, let remuxURL = source.directStreamURL {
+                let codecsCompatible = hasCompatibleCodecs(source: source)
+                if codecsCompatible {
+                    if qualityMode(for: source, configuration: configuration) == .strictQuality,
+                       !isStrictRouteAllowed(source: source, route: .remux(remuxURL)) {
+                        return nil
+                    }
+                    return PlaybackDecision(sourceID: sourceID, route: .remux(remuxURL), playbackPlan: plan)
+                }
+            }
+
+            // Codecs are incompatible — request server-side transcode.
             if let transcodeURL = source.transcodeURL ?? plan.targetURL {
                 if qualityMode(for: source, configuration: configuration) == .strictQuality,
                    !isStrictRouteAllowed(source: source, route: .transcode(transcodeURL)) {
@@ -977,6 +991,20 @@ public struct PlaybackDecisionEngine: Sendable {
         }
 
         return containers.contains("ts") || containers.contains("m2ts")
+    }
+
+    /// Check if the source video and audio codecs are natively supported by the device,
+    /// regardless of container. Used to decide remux (container swap) vs transcode (re-encode).
+    private func hasCompatibleCodecs(source: MediaSource) -> Bool {
+        let videoOK = source.normalizedVideoCodec.isEmpty || capabilities.videoCodecs.contains(source.normalizedVideoCodec)
+        guard videoOK else { return false }
+
+        let sourceAudioSupported = source.normalizedAudioCodec.isEmpty || capabilities.audioCodecs.contains(source.normalizedAudioCodec)
+        let anyTrackSupported = source.audioTracks.contains { track in
+            guard let codec = track.codec?.lowercased(), !codec.isEmpty else { return false }
+            return capabilities.audioCodecs.contains(codec)
+        }
+        return sourceAudioSupported || anyTrackSupported
     }
 
     private func normalizedContainers(_ rawContainer: String?, fallbackURL: URL) -> [String] {

@@ -312,12 +312,26 @@ public actor PlaybackCoordinator {
         return isDirectPlayRoute(route) ? defaultProfile : .forceH264Transcode
     }
 
+    private static var isTvOS: Bool {
+        #if os(tvOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
     private func playbackOptions(
         mode: PlaybackMode,
         maxBitrate: Int,
         transcodeProfile: TranscodeURLProfile,
         configuration: ServerConfiguration
     ) -> PlaybackInfoOptions {
+        // On tvOS, always use the tvOS-optimized profile which tells Jellyfin
+        // exactly what Apple TV can direct play/remux and what needs transcoding.
+        if Self.isTvOS {
+            return .tvOSOptimized(maxStreamingBitrate: maxBitrate)
+        }
+
         if transcodeProfile == .serverDefault, configuration.playbackPolicy != .auto {
             return PlaybackInfoOptions(
                 mode: .balanced,
@@ -574,7 +588,13 @@ public actor PlaybackCoordinator {
         let hevcFamily = codec.contains("hevc") || codec.contains("h265") || codec.contains("dvhe") || codec.contains("dvh1")
 
         if mkvFamily && hevcFamily {
+            #if os(tvOS)
+            // Apple TV hardware-decodes HEVC natively. Allow video stream copy
+            // so Jellyfin just repackages MKV→fMP4 without re-encoding.
+            return .conservativeCompatibility
+            #else
             return .appleOptimizedHEVC
+            #endif
         }
 
         // Guardrail for URLs already carrying HEVC + video copy on server-default profile.
@@ -583,7 +603,11 @@ public actor PlaybackCoordinator {
         let queryCodec = query["videocodec"] ?? ""
         let allowVideoCopy = query["allowvideostreamcopy"] == "true"
         if allowVideoCopy, queryCodec.contains("hevc"), mkvFamily {
+            #if os(tvOS)
+            return .conservativeCompatibility
+            #else
             return .appleOptimizedHEVC
+            #endif
         }
 
         return requestedProfile

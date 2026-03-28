@@ -458,6 +458,11 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 maxStreamingBitrate: maxBitrate,
                 maxAudioChannels: options.maxAudioChannels ?? 2
             )
+        case .tvOSOptimized:
+            profile = DeviceProfileRequestDTO.tvOSOptimized(
+                maxStreamingBitrate: maxBitrate,
+                maxAudioChannels: options.maxAudioChannels ?? 8
+            )
         }
 
         let body = PlaybackInfoRequestDTO(
