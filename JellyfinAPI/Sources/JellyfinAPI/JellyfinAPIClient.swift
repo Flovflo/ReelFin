@@ -418,6 +418,14 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         return response.items.first?.toDomain()
     }
 
+    public func fetchMediaSegments(itemID: String) async throws -> [MediaSegment] {
+        let response: MediaSegmentQueryResultDTO = try await request(
+            path: "MediaSegments/\(itemID)",
+            dedupe: true
+        )
+        return response.items.compactMap { $0.toDomain(defaultItemID: itemID) }
+    }
+
     public func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
         let userID = try requireUserID()
         var queryItems = [

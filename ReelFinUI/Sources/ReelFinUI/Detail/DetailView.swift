@@ -459,13 +459,14 @@ struct DetailView: View {
         guard !isLoadingPlayback else { return }
         let session = dependencies.makePlaybackSession()
         let targetItem = item ?? viewModel.itemToPlay
+        let nextEpisodeQueue = targetItem.mediaType == .episode ? viewModel.nextEpisodes(after: targetItem) : []
 
         isLoadingPlayback = true
         playerSession = session
 
         Task {
             do {
-                try await session.load(item: targetItem)
+                try await session.load(item: targetItem, upNextEpisodes: nextEpisodeQueue)
                 isLoadingPlayback = false
                 showPlayer = true
             } catch {

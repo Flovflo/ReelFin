@@ -1,4 +1,5 @@
 import AVKit
+import PlaybackEngine
 import SwiftUI
 #if os(tvOS)
 import Shared
@@ -14,6 +15,8 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
     var selectedSubtitleID: String?
     var onSelectAudio: ((String) -> Void)?
     var onSelectSubtitle: ((String?) -> Void)?
+    var skipSuggestion: PlaybackSkipSuggestion?
+    var onSkipSuggestion: (() -> Void)?
 #endif
 
     func makeCoordinator() -> Coordinator {
@@ -67,12 +70,24 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
 #if os(tvOS)
     private func updateTransportBarMenu(controller: AVPlayerViewController) {
-        guard audioTracks.count > 1 || !subtitleTracks.isEmpty else {
+        guard audioTracks.count > 1 || !subtitleTracks.isEmpty || skipSuggestion != nil else {
             controller.transportBarCustomMenuItems = []
             return
         }
 
         var menuItems: [UIMenuElement] = []
+
+        if let skipSuggestion {
+            let onSkip = onSkipSuggestion
+            menuItems.append(
+                UIAction(
+                    title: skipSuggestion.title,
+                    image: UIImage(systemName: skipSuggestion.systemImageName)
+                ) { _ in
+                    Task { @MainActor in onSkip?() }
+                }
+            )
+        }
 
         if audioTracks.count > 1 {
             let audioActions: [UIAction] = audioTracks.map { track in

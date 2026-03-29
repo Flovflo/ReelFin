@@ -162,7 +162,7 @@ public struct PlaybackProofSnapshot: Sendable, Equatable {
 @MainActor
 public final class PlaybackSessionController {
     public private(set) var isPlaying = false
-    public private(set) var currentTime: TimeInterval = 0
+    public internal(set) var currentTime: TimeInterval = 0
     public private(set) var duration: TimeInterval = 0
     public private(set) var availableAudioTracks: [MediaTrack] = []
     public private(set) var availableSubtitleTracks: [MediaTrack] = []
@@ -176,12 +176,13 @@ public final class PlaybackSessionController {
     public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
     public private(set) var metrics = PlaybackPerformanceMetrics()
     public private(set) var isExternalPlaybackActive = false
-    public private(set) var playbackErrorMessage: String?
+    var playbackErrorMessage: String?
+    public internal(set) var activeSkipSuggestion: PlaybackSkipSuggestion?
     public private(set) var playbackProof = PlaybackProofSnapshot()
 
     public let player = AVPlayer()
 
-    private let apiClient: any JellyfinAPIClientProtocol & Sendable
+    let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let repository: MetadataRepositoryProtocol
     private let coordinator: PlaybackCoordinator
     private let warmupManager: (any PlaybackWarmupManaging)?
@@ -198,7 +199,10 @@ public final class PlaybackSessionController {
     private var externalPlaybackObserver: NSKeyValueObservation?
     private var lifecycleObservers: [NSObjectProtocol] = []
 
-    private var currentItemID: String?
+    var currentItemID: String?
+    var currentMediaItem: MediaItem?
+    var nextEpisodeQueue: [MediaItem] = []
+    var mediaSegments: [MediaSegment] = []
     private var currentItemHasDolbyVision = false
     private var currentSource: MediaSource?
     private var playMethodForReporting = "Transcode"
@@ -240,6 +244,7 @@ public final class PlaybackSessionController {
     private var startDate = Date()
     private var preferredProfilesByItemID: [String: TranscodeURLProfile] = [:]
     private var lastPreparedSelection: PlaybackAssetSelection?
+    var markerRefreshTask: Task<Void, Never>?
 
     private var readyInterval: SignpostInterval?
     private var firstFrameInterval: SignpostInterval?
@@ -322,11 +327,26 @@ public final class PlaybackSessionController {
         startupWatchdogTask?.cancel()
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
+        markerRefreshTask?.cancel()
         localHLSServer?.stop(reason: "controller_deinit")
     }
 
-    public func load(item: MediaItem, autoPlay: Bool = true) async throws {
+    public func load(
+        item: MediaItem,
+        autoPlay: Bool = true,
+        upNextEpisodes: [MediaItem] = []
+    ) async throws {
         currentItemID = item.id
+        currentMediaItem = item
+        nextEpisodeQueue = upNextEpisodes
+        currentTime = 0
+        duration = 0
+        mediaSegments = []
+        activeSkipSuggestion = nil
+        markerRefreshTask?.cancel()
+        markerRefreshTask = Task { @MainActor [weak self] in
+            await self?.refreshPlaybackMarkers(for: item)
+        }
         currentItemHasDolbyVision = item.hasDolbyVision
         startDate = Date()
         hasMarkedFirstFrame = false
@@ -525,7 +545,7 @@ public final class PlaybackSessionController {
             // For directPlay: seek immediately (the raw URL doesn't support StartTimeTicks).
             if case .directPlay = selection.decision.route {
                 transcodeStartOffset = 0
-                prepareAndLoadSelection(selection, resumeSeconds: nil)
+                prepareAndLoadSelection(selection, resumeSeconds: initialResumeSecs)
                 if initialResumeSecs > 0 {
                     let seekTime = CMTime(seconds: initialResumeSecs, preferredTimescale: 600)
                     let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
@@ -533,7 +553,7 @@ public final class PlaybackSessionController {
                 }
             } else {
                 transcodeStartOffset = initialResumeSecs
-                prepareAndLoadSelection(selection, resumeSeconds: nil)
+                prepareAndLoadSelection(selection, resumeSeconds: initialResumeSecs)
             }
 
             // Mark URL resolution phase complete
@@ -1043,11 +1063,7 @@ public final class PlaybackSessionController {
         updatePlaybackProof(from: playerItem)
         startVideoOutputPolling(for: playerItem)
 
-        if let resumeSeconds, resumeSeconds > 0 {
-            let seek = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
-            let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-            player.seek(to: seek, toleranceBefore: tolerance, toleranceAfter: tolerance)
-        }
+        pendingResumeSeconds = resumeSeconds.flatMap { $0 > 0 ? $0 : nil }
     }
 
     public func stop() {
@@ -1072,6 +1088,10 @@ public final class PlaybackSessionController {
         isExternalPlaybackActive = false
         playbackErrorMessage = nil
         playbackProof = PlaybackProofSnapshot()
+        currentMediaItem = nil
+        nextEpisodeQueue = []
+        mediaSegments = []
+        activeSkipSuggestion = nil
 
         currentItemID = nil
         currentItemHasDolbyVision = false
@@ -1108,6 +1128,8 @@ public final class PlaybackSessionController {
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
         videoOutputPollTask = nil
+        markerRefreshTask?.cancel()
+        markerRefreshTask = nil
 
         nativeBridgeSession = nil
         syntheticHLSSession = nil
@@ -1625,6 +1647,7 @@ public final class PlaybackSessionController {
                 self.duration = max(self.currentTime, hlsDuration + self.transcodeStartOffset)
                 self.refreshDecodedVideoFrameState()
                 self.markFirstFrameIfNeeded(currentSeconds: self.currentTime)
+                self.updateActiveSkipSuggestion()
                 await self.persistProgress(isPaused: !self.isPlaying, didFinish: false)
             }
         }
@@ -1637,10 +1660,7 @@ public final class PlaybackSessionController {
             guard let self else { return }
             Task { @MainActor in
                 self.isPlaying = false
-                await self.persistProgress(isPaused: true, didFinish: true)
-                if let currentItemID = self.currentItemID {
-                    try? await self.apiClient.reportPlayed(itemID: currentItemID)
-                }
+                await self.finishCurrentPlayback()
             }
         }
 
@@ -3069,24 +3089,24 @@ public final class PlaybackSessionController {
         return isHEVCCodec(codec)
     }
 
-    private func shouldDeferResumeSeek(route: PlaybackRoute, seconds: Double) -> Bool {
-        guard seconds > 0 else { return false }
-        switch route {
-        case .transcode, .remux, .nativeBridge:
-            return true
-        case .directPlay:
-            return false
-        }
-    }
-
     private func applyDeferredResumeSeekIfNeeded() {
         guard let seconds = pendingResumeSeconds, seconds > 0 else { return }
-        pendingResumeSeconds = nil
 
         let current = player.currentTime().seconds
-        if current.isFinite, abs(current - seconds) < 3 {
+        let currentDuration = player.currentItem?.duration.seconds
+        let runtimeSeconds = currentMediaItem?.runtimeTicks.map { Double($0) / 10_000_000 }
+
+        guard PlaybackResumeSeekPlanner.shouldApplySeek(
+            pendingResumeSeconds: seconds,
+            currentPlayerTime: current,
+            currentItemDuration: currentDuration,
+            currentMediaRuntimeSeconds: runtimeSeconds
+        ) else {
+            pendingResumeSeconds = nil
             return
         }
+
+        pendingResumeSeconds = nil
 
         let target = CMTime(seconds: seconds, preferredTimescale: 600)
         let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
@@ -3222,6 +3242,14 @@ public final class PlaybackSessionController {
         // (playback_progress has no FK since migration v2_playback_progress_no_fk)
         try? await repository.savePlaybackProgress(snapshot.local)
         try? await apiClient.reportPlayback(progress: snapshot.remote)
+    }
+
+    func finishCurrentPlayback() async {
+        pause()
+        await persistProgress(isPaused: true, didFinish: true)
+        if let currentItemID {
+            try? await apiClient.reportPlayed(itemID: currentItemID)
+        }
     }
 
     private func tearDownCurrentItemObservers() {

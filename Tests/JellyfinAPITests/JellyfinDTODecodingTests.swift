@@ -93,6 +93,32 @@ final class JellyfinDTODecodingTests: XCTestCase {
         XCTAssertEqual(response.mediaSources.count, 0, "Null MediaSources should decode as empty array")
     }
 
+    // MARK: - MediaSegmentDTO
+
+    func testMediaSegmentQueryDecodesOptionalFieldsAndFallsBackToItemID() throws {
+        let json = """
+        {
+            "Items": [
+                {
+                    "StartTicks": 0,
+                    "EndTicks": 300000000,
+                    "Type": "Intro"
+                }
+            ]
+        }
+        """.data(using: .utf8)!
+
+        let response = try decoder.decode(MediaSegmentQueryResultDTO.self, from: json)
+        XCTAssertEqual(response.items.count, 1)
+
+        let segments = response.items.compactMap { $0.toDomain(defaultItemID: "episode-1") }
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].itemID, "episode-1")
+        XCTAssertEqual(segments[0].type, .intro)
+        XCTAssertEqual(segments[0].startTicks, 0)
+        XCTAssertEqual(segments[0].endTicks, 300000000)
+    }
+
     // MARK: - ItemDTO field flexibility
 
     func testItemDTODecodes_withMinimalFields() throws {

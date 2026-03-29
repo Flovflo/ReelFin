@@ -74,6 +74,7 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem]
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource]
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource]
+    func fetchMediaSegments(itemID: String) async throws -> [MediaSegment]
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
     func prefetchImages(for items: [MediaItem]) async
@@ -132,6 +133,10 @@ public extension JellyfinAPIClientProtocol {
 
     // Default no-op: concrete clients may provide a real implementation.
     func prefetchImages(for items: [MediaItem]) async {}
+
+    func fetchMediaSegments(itemID _: String) async throws -> [MediaSegment] {
+        []
+    }
 
     func setPlayedState(itemID: String, isPlayed: Bool) async throws {
         guard isPlayed else { return }

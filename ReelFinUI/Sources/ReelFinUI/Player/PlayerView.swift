@@ -35,13 +35,15 @@ struct PlayerView: View {
                 selectedAudioID: session.selectedAudioTrackID,
                 selectedSubtitleID: session.selectedSubtitleTrackID,
                 onSelectAudio: { id in session.selectAudioTrack(id: id) },
-                onSelectSubtitle: { id in session.selectSubtitleTrack(id: id) }
+                onSelectSubtitle: { id in session.selectSubtitleTrack(id: id) },
+                skipSuggestion: session.activeSkipSuggestion,
+                onSkipSuggestion: { session.skipCurrentSegment() }
             )
             .ignoresSafeArea()
 #else
             // AVPlayerViewController — native controls handle PiP, AirPlay, and scrubbing.
             NativePlayerViewController(player: session.player)
-                .ignoresSafeArea()
+            .ignoresSafeArea()
 
             // Track-picker button — shown only when language/subtitle selection is meaningful.
             // Positioned at the top-leading corner, above AVKit's standard transport overlay,
@@ -64,6 +66,30 @@ struct PlayerView: View {
                     }
                     Spacer()
                 }
+            }
+
+            if let skipSuggestion = session.activeSkipSuggestion {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button {
+                            session.skipCurrentSegment()
+                        } label: {
+                            Label(skipSuggestion.title, systemImage: skipSuggestion.systemImageName)
+                                .font(.callout.weight(.semibold))
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(.ultraThinMaterial, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 20)
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 #endif
         }

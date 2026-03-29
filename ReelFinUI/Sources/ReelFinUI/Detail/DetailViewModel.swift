@@ -155,6 +155,19 @@ final class DetailViewModel: ObservableObject {
         detail.item.mediaType == .series ? nextUpEpisode?.id : detail.item.id
     }
 
+    func nextEpisodes(after episode: MediaItem) -> [MediaItem] {
+        guard let currentIndex = episodes.firstIndex(where: { $0.id == episode.id }) else {
+            return []
+        }
+
+        let nextIndex = episodes.index(after: currentIndex)
+        guard nextIndex < episodes.endIndex else {
+            return []
+        }
+
+        return Array(episodes[nextIndex...])
+    }
+
     func toggleWatchlist() {
         let targetValue = !isInWatchlist
         detail.item.isFavorite = targetValue
