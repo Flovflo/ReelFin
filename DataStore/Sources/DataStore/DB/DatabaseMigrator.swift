@@ -96,6 +96,20 @@ enum DatabaseMigratorFactory {
             try db.execute(sql: "ALTER TABLE playback_progress_new RENAME TO playback_progress")
         }
 
+        migrator.registerMigration("v3_media_items_user_data") { db in
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN series_name TEXT")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN series_poster_tag TEXT")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN index_number INTEGER")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN parent_index_number INTEGER")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN has_4k INTEGER NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN has_dolby_vision INTEGER NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN has_closed_captions INTEGER NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN air_days TEXT NOT NULL DEFAULT '[]'")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN is_played INTEGER NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE media_items ADD COLUMN playback_position_ticks INTEGER")
+        }
+
         return migrator
     }
 

@@ -314,6 +314,7 @@ targets:
       - path: Tests/JellyfinAPITests
     dependencies:
       - target: JellyfinAPI
+      - target: DataStore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.jellyfinapi.tests

@@ -9,6 +9,32 @@ private struct HTTPStatusError: Error {
 }
 
 public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
+    private enum ItemFields {
+        static let home = [
+            "Genres",
+            "Overview",
+            "ImageTags",
+            "BackdropImageTags",
+            "RunTimeTicks",
+            "MediaStreams",
+            "AirDays",
+            "UserData"
+        ]
+        static let detail = [
+            "Genres",
+            "Overview",
+            "ImageTags",
+            "BackdropImageTags",
+            "PrimaryImageAspectRatio",
+            "RunTimeTicks",
+            "MediaStreams",
+            "AirDays",
+            "UserData"
+        ]
+        static let detailWithPeople = detail + ["People"]
+        static let episodes = ["Overview", "RunTimeTicks", "UserData"]
+    }
+
     private enum ClientDefaultsKeys {
         static let deviceID = "jellyfin.client.device_id"
     }
@@ -318,7 +344,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         let item: ItemDTO = try await request(
             path: "Users/\(userID)/Items/\(id)",
             query: [
-                URLQueryItem(name: "Fields", value: "Genres,Overview,ImageTags,BackdropImageTags,PrimaryImageAspectRatio,RunTimeTicks,MediaStreams,AirDays")
+                fieldsQueryItem(ItemFields.detail)
             ]
         )
         return item.toDomain()
@@ -329,7 +355,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         async let itemRequest: ItemDTO = request(
             path: "Users/\(userID)/Items/\(id)",
             query: [
-                URLQueryItem(name: "Fields", value: "Genres,Overview,ImageTags,BackdropImageTags,PrimaryImageAspectRatio,RunTimeTicks,People,MediaStreams,AirDays")
+                fieldsQueryItem(ItemFields.detailWithPeople)
             ]
         )
 
@@ -368,7 +394,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             query: [
                 URLQueryItem(name: "UserId", value: userID),
                 URLQueryItem(name: "SeasonId", value: seasonID),
-                URLQueryItem(name: "Fields", value: "Overview")
+                fieldsQueryItem(ItemFields.episodes)
             ]
         )
         return response.items.map { $0.toDomain() }
@@ -384,7 +410,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 URLQueryItem(name: "UserId", value: userID),
                 URLQueryItem(name: "SeriesId", value: seriesID),
                 URLQueryItem(name: "Limit", value: "1"),
-                URLQueryItem(name: "Fields", value: "Overview"),
+                fieldsQueryItem(ItemFields.episodes),
                 URLQueryItem(name: "EnableResumable", value: "true"),
                 URLQueryItem(name: "EnableRewatching", value: "false")
             ]
@@ -425,6 +451,8 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 break
             }
         }
+
+        queryItems = mergedQueryItems(queryItems, fields: ItemFields.detail)
 
         let response: ItemsResponseDTO = try await request(path: "Users/\(userID)/Items", query: queryItems)
         return response.items.map { $0.toDomain(libraryID: query.viewID) }
@@ -604,8 +632,34 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         query: [URLQueryItem],
         libraryID: String?
     ) async throws -> [MediaItem] {
-        let response: ItemsResponseDTO = try await request(path: path, query: query)
+        let response: ItemsResponseDTO = try await request(
+            path: path,
+            query: mergedQueryItems(query, fields: ItemFields.home)
+        )
         return response.items.map { $0.toDomain(libraryID: libraryID) }
+    }
+
+    private func fieldsQueryItem(_ fields: [String]) -> URLQueryItem {
+        URLQueryItem(name: "Fields", value: fields.joined(separator: ","))
+    }
+
+    private func mergedQueryItems(_ query: [URLQueryItem], fields: [String]) -> [URLQueryItem] {
+        guard let fieldsIndex = query.firstIndex(where: { $0.name == "Fields" }) else {
+            return query + [fieldsQueryItem(fields)]
+        }
+
+        var merged = query
+        let existingFields = merged[fieldsIndex].value?
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? []
+        var combinedFields = existingFields
+
+        for field in fields where !combinedFields.contains(field) {
+            combinedFields.append(field)
+        }
+
+        merged[fieldsIndex] = fieldsQueryItem(combinedFields)
+        return merged
     }
 
     private func incrementalQuery(since: Date?) -> [URLQueryItem] {

@@ -74,8 +74,9 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
             let featuredRows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT m.* FROM featured_items f
+                SELECT \(mediaItemSelectColumns()) FROM featured_items f
                 JOIN media_items m ON m.id = f.item_id
+                \(mediaItemProgressJoin())
                 ORDER BY f.position
                 """
             )
@@ -89,10 +90,11 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
                     r.kind AS row_kind,
                     r.title AS row_title,
                     r.position AS row_position,
-                    m.*
+                    \(mediaItemSelectColumns())
                 FROM home_rows r
                 LEFT JOIN home_row_items h ON h.row_id = r.id
                 LEFT JOIN media_items m ON m.id = h.item_id
+                \(mediaItemProgressJoin())
                 ORDER BY r.position, h.position
                 """
             )
@@ -139,7 +141,16 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
 
     public func fetchItem(id: String) async throws -> MediaItem? {
         try await read { db in
-            let row = try Row.fetchOne(db, sql: "SELECT * FROM media_items WHERE id = ?", arguments: [id])
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT \(mediaItemSelectColumns())
+                FROM media_items m
+                \(mediaItemProgressJoin())
+                WHERE m.id = ?
+                """,
+                arguments: [id]
+            )
             return row.flatMap(mediaItem(from:))
         }
     }
@@ -150,26 +161,28 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
             var arguments = StatementArguments()
 
             if let viewID = query.viewID {
-                conditions.append("library_id = ?")
+                conditions.append("m.library_id = ?")
                 arguments += [viewID]
             }
 
             if let mediaType = query.mediaType {
-                conditions.append("media_type = ?")
+                conditions.append("m.media_type = ?")
                 arguments += [mediaType.rawValue]
             }
 
             if let search = query.query, !search.isEmpty {
-                conditions.append("name LIKE ?")
+                conditions.append("m.name LIKE ?")
                 arguments += ["%\(search)%"]
             }
 
             arguments += [query.pageSize, query.page * query.pageSize]
 
             let sql = """
-                SELECT * FROM media_items
+                SELECT \(mediaItemSelectColumns())
+                FROM media_items m
+                \(mediaItemProgressJoin())
                 WHERE \(conditions.joined(separator: " AND "))
-                ORDER BY updated_at DESC
+                ORDER BY m.updated_at DESC
                 LIMIT ? OFFSET ?
                 """
 
@@ -191,8 +204,9 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT m.* FROM media_items_fts f
+                SELECT \(mediaItemSelectColumns()) FROM media_items_fts f
                 JOIN media_items m ON m.id = f.media_id
+                \(mediaItemProgressJoin())
                 WHERE media_items_fts MATCH ?
                 ORDER BY rank
                 LIMIT ?
@@ -277,8 +291,11 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
                 sql: """
                 INSERT INTO media_items (
                     id, name, overview, media_type, year, runtime_ticks, genres,
-                    community_rating, poster_tag, backdrop_tag, library_id, parent_id, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    community_rating, poster_tag, backdrop_tag, library_id, parent_id,
+                    series_name, series_poster_tag, index_number, parent_index_number,
+                    has_4k, has_dolby_vision, has_closed_captions, air_days,
+                    is_favorite, is_played, playback_position_ticks, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     overview = excluded.overview,
@@ -291,6 +308,17 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
                     backdrop_tag = excluded.backdrop_tag,
                     library_id = excluded.library_id,
                     parent_id = excluded.parent_id,
+                    series_name = COALESCE(excluded.series_name, media_items.series_name),
+                    series_poster_tag = COALESCE(excluded.series_poster_tag, media_items.series_poster_tag),
+                    index_number = COALESCE(excluded.index_number, media_items.index_number),
+                    parent_index_number = COALESCE(excluded.parent_index_number, media_items.parent_index_number),
+                    has_4k = excluded.has_4k,
+                    has_dolby_vision = excluded.has_dolby_vision,
+                    has_closed_captions = excluded.has_closed_captions,
+                    air_days = excluded.air_days,
+                    is_favorite = excluded.is_favorite,
+                    is_played = excluded.is_played,
+                    playback_position_ticks = COALESCE(excluded.playback_position_ticks, media_items.playback_position_ticks),
                     updated_at = excluded.updated_at
                 """,
                 arguments: [
@@ -300,12 +328,23 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
                     item.mediaType.rawValue,
                     item.year,
                     item.runtimeTicks,
-                    encodeGenres(item.genres),
+                    encodeStringArray(item.genres),
                     item.communityRating,
                     item.posterTag,
                     item.backdropTag,
                     item.libraryID,
                     item.parentID,
+                    item.seriesName,
+                    item.seriesPosterTag,
+                    item.indexNumber,
+                    item.parentIndexNumber,
+                    item.has4K,
+                    item.hasDolbyVision,
+                    item.hasClosedCaptions,
+                    encodeStringArray(item.airDays ?? []),
+                    item.isFavorite,
+                    item.isPlayed,
+                    item.playbackPositionTicks,
                     Date().timeIntervalSince1970
                 ]
             )
@@ -319,36 +358,133 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
     }
 
     private func mediaItem(from row: Row) -> MediaItem? {
-        guard let mediaType = MediaType(rawValue: row["media_type"]) else {
+        let id: String? = row["id"]
+        let name: String? = row["name"]
+        let mediaTypeRaw: String? = row["media_type"]
+
+        guard
+            let id,
+            let name,
+            let mediaTypeRaw,
+            let mediaType = MediaType(rawValue: mediaTypeRaw)
+        else {
             return nil
         }
 
+        let genresValue: String? = row["genres"]
+        let airDaysValue: String? = row["air_days"]
+        let storedRuntimeTicks: Int64? = row["runtime_ticks"]
+        let storedPlaybackPositionTicks: Int64? = row["playback_position_ticks"]
+        let localPlaybackPositionTicks: Int64? = row["local_position_ticks"]
+        let localTotalTicks: Int64? = row["local_total_ticks"]
+        let isPlayed = (row["is_played"] as Bool?) ?? false
+
+        let effectivePlaybackPositionTicks: Int64?
+        if isPlayed {
+            effectivePlaybackPositionTicks = nil
+        } else if let localPlaybackPositionTicks, localPlaybackPositionTicks > 0 {
+            effectivePlaybackPositionTicks = localPlaybackPositionTicks
+        } else if let storedPlaybackPositionTicks, storedPlaybackPositionTicks > 0 {
+            effectivePlaybackPositionTicks = storedPlaybackPositionTicks
+        } else {
+            effectivePlaybackPositionTicks = nil
+        }
+
         return MediaItem(
-            id: row["id"],
-            name: row["name"],
+            id: id,
+            name: name,
             overview: row["overview"],
             mediaType: mediaType,
             year: row["year"],
-            runtimeTicks: row["runtime_ticks"],
-            genres: decodeGenres(row["genres"]),
+            runtimeTicks: effectiveRuntimeTicks(
+                storedRuntimeTicks: storedRuntimeTicks,
+                localTotalTicks: localTotalTicks,
+                playbackPositionTicks: effectivePlaybackPositionTicks
+            ),
+            genres: decodeStringArray(genresValue),
             communityRating: row["community_rating"],
             posterTag: row["poster_tag"],
             backdropTag: row["backdrop_tag"],
             libraryID: row["library_id"],
-            parentID: row["parent_id"]
+            parentID: row["parent_id"],
+            seriesName: row["series_name"],
+            seriesPosterTag: row["series_poster_tag"],
+            indexNumber: row["index_number"],
+            parentIndexNumber: row["parent_index_number"],
+            has4K: (row["has_4k"] as Bool?) ?? false,
+            hasDolbyVision: (row["has_dolby_vision"] as Bool?) ?? false,
+            hasClosedCaptions: (row["has_closed_captions"] as Bool?) ?? false,
+            airDays: decodeOptionalStringArray(airDaysValue),
+            isFavorite: (row["is_favorite"] as Bool?) ?? false,
+            isPlayed: isPlayed,
+            playbackPositionTicks: effectivePlaybackPositionTicks
         )
     }
 
-    private func encodeGenres(_ genres: [String]) -> String {
-        let data = (try? encoder.encode(genres)) ?? Data("[]".utf8)
+    private func mediaItemSelectColumns(mediaAlias: String = "m", progressAlias: String = "p") -> String {
+        """
+        \(mediaAlias).id,
+        \(mediaAlias).name,
+        \(mediaAlias).overview,
+        \(mediaAlias).media_type,
+        \(mediaAlias).year,
+        \(mediaAlias).runtime_ticks,
+        \(mediaAlias).genres,
+        \(mediaAlias).community_rating,
+        \(mediaAlias).poster_tag,
+        \(mediaAlias).backdrop_tag,
+        \(mediaAlias).library_id,
+        \(mediaAlias).parent_id,
+        \(mediaAlias).series_name,
+        \(mediaAlias).series_poster_tag,
+        \(mediaAlias).index_number,
+        \(mediaAlias).parent_index_number,
+        \(mediaAlias).has_4k,
+        \(mediaAlias).has_dolby_vision,
+        \(mediaAlias).has_closed_captions,
+        \(mediaAlias).air_days,
+        \(mediaAlias).is_favorite,
+        \(mediaAlias).is_played,
+        \(mediaAlias).playback_position_ticks,
+        \(progressAlias).position_ticks AS local_position_ticks,
+        \(progressAlias).total_ticks AS local_total_ticks
+        """
+    }
+
+    private func mediaItemProgressJoin(mediaAlias: String = "m", progressAlias: String = "p") -> String {
+        "LEFT JOIN playback_progress \(progressAlias) ON \(progressAlias).item_id = \(mediaAlias).id"
+    }
+
+    private func encodeStringArray(_ values: [String]) -> String {
+        let data = (try? encoder.encode(values)) ?? Data("[]".utf8)
         return String(decoding: data, as: UTF8.self)
     }
 
-    private func decodeGenres(_ value: String) -> [String] {
-        guard let data = value.data(using: .utf8), let decoded = try? decoder.decode([String].self, from: data) else {
+    private func decodeStringArray(_ value: String?) -> [String] {
+        guard
+            let value,
+            let data = value.data(using: .utf8),
+            let decoded = try? decoder.decode([String].self, from: data)
+        else {
             return []
         }
         return decoded
+    }
+
+    private func decodeOptionalStringArray(_ value: String?) -> [String]? {
+        let decoded = decodeStringArray(value)
+        return decoded.isEmpty ? nil : decoded
+    }
+
+    private func effectiveRuntimeTicks(
+        storedRuntimeTicks: Int64?,
+        localTotalTicks: Int64?,
+        playbackPositionTicks: Int64?
+    ) -> Int64? {
+        let candidates = [storedRuntimeTicks, localTotalTicks, playbackPositionTicks]
+            .compactMap { $0 }
+            .filter { $0 > 0 }
+        return candidates.max()
     }
 
     private func write<T: Sendable>(_ block: (Database) throws -> T) async throws -> T {

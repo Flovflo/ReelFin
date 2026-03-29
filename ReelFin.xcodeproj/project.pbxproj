@@ -17,6 +17,7 @@
 		0610514202B51056EE59F5F5 /* SharedTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A6CD00B2E7BEF6765C51F19F /* SharedTV.framework */; };
 		0645AF619E9102245CD31B94 /* TVAppBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8BFAE38CD4269729EAF2EE /* TVAppBootstrap.swift */; };
 		07169BC78256D2EB0709ED4C /* SessionPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA8A73A634C0467F018BA267 /* SessionPersistenceTests.swift */; };
+		077DC4D87843C05F915A72EF /* DataStore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CBE87E846E1375DE69C99A6B /* DataStore.framework */; };
 		09F19370AF5C19324383D9CB /* PlaybackAssetSelection+Optimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4607F6D9D24232BDC6E482A3 /* PlaybackAssetSelection+Optimization.swift */; };
 		0A143F0F6BFA1279283F5A4D /* PlaybackSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */; };
 		0A2AEA70DF9E6AEA5ED95B2E /* SeriesLookupCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8263D17251B4545771D4C295 /* SeriesLookupCache.swift */; };
@@ -156,6 +157,7 @@
 		700EAE9F14DEFB08A2470960 /* Shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; };
 		702B8C47A940FC42051D993E /* TVRootShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE6C8B1A53BCDD1611150FCA /* TVRootShellView.swift */; };
 		713F8001B5521F0A8A48EA19 /* TVLibraryControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C115FBF50930454303673151 /* TVLibraryControlBar.swift */; };
+		72560DC1E00780CF906F4F82 /* DataStore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = CBE87E846E1375DE69C99A6B /* DataStore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		727793DD9CD7E9EA922651C8 /* JellyfinAPI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; };
 		750B4D05F9E3760AD34A5A7C /* RetryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA00058358D2298F6ADE8A19 /* RetryPolicy.swift */; };
 		76425146E336A8BF5CCCC006 /* StartupFailureReason.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93D80635B13E718601C851E5 /* StartupFailureReason.swift */; };
@@ -601,6 +603,13 @@
 			remoteGlobalIDString = DDAF1D1C374A36C8C0830813;
 			remoteInfo = DataStoreTV;
 		};
+		7149AD2EA3397F642220155F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CE479CC70E366B8F0A299AD9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8B92FF7BE6C39F2F7D1490FA;
+			remoteInfo = DataStore;
+		};
 		76CDF09E6660334E462CC410 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = CE479CC70E366B8F0A299AD9 /* Project object */;
@@ -808,6 +817,7 @@
 			dstSubfolderSpec = 10;
 			files = (
 				E541BDE74CF94B36A6DEE4F6 /* JellyfinAPI.framework in Embed Frameworks */,
+				72560DC1E00780CF906F4F82 /* DataStore.framework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1114,6 +1124,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6F9B7FC5435B05ADFEBFAAEC /* JellyfinAPI.framework in Frameworks */,
+				077DC4D87843C05F915A72EF /* DataStore.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1963,6 +1974,7 @@
 			);
 			dependencies = (
 				0FE216AD73256F41ECDC4FD8 /* PBXTargetDependency */,
+				4CA879AD4D6C682E64F8C60D /* PBXTargetDependency */,
 			);
 			name = JellyfinAPITests;
 			packageProductDependencies = (
@@ -2768,6 +2780,11 @@
 			isa = PBXTargetDependency;
 			target = 0B9FCD062E05E3C009DEA74F /* PlaybackEngineTV */;
 			targetProxy = 6A3EB8E85D80CE818041090F /* PBXContainerItemProxy */;
+		};
+		4CA879AD4D6C682E64F8C60D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8B92FF7BE6C39F2F7D1490FA /* DataStore */;
+			targetProxy = 7149AD2EA3397F642220155F /* PBXContainerItemProxy */;
 		};
 		4D509269D2EE35E4FFDC84A3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;

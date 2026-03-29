@@ -265,13 +265,13 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var playbackPositionDisplayText: String? {
-        guard let playbackPositionTicks, playbackPositionTicks > 0 else { return nil }
+        guard !isPlayed, let playbackPositionTicks, playbackPositionTicks > 0 else { return nil }
         let totalSeconds = Int(playbackPositionTicks / 10_000_000)
         return Self.formatDuration(seconds: totalSeconds)
     }
 
     public var playbackProgress: Double? {
-        guard let position = playbackPositionTicks, let total = runtimeTicks, total > 0 else {
+        guard !isPlayed, let position = playbackPositionTicks, let total = runtimeTicks, total > 0 else {
             return nil
         }
         return min(1, max(0, Double(position) / Double(total)))
