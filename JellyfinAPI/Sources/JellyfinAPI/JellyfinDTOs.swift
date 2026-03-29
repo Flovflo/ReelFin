@@ -207,6 +207,7 @@ struct ItemDTO: Decodable {
             hasDolbyVision: hasDolbyVision,
             hasClosedCaptions: hasClosedCaptions,
             airDays: airDays,
+            isFavorite: userData?.isFavorite ?? false,
             isPlayed: userData?.played ?? false,
             playbackPositionTicks: userData?.playbackPositionTicks
         )
@@ -214,11 +215,13 @@ struct ItemDTO: Decodable {
 }
 
 struct UserDataDTO: Decodable {
+    let isFavorite: Bool?
     let played: Bool?
     let playbackPositionTicks: Int64?
     let playCount: Int?
 
     enum CodingKeys: String, CodingKey {
+        case isFavorite = "IsFavorite"
         case played = "Played"
         case playbackPositionTicks = "PlaybackPositionTicks"
         case playCount = "PlayCount"
@@ -458,6 +461,7 @@ struct MediaStreamDTO: Decodable {
     let displayTitle: String?
     let language: String?
     let isDefault: Bool?
+    let isForced: Bool?
     let codec: String?
     let profile: String?
     let bitDepth: Int?
@@ -491,6 +495,7 @@ struct MediaStreamDTO: Decodable {
         displayTitle: String?,
         language: String?,
         isDefault: Bool?,
+        isForced: Bool? = nil,
         codec: String?,
         profile: String?,
         bitDepth: Int?,
@@ -523,6 +528,7 @@ struct MediaStreamDTO: Decodable {
         self.displayTitle = displayTitle
         self.language = language
         self.isDefault = isDefault
+        self.isForced = isForced
         self.codec = codec
         self.profile = profile
         self.bitDepth = bitDepth
@@ -557,6 +563,7 @@ struct MediaStreamDTO: Decodable {
         case displayTitle = "DisplayTitle"
         case language = "Language"
         case isDefault = "IsDefault"
+        case isForced = "IsForced"
         case codec = "Codec"
         case profile = "Profile"
         case bitDepth = "BitDepth"
@@ -604,6 +611,7 @@ struct MediaStreamDTO: Decodable {
         displayTitle = try container.decodeIfPresent(String.self, forKey: .displayTitle)
         language = try container.decodeIfPresent(String.self, forKey: .language)
         isDefault = Self.flexibleBool(from: container, forKey: .isDefault)
+        isForced = Self.flexibleBool(from: container, forKey: .isForced)
         codec = try container.decodeIfPresent(String.self, forKey: .codec)
         profile = try container.decodeIfPresent(String.self, forKey: .profile)
         bitDepth = try container.decodeIfPresent(Int.self, forKey: .bitDepth)
@@ -639,6 +647,7 @@ struct MediaStreamDTO: Decodable {
             language: language,
             codec: streamCodec ?? codec,
             isDefault: isDefault ?? false,
+            isForced: isForced ?? false,
             index: trackIndex
         )
     }
@@ -817,6 +826,79 @@ struct DeviceProfileRequestDTO: Encodable {
             ]
         )
     }
+
+    /// tvOS-optimized profile for Apple TV 4K.
+    /// DirectPlay: mp4/m4v/mov with H.264/HEVC/DV + AAC/AC3/EAC3/ALAC/FLAC.
+    /// Jellyfin will use DirectStream (remux) for MKV with compatible codecs.
+    /// Transcode: HLS fMP4 HEVC + EAC3/AAC for incompatible sources.
+    static func tvOSOptimized(maxStreamingBitrate: Int, maxAudioChannels: Int) -> DeviceProfileRequestDTO {
+        DeviceProfileRequestDTO(
+            name: "ReelFin tvOS Apple TV (DV/HDR/Atmos)",
+            id: "a3c1f8e2-7b5d-4a9e-b6c0-d2e4f8a1b3c5",
+            maxStreamingBitrate: maxStreamingBitrate,
+            musicStreamingTranscodingBitrate: 192_000,
+            directPlayProfiles: [
+                // MP4-family: full codec support
+                DirectPlayProfileRequestDTO(
+                    container: "mp4,m4v,mov",
+                    audioCodec: "aac,ac3,eac3,mp3,alac,flac",
+                    videoCodec: "hevc,h265,hvc1,dvh1,dvhe,h264,avc1",
+                    type: .video
+                ),
+                // MPEG-TS: H.264/HEVC with common audio
+                DirectPlayProfileRequestDTO(
+                    container: "mpegts",
+                    audioCodec: "aac,ac3,eac3",
+                    videoCodec: "hevc,h264",
+                    type: .video
+                )
+            ],
+            transcodingProfiles: [
+                // Server-side transcode: HLS TS with H.264 video.
+                // Jellyfin does not produce real fMP4 segments (serves TS bytes
+                // despite SegmentContainer=fmp4), so HEVC fMP4 HLS is broken.
+                // H264 TS is the only reliable transcode path on tvOS.
+                TranscodingProfileRequestDTO(
+                    container: "ts",
+                    type: .video,
+                    videoCodec: "h264",
+                    audioCodec: "aac,ac3,eac3",
+                    protocolValue: .hls,
+                    context: .streaming,
+                    maxAudioChannels: String(maxAudioChannels),
+                    enableSubtitlesInManifest: false,
+                    estimateContentLength: false,
+                    copyTimestamps: true,
+                    enableAudioVbrEncoding: true
+                )
+            ],
+            subtitleProfiles: [
+                SubtitleProfileRequestDTO(
+                    format: "srt",
+                    method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "vtt",
+                    method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "ass",
+                    method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "ssa",
+                    method: .external
+                )
+            ],
+            responseProfiles: [
+                ResponseProfileRequestDTO(
+                    type: .video,
+                    container: "m4v",
+                    mimeType: "video/mp4"
+                )
+            ]
+        )
+    }
 }
 
 struct DirectPlayProfileRequestDTO: Encodable {
@@ -898,5 +980,39 @@ struct PlaybackProgressRequestDTO: Encodable {
         case isPaused = "IsPaused"
         case isMuted = "IsMuted"
         case playMethod = "PlayMethod"
+    }
+}
+
+// MARK: - Quick Connect DTOs
+
+struct QuickConnectInitiateResponseDTO: Decodable {
+    /// Short code displayed to the user (e.g. "A1B2").
+    let code: String
+    /// Opaque secret used to poll for auth completion.
+    let secret: String
+    /// Whether the request was successfully initiated.
+    let authenticated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case code = "Code"
+        case secret = "Secret"
+        case authenticated = "Authenticated"
+    }
+}
+
+struct QuickConnectAuthRequestDTO: Encodable {
+    let secret: String
+
+    enum CodingKeys: String, CodingKey {
+        case secret = "Secret"
+    }
+}
+
+struct QuickConnectAuthResponseDTO: Decodable {
+    /// True when the user has approved the code on another device.
+    let authenticated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case authenticated = "Authenticated"
     }
 }

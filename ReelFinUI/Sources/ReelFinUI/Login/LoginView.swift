@@ -1,3 +1,4 @@
+#if os(iOS)
 import Shared
 import SwiftUI
 import UIKit
@@ -45,7 +46,9 @@ struct LoginView: View {
                 .offset(y: contentVisible ? 0 : 10)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+#if os(iOS)
             .ignoresSafeArea(.keyboard, edges: .bottom)
+#endif
         }
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
@@ -170,10 +173,12 @@ struct LoginView: View {
                 }
 
                 TextField("https://server.tld", text: $viewModel.serverURLText)
+#if os(iOS)
                     .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+#endif
                     .autocorrectionDisabled(true)
                     .textContentType(.URL)
-                    .keyboardType(.URL)
                     .font(.system(size: 17, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                     .focused($focusedField, equals: .serverURL)
@@ -230,7 +235,9 @@ struct LoginView: View {
 
                 VStack(spacing: 12) {
                     TextField("Username", text: $viewModel.username)
+#if os(iOS)
                         .textInputAutocapitalization(.never)
+#endif
                         .autocorrectionDisabled(true)
                         .textContentType(.username)
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -417,7 +424,9 @@ struct LoginView: View {
         try? await Task.sleep(nanoseconds: reduceMotion ? 180_000_000 : 360_000_000)
 
         await MainActor.run {
+#if os(iOS)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+#endif
             onLogin(session)
         }
     }
@@ -533,26 +542,25 @@ private extension View {
         self
             .padding(.horizontal, 18)
             .frame(height: 56)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(0.08))
+            .reelFinGlassCapsule(
+                interactive: true,
+                tint: Color.white.opacity(0.10),
+                stroke: Color.white.opacity(0.10),
+                shadowOpacity: 0.10,
+                shadowRadius: 10,
+                shadowYOffset: 4
             )
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
-            }
     }
 
     func capsuleSurface() -> some View {
         self
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(0.06))
+            .reelFinGlassCapsule(
+                tint: Color.white.opacity(0.08),
+                stroke: Color.white.opacity(0.10),
+                shadowOpacity: 0.08,
+                shadowRadius: 8,
+                shadowYOffset: 4
             )
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
-            }
     }
 }
 
@@ -614,3 +622,4 @@ private struct NativeCircleButtonStyle: ButtonStyle {
         )
     }
 }
+#endif

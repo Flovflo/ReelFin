@@ -79,7 +79,8 @@ public struct DeviceCapabilityFingerprint: Sendable {
         let hevcMain10 = hevc && chip >= .a11OrOlder
         let av1 = chip >= .a17Pro || chip >= .m3
 
-        // HDR: requires A11+ for HDR10, A12+ for Dolby Vision on iPhone.
+        // HDR: requires A11+ for HDR10, A12+ for Dolby Vision.
+        // Apple TV 4K (A12+) fully supports Dolby Vision output via HDMI.
         // Simulator reports modern model identifiers but cannot be trusted for DV decode/render behavior.
         let hdr10 = chip >= .a11OrOlder
         #if targetEnvironment(simulator)
@@ -200,12 +201,16 @@ public struct DeviceCapabilityFingerprint: Sendable {
         if lower.hasPrefix("iphone12") { return .a13 }
         if lower.hasPrefix("iphone11") { return .a12 }
 
-        // Apple TV
+        // Apple TV chip mapping:
+        // AppleTV14,1 = Apple TV 4K (3rd gen, 2022) — A15 Bionic
+        // AppleTV11,1 = Apple TV 4K (2nd gen, 2021) — A12 Bionic
+        // AppleTV6,2  = Apple TV 4K (1st gen, 2017) — A10X Fusion → A11 class
+        // AppleTV5,3  = Apple TV HD (2015) — A8 → A11OrOlder
         if lower.hasPrefix("appletv") {
-            // Apple TV 4K 2nd gen+ has A12+
-            if lower.contains("appletv14") || lower.contains("appletv11,1") { return .a15 }
-            if lower.contains("appletv11") { return .a12 }
-            return .a11OrOlder
+            if lower.contains("appletv14") { return .a15 }           // 4K 3rd gen
+            if lower.contains("appletv11") { return .a12 }           // 4K 2nd gen
+            if lower.contains("appletv6")  { return .a11OrOlder }    // 4K 1st gen (A10X)
+            return .a11OrOlder                                        // older Apple TV HD
         }
 
         if lower.contains("simulator") { return .a15 }

@@ -52,12 +52,7 @@ final class LibraryViewModel: ObservableObject {
                 )
             )
             try await dependencies.repository.upsertItems(remote)
-
-            var merged = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-            for item in remote {
-                merged[item.id] = item
-            }
-            items = sorted(Array(merged.values))
+            items = sorted(items + remote)
         } catch {
             AppLog.ui.error("Search failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -158,13 +153,72 @@ final class LibraryViewModel: ObservableObject {
     }
 
     private func deduped(_ values: [MediaItem]) -> [MediaItem] {
-        var seen = Set<String>()
-        return values.filter { item in
-            if seen.contains(item.id) {
-                return false
+        var grouped: [String: MediaItem] = [:]
+        var orderedKeys: [String] = []
+
+        for item in values {
+            let key = canonicalKey(for: item)
+            if let existing = grouped[key] {
+                grouped[key] = preferredItem(between: existing, and: item)
+                continue
             }
-            seen.insert(item.id)
-            return true
+
+            grouped[key] = item
+            orderedKeys.append(key)
         }
+
+        return orderedKeys.compactMap { grouped[$0] }
+    }
+
+    private func canonicalKey(for item: MediaItem) -> String {
+        switch item.mediaType {
+        case .episode:
+            return [
+                "episode",
+                item.parentID ?? normalizedTitle(item.seriesName ?? item.name),
+                String(item.parentIndexNumber ?? -1),
+                String(item.indexNumber ?? -1)
+            ].joined(separator: "|")
+        default:
+            let runtimeBucket = item.runtimeTicks.map { String($0 / 600_000_000) } ?? "_"
+            return [
+                item.mediaType.rawValue,
+                normalizedTitle(item.name),
+                String(item.year ?? 0),
+                runtimeBucket
+            ].joined(separator: "|")
+        }
+    }
+
+    private func normalizedTitle(_ value: String) -> String {
+        let folded = value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        let filtered = folded.unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0) || CharacterSet.whitespaces.contains($0)
+        }
+        return String(String.UnicodeScalarView(filtered))
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func preferredItem(between lhs: MediaItem, and rhs: MediaItem) -> MediaItem {
+        let lhsScore = qualityScore(for: lhs)
+        let rhsScore = qualityScore(for: rhs)
+        if lhsScore == rhsScore {
+            return lhs.id <= rhs.id ? lhs : rhs
+        }
+        return lhsScore > rhsScore ? lhs : rhs
+    }
+
+    private func qualityScore(for item: MediaItem) -> Int {
+        var score = 0
+        score += item.overview?.isEmpty == false ? 5 : 0
+        score += item.posterTag == nil ? 0 : 4
+        score += item.backdropTag == nil ? 0 : 3
+        score += item.communityRating == nil ? 0 : 2
+        score += item.playbackPositionTicks == nil ? 0 : 2
+        score += item.isFavorite ? 1 : 0
+        score += item.isPlayed ? 1 : 0
+        score += min(item.genres.count, 3)
+        return score
     }
 }

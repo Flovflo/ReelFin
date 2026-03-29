@@ -14,9 +14,11 @@ public struct CachedRemoteImage: View {
     private let contentMode: CachedRemoteImageContentMode
     private let apiClient: JellyfinAPIClientProtocol
     private let imagePipeline: ImagePipelineProtocol
+    private let onImageLoaded: (() -> Void)?
 
     @State private var image: UIImage?
     @State private var requestURL: URL?
+    @State private var currentContentKey: String?
 
     public init(
         itemID: String,
@@ -25,7 +27,8 @@ public struct CachedRemoteImage: View {
         quality: Int = 82,
         contentMode: CachedRemoteImageContentMode = .fill,
         apiClient: JellyfinAPIClientProtocol,
-        imagePipeline: ImagePipelineProtocol
+        imagePipeline: ImagePipelineProtocol,
+        onImageLoaded: (() -> Void)? = nil
     ) {
         self.itemID = itemID
         self.type = type
@@ -34,6 +37,7 @@ public struct CachedRemoteImage: View {
         self.contentMode = contentMode
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
+        self.onImageLoaded = onImageLoaded
     }
 
     public var body: some View {
@@ -68,9 +72,19 @@ public struct CachedRemoteImage: View {
             imagePipeline.cancel(url: requestURL)
         }
         requestURL = nil
-        image = nil
 
-        guard let url = await apiClient.imageURL(for: itemID, type: type, width: width, quality: quality) else {
+        let contentKey = "\(itemID)-\(type.rawValue)"
+        if currentContentKey != contentKey {
+            image = nil
+            currentContentKey = contentKey
+        }
+
+        guard let url = await apiClient.imageURL(
+            for: itemID,
+            type: type,
+            width: normalizedWidth,
+            quality: quality
+        ) else {
             return
         }
 
@@ -78,26 +92,34 @@ public struct CachedRemoteImage: View {
 
         if let cached = await imagePipeline.cachedImage(for: url) {
             image = cached
+            onImageLoaded?()
             return
         }
 
         do {
             let downloaded = try await imagePipeline.image(for: url)
             image = downloaded
+            onImageLoaded?()
         } catch {
-            if shouldIgnoreImageError(error) {
+            if Self.shouldIgnoreImageError(error) {
                 return
             }
 
             // Fallback path: when poster/backdrop is missing, try the opposite type once.
-            if let fallbackType = fallbackType(for: type),
-               let fallbackURL = await apiClient.imageURL(for: itemID, type: fallbackType, width: width, quality: quality) {
+            if let fallbackType = Self.fallbackType(for: type),
+               let fallbackURL = await apiClient.imageURL(
+                for: itemID,
+                type: fallbackType,
+                width: normalizedWidth,
+                quality: quality
+               ) {
                 do {
                     let fallbackImage = try await imagePipeline.image(for: fallbackURL)
                     image = fallbackImage
+                    onImageLoaded?()
                     return
                 } catch {
-                    if shouldIgnoreImageError(error) {
+                    if Self.shouldIgnoreImageError(error) {
                         return
                     }
                 }
@@ -108,46 +130,10 @@ public struct CachedRemoteImage: View {
     }
 
     private var requestIdentity: String {
-        "\(itemID)-\(type.rawValue)-\(width)-\(quality)-\(contentMode.identity)"
+        "\(itemID)-\(type.rawValue)-\(normalizedWidth)-\(quality)-\(contentMode.identity)"
     }
 
-    private func fallbackType(for sourceType: JellyfinImageType) -> JellyfinImageType? {
-        switch sourceType {
-        case .primary:
-            return .backdrop
-        case .backdrop:
-            return .primary
-        case .logo:
-            return nil
-        }
-    }
-
-    private func shouldIgnoreImageError(_ error: Error) -> Bool {
-        let message = error.localizedDescription.lowercased()
-        return message.contains("404")
-    }
-}
-
-private extension CachedRemoteImageContentMode {
-    var identity: String {
-        switch self {
-        case .fill:
-            return "fill"
-        case .fit:
-            return "fit"
-        }
-    }
-}
-
-private struct RemoteImageScalingModifier: ViewModifier {
-    let contentMode: CachedRemoteImageContentMode
-
-    func body(content: Content) -> some View {
-        switch contentMode {
-        case .fill:
-            content.scaledToFill()
-        case .fit:
-            content.scaledToFit()
-        }
+    private var normalizedWidth: Int {
+        type.normalizedImageWidth(width)
     }
 }

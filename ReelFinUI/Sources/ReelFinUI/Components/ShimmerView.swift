@@ -1,6 +1,27 @@
 import SwiftUI
 
 public struct ShimmerView: View {
+#if os(tvOS)
+    public init() {}
+
+    public var body: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .overlay {
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.05),
+                        Color.white.opacity(0.16),
+                        Color.white.opacity(0.05)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .opacity(0.6)
+            }
+            .clipped()
+    }
+#else
     @State private var phase: CGFloat = -0.7
 
     public init() {}
@@ -32,4 +53,5 @@ public struct ShimmerView: View {
                 }
         }
     }
+#endif
 }

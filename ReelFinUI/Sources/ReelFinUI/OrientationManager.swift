@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 
 @MainActor
@@ -7,3 +8,4 @@ public final class OrientationManager {
 
     private init() {}
 }
+#endif

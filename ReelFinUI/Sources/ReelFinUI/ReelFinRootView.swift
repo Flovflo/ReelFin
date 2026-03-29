@@ -5,12 +5,16 @@ import UIKit
 #endif
 
 public struct ReelFinRootView: View {
+    #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     @State private var viewModel: RootViewModel
     private let dependencies: ReelFinDependencies
 
     @State private var selectedTab = 0
+    #if os(iOS)
     @State private var selectedSidebar: SidebarDestination? = .home
+    #endif
 
     public init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
@@ -35,9 +39,15 @@ public struct ReelFinRootView: View {
                 }
                 #endif
             } else {
+#if os(tvOS)
+                TVLoginView(dependencies: dependencies) { session in
+                    viewModel.completeLogin(session)
+                }
+#else
                 LoginView(dependencies: dependencies) { session in
                     viewModel.completeLogin(session)
                 }
+#endif
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -46,6 +56,13 @@ public struct ReelFinRootView: View {
         }
     }
 
+    #if os(tvOS)
+    private var tvLayout: some View {
+        TVRootShellView(dependencies: dependencies)
+    }
+    #endif
+
+    #if os(iOS)
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
             Tab("Home", systemImage: "play.tv.fill", value: 0) {
@@ -53,13 +70,13 @@ public struct ReelFinRootView: View {
                     HomeView(dependencies: dependencies)
                 }
             }
-            
+
             Tab("Search", systemImage: "magnifyingglass", value: 1, role: .search) {
                 NavigationStack {
                     LibraryView(dependencies: dependencies)
                 }
             }
-            
+
             Tab("Settings", systemImage: "gearshape.fill", value: 2) {
                 NavigationStack {
                     ServerSettingsView(dependencies: dependencies) {
@@ -71,40 +88,6 @@ public struct ReelFinRootView: View {
         // iOS 18 behavior to minimize the tab bar on scroll
         .tabBarMinimizeBehavior(.automatic)
     }
-
-    #if os(tvOS)
-    private var tvLayout: some View {
-        TabView(selection: $selectedTab) {
-            NavigationStack {
-                HomeView(dependencies: dependencies)
-            }
-            .tag(0)
-            .tabItem {
-                Label("Home", systemImage: "play.tv.fill")
-            }
-
-            NavigationStack {
-                LibraryView(dependencies: dependencies)
-            }
-            .tag(1)
-            .tabItem {
-                Label("Library", systemImage: "rectangle.stack")
-            }
-
-            NavigationStack {
-                ServerSettingsView(dependencies: dependencies) {
-                    viewModel.signOut()
-                }
-            }
-            .tag(2)
-            .tabItem {
-                Label("Settings", systemImage: "gearshape.fill")
-            }
-        }
-        .tint(.white)
-        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
-    }
-    #endif
 
     private var splitLayout: some View {
         NavigationSplitView {
@@ -143,7 +126,6 @@ public struct ReelFinRootView: View {
         .tint(ReelFinTheme.accent)
     }
 
-    #if os(iOS)
     private var shouldUseSplitLayout: Bool {
         if AppMetadata.current.isScreenshotModeEnabled {
             return false
@@ -153,8 +135,10 @@ public struct ReelFinRootView: View {
     #endif
 }
 
+#if os(iOS)
 private enum SidebarDestination: Hashable {
     case home
     case library
     case settings
 }
+#endif

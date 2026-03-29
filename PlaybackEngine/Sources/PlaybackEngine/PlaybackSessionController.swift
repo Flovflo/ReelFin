@@ -168,6 +168,8 @@ public final class PlaybackSessionController {
     public private(set) var availableSubtitleTracks: [MediaTrack] = []
     public private(set) var selectedAudioTrackID: String?
     public private(set) var selectedSubtitleTrackID: String?
+    /// External subtitle deferred until first frame to avoid HLS reload during startup.
+    private var pendingExternalSubtitleID: String?
     public private(set) var routeDescription: String = ""
     public private(set) var debugInfo: PlaybackDebugInfo?
     public private(set) var currentPlaybackPlan: PlaybackPlan?
@@ -182,6 +184,7 @@ public final class PlaybackSessionController {
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let repository: MetadataRepositoryProtocol
     private let coordinator: PlaybackCoordinator
+    private let warmupManager: (any PlaybackWarmupManaging)?
     private let playbackDiagnostics = PlaybackDiagnostics()
     private let fallbackPlanner = FallbackPlanner()
 
@@ -207,6 +210,10 @@ public final class PlaybackSessionController {
     private var playbackPolicy: PlaybackPolicy = .auto
     private var allowSDRFallback = true
     private var preferAudioTranscodeOnly = true
+    /// Mirrors ServerConfiguration.preferredAudioLanguage for the current session.
+    private var preferredAudioLanguage: String?
+    /// Mirrors ServerConfiguration.preferredSubtitleLanguage for the current session.
+    private var preferredSubtitleLanguage: String?
     private var playbackQualityMode: PlaybackQualityMode = .compatibility
     private var activeTranscodeProfile: TranscodeURLProfile = .serverDefault
     private var nativeBridgeSession: NativeBridgeSession?
@@ -231,6 +238,7 @@ public final class PlaybackSessionController {
     private let assetURLValidator = AssetURLValidator()
     private var startDate = Date()
     private var preferredProfilesByItemID: [String: TranscodeURLProfile] = [:]
+    private var lastPreparedSelection: PlaybackAssetSelection?
 
     private var readyInterval: SignpostInterval?
     private var firstFrameInterval: SignpostInterval?
@@ -291,11 +299,13 @@ public final class PlaybackSessionController {
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
         repository: MetadataRepositoryProtocol,
+        warmupManager: (any PlaybackWarmupManaging)? = nil,
         decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
     ) {
         self.apiClient = apiClient
         self.repository = repository
         self.coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
+        self.warmupManager = warmupManager
         self.preferredProfilesByItemID = Self.loadStoredPreferredProfiles()
         configurePlayerBase()
         setupLifecycleObservers()
@@ -303,15 +313,7 @@ public final class PlaybackSessionController {
 
     @MainActor
     deinit {
-        if let periodicObserver {
-            player.removeTimeObserver(periodicObserver)
-        }
-
-        [endObserver, stalledObserver, accessLogObserver].forEach {
-            if let observer = $0 {
-                NotificationCenter.default.removeObserver(observer)
-            }
-        }
+        tearDownCurrentItemObservers()
 
         lifecycleObservers.forEach {
             NotificationCenter.default.removeObserver($0)
@@ -353,6 +355,8 @@ public final class PlaybackSessionController {
         playbackPolicy = playbackConfig.playbackPolicy
         allowSDRFallback = playbackConfig.allowSDRFallback
         preferAudioTranscodeOnly = playbackConfig.preferAudioTranscodeOnly
+        preferredAudioLanguage = playbackConfig.preferredAudioLanguage
+        preferredSubtitleLanguage = playbackConfig.preferredSubtitleLanguage
         if playbackPolicy == .originalLockHDRDV {
             playbackQualityMode = .strictQuality
             allowSDRFallback = false
@@ -380,19 +384,30 @@ public final class PlaybackSessionController {
         let infoStartDate = Date()
 
         do {
-            // Always resolve with balanced mode so DirectStreamUrl is available for NativeBridge.
-            // Performance mode disables transcoding — the coordinator handles the fallback internally.
-            var selection = try await coordinator.resolvePlayback(
-                itemID: item.id,
-                mode: .balanced,
-                allowTranscodingFallbackInPerformance: !usesDirectRemuxOnly,
-                transcodeProfile: activeTranscodeProfile
-            )
+            let warmedSelection = await warmupManager?.selection(for: item.id)
+            let warmedSelectionStart = Date()
+            var selection: PlaybackAssetSelection
 
-            // Mark PlaybackInfo phase complete
-            ttffInfoInterval?.end(name: "ttff_playback_info", message: "info_received")
-            ttffInfoInterval = nil
-            ttffInfoMs = Date().timeIntervalSince(infoStartDate) * 1000
+            if let warmedSelection {
+                selection = warmedSelection
+                ttffInfoInterval?.end(name: "ttff_playback_info", message: "warm_cache_hit")
+                ttffInfoInterval = nil
+                ttffInfoMs = Date().timeIntervalSince(warmedSelectionStart) * 1000
+            } else {
+                // Always resolve with balanced mode so DirectStreamUrl is available for NativeBridge.
+                // Performance mode disables transcoding — the coordinator handles the fallback internally.
+                selection = try await coordinator.resolvePlayback(
+                    itemID: item.id,
+                    mode: .balanced,
+                    allowTranscodingFallbackInPerformance: !usesDirectRemuxOnly,
+                    transcodeProfile: activeTranscodeProfile
+                )
+
+                // Mark PlaybackInfo phase complete
+                ttffInfoInterval?.end(name: "ttff_playback_info", message: "info_received")
+                ttffInfoInterval = nil
+                ttffInfoMs = Date().timeIntervalSince(infoStartDate) * 1000
+            }
 
             ttffResolveInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_url_resolution")
             let resolveStartDate = Date()
@@ -807,6 +822,7 @@ public final class PlaybackSessionController {
     }
 
     private func prepareAndLoadSelection(_ selection: PlaybackAssetSelection, resumeSeconds: Double?) {
+        lastPreparedSelection = selection
         startupWatchdogTask?.cancel()
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
@@ -874,7 +890,8 @@ public final class PlaybackSessionController {
         let audioSelection = audioSelector.selectPreferredAudioTrack(
             from: availableAudioTracks,
             fallbackCodec: selection.source.normalizedAudioCodec,
-            nativePlayerPath: routeIsNativeApple
+            nativePlayerPath: routeIsNativeApple,
+            preferredLanguage: preferredAudioLanguage
         )
         let preferredAudioTrack = availableAudioTracks.first(where: { $0.index == audioSelection.selectedTrackIndex })
             ?? availableAudioTracks.first(where: { ($0.codec ?? "").lowercased() == audioSelection.selectedCodec })
@@ -882,12 +899,37 @@ public final class PlaybackSessionController {
             ?? availableAudioTracks.first
         selectedAudioTrackID = preferredAudioTrack?.id
         playbackProof.sourceAudioTrackSelected = preferredAudioTrack?.title
+        AppLog.playback.info(
+            "Audio selected: '\(preferredAudioTrack?.title ?? "none", privacy: .public)' lang='\(preferredAudioTrack?.language ?? "?", privacy: .public)' codec=\(audioSelection.selectedCodec, privacy: .public) reason=[\(audioSelection.reason, privacy: .public)]"
+        )
         if audioSelection.trueHDWasDeprioritized {
             AppLog.playback.notice("\(PlaybackFailureReason.trueHDDeprioritizedForNativePath.localizedDescription ?? "TrueHD deprioritized", privacy: .public)")
         }
-        selectedSubtitleTrackID = nil
+
+        // ── Initial subtitle selection ────────────────────────────────────────────
+        // Auto-select a subtitle track at startup when an unambiguous choice exists:
+        //   1. A track explicitly marked `isDefault` in the source metadata.
+        //   2. A forced-subtitle track in the preferred subtitle language (or audio language).
+        // Manual user selection always overrides this at runtime.
+        selectedSubtitleTrackID = initialSubtitleTrackID(
+            tracks: availableSubtitleTracks,
+            preferredSubtitleLanguage: preferredSubtitleLanguage,
+            selectedAudioLanguage: preferredAudioTrack?.language
+        )
+        if let initialSubID = selectedSubtitleTrackID,
+           let track = availableSubtitleTracks.first(where: { $0.id == initialSubID }) {
+            AppLog.playback.info(
+                "Subtitle auto-selected: '\(track.title, privacy: .public)' lang='\(track.language ?? "?", privacy: .public)' default=\(track.isDefault, privacy: .public)"
+            )
+        }
 
         routeDescription = routeLabel(for: selection.decision.route)
+
+        // ── HDR / DV expectation log ─────────────────────────────────────────────
+        // Emit an honest single-line summary of what dynamic range this session
+        // expects to deliver, and why.  This makes "did DV survive the pipeline?"
+        // answerable from logs without a full diagnostics session.
+        emitDynamicRangeExpectationLog(selection: selection)
 
         // Determine buffer tuning per play method
         var forwardBuffer: Double
@@ -992,6 +1034,82 @@ public final class PlaybackSessionController {
         }
     }
 
+    public func stop() {
+        let progressSnapshot = makeProgressSnapshot(isPaused: true, didFinish: false)
+        let bridgeSession = nativeBridgeSession
+
+        pause()
+        tearDownCurrentItemObservers()
+        player.replaceCurrentItem(with: nil)
+
+        currentTime = 0
+        duration = 0
+        availableAudioTracks = []
+        availableSubtitleTracks = []
+        selectedAudioTrackID = nil
+        selectedSubtitleTrackID = nil
+        routeDescription = ""
+        debugInfo = nil
+        currentPlaybackPlan = nil
+        runtimeHDRMode = .unknown
+        metrics = PlaybackPerformanceMetrics()
+        isExternalPlaybackActive = false
+        playbackErrorMessage = nil
+        playbackProof = PlaybackProofSnapshot()
+
+        currentItemID = nil
+        currentItemHasDolbyVision = false
+        currentSource = nil
+        pendingResumeSeconds = nil
+        didResumeAfterForeground = false
+        hasMarkedFirstFrame = false
+        hasDecodedVideoFrame = false
+        playMethodForReporting = "Transcode"
+        lastPreparedSelection = nil
+        videoOutput = nil
+        selectedVariantInfo = nil
+        selectedMasterPlaylistURL = nil
+        selectedVariantPlaylistInspection = nil
+        selectedInitSegmentInspection = nil
+        localHLSStartupSummary = nil
+
+        readyInterval = nil
+        firstFrameInterval = nil
+        activeStallInterval = nil
+        ttffPipelineInterval = nil
+        ttffInfoInterval = nil
+        ttffResolveInterval = nil
+        ttffFirstBytesInterval = nil
+        ttffReadyMs = 0
+        ttffInfoMs = 0
+        ttffResolveMs = 0
+        ttffFirstBytesMs = 0
+
+        startupWatchdogTask?.cancel()
+        startupWatchdogTask = nil
+        decodedFrameWatchdogTask?.cancel()
+        decodedFrameWatchdogTask = nil
+        videoOutputPollTask?.cancel()
+        videoOutputPollTask = nil
+
+        nativeBridgeSession = nil
+        syntheticHLSSession = nil
+        localHLSServer?.stop(reason: "session_stopped")
+        localHLSServer = nil
+
+        if let progressSnapshot {
+            Task { @MainActor [weak self] in
+                await self?.persistProgress(snapshot: progressSnapshot)
+            }
+        }
+
+        if let bridgeSession {
+            Task {
+                await bridgeSession.invalidate()
+            }
+        }
+    }
+
     public func play() {
         player.play()
     }
@@ -1024,35 +1142,92 @@ public final class PlaybackSessionController {
         return try? await session.exportDebugBundle()
     }
 
+    /// Whether the current playback is a progressive DirectPlay (static=true).
+    public var isCurrentlyDirectPlay: Bool {
+        playMethodForReporting == "DirectPlay"
+    }
+
     public func selectAudioTrack(id: String) {
-        guard
-            let item = player.currentItem,
-            let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible),
-            let track = availableAudioTracks.first(where: { $0.id == id })
-        else {
-            return
+        guard let track = availableAudioTracks.first(where: { $0.id == id }) else { return }
+
+        // 1. Try native AVMediaSelectionGroup first (works for multi-track containers).
+        if let item = player.currentItem,
+           let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible) {
+            let options = group.options
+            let descriptors = makeSelectionDescriptors(options: options)
+            if let optionIndex = PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) {
+                item.select(options[optionIndex], in: group)
+                selectedAudioTrackID = id
+                AppLog.playback.info("Audio track switched natively: '\(track.title, privacy: .public)'")
+                return
+            }
         }
 
-        let options = group.options
-        let descriptors = makeSelectionDescriptors(options: options)
-        guard let optionIndex = PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) else {
-            AppLog.playback.warning("Unable to match audio track '\(track.title, privacy: .public)' with AVPlayer media options.")
+        // 2. Fallback: reload with AudioStreamIndex.
+        //    Works for both progressive DirectPlay and Jellyfin HLS manifests.
+        //    NativeBridge delivers a single-track fMP4; audio switching is not yet supported there.
+        guard playMethodForReporting != "NativeBridge" else {
+            AppLog.playback.warning("Audio track switching not supported on NativeBridge path.")
             return
         }
+        Task { @MainActor [weak self] in
+            await self?.reloadForAudioTrack(track)
+        }
+    }
 
-        item.select(options[optionIndex], in: group)
-        selectedAudioTrackID = id
+    /// Reload the current stream with a different AudioStreamIndex.
+    ///
+    /// Handles both progressive DirectPlay URLs and Jellyfin HLS manifests.
+    /// The `assetURL` from the last prepared selection already carries authentication
+    /// parameters, so no extra auth injection is needed.
+    /// Preserves any active subtitle selection so the subtitle track is not lost on reload.
+    private func reloadForAudioTrack(_ track: MediaTrack) async {
+        guard let selection = lastPreparedSelection else { return }
+
+        let currentSeconds = player.currentTime().seconds.isFinite ? max(0, player.currentTime().seconds) : 0
+        guard var components = URLComponents(url: selection.assetURL, resolvingAgainstBaseURL: false) else { return }
+
+        var items = components.queryItems ?? []
+        items.removeAll { $0.name.lowercased() == "audiostreamindex" }
+        items.append(URLQueryItem(name: "AudioStreamIndex", value: "\(track.index)"))
+
+        // Preserve an active subtitle selection so it is not lost after the reload.
+        if let subID = selectedSubtitleTrackID,
+           let sub = availableSubtitleTracks.first(where: { $0.id == subID }) {
+            items.removeAll { ["subtitlestreamindex", "subtitlemethod"].contains($0.name.lowercased()) }
+            items.append(URLQueryItem(name: "SubtitleStreamIndex", value: "\(sub.index)"))
+            items.append(URLQueryItem(name: "SubtitleMethod", value: "Hls"))
+        }
+
+        components.queryItems = items
+        guard let newURL = components.url else { return }
+
+        AppLog.playback.info(
+            "Audio reload: track='\(track.title, privacy: .public)' index=\(track.index, privacy: .public)"
+        )
+
+        var assetOptions: [String: Any] = [:]
+#if os(iOS)
+        assetOptions[AVURLAssetAllowsCellularAccessKey] = true
+#endif
+        let newAsset = AVURLAsset(url: newURL, options: assetOptions)
+        let newItem = AVPlayerItem(asset: newAsset)
+        newItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+
+        player.replaceCurrentItem(with: newItem)
+        selectedAudioTrackID = track.id
+
+        if currentSeconds > 0 {
+            let seekTarget = CMTime(seconds: currentSeconds, preferredTimescale: 600)
+            let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
+            await player.seek(to: seekTarget, toleranceBefore: tolerance, toleranceAfter: tolerance)
+        }
+        if isPlaying { player.play() }
     }
 
     public func selectSubtitleTrack(id: String?) {
-        guard
-            let item = player.currentItem,
-            let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible)
-        else {
-            return
-        }
-
         if let id, let track = availableSubtitleTracks.first(where: { $0.id == id }) {
+            // Guard: block bitmap subtitles in strict HDR mode (they force destructive transcode).
             if subtitlePolicy.shouldBlockSubtitleSelection(
                 track: track,
                 strictMode: strictQualityIsActive,
@@ -1062,22 +1237,266 @@ public final class PlaybackSessionController {
                     "\(PlaybackFailureReason.subtitleWouldForceDestructiveTranscode.localizedDescription ?? "Strict subtitle guard triggered.", privacy: .public) subtitle=\(track.title, privacy: .public)"
                 )
                 playbackErrorMessage = "PGS/VobSub subtitles are disabled in strict HDR mode to protect video quality."
-                item.select(nil, in: group)
-                selectedSubtitleTrackID = nil
                 return
             }
-            let options = group.options
-            let descriptors = makeSelectionDescriptors(options: options)
-            guard let optionIndex = PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) else {
-                AppLog.playback.warning("Unable to match subtitle track '\(track.title, privacy: .public)' with AVPlayer media options.")
-                return
+
+            // 1. Try native AVMediaSelectionGroup (works for embedded subtitle tracks).
+            if let item = player.currentItem,
+               let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) {
+                let options = group.options
+                let descriptors = makeSelectionDescriptors(options: options)
+                if let optionIndex = PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) {
+                    item.select(options[optionIndex], in: group)
+                    selectedSubtitleTrackID = id
+                    AppLog.playback.info("Subtitle track switched natively: '\(track.title, privacy: .public)'")
+                    return
+                }
             }
-            item.select(options[optionIndex], in: group)
-            selectedSubtitleTrackID = id
+
+            // 2. Fallback: the subtitle is not embedded in the container (external SRT/ASS).
+            //    Reload via Jellyfin's HLS direct-stream endpoint with the subtitle injected
+            //    in the manifest (SubtitleStreamIndex + SubtitleMethod=Hls).
+            AppLog.playback.info(
+                "Subtitle '\(track.title, privacy: .public)' not in AVMediaSelectionGroup — reloading via HLS sidecar"
+            )
+            Task { @MainActor [weak self] in
+                await self?.reloadForSubtitleTrack(track)
+            }
         } else {
-            item.select(nil, in: group)
+            // Disable subtitles.
             selectedSubtitleTrackID = nil
+            if let item = player.currentItem,
+               let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) {
+                item.select(nil, in: group)
+            }
         }
+    }
+
+    /// Reload the current stream via Jellyfin's HLS direct-stream endpoint,
+    /// asking it to embed the given subtitle track in the manifest.
+    ///
+    /// This is the fallback path for tracks that are NOT embedded in the
+    /// primary container (e.g. external SRT/ASS files alongside an MKV/MP4).
+    /// Jellyfin responds with an HLS master playlist that contains an
+    /// EXT-X-MEDIA TYPE=SUBTITLES entry referencing the sidecar WebVTT.
+    private func reloadForSubtitleTrack(_ track: MediaTrack) async {
+        guard let selection = lastPreparedSelection else { return }
+
+        // Prefer the HLS direct-stream URL so Jellyfin can embed the subtitle
+        // track in the manifest. Fall back to the transcode URL when no direct
+        // stream is available.
+        let baseURL = selection.source.directStreamURL ?? selection.source.transcodeURL
+        guard let baseURL,
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else {
+            AppLog.playback.warning("selectSubtitleTrack: no HLS base URL available for subtitle reload")
+            return
+        }
+
+        var items = components.queryItems ?? []
+        items.removeAll {
+            ["subtitlestreamindex", "subtitlemethod"].contains($0.name.lowercased())
+        }
+        items.append(URLQueryItem(name: "SubtitleStreamIndex", value: "\(track.index)"))
+        items.append(URLQueryItem(name: "SubtitleMethod", value: "Hls"))
+
+        // Preserve an active audio selection so it is not lost after the reload.
+        if let audioID = selectedAudioTrackID,
+           let audio = availableAudioTracks.first(where: { $0.id == audioID }) {
+            items.removeAll { $0.name.lowercased() == "audiostreamindex" }
+            items.append(URLQueryItem(name: "AudioStreamIndex", value: "\(audio.index)"))
+        }
+
+        // Inject api_key if not already present (api_key is preferred over X-Emby-Token
+        // headers for AVURLAsset; see note in prepareAndLoadSelection).
+        if !items.contains(where: { $0.name.caseInsensitiveCompare("api_key") == .orderedSame }) {
+            if let token = await apiClient.currentSession()?.token {
+                items.append(URLQueryItem(name: "api_key", value: token))
+            }
+        }
+        components.queryItems = items
+
+        guard let hlsURL = components.url else { return }
+
+        AppLog.playback.info(
+            "Subtitle reload via HLS: track='\(track.title, privacy: .public)' index=\(track.index, privacy: .public)"
+        )
+
+        let currentSeconds = player.currentTime().seconds.isFinite ? max(0, player.currentTime().seconds) : 0
+
+        var assetOptions: [String: Any] = [:]
+#if os(iOS)
+        assetOptions[AVURLAssetAllowsCellularAccessKey] = true
+#endif
+        let newAsset = AVURLAsset(url: hlsURL, options: assetOptions)
+        let newItem = AVPlayerItem(asset: newAsset)
+        newItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+
+        player.replaceCurrentItem(with: newItem)
+        selectedSubtitleTrackID = track.id
+
+        // Resume from the same timestamp after the reload.
+        if currentSeconds > 0 {
+            let target = CMTime(seconds: currentSeconds, preferredTimescale: 600)
+            let tolerance = CMTime(seconds: 2.0, preferredTimescale: 600)
+            await player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
+        }
+        if isPlaying { player.play() }
+    }
+
+    /// Log the expected dynamic range outcome for the current playback session.
+    ///
+    /// This is intentionally pessimistic: it reports the *worst-case* expected
+    /// outcome given the chosen route, not the best-case hope.
+    ///
+    /// Examples:
+    ///  • MKV DV 8.1 → transcode (appleOptimizedHEVC) → expected: HDR10
+    ///    Reason: server-side HEVC transcode can preserve HDR10 metadata but DV
+    ///    SEI metadata is not reliably carried through the Jellyfin remux pipeline.
+    ///  • MP4 DV 5 → directPlay → expected: Dolby Vision
+    ///  • MKV HDR10 → transcode (forceH264Transcode) → expected: SDR
+    ///    Reason: H.264 output is SDR; HDR metadata is dropped.
+    private func emitDynamicRangeExpectationLog(selection: PlaybackAssetSelection) {
+        let source = selection.source
+        let route = selection.decision.route
+
+        // Derive what the source carries
+        let sourceDV = (source.dvProfile ?? 0) > 0
+            || source.normalizedVideoCodec.contains("dvhe")
+            || source.normalizedVideoCodec.contains("dvh1")
+        let sourceHDR = source.isLikelyHDRorDV
+        let sourceHDR10Plus = source.hdr10PlusPresentFlag == true
+
+        guard sourceHDR else {
+            // SDR source — nothing noteworthy to log
+            AppLog.playback.debug("HDR: source is SDR — no HDR/DV metadata present.")
+            return
+        }
+
+        let expected: String
+        let reason: String
+
+        switch route {
+        case .directPlay:
+            if sourceDV {
+                expected = "Dolby Vision"
+                reason = "direct play of native DV container"
+            } else {
+                expected = sourceHDR10Plus ? "HDR10 (HDR10+ not guaranteed)" : "HDR10"
+                reason = "direct play preserves HDR metadata"
+            }
+
+        case .remux:
+            if sourceDV {
+                expected = "HDR10 (DV downgrade)"
+                reason = "remux path does not carry DV SEI; DV metadata is lost"
+            } else {
+                expected = sourceHDR10Plus ? "HDR10 (HDR10+ dynamic metadata not preserved)" : "HDR10"
+                reason = "remux preserves static HDR10 but may drop dynamic metadata"
+            }
+
+        case .transcode(let url):
+            let urlString = url.absoluteString.lowercased()
+            let isH264 = urlString.contains("videocodec=h264") || urlString.contains("requireavc=true")
+            let isFMP4HEVC = urlString.contains("container=fmp4") && (urlString.contains("videocodec=hevc") || !urlString.contains("videocodec=h264"))
+            if isH264 {
+                expected = "SDR"
+                reason = "H.264 transcode drops all HDR/DV metadata"
+            } else if isFMP4HEVC && sourceDV {
+                expected = "HDR10 (DV not reliably preserved through Jellyfin remux)"
+                reason = "HEVC fMP4 can carry HDR10 boxes; DV RPU/EL depends on server support"
+            } else if isFMP4HEVC {
+                expected = sourceHDR10Plus ? "HDR10 (HDR10+ dynamic metadata not preserved)" : "HDR10"
+                reason = "HEVC fMP4 transcode preserves static HDR10 color metadata"
+            } else {
+                expected = "SDR (TS container does not carry HDR metadata)"
+                reason = "TS segment container cannot carry HDR10/DV metadata boxes"
+            }
+
+        case .nativeBridge:
+            if sourceDV {
+                expected = "Dolby Vision (if dvcC box generated correctly)"
+                reason = "local fMP4 repackager writes dvcC; verify init segment inspection"
+            } else {
+                expected = sourceHDR10Plus ? "HDR10 (HDR10+ not preserved in fMP4)" : "HDR10"
+                reason = "local fMP4 repackager writes mdcv/clli boxes for HDR10"
+            }
+        }
+
+        AppLog.playback.notice(
+            "HDR expectation: expected='\(expected, privacy: .public)' source=\(sourceDV ? "DV" : (sourceHDR10Plus ? "HDR10+" : "HDR10"), privacy: .public) route=\(selection.decision.playMethod, privacy: .public) reason='\(reason, privacy: .public)'"
+        )
+        if sourceDV && expected.contains("HDR10") {
+            AppLog.playback.warning(
+                "HDR downgrade: Dolby Vision source will play as HDR10 on this route. To preserve DV, use direct play or ensure server-side DV packaging is enabled."
+            )
+        }
+        if sourceHDR10Plus && !expected.contains("HDR10+") {
+            AppLog.playback.info(
+                "HDR10+: dynamic HDR metadata (HDR10+) present in source but will not be preserved on this route."
+            )
+        }
+    }
+
+    /// Determine which subtitle track (if any) should be auto-selected at startup.
+    ///
+    /// Rules applied in order:
+    ///  1. A track flagged `isDefault` is selected if it exists and is not a bitmap
+    ///     format that would conflict with strict-quality mode.
+    ///  2. A forced-subtitle track whose language matches `preferredSubtitleLanguage`
+    ///     or `selectedAudioLanguage` (so foreign-language inserts are shown even
+    ///     when the user did not explicitly choose subtitles).
+    ///  3. Otherwise nil — no subtitle is auto-selected; user must choose manually.
+    private func initialSubtitleTrackID(
+        tracks: [MediaTrack],
+        preferredSubtitleLanguage: String?,
+        selectedAudioLanguage: String?
+    ) -> String? {
+        guard !tracks.isEmpty else { return nil }
+
+        let isHDRSource = currentSource?.isLikelyHDRorDV == true
+
+        // Helper: is this track selectable given current quality mode?
+        func isSelectable(_ track: MediaTrack) -> Bool {
+            !subtitlePolicy.shouldBlockSubtitleSelection(
+                track: track,
+                strictMode: strictQualityIsActive,
+                sourceIsHDRorDV: isHDRSource
+            )
+        }
+
+        // Helper: does the track language match a preferred language tag?
+        func matchesPreferred(_ track: MediaTrack, _ preferred: String?) -> Bool {
+            guard let preferred, let lang = track.language else { return false }
+            return AudioTrackLanguageNormalizer.matches(lang, preferred)
+        }
+
+        // 1. Explicit default track — mirrors what the encoder/muxer intended.
+        if let defaultTrack = tracks.first(where: { $0.isDefault && isSelectable($0) }) {
+            return defaultTrack.id
+        }
+
+        // 2. Forced subtitles in the preferred subtitle language (explicit preference).
+        let titleLower = { (t: MediaTrack) in t.title.lowercased() }
+        func isForced(_ t: MediaTrack) -> Bool {
+            t.isForced || titleLower(t).contains("forced") || titleLower(t).contains("forcé")
+        }
+
+        if let preferred = preferredSubtitleLanguage {
+            if let forced = tracks.first(where: { isForced($0) && matchesPreferred($0, preferred) && isSelectable($0) }) {
+                return forced.id
+            }
+        }
+
+        // 3. Forced subtitles in the currently selected audio language
+        //    (common use case: French audio with occasional English dialogue inserts).
+        if let audioLang = selectedAudioLanguage {
+            if let forced = tracks.first(where: { isForced($0) && matchesPreferred($0, audioLang) && isSelectable($0) }) {
+                return forced.id
+            }
+        }
+
+        return nil
     }
 
     private func configurePlayerBase() {
@@ -1115,6 +1534,17 @@ public final class PlaybackSessionController {
                 self.isExternalPlaybackActive = player.isExternalPlaybackActive
             }
         }
+    }
+
+    /// Check if a subtitle track is available as an embedded option in the AVPlayer item.
+    /// Embedded tracks can be selected instantly; external tracks (SRT/ASS) require an HLS reload.
+    private func isSubtitleEmbedded(id: String, in item: AVPlayerItem) -> Bool {
+        guard let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible),
+              let track = availableSubtitleTracks.first(where: { $0.id == id }) else {
+            return false
+        }
+        let descriptors = makeSelectionDescriptors(options: group.options)
+        return PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) != nil
     }
 
     private func makeSelectionDescriptors(options: [AVMediaSelectionOption]) -> [MediaSelectionOptionDescriptor] {
@@ -1164,16 +1594,7 @@ public final class PlaybackSessionController {
     }
 
     private func configureObservers(for item: AVPlayerItem) {
-        if let periodicObserver {
-            player.removeTimeObserver(periodicObserver)
-            self.periodicObserver = nil
-        }
-
-        [endObserver, stalledObserver, accessLogObserver].forEach {
-            if let observer = $0 {
-                NotificationCenter.default.removeObserver(observer)
-            }
-        }
+        tearDownCurrentItemObservers()
 
         periodicObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 1, preferredTimescale: 600),
@@ -1262,6 +1683,18 @@ public final class PlaybackSessionController {
                     self.updatePlaybackProof(from: observedItem)
                     self.scheduleVideoValidation(for: observedItem)
                     self.emitLocalHLSStartupSummary(avplayerResult: "readyToPlay")
+                    // Apply the initial subtitle selection now that AVFoundation media
+                    // selection groups are available. This is a no-op if nil.
+                    // Only select embedded subtitles immediately; external subtitles
+                    // (SRT/ASS) trigger a full HLS reload which would interrupt first-frame
+                    // decoding. Defer those until after the first frame is displayed.
+                    if let initialSubID = self.selectedSubtitleTrackID {
+                        if self.isSubtitleEmbedded(id: initialSubID, in: observedItem) {
+                            self.selectSubtitleTrack(id: initialSubID)
+                        } else {
+                            self.pendingExternalSubtitleID = initialSubID
+                        }
+                    }
                 } else if observedItem.status == .failed {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_failed")
                     self.firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_failed")
@@ -1349,6 +1782,14 @@ public final class PlaybackSessionController {
         if playMethodForReporting == "NativeBridge", let itemID = currentItemID {
             NativeBridgeFailureCache.clearFailure(itemID: itemID)
         }
+
+        // Apply deferred external subtitle selection now that the first frame is displayed.
+        // This avoids the HLS reload (player item replacement) during startup which would
+        // abort first-frame decoding and trigger the startup watchdog.
+        if let deferredSubID = pendingExternalSubtitleID {
+            pendingExternalSubtitleID = nil
+            selectSubtitleTrack(id: deferredSubID)
+        }
     }
 
     private func scheduleVideoValidation(for item: AVPlayerItem) {
@@ -1418,15 +1859,38 @@ public final class PlaybackSessionController {
             guard !self.hasMarkedFirstFrame else { return }
             guard let currentItem = self.player.currentItem else { return }
 
-            // If AVPlayer already reached readyToPlay, avoid an aggressive fallback.
-            // Some transcodes (notably forced H264 from heavy HEVC/DV sources) can
-            // take additional time before the first rendered frame appears.
-            guard currentItem.status != .readyToPlay else { return }
-
             let delaySeconds = Double(delay) / 1_000_000_000
+
+            if currentItem.status == .readyToPlay {
+                // Item is readyToPlay but no first frame yet.
+                // Give a bounded extension (8s) before hard-failing.
+                // This prevents the zombie state where readyToPlay never
+                // produces a decoded video frame.
+                let extensionNs: UInt64 = 8_000_000_000
+                try? await Task.sleep(nanoseconds: extensionNs)
+                guard !Task.isCancelled else { return }
+                guard !self.hasMarkedFirstFrame else { return }
+
+                self.refreshDecodedVideoFrameState()
+                guard !self.hasDecodedVideoFrame else { return }
+
+                let totalDelay = delaySeconds + Double(extensionNs) / 1_000_000_000
+                let reason = StartupFailureReason.readyButNoVideoFrame
+                AppLog.playback.error(
+                    "playback.startup.failure — reason=\(reason.rawValue, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public) hardDeadline=\(totalDelay, format: .fixed(precision: 1))s status=readyToPlay decodedFrame=false"
+                )
+                if !(await self.attemptRecovery(
+                    reason: reason.rawValue,
+                    userMessage: "No video frame after readyToPlay. Switching profile."
+                )), self.playbackErrorMessage == nil {
+                    self.playbackErrorMessage = "No video frame received. Try changing quality or source."
+                }
+                return
+            }
+
             AppLog.playback.warning("Startup watchdog fired: no first frame after \(delaySeconds, format: .fixed(precision: 1))s.")
             if !(await self.attemptRecovery(
-                reason: "startup_watchdog",
+                reason: StartupFailureReason.startupWatchdogExpired.rawValue,
                 userMessage: "Startup was too slow. Retrying with safer playback profile."
             )), self.playbackErrorMessage == nil {
                 self.playbackErrorMessage = "No video frame received. Try changing quality or source."
@@ -1485,7 +1949,9 @@ public final class PlaybackSessionController {
             // Give more room before switching to an SDR fallback profile.
             return currentItemHasDolbyVision ? 14_000_000_000 : 10_000_000_000
         case .conservativeCompatibility:
-            return 8_000_000_000
+            // Stream-copy DV/HDR content may take longer for AVPlayer to parse
+            // the init segment and produce the first decoded frame.
+            return currentItemHasDolbyVision ? 12_000_000_000 : 8_000_000_000
         case .forceH264Transcode:
             // H264 compatibility fallback may legitimately take longer to produce
             // the first video frame; avoid premature recovery loops.
@@ -1515,7 +1981,10 @@ public final class PlaybackSessionController {
         if let action = plannedFallbackAction(for: attempt) {
             AppLog.playback.notice("Plan fallback step #\(attempt, privacy: .public): \(action.rawValue, privacy: .public)")
         }
-        AppLog.playback.warning("Recovery attempt \(attempt) reason=\(reason, privacy: .public)")
+        let elapsed = Date().timeIntervalSince(startDate) * 1000
+        AppLog.playback.warning(
+            "playback.fallback.triggered — attempt=\(attempt, privacy: .public) reason=\(reason, privacy: .public) fromProfile=\(self.activeTranscodeProfile.rawValue, privacy: .public) elapsedMs=\(elapsed, format: .fixed(precision: 1)) maxAttempts=\(self.maxRecoveryAttempts, privacy: .public)"
+        )
         fallbackOccurred = true
         fallbackReason = reason
         _ = userMessage
@@ -2034,14 +2503,22 @@ public final class PlaybackSessionController {
         return url.pathExtension.lowercased() == "m3u8"
     }
 
-    private func currentPlaybackConfiguration() async -> (playbackPolicy: PlaybackPolicy, allowSDRFallback: Bool, preferAudioTranscodeOnly: Bool) {
+    private func currentPlaybackConfiguration() async -> (
+        playbackPolicy: PlaybackPolicy,
+        allowSDRFallback: Bool,
+        preferAudioTranscodeOnly: Bool,
+        preferredAudioLanguage: String?,
+        preferredSubtitleLanguage: String?
+    ) {
         guard let configuration = await apiClient.currentConfiguration() else {
-            return (.auto, true, true)
+            return (.auto, true, true, nil, nil)
         }
         return (
             configuration.playbackPolicy,
             configuration.allowSDRFallback,
-            configuration.preferAudioTranscodeOnly
+            configuration.preferAudioTranscodeOnly,
+            configuration.preferredAudioLanguage,
+            configuration.preferredSubtitleLanguage
         )
     }
 
@@ -2318,13 +2795,25 @@ public final class PlaybackSessionController {
             return [.serverDefault]
         }
 
+        let failureReason = StartupFailureReason(rawValue: reason)
         let baseProfiles: [TranscodeURLProfile]
-        switch reason {
-        case "audio_only_no_video", "decoded_frame_watchdog", "video_presentation_size_zero", "startup_watchdog", "player_item_failed", "player_item_failed_transient":
-            baseProfiles = startupRecoveryProfiles(after: activeTranscodeProfile)
+
+        switch failureReason {
+        case .readyButNoVideoFrame, .decoderStall, .presentationSizeZero:
+            // Video decode failure on HEVC: skip to H264 directly when allowed
+            if (activeTranscodeProfile == .appleOptimizedHEVC || activeTranscodeProfile == .serverDefault),
+               allowSDRFallback {
+                baseProfiles = [.forceH264Transcode]
+            } else {
+                baseProfiles = startupRecoveryProfiles(after: activeTranscodeProfile)
+            }
         default:
             baseProfiles = startupRecoveryProfiles(after: activeTranscodeProfile)
         }
+
+        AppLog.playback.notice(
+            "playback.fallback.profiles — reason=\(reason, privacy: .public) active=\(self.activeTranscodeProfile.rawValue, privacy: .public) candidates=\(baseProfiles.map(\.rawValue).joined(separator: ","), privacy: .public)"
+        )
 
         return deduplicatedProfiles(baseProfiles)
     }
@@ -2655,25 +3144,28 @@ public final class PlaybackSessionController {
     }
 
     private func persistProgress(isPaused: Bool, didFinish: Bool) async {
-        guard let itemID = currentItemID else { return }
+        guard let snapshot = makeProgressSnapshot(isPaused: isPaused, didFinish: didFinish) else { return }
+        await persistProgress(snapshot: snapshot)
+    }
+
+    private func makeProgressSnapshot(
+        isPaused: Bool,
+        didFinish: Bool
+    ) -> (local: PlaybackProgress, remote: PlaybackProgressUpdate)? {
+        guard let itemID = currentItemID else { return nil }
 
         let positionSeconds = max(0, player.currentTime().seconds)
         let totalSeconds = max(positionSeconds, player.currentItem?.duration.seconds ?? 0)
-
         let positionTicks = Int64(positionSeconds * 10_000_000)
         let totalTicks = Int64(totalSeconds * 10_000_000)
 
-        let localProgress = PlaybackProgress(
+        let local = PlaybackProgress(
             itemID: itemID,
             positionTicks: positionTicks,
             totalTicks: totalTicks,
             updatedAt: Date()
         )
-        if (try? await repository.fetchItem(id: itemID)) != nil {
-            try? await repository.savePlaybackProgress(localProgress)
-        }
-
-        let remoteProgress = PlaybackProgressUpdate(
+        let remote = PlaybackProgressUpdate(
             itemID: itemID,
             positionTicks: positionTicks,
             totalTicks: totalTicks,
@@ -2682,8 +3174,34 @@ public final class PlaybackSessionController {
             didFinish: didFinish,
             playMethod: playMethodForReporting
         )
+        return (local, remote)
+    }
 
-        try? await apiClient.reportPlayback(progress: remoteProgress)
+    private func persistProgress(
+        snapshot: (local: PlaybackProgress, remote: PlaybackProgressUpdate)
+    ) async {
+        if (try? await repository.fetchItem(id: snapshot.local.itemID)) != nil {
+            try? await repository.savePlaybackProgress(snapshot.local)
+        }
+        try? await apiClient.reportPlayback(progress: snapshot.remote)
+    }
+
+    private func tearDownCurrentItemObservers() {
+        if let periodicObserver {
+            player.removeTimeObserver(periodicObserver)
+            self.periodicObserver = nil
+        }
+
+        [endObserver, stalledObserver, accessLogObserver].forEach {
+            if let observer = $0 {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        endObserver = nil
+        stalledObserver = nil
+        accessLogObserver = nil
+        playerItemStatusObserver = nil
     }
 
     private func routeLabel(for route: PlaybackRoute) -> String {
@@ -2711,8 +3229,16 @@ public final class PlaybackSessionController {
         case .serverDefault:
             return canUseH264Fallback ? [.appleOptimizedHEVC, .forceH264Transcode] : [.appleOptimizedHEVC]
         case .appleOptimizedHEVC:
+            #if os(tvOS)
+            // On tvOS, if appleOptimizedHEVC (HEVC re-encode) failed, the source
+            // likely has DV/HDR packaging that AVPlayer can't handle as HEVC at all.
+            // Skip conservativeCompatibility (stream-copy would also fail) and go
+            // straight to H264 for reliable decode.
+            return canUseH264Fallback ? [.forceH264Transcode] : []
+            #else
             // Try conservative (stream-copy) before dropping all the way to H264
             return canUseH264Fallback ? [.conservativeCompatibility, .forceH264Transcode] : [.conservativeCompatibility]
+            #endif
         case .conservativeCompatibility:
             return canUseH264Fallback ? [.forceH264Transcode] : []
         case .forceH264Transcode:

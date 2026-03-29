@@ -180,7 +180,8 @@ public actor PlaybackCoordinator {
         let audioSelection = AudioCompatibilitySelector().selectPreferredAudioTrack(
             from: source.audioTracks,
             fallbackCodec: source.normalizedAudioCodec,
-            nativePlayerPath: true
+            nativePlayerPath: true,
+            preferredLanguage: configuration.preferredAudioLanguage
         )
         switch decision.route {
         case let .directPlay(url):
@@ -311,12 +312,26 @@ public actor PlaybackCoordinator {
         return isDirectPlayRoute(route) ? defaultProfile : .forceH264Transcode
     }
 
+    private static var isTvOS: Bool {
+        #if os(tvOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
     private func playbackOptions(
         mode: PlaybackMode,
         maxBitrate: Int,
         transcodeProfile: TranscodeURLProfile,
         configuration: ServerConfiguration
     ) -> PlaybackInfoOptions {
+        // On tvOS, always use the tvOS-optimized profile which tells Jellyfin
+        // exactly what Apple TV can direct play/remux and what needs transcoding.
+        if Self.isTvOS {
+            return .tvOSOptimized(maxStreamingBitrate: maxBitrate)
+        }
+
         if transcodeProfile == .serverDefault, configuration.playbackPolicy != .auto {
             return PlaybackInfoOptions(
                 mode: .balanced,
@@ -492,7 +507,9 @@ public actor PlaybackCoordinator {
             if let explicit = queryValue("AllowAudioStreamCopy")?.lowercased() {
                 return explicit == "true"
             }
-            return !configuration.preferAudioTranscodeOnly && profile == .serverDefault
+            // Honor preferAudioTranscodeOnly for all profiles.
+            // (serverDefault + auto policy already returns early above, so is never reached here.)
+            return !configuration.preferAudioTranscodeOnly
         }()
         let preferBitstreamAudio = allowAudioCopy && (normalizedAudio == "eac3" || normalizedAudio == "ac3")
         if configuration.preferAudioTranscodeOnly || profile != .serverDefault {
@@ -570,9 +587,29 @@ public actor PlaybackCoordinator {
         let codec = source.normalizedVideoCodec
         let hevcFamily = codec.contains("hevc") || codec.contains("h265") || codec.contains("dvhe") || codec.contains("dvh1")
 
+        #if os(tvOS)
+        // tvOS: ALL MKV transcodes must use H264 TS (forceH264Transcode).
+        //
+        // Root cause: Jellyfin does NOT produce real fMP4 segments for HEVC HLS.
+        // Despite SegmentContainer=fmp4, the actual bytes are MPEG-TS (0x47 sync byte).
+        // Apple AVPlayer requires fMP4/CMAF for HEVC HLS — HEVC in TS segments is
+        // not supported. AVPlayer reaches readyToPlay but never decodes a frame.
+        //
+        // This affects ALL MKV transcodes:
+        //   - conservativeCompatibility (stream copy HEVC fMP4) → broken
+        //   - appleOptimizedHEVC (re-encode HEVC fMP4) → broken
+        //   - forceH264Transcode (H264 TS) → WORKS
+        //
+        // H264 in TS is the only Jellyfin transcode path that produces decodable
+        // segments on tvOS. DirectPlay (MOV/MP4) is unaffected.
+        if mkvFamily {
+            return .forceH264Transcode
+        }
+        #else
         if mkvFamily && hevcFamily {
             return .appleOptimizedHEVC
         }
+        #endif
 
         // Guardrail for URLs already carrying HEVC + video copy on server-default profile.
         // This avoids unstable startup loops on some Jellyfin/Apple combinations.
@@ -580,10 +617,35 @@ public actor PlaybackCoordinator {
         let queryCodec = query["videocodec"] ?? ""
         let allowVideoCopy = query["allowvideostreamcopy"] == "true"
         if allowVideoCopy, queryCodec.contains("hevc"), mkvFamily {
+            #if os(tvOS)
+            return .conservativeCompatibility
+            #else
             return .appleOptimizedHEVC
+            #endif
         }
 
         return requestedProfile
+    }
+
+    /// Detect Dolby Vision from the video codec string (dvhe, dvh1, dovi).
+    private static func isDolbyVisionCodec(_ codec: String) -> Bool {
+        let lower = codec.lowercased()
+        return lower.contains("dvhe") || lower.contains("dvh1") || lower.contains("dovi")
+    }
+
+    /// Detect Dolby Vision from broader source metadata (videoRange, videoProfile, videoRangeType).
+    private static func isDolbyVisionSource(_ source: MediaSource) -> Bool {
+        let metadata = [
+            source.videoRange?.lowercased() ?? "",
+            source.videoProfile?.lowercased() ?? "",
+            source.videoRangeType?.lowercased() ?? "",
+            source.videoCodec?.lowercased() ?? ""
+        ].joined(separator: " ")
+        return metadata.contains("dolby")
+            || metadata.contains("vision")
+            || metadata.contains("dovi")
+            || metadata.contains("dvhe")
+            || metadata.contains("dvh1")
     }
 
     private func queryMap(from url: URL) -> [String: String] {

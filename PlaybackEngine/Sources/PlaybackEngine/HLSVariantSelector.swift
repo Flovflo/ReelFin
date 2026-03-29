@@ -255,10 +255,18 @@ enum HLSVariantSelector {
         }
 
         let sorted = ranked.sorted { lhs, rhs in
+            #if os(tvOS)
+            // Apple TV 4K: HDR/DV fidelity is more valuable than extra resolution.
+            // Prefer DV/HDR variants even at lower resolution (e.g. 720p DV > 1080p SDR).
+            if lhs.codecRank != rhs.codecRank { return lhs.codecRank > rhs.codecRank }
+            if lhs.variant.height != rhs.variant.height { return lhs.variant.height > rhs.variant.height }
+            if lhs.variant.width != rhs.variant.width { return lhs.variant.width > rhs.variant.width }
+            #else
             // Resolution is the primary selector to avoid random low-res choices when metadata is noisy.
             if lhs.variant.height != rhs.variant.height { return lhs.variant.height > rhs.variant.height }
             if lhs.variant.width != rhs.variant.width { return lhs.variant.width > rhs.variant.width }
             if lhs.codecRank != rhs.codecRank { return lhs.codecRank > rhs.codecRank }
+            #endif
             if lhs.variant.bandwidth != rhs.variant.bandwidth { return lhs.variant.bandwidth > rhs.variant.bandwidth }
             return lhs.index < rhs.index
         }
@@ -296,7 +304,14 @@ enum HLSVariantSelector {
             if variant.isHDRSignaled, variant.isHEVC { return 3_300 }
             if variant.isHEVC { return 3_100 }
             return 200
-        case .serverDefault, .conservativeCompatibility:
+        case .conservativeCompatibility:
+            // Stream-copy profile: prefer HDR/DV fidelity since the video bitstream
+            // is passed through unmodified. DV variants preserve the original quality.
+            if likelyDolbyVision, variant.isDolbyVisionSignaled { return 4_000 }
+            if variant.isHDRSignaled, variant.isHEVC { return 3_800 }
+            if variant.isHEVC { return playbackPolicy == .auto ? 3_200 : 3_400 }
+            return 200
+        case .serverDefault:
             if likelyDolbyVision, variant.isDolbyVisionSignaled { return 3_800 }
             if variant.isHDRSignaled, variant.isHEVC { return 3_600 }
             if variant.isHEVC { return playbackPolicy == .auto ? 3_200 : 3_400 }

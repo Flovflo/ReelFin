@@ -64,13 +64,11 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
             }
 
             try await repository.saveHomeFeed(feed)
-            let feedItems = feed.featured + feed.rows.flatMap(\.items)
-            try await repository.upsertItems(feedItems)
             try await repository.setLastSyncDate(Date())
             markForegroundLikeSyncIfNeeded(reason: reason)
             updateWidgetSnapshots(feed: feed)
 
-            let prefetchLimit = reason == .appLaunch ? 12 : 24
+            let prefetchLimit = reason == .appLaunch ? 8 : 16
             let posterURLs = await buildPrefetchURLs(feed: feed, limit: prefetchLimit)
             if !posterURLs.isEmpty {
                 let imagePipeline = imagePipeline
@@ -79,6 +77,7 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
                 }
             }
 
+            let feedItems = feed.featured + feed.rows.flatMap(\.items)
             AppLog.sync.debug("Home feed rows: \(feed.rows.count, privacy: .public), items: \(feedItems.count, privacy: .public)")
             interval.end(name: "metadata_sync", message: "success")
             AppLog.sync.debug("Sync finished")

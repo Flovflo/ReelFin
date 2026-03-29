@@ -57,6 +57,12 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func authenticate(credentials: UserCredentials) async throws -> UserSession
     func signOut() async
 
+    // Quick Connect (Jellyfin 10.7+)
+    /// Initiates a Quick Connect request and returns the 4-character display code and an opaque secret.
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState
+    /// Polls the server to check if the user has approved the code. Returns the session when approved.
+    func pollQuickConnect(secret: String) async throws -> UserSession?
+
     func fetchUserViews() async throws -> [LibraryView]
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed
     func fetchItem(id: String) async throws -> MediaItem
@@ -73,6 +79,8 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func prefetchImages(for items: [MediaItem]) async
     func reportPlayback(progress: PlaybackProgressUpdate) async throws
     func reportPlayed(itemID: String) async throws
+    func setPlayedState(itemID: String, isPlayed: Bool) async throws
+    func setFavorite(itemID: String, isFavorite: Bool) async throws
 }
 
 public protocol MetadataRepositoryProtocol: AnyObject, Sendable {
@@ -94,6 +102,17 @@ public protocol MetadataRepositoryProtocol: AnyObject, Sendable {
     func setLastSyncDate(_ date: Date) async throws
 }
 
+public protocol MediaDetailRepositoryProtocol: AnyObject, Sendable {
+    func cachedItem(id: String) async -> MediaItem?
+    func refreshItem(id: String) async throws -> MediaItem
+    func loadDetail(id: String) async throws -> MediaDetail
+    func loadSeasons(seriesID: String) async throws -> [MediaItem]
+    func loadEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem]
+    func loadNextUpEpisode(seriesID: String) async throws -> MediaItem?
+    func primeItem(id: String) async
+    func primeDetail(id: String) async
+}
+
 public protocol ImagePipelineProtocol: AnyObject, Sendable {
     func image(for url: URL) async throws -> UIImage
     func cachedImage(for url: URL) async -> UIImage?
@@ -113,4 +132,11 @@ public extension JellyfinAPIClientProtocol {
 
     // Default no-op: concrete clients may provide a real implementation.
     func prefetchImages(for items: [MediaItem]) async {}
+
+    func setPlayedState(itemID: String, isPlayed: Bool) async throws {
+        guard isPlayed else { return }
+        try await reportPlayed(itemID: itemID)
+    }
+
+    func setFavorite(itemID _: String, isFavorite _: Bool) async throws {}
 }

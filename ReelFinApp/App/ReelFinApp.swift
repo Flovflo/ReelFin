@@ -1,12 +1,16 @@
 import ReelFinUI
 import Shared
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 
 @main
 struct ReelFinApp: App {
     @Environment(\.scenePhase) private var scenePhase
+#if os(iOS)
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+#endif
     private let metadata: AppMetadata
     private let dependencies: ReelFinDependencies
 
@@ -14,7 +18,9 @@ struct ReelFinApp: App {
         let metadata = AppMetadata.current
         self.metadata = metadata
         self.dependencies = AppBootstrap.makeDependencies(metadata: metadata)
+#if os(iOS)
         configureTabBarAppearance()
+#endif
         ErrorTracking.startIfConfigured(metadata: metadata)
     }
 
@@ -32,6 +38,7 @@ struct ReelFinApp: App {
         }
     }
 
+#if os(iOS)
     private func configureTabBarAppearance() {
         let appearance = UITabBarAppearance()
         appearance.configureWithDefaultBackground()
@@ -52,4 +59,5 @@ struct ReelFinApp: App {
         UITabBar.appearance().scrollEdgeAppearance = appearance
         UITabBar.appearance().isTranslucent = true
     }
+#endif
 }

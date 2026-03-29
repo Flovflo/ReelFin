@@ -5,6 +5,7 @@ struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
+    @State private var warmupTask: Task<Void, Never>?
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: LibraryViewModel(dependencies: dependencies))
@@ -12,27 +13,61 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            topBar
+        ZStack {
+            ReelFinTheme.pageGradient.ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
-                    LazyVGrid(columns: columns, spacing: 16) {
+            VStack(spacing: 14) {
+                topBar
+
+                ScrollView(showsIndicators: false) {
+                    LazyVGrid(columns: columns, spacing: gridSpacing) {
                         ForEach(viewModel.items) { item in
-                            Button {
-                                viewModel.select(item: item)
-                            } label: {
-                                PosterCardView(
-                                    item: item,
-                                    apiClient: dependencies.apiClient,
-                                    imagePipeline: dependencies.imagePipeline,
-                                    layoutStyle: .grid
-                                )
-                            }
-                            .accessibilityIdentifier("media_card_button_\(item.id)")
-                            .buttonStyle(.plain)
+#if os(tvOS)
+                            TVLibraryPosterCard(
+                                item: item,
+                                dependencies: dependencies,
+                                onFocus: { focusedItem in
+                                    handleFocusedItem(focusedItem)
+                                },
+                                onSelect: { selectedItem in
+                                    let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
+                                    Task {
+                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                    }
+                                    viewModel.select(item: selectedItem)
+                                }
+                            )
                             .task {
                                 await viewModel.loadMoreIfNeeded(for: item)
                             }
+#else
+                            VStack(alignment: .leading, spacing: 10) {
+                                Button {
+                                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                                    Task {
+                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                    }
+                                    viewModel.select(item: item)
+                                } label: {
+                                    PosterCardArtworkView(
+                                        item: item,
+                                        apiClient: dependencies.apiClient,
+                                        imagePipeline: dependencies.imagePipeline,
+                                        layoutStyle: .grid
+                                    )
+                                }
+                                .accessibilityIdentifier("media_card_button_\(item.id)")
+                                .buttonStyle(.plain)
+
+                                PosterCardMetadataView(
+                                    item: item,
+                                    layoutStyle: .grid
+                                )
+                            }
+                            .task {
+                                await viewModel.loadMoreIfNeeded(for: item)
+                            }
+#endif
                         }
                     }
                     .padding(.horizontal, horizontalPadding)
@@ -44,8 +79,8 @@ struct LibraryView: View {
                             .padding(.bottom, 16)
                     }
                 }
+            }
         }
-        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .navigationDestination(
             isPresented: Binding(
                 get: { viewModel.selectedItem != nil },
@@ -58,6 +93,9 @@ struct LibraryView: View {
                     item: item
                 )
             }
+        }
+        .onDisappear {
+            warmupTask?.cancel()
         }
         .task {
             await viewModel.loadInitial()
@@ -76,52 +114,101 @@ struct LibraryView: View {
         .onChange(of: viewModel.sortMode) { _, _ in
             Task { await viewModel.loadInitial() }
         }
+#if os(tvOS)
         .toolbar(.hidden, for: .navigationBar)
+        .preference(key: TVTopNavigationAppearancePreferenceKey.self, value: .neutral)
+#elseif os(iOS)
+        .toolbar(.hidden, for: .navigationBar)
+#endif
     }
 
+    @ViewBuilder
     private var topBar: some View {
+#if os(tvOS)
+        tvTopBar
+#else
+        iosTopBar
+#endif
+    }
+
+#if os(tvOS)
+    private var tvTopBar: some View {
+        TVLibraryControlBar(
+            selectedFilter: viewModel.selectedFilter,
+            sortMode: viewModel.sortMode,
+            onFilterChange: setTVFilter,
+            onSortToggle: toggleTVSortMode
+        )
+    }
+#endif
+
+    // MARK: - iOS top bar: full search bar + filter chips
+
+    private var iosTopBar: some View {
         VStack(spacing: 10) {
             HStack {
                 Text("Library")
                     .reelFinTitleStyle()
                 Spacer()
 
-                Menu {
-                    Picker("Sort", selection: $viewModel.sortMode) {
-                        ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
-                            Text(mode.rawValue).tag(mode)
+                glassGroup(spacing: 10) {
+                    Menu {
+                        Picker("Sort", selection: $viewModel.sortMode) {
+                            ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
                         }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 15, weight: .semibold))
+                            .padding(10)
+                            .foregroundStyle(.white.opacity(0.96))
+                            .background {
+                                Color.clear.reelFinGlassCircle(
+                                    interactive: true,
+                                    tint: Color.white.opacity(0.10),
+                                    stroke: Color.white.opacity(0.12),
+                                    shadowOpacity: 0.10,
+                                    shadowRadius: 10,
+                                    shadowYOffset: 4
+                                )
+                            }
                     }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 15, weight: .semibold))
-                        .padding(10)
-                        .background(ReelFinTheme.card.opacity(0.9))
-                        .clipShape(Circle())
                 }
             }
 
-            HStack(spacing: 10) {
-                filterChip(title: "All", isActive: viewModel.selectedFilter == nil) {
-                    viewModel.selectedFilter = nil
+            glassGroup(spacing: 10) {
+                HStack(spacing: 10) {
+                    filterChip(title: "All", isActive: viewModel.selectedFilter == nil) {
+                        viewModel.selectedFilter = nil
+                    }
+                    filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
+                        viewModel.selectedFilter = .movie
+                    }
+                    filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
+                        viewModel.selectedFilter = .series
+                    }
+                    Spacer()
                 }
-                filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
-                    viewModel.selectedFilter = .movie
-                }
-                filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
-                    viewModel.selectedFilter = .series
-                }
-                Spacer()
             }
 
             TextField("Search your library", text: $viewModel.searchQuery)
+#if os(iOS)
                 .textInputAutocapitalization(.never)
+#endif
                 .autocorrectionDisabled(true)
                 .padding(.horizontal, 14)
                 .frame(height: 44)
-                .background(ReelFinTheme.card.opacity(0.95))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .foregroundStyle(.white)
+                .reelFinGlassRoundedRect(
+                    cornerRadius: 12,
+                    interactive: true,
+                    tint: Color.white.opacity(0.08),
+                    stroke: Color.white.opacity(0.10),
+                    shadowOpacity: 0.10,
+                    shadowRadius: 10,
+                    shadowYOffset: 4
+                )
         }
         .padding(.horizontal, horizontalPadding)
     }
@@ -129,24 +216,120 @@ struct LibraryView: View {
     private func filterChip(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(isActive ? ReelFinTheme.accent : ReelFinTheme.card.opacity(0.9))
-                .clipShape(Capsule())
-                .foregroundStyle(.white)
+                .font(.system(size: chipFontSize, weight: .semibold, design: .rounded))
+                .padding(.horizontal, chipHPad)
+                .padding(.vertical, chipVPad)
+                .foregroundStyle(isActive ? Color.black.opacity(0.92) : Color.white.opacity(0.94))
+                .background {
+                    Color.clear.reelFinGlassCapsule(
+                        interactive: true,
+                        tint: isActive ? Color.white.opacity(0.24) : Color.white.opacity(0.08),
+                        stroke: Color.white.opacity(isActive ? 0.18 : 0.10),
+                        shadowOpacity: isActive ? 0.14 : 0.08,
+                        shadowRadius: isActive ? 14 : 8,
+                        shadowYOffset: isActive ? 6 : 4
+                    )
+                }
         }
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
+    private func glassGroup<Content: View>(
+        spacing: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if #available(iOS 26.0, tvOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing, content: content)
+        } else {
+            content()
+        }
+    }
+
     private var columns: [GridItem] {
+#if os(tvOS)
+        return [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 32)]
+#else
         if horizontalSizeClass == .compact {
             return [GridItem(.adaptive(minimum: 152, maximum: 190), spacing: 12)]
         }
         return [GridItem(.adaptive(minimum: 186, maximum: 230), spacing: 16)]
+#endif
+    }
+
+    private var gridSpacing: CGFloat {
+#if os(tvOS)
+        return 40
+#else
+        return 16
+#endif
     }
 
     private var horizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 12 : 22
+#if os(tvOS)
+        return 56
+#else
+        return horizontalSizeClass == .compact ? 12 : 22
+#endif
     }
+
+    private var chipFontSize: CGFloat {
+#if os(tvOS)
+        return 18
+#else
+        return 13
+#endif
+    }
+
+    private var chipHPad: CGFloat {
+#if os(tvOS)
+        return 20
+#else
+        return 12
+#endif
+    }
+
+    private var chipVPad: CGFloat {
+#if os(tvOS)
+        return 12
+#else
+        return 8
+#endif
+    }
+
+    private func handleFocusedItem(_ item: MediaItem) {
+        warmupTask?.cancel()
+        warmupTask = Task(priority: .background) {
+            await dependencies.detailRepository.primeItem(id: item.id)
+            guard !Task.isCancelled else { return }
+            await dependencies.detailRepository.primeDetail(id: item.id)
+            guard !Task.isCancelled else { return }
+            await dependencies.apiClient.prefetchImages(for: [item])
+            guard !Task.isCancelled else { return }
+
+            if let heroURL = await dependencies.apiClient.imageURL(
+                for: item.id,
+                type: item.backdropTag == nil ? .primary : .backdrop,
+                width: 1_920,
+                quality: 78
+            ) {
+                await dependencies.imagePipeline.prefetch(urls: [heroURL])
+            }
+            guard !Task.isCancelled else { return }
+
+            await dependencies.playbackWarmupManager.trim(keeping: [item.id])
+            guard !Task.isCancelled else { return }
+            await dependencies.playbackWarmupManager.warm(itemID: item.id)
+        }
+    }
+
+#if os(tvOS)
+    private func setTVFilter(_ filter: MediaType?) {
+        viewModel.selectedFilter = filter
+    }
+
+    private func toggleTVSortMode() {
+        viewModel.sortMode = viewModel.sortMode == .recent ? .title : .recent
+    }
+#endif
 }

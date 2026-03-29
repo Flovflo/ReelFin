@@ -103,6 +103,87 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         await deduplicator.cancelAll()
     }
 
+    // MARK: - Quick Connect
+
+    public func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState {
+        let url = try buildURL(baseURL: serverURL, path: "QuickConnect/Initiate", query: [])
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
+        request.timeoutInterval = 10
+        let data = try await send(request, dedupe: false)
+        let dto = try decoder.decode(QuickConnectInitiateResponseDTO.self, from: data)
+        // Persist the server URL so pollQuickConnect can reach it without requiring a separate configure() call
+        if configuration == nil {
+            configuration = ServerConfiguration(serverURL: serverURL)
+            settingsStore.serverConfiguration = configuration
+        }
+        return QuickConnectState(code: dto.code, secret: dto.secret)
+    }
+
+    public func pollQuickConnect(secret: String) async throws -> UserSession? {
+        // serverURL is taken from configuration if available, or derived from the stored server config.
+        // This is called only after initiateQuickConnect which validates the URL.
+        guard let serverURL = configuration?.serverURL ?? settingsStore.serverConfiguration?.serverURL else {
+            throw AppError.invalidServerURL
+        }
+        let url = try buildURL(
+            baseURL: serverURL,
+            path: "QuickConnect/Connect",
+            query: [URLQueryItem(name: "Secret", value: secret)]
+        )
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
+        req.timeoutInterval = 10
+        let data = try await send(req, dedupe: false)
+        let dto = try decoder.decode(QuickConnectAuthResponseDTO.self, from: data)
+        guard dto.authenticated else {
+            return nil
+        }
+        // Exchange the secret for a full user session via /Users/AuthenticateWithQuickConnect
+        let exchangeBody = QuickConnectAuthRequestDTO(secret: secret)
+        let sessionDTO: AuthenticateResponseDTO = try await requestWithBaseURL(
+            baseURL: serverURL,
+            path: "Users/AuthenticateWithQuickConnect",
+            method: "POST",
+            body: exchangeBody
+        )
+        let session = UserSession(userID: sessionDTO.user.id, username: sessionDTO.user.name, token: sessionDTO.accessToken)
+        activeSession = session
+        // Also persist configuration so subsequent API calls work
+        if configuration == nil {
+            configuration = ServerConfiguration(serverURL: serverURL)
+            settingsStore.serverConfiguration = configuration
+        }
+        settingsStore.lastSession = session
+        try tokenStore.saveToken(sessionDTO.accessToken)
+        return session
+    }
+
+    /// Sends a request using an explicit base URL (used before configuration is set).
+    private func requestWithBaseURL<T: Decodable>(
+        baseURL: URL,
+        path: String,
+        method: String,
+        body: Encodable? = nil
+    ) async throws -> T {
+        let url = try buildURL(baseURL: baseURL, path: path, query: [])
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try encoder.encode(AnyEncodable(body))
+        }
+        request.timeoutInterval = 20
+        let data = try await send(request, dedupe: false)
+        return try decoder.decode(T.self, from: data)
+    }
+
     public func fetchUserViews() async throws -> [LibraryView] {
         let userID = try requireUserID()
         let response: ViewsResponseDTO = try await request(path: "Users/\(userID)/Views")
@@ -237,7 +318,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         let item: ItemDTO = try await request(
             path: "Users/\(userID)/Items/\(id)",
             query: [
-                URLQueryItem(name: "Fields", value: "Genres,Overview,ImageTags,BackdropImageTags,PrimaryImageAspectRatio,RunTimeTicks,People,MediaStreams,AirDays")
+                URLQueryItem(name: "Fields", value: "Genres,Overview,ImageTags,BackdropImageTags,PrimaryImageAspectRatio,RunTimeTicks,MediaStreams,AirDays")
             ]
         )
         return item.toDomain()
@@ -245,20 +326,22 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
     public func fetchItemDetail(id: String) async throws -> MediaDetail {
         let userID = try requireUserID()
-        let item: ItemDTO = try await request(
+        async let itemRequest: ItemDTO = request(
             path: "Users/\(userID)/Items/\(id)",
             query: [
                 URLQueryItem(name: "Fields", value: "Genres,Overview,ImageTags,BackdropImageTags,PrimaryImageAspectRatio,RunTimeTicks,People,MediaStreams,AirDays")
             ]
         )
 
-        let similarResponse: ItemsResponseDTO = try await request(
+        async let similarRequest: ItemsResponseDTO = request(
             path: "Items/\(id)/Similar",
             query: [
                 URLQueryItem(name: "UserId", value: userID),
                 URLQueryItem(name: "Limit", value: "20")
             ]
         )
+
+        let (item, similarResponse) = try await (itemRequest, similarRequest)
 
         return MediaDetail(
             item: item.toDomain(),
@@ -375,6 +458,11 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 maxStreamingBitrate: maxBitrate,
                 maxAudioChannels: options.maxAudioChannels ?? 2
             )
+        case .tvOSOptimized:
+            profile = DeviceProfileRequestDTO.tvOSOptimized(
+                maxStreamingBitrate: maxBitrate,
+                maxAudioChannels: options.maxAudioChannels ?? 8
+            )
         }
 
         let body = PlaybackInfoRequestDTO(
@@ -394,7 +482,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             path: "Items/\(itemID)/PlaybackInfo",
             method: "POST",
             body: body,
-            dedupe: false
+            dedupe: true
         )
 
         guard let configuration else {
@@ -412,7 +500,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         queryItems.append(URLQueryItem(name: "format", value: "webp"))
 
         if let width {
-            queryItems.append(URLQueryItem(name: "maxWidth", value: String(width)))
+            queryItems.append(URLQueryItem(name: "maxWidth", value: String(type.normalizedImageWidth(width))))
         }
         if let quality {
             queryItems.append(URLQueryItem(name: "quality", value: String(quality)))
@@ -436,11 +524,27 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func prefetchImages(for items: [MediaItem]) async {
-        // Speculative prefetching: Generate URLs and trigger URLSession tasks.
-        // This warms up the server-side image cache and local CDN.
+        // Speculative prefetching: Generate the most likely artwork requests up front.
+        // This warms the server-side cache and improves perceived detail-page readiness.
         for item in items {
-            if let posterURL = await imageURL(for: item.id, type: .primary, width: 400, quality: 80) {
-                let request = URLRequest(url: posterURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
+            guard !Task.isCancelled else { return }
+            let imageTargets: [(itemID: String, type: JellyfinImageType, width: Int, quality: Int)] = [
+                (item.id, .primary, 400, 80),
+                (item.mediaType == .episode ? (item.parentID ?? item.id) : item.id, .backdrop, 1280, 72)
+            ]
+
+            for target in imageTargets {
+                guard !Task.isCancelled else { return }
+                guard let imageURL = await imageURL(
+                    for: target.itemID,
+                    type: target.type,
+                    width: target.width,
+                    quality: target.quality
+                ) else {
+                    continue
+                }
+
+                let request = URLRequest(url: imageURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
                 _ = try? await urlSession.data(for: request)
             }
         }
@@ -467,8 +571,29 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     public func reportPlayed(itemID: String) async throws {
         let userID = try requireUserID()
         let _: EmptyResponse = try await request(
-            path: "Users/\(userID)/PlayedItems/\(itemID)",
+            path: "UserPlayedItems/\(itemID)",
             method: "POST",
+            query: [URLQueryItem(name: "userId", value: userID)],
+            dedupe: false
+        )
+    }
+
+    public func setPlayedState(itemID: String, isPlayed: Bool) async throws {
+        let userID = try requireUserID()
+        let _: EmptyResponse = try await request(
+            path: "UserPlayedItems/\(itemID)",
+            method: isPlayed ? "POST" : "DELETE",
+            query: [URLQueryItem(name: "userId", value: userID)],
+            dedupe: false
+        )
+    }
+
+    public func setFavorite(itemID: String, isFavorite: Bool) async throws {
+        let userID = try requireUserID()
+        let _: EmptyResponse = try await request(
+            path: "UserFavoriteItems/\(itemID)",
+            method: isFavorite ? "POST" : "DELETE",
+            query: [URLQueryItem(name: "userId", value: userID)],
             dedupe: false
         )
     }
@@ -511,7 +636,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             requiresAuth: requiresAuth
         )
 
-        let data = try await send(request, dedupe: dedupe && method.uppercased() == "GET")
+        let data = try await send(request, dedupe: dedupe)
 
         if T.self == EmptyResponse.self || data.isEmpty {
             if T.self == EmptyResponse.self {
@@ -584,7 +709,8 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     private func send(_ request: URLRequest, dedupe: Bool) async throws -> Data {
-        let key = request.httpMethod.map { "\($0)|\(request.url?.absoluteString ?? "")" }
+        let bodyKey = request.httpBody?.base64EncodedString() ?? ""
+        let key = request.httpMethod.map { "\($0)|\(request.url?.absoluteString ?? "")|\(bodyKey)" }
 
         do {
             return try await retrying(policy: retryPolicy, shouldRetry: { error in

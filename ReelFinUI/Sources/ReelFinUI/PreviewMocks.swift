@@ -37,6 +37,14 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         session = nil
     }
 
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState {
+        QuickConnectState(code: "1234", secret: "mock-secret")
+    }
+
+    func pollQuickConnect(secret: String) async throws -> UserSession? {
+        nil
+    }
+
     func fetchUserViews() async throws -> [Shared.LibraryView] {
         [Shared.LibraryView(id: "movies", name: "Movies", collectionType: "movies")]
     }
@@ -144,7 +152,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? {
-        URL(string: "mock-image://\(itemID)?type=\(type.rawValue)&width=\(width ?? 400)")
+        let normalizedWidth = width.map { type.normalizedImageWidth($0) } ?? 400
+        return URL(string: "mock-image://\(itemID)?type=\(type.rawValue)&width=\(normalizedWidth)")
     }
 
     func reportPlayback(progress: PlaybackProgressUpdate) async throws {}
@@ -407,20 +416,34 @@ public enum ReelFinPreviewFactory {
     @MainActor public static func dependencies(authenticated: Bool = true) -> ReelFinDependencies {
         let api = MockJellyfinAPIClient(authenticated: authenticated)
         let repository = MockMetadataRepository()
+        let detailRepository = DefaultMediaDetailRepository(
+            apiClient: api,
+            repository: repository,
+            itemTTL: 60,
+            detailTTL: 60,
+            collectionTTL: 60
+        )
         let images = MockImagePipeline()
         let sync = MockSyncEngine()
         let settings = MockSettingsStore(authenticated: authenticated)
         let seriesCache = SeriesLookupCache(apiClient: api)
+        let warmupManager = PlaybackWarmupManager(apiClient: api, ttl: 60)
 
         return ReelFinDependencies(
             apiClient: api,
             repository: repository,
+            detailRepository: detailRepository,
             imagePipeline: images,
             syncEngine: sync,
             settingsStore: settings,
             seriesCache: seriesCache,
+            playbackWarmupManager: warmupManager,
             makePlaybackSession: {
-                PlaybackSessionController(apiClient: api, repository: repository)
+                PlaybackSessionController(
+                    apiClient: api,
+                    repository: repository,
+                    warmupManager: warmupManager
+                )
             }
         )
     }

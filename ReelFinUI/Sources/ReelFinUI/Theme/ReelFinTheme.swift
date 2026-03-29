@@ -65,6 +65,41 @@ public enum ReelFinTheme {
     public static let cardCornerRadius: CGFloat = 16
     public static let glassStrokeColor = Color.white.opacity(0.12)
     public static let glassStrokeWidth: CGFloat = 0.5
+    public static let tvHeroCornerRadius: CGFloat = 38
+    public static let tvCardCornerRadius: CGFloat = 26
+    public static let tvChipCornerRadius: CGFloat = 16
+    public static let tvSurfaceFill = Color(red: 0.072, green: 0.086, blue: 0.124)
+    public static let tvSurfaceElevatedFill = Color(red: 0.110, green: 0.126, blue: 0.177)
+    public static let tvSurfaceMutedFill = Color.white.opacity(0.06)
+    public static let tvSelectedFill = Color.white.opacity(0.13)
+    public static let tvStroke = Color.white.opacity(0.10)
+    public static let tvStrongStroke = Color.white.opacity(0.24)
+    public static let tvBrightText = Color.white.opacity(0.96)
+    public static let tvMutedText = Color.white.opacity(0.62)
+    public static let tvSoftText = Color.white.opacity(0.48)
+    public static let tvSectionSpacing: CGFloat = 36
+    public static let tvRailSpacing: CGFloat = 28
+    public static let tvSectionHorizontalPadding: CGFloat = 56
+    public static let tvTopNavigationBarMaxWidth: CGFloat = 760
+    public static let tvTopNavigationBarHeight: CGFloat = 64
+    public static let tvTopNavigationItemHeight: CGFloat = 52
+    public static let tvTopNavigationHorizontalPadding: CGFloat = 14
+
+    // tvOS Focus & State Design Tokens
+    public static let tvFocusScale: CGFloat = 1.06
+    public static let tvFocusShadowRadius: CGFloat = 40
+    public static let tvFocusShadowY: CGFloat = 22
+    public static let tvFocusShadowOpacity: Double = 0.50
+    public static let tvRestShadowRadius: CGFloat = 14
+    public static let tvRestShadowY: CGFloat = 8
+    public static let tvRestShadowOpacity: Double = 0.20
+    public static let tvFocusSpecularOpacity: Double = 0.30
+    public static let tvFocusSpring = Animation.spring(response: 0.35, dampingFraction: 0.78)
+    public static let tvResumeAccent = Color(red: 0.30, green: 0.72, blue: 0.90)
+    public static let tvProgressTrack = Color.white.opacity(0.18)
+    public static let tvProgressFill = Color.white.opacity(0.88)
+    public static let tvProgressResumeFill = Color(red: 0.30, green: 0.72, blue: 0.90)
+    public static let tvWatchedDim: Double = 0.60
 
     public static let onboardingStageWidthCompact: CGFloat = 420
     public static let onboardingStageWidthRegular: CGFloat = 560
@@ -93,12 +128,89 @@ public extension View {
     }
 
     func glassPanelStyle(cornerRadius: CGFloat = ReelFinTheme.glassPanelCornerRadius) -> some View {
+        reelFinGlassPanel(cornerRadius: cornerRadius)
+    }
+
+    func tvCardSurface(focused: Bool, selected: Bool = false, cornerRadius: CGFloat = ReelFinTheme.tvCardCornerRadius) -> some View {
         self
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                focused ? ReelFinTheme.tvSurfaceElevatedFill : (selected ? ReelFinTheme.tvSelectedFill : ReelFinTheme.tvSurfaceMutedFill),
+                                focused ? Color.white.opacity(0.10) : Color.white.opacity(selected ? 0.05 : 0.015)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(ReelFinTheme.glassStrokeColor, lineWidth: ReelFinTheme.glassStrokeWidth)
+                    .stroke(tvCardSurfaceStroke(focused: focused, selected: selected), lineWidth: focused ? 1.6 : 1)
             }
-            .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
+            .shadow(color: .black.opacity(focused ? 0.42 : 0.24), radius: focused ? 32 : 18, x: 0, y: focused ? 18 : 10)
+    }
+
+    func tvSectionPanel(cornerRadius: CGFloat = 30) -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.042),
+                                Color.white.opacity(0.016)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.075), lineWidth: 1)
+            }
+    }
+
+    private func tvCardSurfaceStroke(focused: Bool, selected: Bool) -> Color {
+        if focused {
+            return ReelFinTheme.tvStrongStroke
+        }
+        if selected {
+            return Color.white.opacity(0.16)
+        }
+        return ReelFinTheme.tvStroke
+    }
+
+    /// Unified tvOS focus elevation: scale + shadow + specular rim.
+    /// Use on artwork containers inside episode/poster cards.
+    func tvFocusElevation(focused: Bool, cornerRadius: CGFloat = ReelFinTheme.tvCardCornerRadius) -> some View {
+        self
+            .scaleEffect(focused ? ReelFinTheme.tvFocusScale : 1)
+            .shadow(
+                color: .black.opacity(focused ? ReelFinTheme.tvFocusShadowOpacity : ReelFinTheme.tvRestShadowOpacity),
+                radius: focused ? ReelFinTheme.tvFocusShadowRadius : ReelFinTheme.tvRestShadowRadius,
+                x: 0,
+                y: focused ? ReelFinTheme.tvFocusShadowY : ReelFinTheme.tvRestShadowY
+            )
+            .overlay {
+                if focused {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(ReelFinTheme.tvFocusSpecularOpacity),
+                                    Color.white.opacity(0.08)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.8
+                        )
+                }
+            }
+            .animation(ReelFinTheme.tvFocusSpring, value: focused)
     }
 }
