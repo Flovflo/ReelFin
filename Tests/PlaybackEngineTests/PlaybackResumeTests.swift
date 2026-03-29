@@ -3,6 +3,53 @@ import Shared
 import XCTest
 
 final class PlaybackResumeTests: XCTestCase {
+    func testResumePlanUsesImmediateSeekForDirectPlay() {
+        let plan = PlaybackResumePlan.make(
+            for: .directPlay(URL(string: "https://example.com/movie.mp4")!),
+            absoluteResumeSeconds: 2258.308
+        )
+
+        XCTAssertEqual(plan.startOffsetSeconds, 0)
+        XCTAssertNotNil(plan.immediateSeekSeconds)
+        XCTAssertEqual(plan.immediateSeekSeconds ?? 0, 2258.308, accuracy: 0.001)
+        XCTAssertNil(plan.deferredSeekSeconds)
+    }
+
+    func testResumePlanDefersSeekForNativeBridge() {
+        let plan = PlaybackResumePlan.make(
+            for: .nativeBridge(
+                NativeBridgePlan(
+                    itemID: "item-1",
+                    sourceID: "source-1",
+                    sourceURL: URL(string: "https://example.com/Videos/item-1/stream.mkv")!,
+                    videoTrack: TrackInfo(id: 1, trackType: .video, codecID: "", codecName: "hevc"),
+                    audioTrack: TrackInfo(id: 2, trackType: .audio, codecID: "", codecName: "aac"),
+                    videoAction: .directPassthrough,
+                    audioAction: .directPassthrough,
+                    subtitleTracks: [],
+                    whyChosen: "test"
+                )
+            ),
+            absoluteResumeSeconds: 2258.308
+        )
+
+        XCTAssertEqual(plan.startOffsetSeconds, 0)
+        XCTAssertNil(plan.immediateSeekSeconds)
+        XCTAssertNotNil(plan.deferredSeekSeconds)
+        XCTAssertEqual(plan.deferredSeekSeconds ?? 0, 2258.308, accuracy: 0.001)
+    }
+
+    func testResumePlanUsesServerOffsetForTranscode() {
+        let plan = PlaybackResumePlan.make(
+            for: .transcode(URL(string: "https://example.com/Videos/item-1/master.m3u8")!),
+            absoluteResumeSeconds: 2258.308
+        )
+
+        XCTAssertEqual(plan.startOffsetSeconds, 2258.308, accuracy: 0.001)
+        XCTAssertNil(plan.immediateSeekSeconds)
+        XCTAssertNil(plan.deferredSeekSeconds)
+    }
+
     @MainActor
     func testLoadPreservesResumeTicksAcrossInitialProfileUpgrade() async throws {
         let resumeTicks: Int64 = 42 * 10_000_000

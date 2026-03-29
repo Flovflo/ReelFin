@@ -6,6 +6,43 @@ import Shared
 import UIKit
 import CoreVideo
 
+struct PlaybackResumePlan: Equatable, Sendable {
+    let startOffsetSeconds: Double
+    let immediateSeekSeconds: Double?
+    let deferredSeekSeconds: Double?
+
+    static func make(for route: PlaybackRoute, absoluteResumeSeconds: Double?) -> PlaybackResumePlan {
+        guard let absoluteResumeSeconds, absoluteResumeSeconds > 0 else {
+            return PlaybackResumePlan(
+                startOffsetSeconds: 0,
+                immediateSeekSeconds: nil,
+                deferredSeekSeconds: nil
+            )
+        }
+
+        switch route {
+        case .directPlay:
+            return PlaybackResumePlan(
+                startOffsetSeconds: 0,
+                immediateSeekSeconds: absoluteResumeSeconds,
+                deferredSeekSeconds: nil
+            )
+        case .nativeBridge:
+            return PlaybackResumePlan(
+                startOffsetSeconds: 0,
+                immediateSeekSeconds: nil,
+                deferredSeekSeconds: absoluteResumeSeconds
+            )
+        case .remux, .transcode:
+            return PlaybackResumePlan(
+                startOffsetSeconds: absoluteResumeSeconds,
+                immediateSeekSeconds: nil,
+                deferredSeekSeconds: nil
+            )
+        }
+    }
+}
+
 public struct PlaybackPerformanceMetrics: Sendable {
     public var timeToFirstFrameMs: Double?
     public var stallCount: Int
@@ -524,22 +561,15 @@ public final class PlaybackSessionController {
                 self.localHLSStartupSummary = nil
             }
 
-            // For transcode/remux routes: Jellyfin already starts from initialResumeSecs
-            // (via StartTimeTicks). Track the offset so currentTime/progress are reported
-            // in movie-absolute seconds rather than HLS-stream-relative seconds.
-            // For directPlay: seek immediately (the raw URL doesn't support StartTimeTicks).
-            if case .directPlay = selection.decision.route {
-                transcodeStartOffset = 0
-                prepareAndLoadSelection(selection, resumeSeconds: nil)
-                if initialResumeSecs > 0 {
-                    let seekTime = CMTime(seconds: initialResumeSecs, preferredTimescale: 600)
-                    let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-                    _ = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
-                }
-            } else {
-                transcodeStartOffset = initialResumeSecs
-                prepareAndLoadSelection(selection, resumeSeconds: nil)
-            }
+            let resumePlan = PlaybackResumePlan.make(
+                for: selection.decision.route,
+                absoluteResumeSeconds: initialResumeSecs > 0 ? initialResumeSecs : nil
+            )
+            transcodeStartOffset = resumePlan.startOffsetSeconds
+            prepareAndLoadSelection(
+                selection,
+                resumeSeconds: resumePlan.immediateSeekSeconds ?? resumePlan.deferredSeekSeconds
+            )
 
             // Mark URL resolution phase complete
             ttffResolveInterval?.end(name: "ttff_url_resolution", message: "url_resolved")
@@ -848,6 +878,7 @@ public final class PlaybackSessionController {
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
         videoOutput = nil
+        pendingResumeSeconds = nil
         activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
         currentSource = selection.source
         // Keep runtime quality mode tied to explicit policy/user settings.
@@ -1049,9 +1080,16 @@ public final class PlaybackSessionController {
         startVideoOutputPolling(for: playerItem)
 
         if let resumeSeconds, resumeSeconds > 0 {
-            let seek = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
-            let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-            player.seek(to: seek, toleranceBefore: tolerance, toleranceAfter: tolerance)
+            if shouldDeferResumeSeek(route: selection.decision.route, seconds: resumeSeconds) {
+                pendingResumeSeconds = resumeSeconds
+                AppLog.playback.info(
+                    "Deferred resume armed at \(resumeSeconds, format: .fixed(precision: 3))s."
+                )
+            } else {
+                let seek = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
+                let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
+                player.seek(to: seek, toleranceBefore: tolerance, toleranceAfter: tolerance)
+            }
         }
     }
 
@@ -2801,15 +2839,15 @@ public final class PlaybackSessionController {
                 }
 
                 activeTranscodeProfile = profile
-                // Update offset to reflect the new transcode start position.
-                if case .directPlay = selection.decision.route {
-                    transcodeStartOffset = 0
-                } else {
-                    transcodeStartOffset = resumeSeconds ?? 0
-                }
-                let isDirectPlay: Bool
-                if case .directPlay = selection.decision.route { isDirectPlay = true } else { isDirectPlay = false }
-                prepareAndLoadSelection(selection, resumeSeconds: isDirectPlay ? resumeSeconds : nil)
+                let resumePlan = PlaybackResumePlan.make(
+                    for: selection.decision.route,
+                    absoluteResumeSeconds: resumeSeconds
+                )
+                transcodeStartOffset = resumePlan.startOffsetSeconds
+                prepareAndLoadSelection(
+                    selection,
+                    resumeSeconds: resumePlan.immediateSeekSeconds ?? resumePlan.deferredSeekSeconds
+                )
                 routeDescription = "Recovery #\(attempt): \(routeLabel(for: selection.decision.route)) [\(profile.rawValue)]"
                 playbackErrorMessage = nil
                 player.play()
@@ -3093,14 +3131,12 @@ public final class PlaybackSessionController {
         guard let seconds = pendingResumeSeconds, seconds > 0 else { return }
         pendingResumeSeconds = nil
 
-        let current = player.currentTime().seconds
+        let current = player.currentTime().seconds + transcodeStartOffset
         if current.isFinite, abs(current - seconds) < 3 {
             return
         }
 
-        let target = CMTime(seconds: seconds, preferredTimescale: 600)
-        let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-        player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
+        seek(to: seconds)
         AppLog.playback.info("Deferred resume seek applied at \(seconds, format: .fixed(precision: 3))s after first frame.")
     }
 
