@@ -34,10 +34,14 @@ struct PlaybackResumePlan: Equatable, Sendable {
                 deferredSeekSeconds: absoluteResumeSeconds
             )
         case .remux, .transcode:
+            // Jellyfin does not honor StartTimeTicks in the PlaybackInfo response body for
+            // HLS transcode — it starts the stream from position 0. Use a deferred seek
+            // (applied after the first decoded frame) to jump to the correct position.
+            // startOffsetSeconds stays 0 so currentTime reflects the real HLS stream position.
             return PlaybackResumePlan(
-                startOffsetSeconds: absoluteResumeSeconds,
+                startOffsetSeconds: 0,
                 immediateSeekSeconds: nil,
-                deferredSeekSeconds: nil
+                deferredSeekSeconds: absoluteResumeSeconds
             )
         }
     }
