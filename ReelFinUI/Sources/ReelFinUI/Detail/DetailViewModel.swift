@@ -1,4 +1,5 @@
 import Foundation
+import PlaybackEngine
 import Shared
 
 @MainActor
@@ -18,6 +19,7 @@ final class DetailViewModel: ObservableObject {
     @Published var isInWatchlist = false
     @Published var isWatched = false
     @Published var preferredPlaybackSource: MediaSource?
+    @Published var playbackOptimizationStatus: ApplePlaybackOptimizationStatus?
     @Published var isPlaybackWarm = false
     @Published var isWarmingPlayback = false
 
@@ -48,6 +50,7 @@ final class DetailViewModel: ObservableObject {
         self.preferredEpisode = preferredEpisode
         playbackProgress = nil
         preferredPlaybackSource = nil
+        playbackOptimizationStatus = nil
         isPlaybackWarm = false
         isWarmingPlayback = false
         seasons = []
@@ -337,6 +340,7 @@ final class DetailViewModel: ObservableObject {
         guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
 
         preferredPlaybackSource = selection?.source
+        playbackOptimizationStatus = ApplePlaybackOptimizationStatus(selection: selection)
         isPlaybackWarm = selection != nil
         isWarmingPlayback = false
 
@@ -370,6 +374,10 @@ final class DetailViewModel: ObservableObject {
     }
 
     private func resolvedPlaybackProgress(for item: MediaItem) async -> PlaybackProgress? {
+        guard !item.isPlayed else {
+            return nil
+        }
+
         if let local = try? await dependencies.repository.fetchPlaybackProgress(itemID: item.id) {
             return local
         }

@@ -153,6 +153,7 @@ struct DetailView: View {
             HeroMetadataColumn(
                 item: viewModel.detail.item,
                 preferredSource: viewModel.preferredPlaybackSource,
+                optimizationStatus: viewModel.playbackOptimizationStatus,
                 playButtonLabel: viewModel.playButtonLabel,
                 playbackStatusText: viewModel.playbackStatusText,
                 progress: resolvedHeroProgress,
@@ -233,6 +234,7 @@ struct DetailView: View {
                 HeroMetadataColumn(
                     item: viewModel.detail.item,
                     preferredSource: viewModel.preferredPlaybackSource,
+                    optimizationStatus: viewModel.playbackOptimizationStatus,
                     playButtonLabel: viewModel.playButtonLabel,
                     playbackStatusText: viewModel.playbackStatusText,
                     progress: resolvedHeroProgress,
@@ -841,6 +843,7 @@ private struct TVDetailContextPreviewCard: View {
 private struct HeroMetadataColumn: View {
     let item: MediaItem
     let preferredSource: MediaSource?
+    let optimizationStatus: ApplePlaybackOptimizationStatus?
     let playButtonLabel: String
     let playbackStatusText: String?
     let progress: Double?
@@ -923,6 +926,10 @@ private struct HeroMetadataColumn: View {
 
             if let airDayBadge, !airDayBadge.isEmpty {
                 HeroEyebrowBadge(text: airDayBadge)
+            }
+
+            if let optimizationStatus {
+                ApplePlaybackDetailBadge(status: optimizationStatus)
             }
         }
     }
