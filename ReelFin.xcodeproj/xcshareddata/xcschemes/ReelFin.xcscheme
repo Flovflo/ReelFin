@@ -20,20 +20,6 @@
                ReferencedContainer = "container:ReelFin.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "1EE043749EBE0A072F10A3D8"
-               BuildableName = "ReelFinWidgetsExtension.appex"
-               BlueprintName = "ReelFinWidgetsExtension"
-               ReferencedContainer = "container:ReelFin.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

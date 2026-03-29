@@ -286,25 +286,6 @@ targets:
         PRODUCT_NAME: ReelFinUI
 
   # ──────────────────────────────────────────────
-  # Widgets & Extensions
-  # ──────────────────────────────────────────────
-  ReelFinWidgetsExtension:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: Widgets/Sources
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.widgets
-        INFOPLIST_KEY_NSExtensionPointIdentifier: com.apple.widgetkit-extension
-        INFOPLIST_KEY_CFBundleDisplayName: ReelFin Widgets
-    dependencies:
-      - target: Shared
-      - target: PlaybackEngine
-      - target: JellyfinAPI
-      - target: DataStore
-
-  # ──────────────────────────────────────────────
   # Tests (iOS)
   # ──────────────────────────────────────────────
   JellyfinAPITests:
@@ -355,7 +336,6 @@ schemes:
     build:
       targets:
         ReelFinApp: all
-        ReelFinWidgetsExtension: all
     test:
       targets:
         - PlaybackEngineTests
