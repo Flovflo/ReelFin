@@ -211,6 +211,7 @@ public final class PlaybackSessionController {
     private var hasDecodedVideoFrame = false
     private var pendingResumeSeconds: Double?
     private var transcodeStartOffset: Double = 0
+    private var currentForwardBufferDuration: Double = 0
     private var playbackStrategy: PlaybackStrategy = .bestQualityFastest
     private var playbackPolicy: PlaybackPolicy = .auto
     private var allowSDRFallback = true
@@ -264,6 +265,14 @@ public final class PlaybackSessionController {
     private var ttffReadyMs: Double = 0
     private static let preferredProfileStorageKey = "reelfin.playback.preferredTranscodeProfileByItemID.v2"
     private static let localhostHLSMaxStartupAttempts = 2
+
+    private static var isTvOSPlatform: Bool {
+        #if os(tvOS)
+        return true
+        #else
+        return false
+        #endif
+    }
 
     private struct LocalHLSPreflightResult: Sendable {
         let masterStatus: Int
@@ -353,6 +362,7 @@ public final class PlaybackSessionController {
         hasDecodedVideoFrame = false
         pendingResumeSeconds = nil
         transcodeStartOffset = 0
+        currentForwardBufferDuration = 0
         recoveryAttemptCount = 0
         metrics = PlaybackPerformanceMetrics()
         playbackErrorMessage = nil
@@ -639,11 +649,23 @@ public final class PlaybackSessionController {
                     maxConcurrentRequests: 2,
                     readAheadChunks: 0
                 )
-                let reader = HTTPRangeReader(url: startupPlan.sourceURL, headers: headers, config: readerConfig)
+                let adjustedReaderConfig = PlaybackTVOSCachingPolicy.syntheticReaderConfiguration(
+                    base: readerConfig,
+                    isTVOS: Self.isTvOSPlatform
+                )
+                let reader = HTTPRangeReader(url: startupPlan.sourceURL, headers: headers, config: adjustedReaderConfig)
                 let demuxer = MatroskaDemuxer(reader: reader, plan: startupPlan)
                 let diagnostics = NativeBridgeDiagnosticsCollector(config: startupPlan.diagnostics)
                 let repackager = FMP4Repackager(plan: startupPlan, diagnostics: diagnostics)
-                let session = SyntheticHLSSession(plan: startupPlan, demuxer: demuxer, repackager: repackager)
+                let session = SyntheticHLSSession(
+                    plan: startupPlan,
+                    demuxer: demuxer,
+                    repackager: repackager,
+                    cache: SegmentCacheActor(
+                        maxBytes: PlaybackTVOSCachingPolicy.syntheticSegmentCacheSize(isTVOS: Self.isTvOSPlatform)
+                    ),
+                    defaultPreloadCount: PlaybackTVOSCachingPolicy.syntheticPlaylistPreloadCount(isTVOS: Self.isTvOSPlatform)
+                )
                 try await session.prepare()
 
                 let localServer = LocalHLSServer(session: session)
@@ -982,6 +1004,13 @@ public final class PlaybackSessionController {
             waitsToMinimize = ttffTuning.transcodeWaitsToMinimizeStalling
         }
 
+        forwardBuffer = PlaybackTVOSCachingPolicy.startupForwardBufferDuration(
+            baseBufferDuration: forwardBuffer,
+            route: selection.decision.route,
+            runtimeSeconds: currentMediaItem?.runtimeTicks.map { Double($0) / 10_000_000 },
+            isTVOS: Self.isTvOSPlatform
+        )
+
         if isLocalSyntheticHLSURL(selection.assetURL) {
             // NativeBridge local HLS startup: bias for earliest first frame.
             forwardBuffer = min(forwardBuffer, 0.25)
@@ -1051,6 +1080,7 @@ public final class PlaybackSessionController {
         playerItem.add(output)
         videoOutput = output
         playerItem.preferredForwardBufferDuration = forwardBuffer
+        currentForwardBufferDuration = forwardBuffer
 
         readyInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_item_ready")
         firstFrameInterval = SignpostInterval(signposter: Signpost.playerLifecycle, name: "avplayer_first_frame")
@@ -1098,6 +1128,7 @@ public final class PlaybackSessionController {
         currentSource = nil
         pendingResumeSeconds = nil
         transcodeStartOffset = 0
+        currentForwardBufferDuration = 0
         didResumeAfterForeground = false
         hasMarkedFirstFrame = false
         hasDecodedVideoFrame = false
@@ -1695,6 +1726,7 @@ public final class PlaybackSessionController {
                 if event.observedBitrate > 0 {
                     self.playbackProof.observedBitrate = Int(event.observedBitrate)
                 }
+                self.updateTVOSForwardBufferIfNeeded(item: item, observedBitrate: event.observedBitrate, indicatedBitrate: event.indicatedBitrate)
                 self.updatePlaybackProof(from: item)
             }
         }
@@ -2953,6 +2985,40 @@ public final class PlaybackSessionController {
 
         let codec = query["videocodec"] ?? currentSource?.normalizedVideoCodec
         return isHEVCCodec(codec)
+    }
+
+    private func updateTVOSForwardBufferIfNeeded(
+        item: AVPlayerItem,
+        observedBitrate: Double,
+        indicatedBitrate: Double
+    ) {
+        guard Self.isTvOSPlatform else { return }
+
+        let runtimeSeconds =
+            currentMediaItem?.runtimeTicks.map { Double($0) / 10_000_000 }
+            ?? {
+                let itemDuration = item.duration.seconds
+                guard itemDuration.isFinite, itemDuration > 0 else { return nil }
+                return itemDuration + transcodeStartOffset
+            }()
+
+        guard let targetBuffer = PlaybackTVOSCachingPolicy.aggressiveForwardBufferDuration(
+            currentBufferDuration: currentForwardBufferDuration,
+            observedBitrate: observedBitrate,
+            indicatedBitrate: indicatedBitrate,
+            sourceBitrate: currentSource?.bitrate,
+            currentTime: currentTime,
+            runtimeSeconds: runtimeSeconds,
+            isTVOS: Self.isTvOSPlatform
+        ) else {
+            return
+        }
+
+        item.preferredForwardBufferDuration = targetBuffer
+        currentForwardBufferDuration = targetBuffer
+        AppLog.playback.info(
+            "tvOS aggressive buffering enabled buffer=\(targetBuffer, format: .fixed(precision: 1))s observed=\(observedBitrate, format: .fixed(precision: 0))bps indicated=\(indicatedBitrate, format: .fixed(precision: 0))bps"
+        )
     }
 
     private func shouldUpgradeInitialTranscodeProfile(_ selection: PlaybackAssetSelection) -> Bool {

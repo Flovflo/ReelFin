@@ -18,6 +18,9 @@ struct PlayerView: View {
     private var hasSelectableTracks: Bool {
         session.availableAudioTracks.count > 1 || !session.availableSubtitleTracks.isEmpty
     }
+
+    @ScaledMetric(relativeTo: .headline) private var skipButtonTrailingPadding = 28.0
+    @ScaledMetric(relativeTo: .headline) private var skipButtonBottomPadding = 54.0
 #endif
 
     var body: some View {
@@ -68,31 +71,27 @@ struct PlayerView: View {
                 }
             }
 
+#endif
+        }
+        .overlay(alignment: .bottomTrailing) {
+#if os(iOS)
             if let skipSuggestion = session.activeSkipSuggestion {
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button {
-                            session.skipCurrentSegment()
-                        } label: {
-                            Label(skipSuggestion.title, systemImage: skipSuggestion.systemImageName)
-                                .font(.callout.weight(.semibold))
-                                .labelStyle(.titleAndIcon)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(.ultraThinMaterial, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 20)
-                        Spacer()
-                    }
-                    Spacer()
+                PlaybackSkipButton(suggestion: skipSuggestion) {
+                    session.skipCurrentSegment()
                 }
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .padding(.trailing, skipButtonTrailingPadding)
+                .padding(.bottom, skipButtonBottomPadding)
+                .transition(
+                    .asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .scale(scale: 0.96).combined(with: .opacity)
+                    )
+                )
+                .zIndex(2)
             }
 #endif
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: session.activeSkipSuggestion)
         .accessibilityIdentifier("native_player_screen")
 #if os(iOS)
         .sheet(isPresented: $showingTrackPicker) {

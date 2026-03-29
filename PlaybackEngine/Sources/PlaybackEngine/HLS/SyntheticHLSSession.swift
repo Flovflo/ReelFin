@@ -214,6 +214,7 @@ public actor SyntheticHLSSession {
     private let timelineBuilder = CMAFSegmentTimelineBuilder()
     private let cache: SegmentCacheActor
     private let scheduler: PackagingSchedulerActor
+    private let defaultPreloadCount: Int
 
     /// Explicit packaging mode requested by caller (default: dvProfile81Compatible).
     private let requestedPackagingMode: DolbyVisionPackagingMode
@@ -232,12 +233,14 @@ public actor SyntheticHLSSession {
         demuxer: Demuxer,
         repackager: Repackager,
         cache: SegmentCacheActor = SegmentCacheActor(),
+        defaultPreloadCount: Int = 3,
         packagingMode: DolbyVisionPackagingMode = NativeBridgeDebugToggles.packagingMode
     ) {
         self.plan = plan
         self.demuxer = demuxer
         self.repackager = repackager
         self.cache = cache
+        self.defaultPreloadCount = max(Self.minimumPreloadSegments, defaultPreloadCount)
         self.requestedPackagingMode = packagingMode
         self.scheduler = PackagingSchedulerActor(
             demuxer: demuxer,
@@ -319,7 +322,7 @@ public actor SyntheticHLSSession {
     }
 
     public func mediaPlaylist(
-        preloadCount: Int = 3,
+        preloadCount: Int? = nil,
         baseURL: URL? = nil,
         startupPreflightSnapshot: Bool = false
     ) async throws -> String {
@@ -338,7 +341,7 @@ public actor SyntheticHLSSession {
         }
 
         if !reachedEndOfStream, !startupPreflightSnapshot {
-            let baselineCount = max(Self.minimumPreloadSegments, preloadCount)
+            let baselineCount = max(Self.minimumPreloadSegments, preloadCount ?? defaultPreloadCount)
             let desiredSegmentCount = max(baselineCount, sequences.count + Self.playlistGrowthStepSegments)
             let desiredLastSequence = max(0, desiredSegmentCount - 1)
             requestPrefetch(upTo: desiredLastSequence)
