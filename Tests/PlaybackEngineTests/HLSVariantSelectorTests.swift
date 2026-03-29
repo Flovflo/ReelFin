@@ -71,6 +71,28 @@ final class HLSVariantSelectorTests: XCTestCase {
         }
     }
 
+    func testParseVariantsPropagatesResumeQueryItemsToRelativeVariantURLs() {
+        let masterURL = URL(
+            string: "https://example.com/Videos/abcd/master.m3u8?api_key=secret-token&StartTimeTicks=420000000"
+        )!
+        let manifest = """
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=12000000,RESOLUTION=1920x1080,CODECS="hvc1.1.6.L123.B0,mp4a.40.2"
+        main.m3u8
+        """
+
+        let variants = HLSVariantSelector.parseVariants(manifest: manifest, masterURL: masterURL)
+
+        XCTAssertEqual(variants.count, 1)
+        let items = URLComponents(url: variants[0].resolvedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let query: [String: String] = Dictionary(uniqueKeysWithValues: items.compactMap { item in
+            guard let value = item.value else { return nil }
+            return (item.name.lowercased(), value)
+        })
+        XCTAssertEqual(query["api_key"], "secret-token")
+        XCTAssertEqual(query["starttimeticks"], "420000000")
+    }
+
     func testVariantSelectorChooses4KHEVCDolbyVisionWhenAvailable() {
         let manifest = """
         #EXTM3U

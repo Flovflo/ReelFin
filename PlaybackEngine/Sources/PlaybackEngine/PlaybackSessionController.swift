@@ -436,7 +436,8 @@ public final class PlaybackSessionController {
                 itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                     itemPrefersDolbyVision: item.hasDolbyVision,
                     source: selection.source
-                )
+                ),
+                startTimeTicks: resumeTimeTicks
             )
             selection = try await upgradeRiskyInitialSelectionIfNeeded(
                 itemID: item.id,
@@ -444,7 +445,8 @@ public final class PlaybackSessionController {
                 itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                     itemPrefersDolbyVision: item.hasDolbyVision,
                     source: selection.source
-                )
+                ),
+                startTimeTicks: resumeTimeTicks
             )
             activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
             if !registerAttempt(selection: selection, profile: activeTranscodeProfile) {
@@ -476,7 +478,8 @@ public final class PlaybackSessionController {
                         itemID: item.id,
                         mode: .balanced,
                         allowTranscodingFallbackInPerformance: true,
-                        transcodeProfile: activeTranscodeProfile
+                        transcodeProfile: activeTranscodeProfile,
+                        startTimeTicks: resumeTimeTicks
                     )
                     selection = try await pinPreferredVariantIfNeeded(
                         selection: selection,
@@ -491,7 +494,8 @@ public final class PlaybackSessionController {
                         itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                             itemPrefersDolbyVision: item.hasDolbyVision,
                             source: selection.source
-                        )
+                        ),
+                        startTimeTicks: resumeTimeTicks
                     )
                     selection = try await upgradeRiskyInitialSelectionIfNeeded(
                         itemID: item.id,
@@ -499,7 +503,8 @@ public final class PlaybackSessionController {
                         itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                             itemPrefersDolbyVision: item.hasDolbyVision,
                             source: selection.source
-                        )
+                        ),
+                        startTimeTicks: resumeTimeTicks
                     )
                     activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
                     _ = registerAttempt(selection: selection, profile: activeTranscodeProfile)
@@ -2781,7 +2786,8 @@ public final class PlaybackSessionController {
                     itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                         itemPrefersDolbyVision: currentItemHasDolbyVision || (currentSource?.isLikelyHDRorDV ?? false),
                         source: selection.source
-                    )
+                    ),
+                    startTimeTicks: resumeTimeTicks
                 )
 
                 if !registerAttempt(selection: selection, profile: profile) {
@@ -2954,7 +2960,8 @@ public final class PlaybackSessionController {
     private func upgradeRiskyInitialSelectionIfNeeded(
         itemID: String,
         selection: PlaybackAssetSelection,
-        itemPrefersDolbyVision: Bool
+        itemPrefersDolbyVision: Bool,
+        startTimeTicks: Int64?
     ) async throws -> PlaybackAssetSelection {
         guard shouldUpgradeInitialTranscodeProfile(selection) else { return selection }
 
@@ -2971,7 +2978,8 @@ public final class PlaybackSessionController {
             itemID: itemID,
             mode: .balanced,
             allowTranscodingFallbackInPerformance: true,
-            transcodeProfile: saferProfile
+            transcodeProfile: saferProfile,
+            startTimeTicks: startTimeTicks
         )
         upgraded = try await pinPreferredVariantIfNeeded(
             selection: upgraded,
@@ -2985,7 +2993,8 @@ public final class PlaybackSessionController {
     private func stabilizeInitialSelectionIfNeeded(
         itemID: String,
         selection: PlaybackAssetSelection,
-        itemPrefersDolbyVision: Bool
+        itemPrefersDolbyVision: Bool,
+        startTimeTicks: Int64?
     ) async throws -> PlaybackAssetSelection {
         guard await shouldPreemptivelyFallbackToH264(
             for: selection,
@@ -2998,7 +3007,8 @@ public final class PlaybackSessionController {
             itemID: itemID,
             mode: .balanced,
             allowTranscodingFallbackInPerformance: true,
-            transcodeProfile: .forceH264Transcode
+            transcodeProfile: .forceH264Transcode,
+            startTimeTicks: startTimeTicks
         )
         upgraded = try await pinPreferredVariantIfNeeded(
             selection: upgraded,

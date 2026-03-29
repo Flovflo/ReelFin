@@ -150,9 +150,19 @@ struct DetailView: View {
                 }
             )
 
+            if let optimizationStatus = viewModel.playbackOptimizationStatus {
+                ApplePlaybackPosterBadge(status: optimizationStatus)
+                    .scaleEffect(1.1)
+                    .padding(.top, horizontalSizeClass == .compact ? 72 : 88)
+                    .padding(.trailing, horizontalPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .accessibilityIdentifier("detail_apple_optimization_badge")
+            }
+
             HeroMetadataColumn(
                 item: viewModel.detail.item,
                 preferredSource: viewModel.preferredPlaybackSource,
+                optimizationStatus: viewModel.playbackOptimizationStatus,
                 playButtonLabel: viewModel.playButtonLabel,
                 playbackStatusText: viewModel.playbackStatusText,
                 progress: resolvedHeroProgress,
@@ -230,9 +240,19 @@ struct DetailView: View {
                     )
                     .allowsHitTesting(false)
 
+                if let optimizationStatus = viewModel.playbackOptimizationStatus {
+                    ApplePlaybackPosterBadge(status: optimizationStatus)
+                        .scaleEffect(1.15)
+                        .padding(.top, 34)
+                        .padding(.trailing, 34)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .accessibilityIdentifier("detail_apple_optimization_badge")
+                }
+
                 HeroMetadataColumn(
                     item: viewModel.detail.item,
                     preferredSource: viewModel.preferredPlaybackSource,
+                    optimizationStatus: viewModel.playbackOptimizationStatus,
                     playButtonLabel: viewModel.playButtonLabel,
                     playbackStatusText: viewModel.playbackStatusText,
                     progress: resolvedHeroProgress,
@@ -841,6 +861,7 @@ private struct TVDetailContextPreviewCard: View {
 private struct HeroMetadataColumn: View {
     let item: MediaItem
     let preferredSource: MediaSource?
+    let optimizationStatus: ApplePlaybackOptimizationStatus?
     let playButtonLabel: String
     let playbackStatusText: String?
     let progress: Double?
@@ -866,6 +887,10 @@ private struct HeroMetadataColumn: View {
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
+
+            if let optimizationStatus {
+                ApplePlaybackDetailBadge(status: optimizationStatus)
+            }
 
             if let subtitleText {
                 Text(subtitleText)

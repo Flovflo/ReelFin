@@ -18,6 +18,7 @@ final class DetailViewModel: ObservableObject {
     @Published var isInWatchlist = false
     @Published var isWatched = false
     @Published var preferredPlaybackSource: MediaSource?
+    @Published var playbackOptimizationStatus: ApplePlaybackOptimizationStatus?
     @Published var isPlaybackWarm = false
     @Published var isWarmingPlayback = false
 
@@ -48,6 +49,7 @@ final class DetailViewModel: ObservableObject {
         self.preferredEpisode = preferredEpisode
         playbackProgress = nil
         preferredPlaybackSource = nil
+        playbackOptimizationStatus = nil
         isPlaybackWarm = false
         isWarmingPlayback = false
         seasons = []
@@ -128,6 +130,10 @@ final class DetailViewModel: ObservableObject {
     var playbackStatusText: String? {
         if shouldShowResume, let displayText = itemToPlay.playbackPositionDisplayText ?? playbackProgressDisplayText {
             return "Stopped at \(displayText)"
+        }
+
+        if playbackOptimizationStatus == .optimized, isPlaybackWarm {
+            return "Apple Direct Play ready"
         }
 
         if isPlaybackWarm {
@@ -337,6 +343,7 @@ final class DetailViewModel: ObservableObject {
         guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
 
         preferredPlaybackSource = selection?.source
+        playbackOptimizationStatus = ApplePlaybackOptimizationStatus(selection: selection)
         isPlaybackWarm = selection != nil
         isWarmingPlayback = false
 

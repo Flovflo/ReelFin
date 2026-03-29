@@ -22,6 +22,7 @@ private struct TVCardButton: View {
     let namespaceProvider: (String) -> Namespace.ID?
     let isLandscapeRail: Bool
     let progress: Double?
+    let optimizationStatus: ApplePlaybackOptimizationStatus?
     let onFocus: ((MediaItem) -> Void)?
     let onSelect: (MediaItem) -> Void
 
@@ -35,7 +36,8 @@ private struct TVCardButton: View {
                 layoutStyle: isLandscapeRail ? .landscape : .row,
                 namespace: namespaceProvider(item.id),
                 ranking: isTop10 ? (index + 1) : nil,
-                progress: progress
+                progress: progress,
+                optimizationStatus: optimizationStatus
             )
             .scaleEffect(isFocused ? 1.05 : 1)
             .shadow(
@@ -87,6 +89,7 @@ public struct SectionRow: View {
     private let apiClient: JellyfinAPIClientProtocol
     private let imagePipeline: ImagePipelineProtocol
     private let namespaceProvider: (String) -> Namespace.ID?
+    private let optimizationStatusProvider: (MediaItem) -> ApplePlaybackOptimizationStatus?
     private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
     private let onSelect: (MediaItem) -> Void
 
@@ -97,6 +100,7 @@ public struct SectionRow: View {
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         namespaceProvider: @escaping (String) -> Namespace.ID?,
+        optimizationStatusProvider: @escaping (MediaItem) -> ApplePlaybackOptimizationStatus? = { _ in nil },
         onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
         onSelect: @escaping (MediaItem) -> Void
     ) {
@@ -106,6 +110,7 @@ public struct SectionRow: View {
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
         self.namespaceProvider = namespaceProvider
+        self.optimizationStatusProvider = optimizationStatusProvider
         self.onFocus = onFocus
         self.onSelect = onSelect
     }
@@ -139,6 +144,7 @@ public struct SectionRow: View {
                             namespaceProvider: namespaceProvider,
                             isLandscapeRail: isLandscapeRail,
                             progress: progress(for: item),
+                            optimizationStatus: optimizationStatusProvider(item),
                             onFocus: { focusedItem in
                                 onFocus?(focusedItem, items)
                             },
@@ -155,7 +161,8 @@ public struct SectionRow: View {
                                 layoutStyle: isLandscapeRail ? .landscape : .row,
                                 namespace: namespaceProvider(item.id),
                                 ranking: isTop10 ? (index + 1) : nil,
-                                progress: progress(for: item)
+                                progress: progress(for: item),
+                                optimizationStatus: optimizationStatusProvider(item)
                             )
                             .scrollTransition(axis: .horizontal) { content, phase in
                                 content
@@ -225,6 +232,8 @@ struct HomeView: View {
     @State private var isPreparingPlayback = false
     @State private var playbackErrorMessage: String?
     @State private var warmupTask: Task<Void, Never>?
+    @State private var optimizationHydrationTask: Task<Void, Never>?
+    @State private var optimizationStatuses: [String: ApplePlaybackOptimizationStatus] = [:]
 
 #if os(iOS)
     @State private var ambientItem: MediaItem?
@@ -291,6 +300,7 @@ struct HomeView: View {
                                 namespaceProvider: { itemID in
                                     rowIDByItemID[itemID] == row.id ? posterNamespace : nil
                                 },
+                                optimizationStatusProvider: playbackOptimizationStatus(for:),
                                 onFocus: { item, neighbors in
                                     handleFocusedItem(item, neighbors: neighbors)
                                 },
@@ -349,6 +359,7 @@ struct HomeView: View {
 #endif
         .onDisappear {
             warmupTask?.cancel()
+            optimizationHydrationTask?.cancel()
 #if os(tvOS)
             tvAppearanceTask?.cancel()
 #endif
@@ -379,6 +390,7 @@ struct HomeView: View {
         }
         .task {
             await viewModel.load()
+            scheduleOptimizationHydration()
 #if os(tvOS)
             if let item = viewModel.feed.featured.first {
                 scheduleTVNavigationAppearance(for: item)
@@ -386,6 +398,12 @@ struct HomeView: View {
                 tvNavigationAppearance = .neutral
             }
 #endif
+        }
+        .onChange(of: viewModel.visibleRowsRevision) { _, _ in
+            scheduleOptimizationHydration()
+        }
+        .onChange(of: viewModel.feed.featured) { _, _ in
+            scheduleOptimizationHydration()
         }
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession, let playerItem {
@@ -750,9 +768,14 @@ struct HomeView: View {
         }
         guard !Task.isCancelled else { return }
 
-        await dependencies.playbackWarmupManager.trim(keeping: [item.id] + nearbyItems.map(\.id))
+        let lookupItemID = await playbackOptimizationLookupItemID(for: item)
+        let keepIDs = [lookupItemID ?? item.id] + nearbyItems.map(\.id)
+        await dependencies.playbackWarmupManager.trim(keeping: keepIDs)
         guard !Task.isCancelled else { return }
-        await dependencies.playbackWarmupManager.warm(itemID: item.id)
+        guard let lookupItemID else { return }
+        await dependencies.playbackWarmupManager.warm(itemID: lookupItemID)
+        guard !Task.isCancelled else { return }
+        await refreshPlaybackOptimizationStatus(displayItemID: item.id, lookupItemID: lookupItemID)
     }
 
     private func scheduleWarmup(
@@ -772,6 +795,75 @@ struct HomeView: View {
 
             guard !Task.isCancelled else { return }
             await primePresentation(for: item, neighbors: neighbors)
+        }
+    }
+
+    private func scheduleOptimizationHydration() {
+        let candidates = optimizationCandidateItems
+        guard !candidates.isEmpty else { return }
+
+        optimizationHydrationTask?.cancel()
+        optimizationHydrationTask = Task(priority: .background) {
+            do {
+                try await Task.sleep(nanoseconds: 180_000_000)
+            } catch {
+                return
+            }
+
+            for item in candidates {
+                guard !Task.isCancelled else { return }
+                if await MainActor.run(body: { optimizationStatuses[item.id] != nil }) {
+                    continue
+                }
+
+                guard let lookupItemID = await playbackOptimizationLookupItemID(for: item) else {
+                    continue
+                }
+
+                await dependencies.playbackWarmupManager.warm(itemID: lookupItemID)
+                guard !Task.isCancelled else { return }
+                await refreshPlaybackOptimizationStatus(displayItemID: item.id, lookupItemID: lookupItemID)
+            }
+        }
+    }
+
+    private var optimizationCandidateItems: [MediaItem] {
+        let featured = Array(featuredItems.prefix(4))
+        let rowItems = viewModel.visibleRows
+            .prefix(3)
+            .flatMap { row in
+                Array(row.items.prefix(3))
+            }
+
+        var seen = Set<String>()
+        var result: [MediaItem] = []
+        for item in featured + rowItems where seen.insert(item.id).inserted {
+            result.append(item)
+        }
+        return result
+    }
+
+    private func refreshPlaybackOptimizationStatus(displayItemID: String, lookupItemID: String) async {
+        let selection = await dependencies.playbackWarmupManager.selection(for: lookupItemID)
+        let status = ApplePlaybackOptimizationStatus(selection: selection)
+        await MainActor.run {
+            optimizationStatuses[displayItemID] = status
+        }
+    }
+
+    private func playbackOptimizationStatus(for item: MediaItem) -> ApplePlaybackOptimizationStatus? {
+        optimizationStatuses[item.id]
+    }
+
+    private func playbackOptimizationLookupItemID(for item: MediaItem) async -> String? {
+        guard item.mediaType == .series else {
+            return item.id
+        }
+
+        do {
+            return try await dependencies.detailRepository.loadNextUpEpisode(seriesID: item.id)?.id
+        } catch {
+            return nil
         }
     }
 

@@ -46,9 +46,6 @@ struct LoginView: View {
                 .offset(y: contentVisible ? 0 : 10)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
-#if os(iOS)
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-#endif
         }
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
@@ -80,9 +77,15 @@ struct LoginView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Text("Jellyfin")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.68))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("ReelFin")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+
+                Text("Apple-native Jellyfin playback")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+            }
 
             Spacer()
 
@@ -120,41 +123,72 @@ struct LoginView: View {
 
     private func landingCard(metrics: LoginMetrics) -> some View {
         stageCard {
-            VStack(alignment: .leading, spacing: 22) {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.92))
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(alignment: .top, spacing: 16) {
+                    OnboardingBrandMark()
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Connect your server")
-                        .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .accessibilityIdentifier("login_landing_title")
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Built for fast Apple playback")
+                            .font(.system(size: metrics.titleSize - 2, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .accessibilityIdentifier("login_landing_title")
 
-                    Text("Simple setup, native feel.")
-                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
+                        Text("Compatible files start faster, look better, and usually feel snappier than Plex or Infuse on Apple devices.")
+                            .font(.system(size: metrics.subtitleSize - 1, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.72))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
-                if viewModel.hasSavedServer {
-                    Text("Saved server ready")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.82))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .capsuleSurface()
+                VStack(spacing: 12) {
+                    OnboardingInfoCard(
+                        icon: "bolt.fill",
+                        tint: ReelFinTheme.onboardingOrange,
+                        title: "Direct Play first",
+                        detail: "ReelFin stays on the Apple-native fast path whenever the file is already compatible."
+                    )
+
+                    OnboardingInfoCard(
+                        icon: "server.rack",
+                        tint: ReelFinTheme.onboardingBlue,
+                        title: "Install ReelTranscode on your server",
+                        detail: "Prepare Apple-friendly files ahead of time so playback can stay instant, stable, and high quality."
+                    )
+
+                    OnboardingBadgeLegend()
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("When a title is Apple-ready, ReelFin can keep 4K, HDR and Dolby Vision with much less startup friction.")
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.70))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if viewModel.hasSavedServer {
+                        Label("Saved server ready", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.86))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .capsuleSurface()
+                    }
                 }
 
                 Button {
                     transition(to: .serverEntry)
                     focus(.serverURL)
                 } label: {
-                    Text(viewModel.hasSavedServer ? "Continue" : "Start setup")
+                    Text(viewModel.hasSavedServer ? "Continue with saved server" : "Connect my server")
                         .frame(maxWidth: .infinity)
-                        .frame(height: 54)
+                        .frame(height: 56)
                 }
                 .buttonStyle(NativePrimaryButtonStyle())
                 .accessibilityIdentifier("login_primary_cta")
+
+                Text("ReelFin talks directly to your Jellyfin server. Your login stays on your server, not on a ReelFin relay.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.54))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -167,10 +201,17 @@ struct LoginView: View {
                         .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
 
-                    Text("Enter your Jellyfin address.")
-                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
+                    Text("Add your Jellyfin address first. ReelFin verifies the server before sign-in.")
+                        .font(.system(size: metrics.subtitleSize - 1, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.66))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+
+                HStack(spacing: 12) {
+                    OnboardingMiniPill(icon: "lock.fill", text: "HTTPS preferred")
+                    OnboardingMiniPill(icon: "network", text: "Direct server connection")
+                }
+                .fixedSize(horizontal: false, vertical: true)
 
                 TextField("https://server.tld", text: $viewModel.serverURLText)
 #if os(iOS)
@@ -188,6 +229,11 @@ struct LoginView: View {
                     }
                     .accessibilityIdentifier("login_server_field")
                     .fieldSurface()
+
+                Text("If your server already prepares Apple-compatible files with ReelTranscode, the library will start showing the lightning badge automatically.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if viewModel.isTestingConnection {
                     feedbackRow(text: "Checking server", tint: .white.opacity(0.72))
@@ -229,9 +275,34 @@ struct LoginView: View {
                         .foregroundStyle(.white)
 
                     Text(serverHost)
-                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
+                        .font(.system(size: metrics.subtitleSize - 1, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.66))
                 }
+
+                HStack(alignment: .top, spacing: 10) {
+                    ApplePlaybackPosterBadge(status: .optimized)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("The lightning badge appears after sign-in.")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.80))
+
+                        Text("Bright = Apple-ready. Dimmed = server prep still recommended.")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.64))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .reelFinGlassRoundedRect(
+                    cornerRadius: 22,
+                    tint: Color.white.opacity(0.05),
+                    stroke: Color.white.opacity(0.08),
+                    shadowOpacity: 0.08,
+                    shadowRadius: 12,
+                    shadowYOffset: 6
+                )
 
                 VStack(spacing: 12) {
                     TextField("Username", text: $viewModel.username)
@@ -303,6 +374,12 @@ struct LoginView: View {
                     .font(.system(size: metrics.titleSize - 4, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .accessibilityIdentifier("login_success_title")
+
+                Text("Your library is ready. Watch for the lightning badge on Apple-ready titles.")
+                    .font(.system(size: metrics.subtitleSize - 1, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.66))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity)
         }
@@ -317,27 +394,39 @@ struct LoginView: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.04, green: 0.05, blue: 0.08),
-                    Color(red: 0.02, green: 0.03, blue: 0.05),
+                    Color(red: 0.03, green: 0.05, blue: 0.10),
+                    Color(red: 0.02, green: 0.03, blue: 0.07),
                     Color.black
                 ],
-                startPoint: .top,
+                startPoint: .topLeading,
                 endPoint: .bottom
             )
 
             Circle()
                 .fill(phaseTint.opacity(0.34))
-                .frame(width: min(size.width * 0.72, 340), height: min(size.width * 0.72, 340))
-                .blur(radius: 60)
-                .offset(y: -size.height * 0.2)
+                .frame(width: min(size.width * 0.74, 360), height: min(size.width * 0.74, 360))
+                .blur(radius: 70)
+                .offset(x: -size.width * 0.18, y: -size.height * 0.18)
+
+            Circle()
+                .fill(ReelFinTheme.onboardingOrange.opacity(phase == .landing ? 0.20 : 0.12))
+                .frame(width: min(size.width * 0.52, 260), height: min(size.width * 0.52, 260))
+                .blur(radius: 56)
+                .offset(x: size.width * 0.24, y: -size.height * 0.08)
+
+            Circle()
+                .fill(ReelFinTheme.onboardingMint.opacity(phase == .success ? 0.24 : 0.10))
+                .frame(width: min(size.width * 0.48, 220), height: min(size.width * 0.48, 220))
+                .blur(radius: 52)
+                .offset(x: size.width * 0.20, y: size.height * 0.26)
 
             LinearGradient(
                 colors: [
-                    Color.white.opacity(0.03),
+                    Color.white.opacity(0.04),
                     Color.clear,
                     Color.black.opacity(0.44)
                 ],
-                startPoint: .top,
+                startPoint: .topLeading,
                 endPoint: .bottom
             )
         }
@@ -467,13 +556,14 @@ struct LoginView: View {
 
     private func layoutMetrics(for size: CGSize) -> LoginMetrics {
         let compact = size.width < 760 || horizontalSizeClass != .regular
+        let isInputPhase = phase == .serverEntry || phase == .credentials || phase == .submitting
 
         if compact {
             return LoginMetrics(
                 contentWidth: min(size.width - 32, 420),
                 horizontalPadding: 16,
                 topPadding: 8,
-                topSpacer: max(36, size.height * 0.18),
+                topSpacer: isInputPhase ? max(12, size.height * 0.08) : max(36, size.height * 0.18),
                 titleSize: 34,
                 subtitleSize: 18
             )
@@ -483,7 +573,7 @@ struct LoginView: View {
             contentWidth: min(size.width - 96, 500),
             horizontalPadding: 24,
             topPadding: 18,
-            topSpacer: max(52, size.height * 0.16),
+            topSpacer: isInputPhase ? max(20, size.height * 0.09) : max(52, size.height * 0.16),
             titleSize: 42,
             subtitleSize: 20
         )
@@ -511,6 +601,134 @@ private struct LoginMetrics {
     let topSpacer: CGFloat
     let titleSize: CGFloat
     let subtitleSize: CGFloat
+}
+
+private struct OnboardingBrandMark: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            ReelFinTheme.onboardingBlue.opacity(0.92),
+                            ReelFinTheme.onboardingOrange.opacity(0.90)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            Image(systemName: "play.fill")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(.white.opacity(0.96))
+
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 11, weight: .black))
+                .foregroundStyle(Color(red: 1.0, green: 0.95, blue: 0.42))
+                .offset(x: 16, y: -16)
+        }
+        .frame(width: 64, height: 64)
+        .overlay {
+            Circle().stroke(Color.white.opacity(0.14), lineWidth: 1)
+        }
+        .shadow(color: ReelFinTheme.onboardingBlue.opacity(0.30), radius: 18, x: 0, y: 10)
+    }
+}
+
+private struct OnboardingInfoCard: View {
+    let icon: String
+    let tint: Color
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .reelFinGlassCircle(
+                    tint: tint.opacity(0.12),
+                    stroke: tint.opacity(0.18),
+                    shadowOpacity: 0.08,
+                    shadowRadius: 8,
+                    shadowYOffset: 4
+                )
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+
+                Text(detail)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.66))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .reelFinGlassRoundedRect(
+            cornerRadius: 24,
+            tint: Color.white.opacity(0.05),
+            stroke: Color.white.opacity(0.08),
+            shadowOpacity: 0.10,
+            shadowRadius: 16,
+            shadowYOffset: 8
+        )
+    }
+}
+
+private struct OnboardingBadgeLegend: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Lightning badge")
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+
+            HStack(alignment: .top, spacing: 10) {
+                ApplePlaybackPosterBadge(status: .optimized)
+
+                Text("Bright bolt = already optimized for Apple playback.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.70))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(alignment: .top, spacing: 10) {
+                ApplePlaybackPosterBadge(status: .needsServerPrep)
+
+                Text("Dimmed bolt = ReelFin can still play it, but the server likely needs to convert or prebuild a compatible version first.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.70))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .reelFinGlassRoundedRect(
+            cornerRadius: 24,
+            tint: Color.white.opacity(0.05),
+            stroke: Color.white.opacity(0.08),
+            shadowOpacity: 0.10,
+            shadowRadius: 16,
+            shadowYOffset: 8
+        )
+    }
+}
+
+private struct OnboardingMiniPill: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: icon)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.78))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .capsuleSurface()
+    }
 }
 
 private extension View {

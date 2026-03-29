@@ -422,30 +422,33 @@ enum HLSVariantSelector {
 
     private static func resolveVariantURL(_ uriLine: String, relativeTo masterURL: URL) -> URL? {
         if let absolute = URL(string: uriLine), absolute.scheme != nil {
-            return injectingAPIKeyIfNeeded(targetURL: absolute, from: masterURL)
+            return inheritingMasterQueryItemsIfNeeded(targetURL: absolute, from: masterURL)
         }
 
         guard let resolved = URL(string: uriLine, relativeTo: masterURL)?.absoluteURL else {
             return nil
         }
-        return injectingAPIKeyIfNeeded(targetURL: resolved, from: masterURL)
+        return inheritingMasterQueryItemsIfNeeded(targetURL: resolved, from: masterURL)
     }
 
-    private static func injectingAPIKeyIfNeeded(targetURL: URL, from masterURL: URL) -> URL {
+    private static func inheritingMasterQueryItemsIfNeeded(targetURL: URL, from masterURL: URL) -> URL {
         guard
             let masterComponents = URLComponents(url: masterURL, resolvingAgainstBaseURL: false),
-            let apiKey = masterComponents.queryItems?.first(where: { $0.name.caseInsensitiveCompare("api_key") == .orderedSame })?.value,
+            let masterQueryItems = masterComponents.queryItems,
+            !masterQueryItems.isEmpty,
             var targetComponents = URLComponents(url: targetURL, resolvingAgainstBaseURL: false)
         else {
             return targetURL
         }
 
         var queryItems = targetComponents.queryItems ?? []
-        if queryItems.contains(where: { $0.name.caseInsensitiveCompare("api_key") == .orderedSame }) {
+        let existingNames = Set(queryItems.map { $0.name.lowercased() })
+        let inheritedItems = masterQueryItems.filter { !existingNames.contains($0.name.lowercased()) }
+        guard !inheritedItems.isEmpty else {
             return targetURL
         }
 
-        queryItems.append(URLQueryItem(name: "api_key", value: apiKey))
+        queryItems.append(contentsOf: inheritedItems)
         targetComponents.queryItems = queryItems
         return targetComponents.url ?? targetURL
     }

@@ -54,11 +54,7 @@ class ReelFinUITests: XCTestCase {
         let passwordField = app.secureTextFields["Password"].firstMatch
         XCTAssertTrue(passwordField.exists)
         passwordField.tap()
-        passwordField.typeText("password")
-
-        let signInButton = app.buttons["Sign in"].firstMatch
-        XCTAssertTrue(signInButton.exists)
-        signInButton.tap()
+        passwordField.typeText("password\n")
 
         XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: 8))
     }

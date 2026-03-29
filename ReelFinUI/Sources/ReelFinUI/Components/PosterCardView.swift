@@ -26,6 +26,7 @@ public struct PosterCardView: View {
     private let namespace: Namespace.ID?
     private let ranking: Int?
     private let progress: Double?
+    private let optimizationStatus: ApplePlaybackOptimizationStatus?
     private let titleLineLimit: Int
     private let subtitleLineLimit: Int
 
@@ -38,6 +39,7 @@ public struct PosterCardView: View {
         namespace: Namespace.ID? = nil,
         ranking: Int? = nil,
         progress: Double? = nil,
+        optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
         titleLineLimit: Int = 1,
         subtitleLineLimit: Int = 1
     ) {
@@ -49,6 +51,7 @@ public struct PosterCardView: View {
         self.namespace = namespace
         self.ranking = ranking
         self.progress = progress
+        self.optimizationStatus = optimizationStatus
         self.titleLineLimit = titleLineLimit
         self.subtitleLineLimit = subtitleLineLimit
     }
@@ -63,7 +66,8 @@ public struct PosterCardView: View {
                 focusStyle: focusStyle,
                 namespace: namespace,
                 ranking: ranking,
-                progress: progress
+                progress: progress,
+                optimizationStatus: optimizationStatus
             )
 
             PosterCardMetadataView(
@@ -112,6 +116,7 @@ public struct PosterCardArtworkView: View {
     private let namespace: Namespace.ID?
     private let ranking: Int?
     private let progress: Double?
+    private let optimizationStatus: ApplePlaybackOptimizationStatus?
 
     public init(
         item: MediaItem,
@@ -121,7 +126,8 @@ public struct PosterCardArtworkView: View {
         focusStyle: PosterCardFocusStyle = .standard,
         namespace: Namespace.ID? = nil,
         ranking: Int? = nil,
-        progress: Double? = nil
+        progress: Double? = nil,
+        optimizationStatus: ApplePlaybackOptimizationStatus? = nil
     ) {
         self.item = item
         self.apiClient = apiClient
@@ -131,6 +137,7 @@ public struct PosterCardArtworkView: View {
         self.namespace = namespace
         self.ranking = ranking
         self.progress = progress
+        self.optimizationStatus = optimizationStatus
     }
 
     public var body: some View {
@@ -157,17 +164,23 @@ public struct PosterCardArtworkView: View {
             }
             #endif
             .overlay(alignment: .topTrailing) {
-                if item.isPlayed {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .overlay {
-                            Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-                        }
-                        .padding(8)
+                VStack(alignment: .trailing, spacing: 6) {
+                    if let optimizationStatus {
+                        ApplePlaybackPosterBadge(status: optimizationStatus)
+                    }
+
+                    if item.isPlayed {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 28, height: 28)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay {
+                                Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                            }
+                    }
                 }
+                .padding(8)
             }
 
             if let progressValue = progress ?? item.playbackProgress, progressValue > 0 {
