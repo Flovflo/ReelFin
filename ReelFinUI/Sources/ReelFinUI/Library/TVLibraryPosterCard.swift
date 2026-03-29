@@ -11,7 +11,7 @@ struct TVLibraryPosterCard: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: ReelFinTheme.tvCardMetadataSpacing) {
             PosterCardArtworkView(
                 item: item,
                 apiClient: dependencies.apiClient,

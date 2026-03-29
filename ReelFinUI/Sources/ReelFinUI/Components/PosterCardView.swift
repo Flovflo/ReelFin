@@ -97,7 +97,7 @@ public struct PosterCardView: View {
 
     private var tvMetadataSpacing: CGFloat {
         #if os(tvOS)
-        return 14
+        return ReelFinTheme.tvCardMetadataSpacing
         #else
         return 10
         #endif
@@ -305,21 +305,7 @@ public struct PosterCardMetadataView: View {
                 .frame(maxWidth: .infinity, minHeight: titleBlockHeight, maxHeight: titleBlockHeight, alignment: .topLeading)
                 #endif
 
-            if item.mediaType == .episode, let index = item.indexNumber {
-                let seasonText = item.parentIndexNumber.map { "S\($0)" } ?? ""
-                Text("\(seasonText) E\(index)")
-                    .font(.system(size: badgeFontSize, weight: .bold, design: .rounded))
-                    .foregroundStyle(badgeForeground)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(badgeBackground)
-                    .clipShape(Capsule())
-            } else if let year = item.year {
-                Text(String(year))
-                    .font(.system(size: subtitleFontSize, weight: .medium, design: .rounded))
-                    .foregroundStyle(subtitleColor)
-                    .lineLimit(subtitleLineLimit)
-            }
+            secondaryMetadata
         }
         .frame(width: PosterCardMetrics.posterWidth(for: layoutStyle, compact: horizontalSizeClass == .compact), alignment: .leading)
     }
@@ -408,6 +394,47 @@ public struct PosterCardMetadataView: View {
     private var titleBlockHeight: CGFloat {
         let lineHeight = titleFontSize * 1.18
         return ceil(lineHeight * CGFloat(resolvedTitleLineLimit))
+    }
+
+    @ViewBuilder
+    private var secondaryMetadata: some View {
+        if item.mediaType == .episode, let index = item.indexNumber {
+            let seasonText = item.parentIndexNumber.map { "S\($0)" } ?? ""
+            Text("\(seasonText) E\(index)")
+                .font(.system(size: badgeFontSize, weight: .bold, design: .rounded))
+                .foregroundStyle(badgeForeground)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(badgeBackground)
+                .clipShape(Capsule())
+                .frame(maxWidth: .infinity, minHeight: secondaryMetadataHeight, alignment: .topLeading)
+        } else if let year = item.year {
+            Text(String(year))
+                .font(.system(size: subtitleFontSize, weight: .medium, design: .rounded))
+                .foregroundStyle(subtitleColor)
+                .lineLimit(subtitleLineLimit)
+                .frame(maxWidth: .infinity, minHeight: secondaryMetadataHeight, alignment: .topLeading)
+        } else if reservesSecondaryMetadataSpace {
+            Color.clear
+                .frame(height: secondaryMetadataHeight)
+        }
+    }
+
+    private var secondaryMetadataHeight: CGFloat {
+        #if os(tvOS)
+        let lineHeight = max(subtitleFontSize * 1.24, badgeFontSize + 8)
+        return ceil(lineHeight)
+        #else
+        return 0
+        #endif
+    }
+
+    private var reservesSecondaryMetadataSpace: Bool {
+        #if os(tvOS)
+        return true
+        #else
+        return false
+        #endif
     }
 }
 

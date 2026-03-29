@@ -27,30 +27,23 @@ private struct TVCardButton: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: cardContentSpacing) {
             // Artwork — scale/shadow applied directly, no Button glass container
             PosterCardArtworkView(
                 item: item,
                 apiClient: apiClient,
                 imagePipeline: imagePipeline,
-                layoutStyle: isLandscapeRail ? .landscape : .row,
+                layoutStyle: layoutStyle,
                 namespace: namespaceProvider(item.id),
                 ranking: isTop10 ? (index + 1) : nil,
                 progress: progress,
                 optimizationStatus: optimizationStatus
             )
-            .scaleEffect(isFocused ? 1.05 : 1)
-            .shadow(
-                color: .black.opacity(isFocused ? 0.42 : 0.20),
-                radius: isFocused ? 32 : 14,
-                x: 0,
-                y: isFocused ? 20 : 8
-            )
-            .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
+            .tvFocusElevation(focused: isFocused, cornerRadius: ReelFinTheme.cardCornerRadius)
 
             PosterCardMetadataView(
                 item: item,
-                layoutStyle: isLandscapeRail ? .landscape : .row,
+                layoutStyle: layoutStyle,
                 titleLineLimit: isLandscapeRail ? 2 : 1
             )
             .padding(.horizontal, 4)
@@ -71,6 +64,14 @@ private struct TVCardButton: View {
             guard focused else { return }
             onFocus?(item)
         }
+    }
+
+    private var layoutStyle: PosterCardLayoutStyle {
+        isLandscapeRail ? .landscape : .row
+    }
+
+    private var cardContentSpacing: CGFloat {
+        ReelFinTheme.tvCardMetadataSpacing
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
@@ -116,7 +117,7 @@ public struct SectionRow: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: sectionHeaderSpacing) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title)
                     .reelFinSectionStyle()
@@ -131,7 +132,7 @@ public struct SectionRow: View {
             .padding(.horizontal, horizontalPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: cardSpacing) {
+                LazyHStack(alignment: .top, spacing: cardSpacing) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         let optimizationStatus = optimizationStatusProvider?(item)
 #if os(tvOS)
@@ -178,7 +179,7 @@ public struct SectionRow: View {
                 }
                 .scrollTargetLayout()
                 .padding(.horizontal, horizontalPadding)
-                .padding(.vertical, 14)
+                .padding(.vertical, railVerticalPadding)
             }
             .scrollTargetBehavior(.viewAligned)
         }
@@ -212,6 +213,22 @@ public struct SectionRow: View {
         return ReelFinTheme.tvSectionHorizontalPadding
         #else
         return horizontalSizeClass == .compact ? 24 : 40
+        #endif
+    }
+
+    private var sectionHeaderSpacing: CGFloat {
+        #if os(tvOS)
+        return ReelFinTheme.tvSectionHeaderSpacing
+        #else
+        return 14
+        #endif
+    }
+
+    private var railVerticalPadding: CGFloat {
+        #if os(tvOS)
+        return ReelFinTheme.tvRailVerticalPadding
+        #else
+        return 14
         #endif
     }
 }
@@ -280,7 +297,7 @@ struct HomeView: View {
 #endif
 
             ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 32) {
+                LazyVStack(alignment: .leading, spacing: sectionSpacing) {
                     if viewModel.isInitialLoading && visibleRows.isEmpty {
                         loadingSkeleton
                             .padding(.top, 48)
@@ -513,6 +530,14 @@ struct HomeView: View {
         .padding(.horizontal, horizontalPadding)
         .padding(.top, topChromePadding)
         .shadow(color: .black.opacity(0.3), radius: 6)
+    }
+
+    private var sectionSpacing: CGFloat {
+        #if os(tvOS)
+        return ReelFinTheme.tvSectionSpacing
+        #else
+        return 32
+        #endif
     }
 
     private func topIcon(symbol: String, accessibilityLabel: String) -> some View {
