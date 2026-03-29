@@ -589,12 +589,22 @@ public actor PlaybackCoordinator {
 
         #if os(tvOS)
         // tvOS: MKV containers always need profile override.
-        // HEVC can be stream-copied (conservativeCompatibility) since Apple TV
-        // hardware-decodes HEVC natively. All other codecs (H264, mpeg4, etc.)
-        // must be re-encoded (appleOptimizedHEVC) because stream-copied H264
-        // from MKV produces fMP4 segments that AVPlayer cannot decode on tvOS.
+        //
+        // Dolby Vision HEVC: stream-copying DV from MKV into fMP4 HLS produces
+        // segments with DV RPU NAL units that AVPlayer cannot decode reliably
+        // (readyToPlay but no decoded frames). Force re-encode to strip DV metadata
+        // and produce a clean HEVC stream.
+        //
+        // Plain HEVC (non-DV): stream copy works since Apple TV hardware-decodes HEVC.
+        //
+        // H264/other: must be re-encoded because stream-copied H264 from MKV
+        // produces fMP4 segments that AVPlayer cannot decode on tvOS.
         if mkvFamily {
-            return hevcFamily ? .conservativeCompatibility : .appleOptimizedHEVC
+            let isDolbyVision = Self.isDolbyVisionCodec(codec) || Self.isDolbyVisionSource(source)
+            if hevcFamily && !isDolbyVision {
+                return .conservativeCompatibility
+            }
+            return .appleOptimizedHEVC
         }
         #else
         if mkvFamily && hevcFamily {
@@ -616,6 +626,27 @@ public actor PlaybackCoordinator {
         }
 
         return requestedProfile
+    }
+
+    /// Detect Dolby Vision from the video codec string (dvhe, dvh1, dovi).
+    private static func isDolbyVisionCodec(_ codec: String) -> Bool {
+        let lower = codec.lowercased()
+        return lower.contains("dvhe") || lower.contains("dvh1") || lower.contains("dovi")
+    }
+
+    /// Detect Dolby Vision from broader source metadata (videoRange, videoProfile, videoRangeType).
+    private static func isDolbyVisionSource(_ source: MediaSource) -> Bool {
+        let metadata = [
+            source.videoRange?.lowercased() ?? "",
+            source.videoProfile?.lowercased() ?? "",
+            source.videoRangeType?.lowercased() ?? "",
+            source.videoCodec?.lowercased() ?? ""
+        ].joined(separator: " ")
+        return metadata.contains("dolby")
+            || metadata.contains("vision")
+            || metadata.contains("dovi")
+            || metadata.contains("dvhe")
+            || metadata.contains("dvh1")
     }
 
     private func queryMap(from url: URL) -> [String: String] {

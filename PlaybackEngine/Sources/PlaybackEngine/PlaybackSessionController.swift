@@ -3229,8 +3229,16 @@ public final class PlaybackSessionController {
         case .serverDefault:
             return canUseH264Fallback ? [.appleOptimizedHEVC, .forceH264Transcode] : [.appleOptimizedHEVC]
         case .appleOptimizedHEVC:
+            #if os(tvOS)
+            // On tvOS, if appleOptimizedHEVC (HEVC re-encode) failed, the source
+            // likely has DV/HDR packaging that AVPlayer can't handle as HEVC at all.
+            // Skip conservativeCompatibility (stream-copy would also fail) and go
+            // straight to H264 for reliable decode.
+            return canUseH264Fallback ? [.forceH264Transcode] : []
+            #else
             // Try conservative (stream-copy) before dropping all the way to H264
             return canUseH264Fallback ? [.conservativeCompatibility, .forceH264Transcode] : [.conservativeCompatibility]
+            #endif
         case .conservativeCompatibility:
             return canUseH264Fallback ? [.forceH264Transcode] : []
         case .forceH264Transcode:
