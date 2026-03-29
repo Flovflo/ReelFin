@@ -76,6 +76,26 @@ enum DatabaseMigratorFactory {
             }
         }
 
+        // Remove foreign-key constraint from playback_progress so progress can be saved
+        // even for items that haven't been synced to the local media_items table yet.
+        migrator.registerMigration("v2_playback_progress_no_fk") { db in
+            try db.execute(sql: """
+                CREATE TABLE playback_progress_new (
+                    item_id TEXT PRIMARY KEY,
+                    position_ticks INTEGER NOT NULL,
+                    total_ticks INTEGER NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """)
+            try db.execute(sql: """
+                INSERT INTO playback_progress_new
+                SELECT item_id, position_ticks, total_ticks, updated_at
+                FROM playback_progress
+            """)
+            try db.execute(sql: "DROP TABLE playback_progress")
+            try db.execute(sql: "ALTER TABLE playback_progress_new RENAME TO playback_progress")
+        }
+
         return migrator
     }
 
