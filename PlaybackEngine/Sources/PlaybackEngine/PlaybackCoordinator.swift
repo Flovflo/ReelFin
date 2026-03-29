@@ -86,8 +86,7 @@ public actor PlaybackCoordinator {
         itemID: String,
         mode: PlaybackMode = .performance,
         allowTranscodingFallbackInPerformance: Bool = true,
-        transcodeProfile: TranscodeURLProfile = .serverDefault,
-        startTimeTicks: Int64? = nil
+        transcodeProfile: TranscodeURLProfile = .serverDefault
     ) async throws -> PlaybackAssetSelection {
         guard
             let configuration = await apiClient.currentConfiguration(),
@@ -97,13 +96,12 @@ public actor PlaybackCoordinator {
         }
 
         let maxBitrate = configuration.effectiveMaxStreamingBitrate
-        var initialOptions = playbackOptions(
+        let initialOptions = playbackOptions(
             mode: mode,
             maxBitrate: maxBitrate,
             transcodeProfile: transcodeProfile,
             configuration: configuration
         )
-        initialOptions.startTimeTicks = startTimeTicks
         let initialOptionBitrate = initialOptions.maxStreamingBitrate ?? maxBitrate
 
         let requestInterval = SignpostInterval(signposter: Signpost.playbackInfo, name: "playback_info_request")
@@ -126,13 +124,12 @@ public actor PlaybackCoordinator {
         }
 
         if mode == .performance, allowTranscodingFallbackInPerformance, !initialOptions.allowTranscoding {
-            var fallbackOptions = playbackOptions(
+            let fallbackOptions = playbackOptions(
                 mode: .balanced,
                 maxBitrate: maxBitrate,
                 transcodeProfile: transcodeProfile,
                 configuration: configuration
             )
-            fallbackOptions.startTimeTicks = startTimeTicks
             let fallbackBitrate = fallbackOptions.maxStreamingBitrate ?? maxBitrate
             let fallbackRequest = SignpostInterval(signposter: Signpost.playbackInfo, name: "playback_info_request_fallback")
             let fallbackSources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: fallbackOptions)
