@@ -206,6 +206,7 @@ public final class PlaybackSessionController {
     private var hasMarkedFirstFrame = false
     private var hasDecodedVideoFrame = false
     private var pendingResumeSeconds: Double?
+    private var transcodeStartOffset: Double = 0
     private var playbackStrategy: PlaybackStrategy = .bestQualityFastest
     private var playbackPolicy: PlaybackPolicy = .auto
     private var allowSDRFallback = true
@@ -331,6 +332,7 @@ public final class PlaybackSessionController {
         hasMarkedFirstFrame = false
         hasDecodedVideoFrame = false
         pendingResumeSeconds = nil
+        transcodeStartOffset = 0
         recoveryAttemptCount = 0
         metrics = PlaybackPerformanceMetrics()
         playbackErrorMessage = nil
@@ -384,11 +386,19 @@ public final class PlaybackSessionController {
         let infoStartDate = Date()
 
         do {
-            let warmedSelection = await warmupManager?.selection(for: item.id)
+            // Fetch resume position before resolving playback so we can pass StartTimeTicks
+            // to Jellyfin. This makes the server transcode from the correct position immediately,
+            // instead of transcoding from 0 and relying on a fragile mid-stream seek.
+            let initialResumeSecs = (try? await resumeSeconds(for: item)) ?? 0
+            let resumeTimeTicks: Int64? = initialResumeSecs > 0 ? Int64(initialResumeSecs * 10_000_000) : nil
+
             let warmedSelectionStart = Date()
             var selection: PlaybackAssetSelection
 
-            if let warmedSelection {
+            // Use a warmed selection only when there is no resume position (warm cache was
+            // resolved without StartTimeTicks; it cannot be trusted for mid-movie resume).
+            let candidateWarmed = initialResumeSecs <= 0 ? await warmupManager?.selection(for: item.id) : nil
+            if let warmedSelection = candidateWarmed {
                 selection = warmedSelection
                 ttffInfoInterval?.end(name: "ttff_playback_info", message: "warm_cache_hit")
                 ttffInfoInterval = nil
@@ -400,7 +410,8 @@ public final class PlaybackSessionController {
                     itemID: item.id,
                     mode: .balanced,
                     allowTranscodingFallbackInPerformance: !usesDirectRemuxOnly,
-                    transcodeProfile: activeTranscodeProfile
+                    transcodeProfile: activeTranscodeProfile,
+                    startTimeTicks: resumeTimeTicks
                 )
 
                 // Mark PlaybackInfo phase complete
@@ -508,7 +519,22 @@ public final class PlaybackSessionController {
                 self.localHLSStartupSummary = nil
             }
 
-            prepareAndLoadSelection(selection, resumeSeconds: nil)
+            // For transcode/remux routes: Jellyfin already starts from initialResumeSecs
+            // (via StartTimeTicks). Track the offset so currentTime/progress are reported
+            // in movie-absolute seconds rather than HLS-stream-relative seconds.
+            // For directPlay: seek immediately (the raw URL doesn't support StartTimeTicks).
+            if case .directPlay = selection.decision.route {
+                transcodeStartOffset = 0
+                prepareAndLoadSelection(selection, resumeSeconds: nil)
+                if initialResumeSecs > 0 {
+                    let seekTime = CMTime(seconds: initialResumeSecs, preferredTimescale: 600)
+                    let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
+                    _ = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
+                }
+            } else {
+                transcodeStartOffset = initialResumeSecs
+                prepareAndLoadSelection(selection, resumeSeconds: nil)
+            }
 
             // Mark URL resolution phase complete
             ttffResolveInterval?.end(name: "ttff_url_resolution", message: "url_resolved")
@@ -517,16 +543,6 @@ public final class PlaybackSessionController {
 
             // Retrieve TTFF tuning from coordinator
             ttffTuning = coordinator.ttffTuning
-
-            if let seconds = try await resumeSeconds(for: item), seconds > 0 {
-                if shouldDeferResumeSeek(route: selection.decision.route, seconds: seconds) {
-                    pendingResumeSeconds = seconds
-                } else {
-                    let seekTime = CMTime(seconds: seconds, preferredTimescale: 600)
-                    let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-                    _ = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
-                }
-            }
 
             if autoPlay {
                 play()
@@ -1061,6 +1077,7 @@ public final class PlaybackSessionController {
         currentItemHasDolbyVision = false
         currentSource = nil
         pendingResumeSeconds = nil
+        transcodeStartOffset = 0
         didResumeAfterForeground = false
         hasMarkedFirstFrame = false
         hasDecodedVideoFrame = false
@@ -1131,8 +1148,9 @@ public final class PlaybackSessionController {
     }
 
     public func seek(to seconds: Double) {
-        let clamped = max(0, seconds)
-        let target = CMTime(seconds: clamped, preferredTimescale: 600)
+        // `seconds` is in movie-absolute time; convert to HLS-stream-relative position.
+        let hlsPosition = max(0, seconds - transcodeStartOffset)
+        let target = CMTime(seconds: hlsPosition, preferredTimescale: 600)
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
         handleSyntheticSeekInvalidation(target: target)
     }
@@ -1602,8 +1620,9 @@ public final class PlaybackSessionController {
         ) { [weak self] time in
             guard let self else { return }
             Task { @MainActor in
-                self.currentTime = max(0, time.seconds)
-                self.duration = max(self.currentTime, self.player.currentItem?.duration.seconds ?? 0)
+                self.currentTime = max(0, time.seconds) + self.transcodeStartOffset
+                let hlsDuration = self.player.currentItem?.duration.seconds ?? 0
+                self.duration = max(self.currentTime, hlsDuration + self.transcodeStartOffset)
                 self.refreshDecodedVideoFrameState()
                 self.markFirstFrameIfNeeded(currentSeconds: self.currentTime)
                 await self.persistProgress(isPaused: !self.isPlaying, didFinish: false)
@@ -2061,7 +2080,7 @@ public final class PlaybackSessionController {
         recoveryAttemptCount += 1
 
         let attempt = recoveryAttemptCount
-        let resumeSeconds: Double? = hasMarkedFirstFrame ? max(0, player.currentTime().seconds) : nil
+        let resumeSeconds: Double? = hasMarkedFirstFrame ? max(0, player.currentTime().seconds) + transcodeStartOffset : transcodeStartOffset > 0 ? transcodeStartOffset : nil
         AppLog.nativeBridge.warning("[NB-DIAG] hls.server.recovery.start — attempt=\(attempt, privacy: .public) reason=\(reason, privacy: .public)")
         fallbackOccurred = true
         fallbackReason = reason
@@ -2692,7 +2711,17 @@ public final class PlaybackSessionController {
     }
 
     private func reloadRecoveryTranscode(reason: String, attempt: Int) async -> Bool {
-        let resumeSeconds: Double? = hasMarkedFirstFrame ? max(0, player.currentTime().seconds) : nil
+        // Compute resume position in movie-absolute time.
+        // If we've decoded at least one frame, use current player position + offset.
+        // Otherwise, preserve the original start offset (retry from same position).
+        let realPositionSeconds: Double
+        if hasMarkedFirstFrame {
+            realPositionSeconds = max(0, player.currentTime().seconds) + transcodeStartOffset
+        } else {
+            realPositionSeconds = transcodeStartOffset
+        }
+        let resumeSeconds: Double? = realPositionSeconds > 0 ? realPositionSeconds : nil
+        let resumeTimeTicks: Int64? = resumeSeconds.map { Int64($0 * 10_000_000) }
         guard let itemID = currentItemID else { return false }
 
         if playMethodForReporting == "NativeBridge" || reason == "nativebridge_packaging_failure" {
@@ -2715,7 +2744,8 @@ public final class PlaybackSessionController {
                     itemID: itemID,
                     mode: mode,
                     allowTranscodingFallbackInPerformance: allowTranscodingFallback,
-                    transcodeProfile: profile
+                    transcodeProfile: profile,
+                    startTimeTicks: resumeTimeTicks
                 )
 
                 if case let .nativeBridge(plan) = selection.decision.route {
@@ -2765,7 +2795,15 @@ public final class PlaybackSessionController {
                 }
 
                 activeTranscodeProfile = profile
-                prepareAndLoadSelection(selection, resumeSeconds: resumeSeconds)
+                // Update offset to reflect the new transcode start position.
+                if case .directPlay = selection.decision.route {
+                    transcodeStartOffset = 0
+                } else {
+                    transcodeStartOffset = resumeSeconds ?? 0
+                }
+                let isDirectPlay: Bool
+                if case .directPlay = selection.decision.route { isDirectPlay = true } else { isDirectPlay = false }
+                prepareAndLoadSelection(selection, resumeSeconds: isDirectPlay ? resumeSeconds : nil)
                 routeDescription = "Recovery #\(attempt): \(routeLabel(for: selection.decision.route)) [\(profile.rawValue)]"
                 playbackErrorMessage = nil
                 player.play()
@@ -3154,8 +3192,8 @@ public final class PlaybackSessionController {
     ) -> (local: PlaybackProgress, remote: PlaybackProgressUpdate)? {
         guard let itemID = currentItemID else { return nil }
 
-        let positionSeconds = max(0, player.currentTime().seconds)
-        let totalSeconds = max(positionSeconds, player.currentItem?.duration.seconds ?? 0)
+        let positionSeconds = max(0, player.currentTime().seconds) + transcodeStartOffset
+        let totalSeconds = max(positionSeconds, (player.currentItem?.duration.seconds ?? 0) + transcodeStartOffset)
         let positionTicks = Int64(positionSeconds * 10_000_000)
         let totalTicks = Int64(totalSeconds * 10_000_000)
 
