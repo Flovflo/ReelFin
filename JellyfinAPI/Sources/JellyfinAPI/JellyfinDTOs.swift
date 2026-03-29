@@ -854,13 +854,15 @@ struct DeviceProfileRequestDTO: Encodable {
                 )
             ],
             transcodingProfiles: [
-                // Server-side transcode: HLS fMP4 with HEVC video.
-                // Jellyfin will use this when codecs are incompatible.
+                // Server-side transcode: HLS TS with H.264 video.
+                // Jellyfin does not produce real fMP4 segments (serves TS bytes
+                // despite SegmentContainer=fmp4), so HEVC fMP4 HLS is broken.
+                // H264 TS is the only reliable transcode path on tvOS.
                 TranscodingProfileRequestDTO(
-                    container: "fmp4",
+                    container: "ts",
                     type: .video,
-                    videoCodec: "hevc,h264",
-                    audioCodec: "eac3,aac",
+                    videoCodec: "h264",
+                    audioCodec: "aac,ac3,eac3",
                     protocolValue: .hls,
                     context: .streaming,
                     maxAudioChannels: String(maxAudioChannels),

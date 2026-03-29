@@ -588,23 +588,22 @@ public actor PlaybackCoordinator {
         let hevcFamily = codec.contains("hevc") || codec.contains("h265") || codec.contains("dvhe") || codec.contains("dvh1")
 
         #if os(tvOS)
-        // tvOS: MKV containers always need profile override.
+        // tvOS: ALL MKV transcodes must use H264 TS (forceH264Transcode).
         //
-        // Dolby Vision HEVC: stream-copying DV from MKV into fMP4 HLS produces
-        // segments with DV RPU NAL units that AVPlayer cannot decode reliably
-        // (readyToPlay but no decoded frames). Force re-encode to strip DV metadata
-        // and produce a clean HEVC stream.
+        // Root cause: Jellyfin does NOT produce real fMP4 segments for HEVC HLS.
+        // Despite SegmentContainer=fmp4, the actual bytes are MPEG-TS (0x47 sync byte).
+        // Apple AVPlayer requires fMP4/CMAF for HEVC HLS — HEVC in TS segments is
+        // not supported. AVPlayer reaches readyToPlay but never decodes a frame.
         //
-        // Plain HEVC (non-DV): stream copy works since Apple TV hardware-decodes HEVC.
+        // This affects ALL MKV transcodes:
+        //   - conservativeCompatibility (stream copy HEVC fMP4) → broken
+        //   - appleOptimizedHEVC (re-encode HEVC fMP4) → broken
+        //   - forceH264Transcode (H264 TS) → WORKS
         //
-        // H264/other: must be re-encoded because stream-copied H264 from MKV
-        // produces fMP4 segments that AVPlayer cannot decode on tvOS.
+        // H264 in TS is the only Jellyfin transcode path that produces decodable
+        // segments on tvOS. DirectPlay (MOV/MP4) is unaffected.
         if mkvFamily {
-            let isDolbyVision = Self.isDolbyVisionCodec(codec) || Self.isDolbyVisionSource(source)
-            if hevcFamily && !isDolbyVision {
-                return .conservativeCompatibility
-            }
-            return .appleOptimizedHEVC
+            return .forceH264Transcode
         }
         #else
         if mkvFamily && hevcFamily {

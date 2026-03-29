@@ -1,4 +1,4 @@
-# Playback Architecture (Current — v0.5)
+# Playback Architecture (Current — v0.6)
 
 This document describes the **real, shipping** playback stack in ReelFin.
 It is kept in sync with the runtime; do not document aspirational architecture here.
@@ -18,6 +18,14 @@ It is kept in sync with the runtime; do not document aspirational architecture h
 | `SubtitleCompatibilityPolicy` | Guards bitmap subtitles in strict HDR mode |
 | `HLSVariantSelector` | Pins the best HLS variant after master playlist fetch |
 | `NativeBridge` (disabled) | Local MKV → fMP4 repackager — kept behind a feature flag, not active in shipping builds |
+
+### Platform-specific components
+
+| Component | Platform | Role |
+|---|---|---|
+| `TVRootShellView` / `TVTopNavigationBar` | tvOS | Focus-driven navigation shell with Liquid Glass |
+| `TVLoginView` | tvOS | Quick Connect + password login |
+| `PlaybackWarmupManager` | tvOS | Pre-resolves playback plan on detail page open to hide latency |
 
 ---
 
@@ -79,12 +87,24 @@ load(item:)
 | `serverDefault` | Keep `AllowVideoStreamCopy=true` when safe | First attempt for unknown sources |
 | `appleOptimizedHEVC` | `VideoCodec=hevc`, `AllowVideoStreamCopy=false`, `Container=fmp4` | MKV HEVC / HDR — clean server-side HEVC transcode |
 | `conservativeCompatibility` | Source codec kept, normalised `SegmentLength/MinSegments` | Middle ground for uncertain hardware |
-| `forceH264Transcode` | `VideoCodec=h264`, `RequireAvc=true`, `Container=ts` | Last resort; always SDR output |
+| `forceH264Transcode` | `VideoCodec=h264`, `RequireAvc=true`, `Container=ts` | Reliable SDR output via H.264 MPEG-TS |
 
 **Recovery cascade** (default `auto` policy, 2 recovery attempts):
+
+*iOS:*
 ```
 serverDefault → appleOptimizedHEVC → conservativeCompatibility → forceH264Transcode
 ```
+
+*tvOS:*
+```
+serverDefault → appleOptimizedHEVC → forceH264Transcode
+```
+
+> **tvOS note:** `conservativeCompatibility` is skipped in the tvOS recovery chain.
+> All MKV transcode paths on tvOS begin with `forceH264Transcode` directly
+> (see §tvOS playback below).
+
 Once `forceH264Transcode` is used, no further fallback is attempted.
 
 Profile choices are persisted per item ID so subsequent loads skip known-bad profiles.
@@ -183,6 +203,47 @@ In strict mode:
 
 ---
 
+## tvOS playback
+
+### Device profile
+
+On tvOS, `PlaybackInfoOptions.tvOSOptimized()` is selected automatically via `#if os(tvOS)` in `PlaybackCoordinator.playbackOptions()`. The profile tells Jellyfin:
+
+- **DirectPlay**: mp4/m4v/mov with HEVC/H264/DV + AAC/AC3/EAC3/ALAC/FLAC
+- **Transcode**: HLS MPEG-TS H.264 (not fMP4 — see below)
+
+### Why fMP4 HLS is disabled for MKV on tvOS
+
+Jellyfin does **not** produce real fMP4 segments when `SegmentContainer=fmp4` is requested
+for MKV remux/transcode. It serves raw MPEG-TS bytes (starting with `0x47` sync byte) despite
+the `.fmp4` file extension and `hvc1.…` codec signaling in the master playlist.
+
+Apple AVPlayer requires ISO BMFF fMP4 with a `#EXT-X-MAP` init segment for HEVC HLS (CMAF).
+Without it, AVPlayer reaches `readyToPlay` status but never decodes a video frame — the decoded-frame
+watchdog fires and recovery begins.
+
+**Consequence:** all MKV files on tvOS use `forceH264Transcode` directly.
+
+| Source | tvOS route | Output |
+|---|---|---|
+| MP4 / MOV / M4V — compatible codecs | DirectPlay | Native quality |
+| MKV (any codec) | H.264 HLS TS | SDR H.264 |
+| MOV / MP4 — incompatible codec | H.264 HLS TS | SDR H.264 |
+
+### HLS variant selection on tvOS
+
+`HLSVariantSelector` uses **codec rank as the primary sort key** on tvOS (vs. resolution on iOS).
+This ensures a Dolby Vision or HDR10 variant is preferred over a higher-resolution SDR variant
+when the source already has richer metadata — more relevant once fMP4 HEVC is supported.
+
+### Subtitle deferred selection
+
+External subtitle tracks (SRT/ASS) are not applied at `readyToPlay`. They are deferred until
+after the **first decoded video frame** to prevent the HLS reload (player item replacement)
+from interfering with startup decoding.
+
+---
+
 ## Startup state machine
 
 Simplified observable states:
@@ -194,7 +255,9 @@ idle → load() called
   → creating AVURLAsset + AVPlayerItem
   → playerItem.status == .unknown
   → playerItem.status == .readyToPlay
-      → initial audio/subtitle selection applied
+      → initial audio selection applied
+      → embedded subtitle applied (if auto-selected)
+      → external subtitle deferred until first frame (see §tvOS playback)
       → startup watchdog started
   → first video frame decoded (hasDecodedVideoFrame = true)
   → playing
@@ -211,7 +274,7 @@ idle → load() called
 |---|---|---|
 | `serverDefault` | 6–8 s (3 s for HEVC stream-copy) | +8 s |
 | `appleOptimizedHEVC` | 10–14 s (14 s for DV sources) | +8 s |
-| `conservativeCompatibility` | 8 s | +8 s |
+| `conservativeCompatibility` | 8–12 s (12 s for DV sources) | +8 s |
 | `forceH264Transcode` | 30 s | +8 s |
 
 ---
@@ -257,12 +320,13 @@ Use `AppLog.playback` for the main pipeline and `AppLog.nativeBridge` for the lo
 ## Known limitations
 
 1. **MKV direct play is not supported.** MKV files always route through server-side transcode.
-2. **DV preservation through Jellyfin HLS transcoding is not guaranteed.** Expect HDR10 for DV sources on the transcode path.
-3. **HDR10+ dynamic metadata is not preserved** on any server-side path.
-4. **TrueHD / DTS require server-side audio transcoding.** They cannot play natively via AVFoundation.
-5. **PGS/VobSub subtitles cannot be used in strict HDR mode** without forcing a destructive SDR transcode.
-6. **No mid-session HLS adaptation by ReelFin.** AVPlayer handles adaptive bitrate internally.
-7. **NativeBridge subtitle pipeline is incomplete.** SRT/ASS subtitle sidecar injection is not yet wired up.
+2. **tvOS MKV transcode is always H.264 SDR.** Jellyfin does not produce real fMP4 segments for HEVC HLS; H.264 MPEG-TS is the only reliable transcode output on tvOS.
+3. **DV preservation through Jellyfin HLS transcoding is not guaranteed.** Expect HDR10 on iOS transcode path, SDR on tvOS transcode path.
+4. **HDR10+ dynamic metadata is not preserved** on any server-side path.
+5. **TrueHD / DTS require server-side audio transcoding.** They cannot play natively via AVFoundation.
+6. **PGS/VobSub subtitles cannot be used in strict HDR mode** without forcing a destructive SDR transcode.
+7. **No mid-session HLS adaptation by ReelFin.** AVPlayer handles adaptive bitrate internally.
+8. **NativeBridge subtitle pipeline is incomplete.** SRT/ASS subtitle sidecar injection is not yet wired up.
 
 ---
 
