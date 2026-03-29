@@ -51,10 +51,6 @@ struct TVLibraryPosterCard: View {
         if isFocused {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color.white.opacity(0.05))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
-                }
         }
     }
 }

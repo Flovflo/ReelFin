@@ -10,73 +10,52 @@ struct TVLibraryPillButton: View {
     let action: () -> Void
 
     var body: some View {
-        Group {
-            if #available(tvOS 26.0, *) {
-                modernButton
-            } else {
-                legacyButton
+        HStack(spacing: 10) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
             }
-        }
-    }
 
-    private var baseButton: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 20, weight: .semibold))
-                        .symbolRenderingMode(.monochrome)
-                }
-
-                Text(title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.86)
-            }
-            .font(.system(size: 21, weight: .semibold, design: .rounded))
-            .padding(.horizontal, 24)
-            .padding(.vertical, 14)
-            .frame(minHeight: 60)
-            .contentShape(Capsule(style: .continuous))
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.86)
         }
-        .buttonStyle(.plain)
+        .font(.system(size: 21, weight: .semibold, design: .rounded))
+        .foregroundStyle(labelColor)
+        .padding(.horizontal, 24)
+        .frame(minHeight: 60)
+        .background { highlightBackground }
+        .contentShape(Capsule(style: .continuous))
+        .scaleEffect(isFocused ? 1.01 : 1)
+        .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
+        .onTapGesture(perform: action)
+        .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityRepresentation { Button(title, action: action) }
     }
 
-    @available(tvOS 26.0, *)
-    @ViewBuilder
-    private var modernButton: some View {
-        if isFocused || isSelected {
-            baseButton
-                .glassEffect(Glass.regular.interactive(), in: .capsule)
-        } else {
-            baseButton
-                .foregroundStyle(Color.white.opacity(0.92))
-                .glassEffect(
-                    Glass.regular.tint(Color.white.opacity(0.04)),
-                    in: .capsule
-                )
-        }
+    private var labelColor: Color {
+        isHighlighted ? Color.black.opacity(0.92) : Color.white.opacity(0.94)
     }
 
     @ViewBuilder
-    private var legacyButton: some View {
-        if isFocused || isSelected {
-            baseButton
-                .foregroundStyle(Color.black.opacity(0.92))
-                .background {
+    private var highlightBackground: some View {
+        if isHighlighted {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.94))
+                .overlay {
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.92))
+                        .stroke(Color.white.opacity(0.42), lineWidth: 1)
                 }
-        } else {
-            baseButton
-                .foregroundStyle(Color.white.opacity(0.92))
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                }
+                .shadow(color: .black.opacity(isFocused ? 0.22 : 0.16), radius: isFocused ? 14 : 10, x: 0, y: isFocused ? 8 : 6)
         }
+    }
+
+    private var isHighlighted: Bool {
+        isFocused || isSelected
     }
 }
 #endif

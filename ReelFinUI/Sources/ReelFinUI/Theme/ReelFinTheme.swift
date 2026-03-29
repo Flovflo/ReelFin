@@ -198,22 +198,6 @@ public extension View {
                 x: 0,
                 y: focused ? ReelFinTheme.tvFocusShadowY : ReelFinTheme.tvRestShadowY
             )
-            .overlay {
-                if focused {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(ReelFinTheme.tvFocusSpecularOpacity),
-                                    Color.white.opacity(0.08)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.8
-                        )
-                }
-            }
             .animation(ReelFinTheme.tvFocusSpring, value: focused)
     }
 }

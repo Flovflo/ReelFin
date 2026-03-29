@@ -17,11 +17,6 @@ struct TVTopBackdropOverlay: View {
                 )
             )
             .frame(height: 132)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(appearance.railStrokeColor.opacity(0.32))
-                    .frame(height: 1)
-            }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

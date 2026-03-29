@@ -14,7 +14,7 @@ struct TVLibraryControlBar: View {
                 Text("Library")
                     .reelFinTitleStyle()
 
-                Text("Browse movies and series with a clean focus-first layout.")
+                Text("Browse movies and series with the same focus rhythm as Home.")
                     .font(.system(size: 18, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.62))
             }
@@ -27,12 +27,22 @@ struct TVLibraryControlBar: View {
         .padding(.top, 22)
     }
 
-    @ViewBuilder
     private var controls: some View {
-        if #available(tvOS 26.0, *) {
-            GlassEffectContainer(spacing: 12) { controlRow }
-        } else {
+        HStack(spacing: 14) {
             controlRow
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(railBackground)
+                .overlay(railStroke)
+                .shadow(color: .black.opacity(0.22), radius: 20, x: 0, y: 10)
+
+            TVLibraryPillButton(
+                title: sortMode.displayTitle,
+                systemImage: "arrow.up.arrow.down",
+                isSelected: false,
+                action: onSortToggle
+            )
+            .background(quietSortBackground)
         }
     }
 
@@ -47,13 +57,27 @@ struct TVLibraryControlBar: View {
             TVLibraryPillButton(title: "Shows", isSelected: selectedFilter == .series) {
                 onFilterChange(.series)
             }
-            TVLibraryPillButton(
-                title: sortMode.displayTitle,
-                systemImage: "arrow.up.arrow.down",
-                isSelected: false,
-                action: onSortToggle
-            )
         }
+    }
+
+    private var railBackground: some View {
+        Capsule(style: .continuous)
+            .fill(Color.white.opacity(0.10))
+    }
+
+    private var railStroke: some View {
+        Capsule(style: .continuous)
+            .stroke(Color.white.opacity(0.10), lineWidth: 1)
+    }
+
+    private var quietSortBackground: some View {
+        Capsule(style: .continuous)
+            .fill(Color.white.opacity(0.10))
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.18), radius: 16, x: 0, y: 8)
     }
 }
 
