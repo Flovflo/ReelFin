@@ -2,12 +2,20 @@ import PlaybackEngine
 import Foundation
 import Shared
 
+enum ServerSettingsSaveResult {
+    case saved
+    case requiresReauthentication
+    case failed
+}
+
 @MainActor
 final class ServerSettingsViewModel: ObservableObject {
     @Published var serverURLText = ""
     @Published var username = ""
     @Published var allowCellularStreaming = true
     @Published var preferredQuality: QualityPreference = .auto
+    @Published var preferredAudioLanguage = ""
+    @Published var preferredSubtitleLanguage = ""
     @Published var playbackStrategy: PlaybackStrategy = .bestQualityFastest
     @Published var playbackPolicy: PlaybackPolicy = .auto
     @Published var allowSDRFallback = true
@@ -32,6 +40,8 @@ final class ServerSettingsViewModel: ObservableObject {
             serverURLText = config.serverURL.absoluteString
             allowCellularStreaming = config.allowCellularStreaming
             preferredQuality = config.preferredQuality
+            preferredAudioLanguage = config.preferredAudioLanguage ?? ""
+            preferredSubtitleLanguage = config.preferredSubtitleLanguage ?? ""
             playbackStrategy = config.playbackStrategy
             playbackPolicy = config.playbackPolicy
             allowSDRFallback = config.allowSDRFallback
@@ -49,14 +59,63 @@ final class ServerSettingsViewModel: ObservableObject {
         }
     }
 
-    func save() async {
+    var displayUsername: String {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Signed in" : trimmed
+    }
+
+    var displayServerHost: String {
+        if let url = try? normalizedServerURL(from: serverURLText) {
+            return url.host ?? url.absoluteString
+        }
+
+        if let saved = dependencies.settingsStore.serverConfiguration?.serverURL {
+            return saved.host ?? saved.absoluteString
+        }
+
+        return "No server configured"
+    }
+
+    var canSave: Bool {
+        !serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasPendingServerChange: Bool {
+        guard let savedURL = dependencies.settingsStore.serverConfiguration?.serverURL else {
+            return !serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        guard let editedURL = try? normalizedServerURL(from: serverURLText) else {
+            return serverURLText.trimmingCharacters(in: .whitespacesAndNewlines) != savedURL.absoluteString
+        }
+
+        return editedURL.absoluteString != savedURL.absoluteString
+    }
+
+    var saveButtonTitle: String {
+        hasPendingServerChange ? "Save & Reconnect" : "Save Changes"
+    }
+
+    var effectivePreferredAudioLanguage: String? {
+        normalizedLanguageCode(from: preferredAudioLanguage)
+    }
+
+    var effectivePreferredSubtitleLanguage: String? {
+        normalizedLanguageCode(from: preferredSubtitleLanguage)
+    }
+
+    func serverURLDidChange() {
+        errorMessage = nil
+        infoMessage = nil
+    }
+
+    func save() async -> ServerSettingsSaveResult {
         errorMessage = nil
         infoMessage = nil
 
         do {
-            guard let url = URL(string: serverURLText), url.host != nil else {
-                throw AppError.invalidServerURL
-            }
+            let url = try normalizedServerURL(from: serverURLText)
+            let previousURL = dependencies.settingsStore.serverConfiguration?.serverURL
 
             let config = ServerConfiguration(
                 serverURL: url,
@@ -64,23 +123,24 @@ final class ServerSettingsViewModel: ObservableObject {
                 preferredQuality: preferredQuality,
                 playbackStrategy: playbackStrategy,
                 playbackPolicy: playbackPolicy,
-                allowSDRFallback: allowSDRFallback,
+                allowSDRFallback: playbackPolicy == .originalLockHDRDV ? false : allowSDRFallback,
                 preferAudioTranscodeOnly: preferAudioTranscodeOnly,
                 maxStreamingBitrateOverride: parseMaxStreamingBitrateOverride(),
-                forceH264FallbackWhenNotDirectPlay: forceH264FallbackWhenNotDirectPlay
+                forceH264FallbackWhenNotDirectPlay: forceH264FallbackWhenNotDirectPlay,
+                preferredAudioLanguage: effectivePreferredAudioLanguage,
+                preferredSubtitleLanguage: effectivePreferredSubtitleLanguage
             )
             try await dependencies.apiClient.configure(server: config)
             dependencies.settingsStore.serverConfiguration = config
             UserDefaults.standard.set(nerdOverlayEnabled, forKey: Self.nerdOverlayKey)
+            if previousURL?.absoluteString != config.serverURL.absoluteString {
+                return .requiresReauthentication
+            }
             infoMessage = "Settings saved"
+            return .saved
         } catch {
             errorMessage = error.localizedDescription
-        }
-    }
-
-    func applyPolicyDefaultsIfNeeded() {
-        if playbackPolicy == .originalLockHDRDV, allowSDRFallback {
-            allowSDRFallback = false
+            return .failed
         }
     }
 
@@ -91,19 +151,36 @@ final class ServerSettingsViewModel: ObservableObject {
         return value
     }
 
+    private func normalizedServerURL(from rawValue: String) throws -> URL {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw AppError.invalidServerURL
+        }
+
+        let prefixed = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard let url = URL(string: prefixed), url.host != nil else {
+            throw AppError.invalidServerURL
+        }
+
+        return url
+    }
+
     func testConnection() async {
         errorMessage = nil
         infoMessage = nil
 
         do {
-            guard let url = URL(string: serverURLText), url.host != nil else {
-                throw AppError.invalidServerURL
-            }
+            let url = try normalizedServerURL(from: serverURLText)
             try await dependencies.apiClient.testConnection(serverURL: url)
             infoMessage = "Connection OK"
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func normalizedLanguageCode(from rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     func runPlaybackDiagnostics() async {
