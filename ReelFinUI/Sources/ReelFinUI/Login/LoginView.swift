@@ -6,14 +6,15 @@ import UIKit
 struct LoginView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @StateObject private var viewModel: LoginViewModel
-    @FocusState private var focusedField: FocusField?
+    @FocusState private var focusedField: LoginFocusField?
 
     private let onLogin: (UserSession) -> Void
+    private let onboardingPage = OnboardingPageContent.pages[0]
 
-    @State private var phase: OnboardingPhase = .landing
+    @State private var phase: LoginPhase = .onboarding
     @State private var contentVisible = false
-    @State private var successVisible = false
 
     init(dependencies: ReelFinDependencies, onLogin: @escaping (UserSession) -> Void) {
         _viewModel = StateObject(wrappedValue: LoginViewModel(dependencies: dependencies))
@@ -22,41 +23,42 @@ struct LoginView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let metrics = layoutMetrics(for: proxy.size)
+            let metrics = LoginLayoutMetrics(size: proxy.size, sizeClass: horizontalSizeClass)
 
             ZStack {
-                backgroundView(size: proxy.size)
+                OnboardingBackgroundView(
+                    accent: activeVisualPage.accent,
+                    glow: activeVisualPage.glow,
+                    compact: metrics.isCompact
+                )
 
-                VStack(alignment: .leading, spacing: 0) {
-                    header
-                        .padding(.top, proxy.safeAreaInsets.top + metrics.topPadding)
+                VStack(spacing: 0) {
+                    LoginChromeView(
+                        canGoBack: canGoBack,
+                        onBack: handleBack
+                    )
+                    .padding(.top, proxy.safeAreaInsets.top + metrics.topPadding)
 
                     Spacer(minLength: metrics.topSpacer)
 
-                    ZStack {
-                        stageContent(metrics: metrics)
-                    }
-                    .frame(maxWidth: metrics.contentWidth)
+                    stageContent(metrics: metrics)
+                        .frame(maxWidth: metrics.contentWidth)
 
-                    Spacer()
+                    Spacer(minLength: metrics.bottomSpacer)
                 }
                 .padding(.horizontal, metrics.horizontalPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .opacity(contentVisible ? 1 : 0)
-                .offset(y: contentVisible ? 0 : 10)
+                .offset(y: contentVisible ? 0 : 12)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
-#if os(iOS)
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-#endif
         }
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
         .onAppear {
-            guard !contentVisible else {
-                return
-            }
+            applyDebugOverridesIfNeeded()
 
+            guard !contentVisible else { return }
             withAnimation(entranceAnimation) {
                 contentVisible = true
             }
@@ -66,322 +68,93 @@ struct LoginView: View {
         }
     }
 
+    private var activeVisualPage: OnboardingPageContent {
+        switch phase {
+        case .onboarding, .serverEntry, .credentials, .submitting, .success:
+            onboardingPage
+        }
+    }
+
+    private var canGoBack: Bool {
+        switch phase {
+        case .onboarding, .serverEntry:
+            return false
+        case .credentials, .submitting:
+            return true
+        case .success:
+            return false
+        }
+    }
+
     private var stageAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.14) : .smooth(duration: 0.28, extraBounce: 0.01)
+        reduceMotion ? .easeInOut(duration: 0.14) : .smooth(duration: 0.30, extraBounce: 0.01)
     }
 
     private var entranceAnimation: Animation {
-        reduceMotion ? .easeOut(duration: 0.12) : .smooth(duration: 0.26, extraBounce: 0)
+        reduceMotion ? .easeOut(duration: 0.12) : .smooth(duration: 0.28, extraBounce: 0)
+    }
+
+    @ViewBuilder
+    private func stageContent(metrics: LoginLayoutMetrics) -> some View {
+        switch phase {
+        case .onboarding, .serverEntry:
+            ConnectionLandingView(
+                compact: metrics.isCompact,
+                titleSize: metrics.titleSize,
+                bodySize: metrics.bodySize,
+                serverURLText: $viewModel.serverURLText,
+                focusedField: $focusedField,
+                hasSavedServer: viewModel.hasSavedServer,
+                isTestingConnection: viewModel.isTestingConnection,
+                serverMessage: viewModel.serverMessage,
+                serverErrorMessage: viewModel.serverErrorMessage,
+                canContinue: viewModel.canAdvanceFromServer,
+                onContinue: continueFromServer
+            )
+            .transition(stageTransition)
+        case .credentials, .submitting:
+            CredentialsStageView(
+                username: $viewModel.username,
+                password: $viewModel.password,
+                focusedField: $focusedField,
+                serverHost: serverHost,
+                isSubmitting: phase == .submitting,
+                authErrorMessage: viewModel.authErrorMessage,
+                canSubmit: viewModel.canSubmitCredentials && phase != .submitting,
+                titleSize: metrics.formTitleSize,
+                bodySize: metrics.formBodySize,
+                onSubmit: submitCredentials
+            )
+            .transition(stageTransition)
+        case .success:
+            SuccessStageView(
+                titleSize: metrics.formTitleSize,
+                bodySize: metrics.formBodySize
+            )
+            .transition(stageTransition)
+        }
     }
 
     private var stageTransition: AnyTransition {
         .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.985))
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            Text("Jellyfin")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.68))
-
-            Spacer()
-
-            if phase != .landing {
-                Button {
-                    handleBack()
-                } label: {
-                    Image(systemName: phase == .serverEntry ? "xmark" : "chevron.backward")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                }
-                .buttonStyle(NativeCircleButtonStyle())
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func stageContent(metrics: LoginMetrics) -> some View {
-        switch phase {
-        case .landing:
-            landingCard(metrics: metrics)
-                .transition(stageTransition)
-        case .serverEntry:
-            serverCard(metrics: metrics)
-                .transition(stageTransition)
-        case .credentials, .submitting:
-            credentialsCard(metrics: metrics)
-                .transition(stageTransition)
-        case .success:
-            successCard(metrics: metrics)
-                .transition(stageTransition)
-        }
-    }
-
-    private func landingCard(metrics: LoginMetrics) -> some View {
-        stageCard {
-            VStack(alignment: .leading, spacing: 22) {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.92))
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Connect your server")
-                        .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .accessibilityIdentifier("login_landing_title")
-
-                    Text("Simple setup, native feel.")
-                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
-                }
-
-                if viewModel.hasSavedServer {
-                    Text("Saved server ready")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.82))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .capsuleSurface()
-                }
-
-                Button {
-                    transition(to: .serverEntry)
-                    focus(.serverURL)
-                } label: {
-                    Text(viewModel.hasSavedServer ? "Continue" : "Start setup")
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 54)
-                }
-                .buttonStyle(NativePrimaryButtonStyle())
-                .accessibilityIdentifier("login_primary_cta")
-            }
-        }
-    }
-
-    private func serverCard(metrics: LoginMetrics) -> some View {
-        stageCard {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Server URL")
-                        .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-
-                    Text("Enter your Jellyfin address.")
-                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
-                }
-
-                TextField("https://server.tld", text: $viewModel.serverURLText)
-#if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-#endif
-                    .autocorrectionDisabled(true)
-                    .textContentType(.URL)
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .focused($focusedField, equals: .serverURL)
-                    .submitLabel(.continue)
-                    .onSubmit {
-                        continueFromServer()
-                    }
-                    .accessibilityIdentifier("login_server_field")
-                    .fieldSurface()
-
-                if viewModel.isTestingConnection {
-                    feedbackRow(text: "Checking server", tint: .white.opacity(0.72))
-                } else if let serverError = viewModel.serverErrorMessage {
-                    feedbackRow(text: serverError, tint: .red.opacity(0.92))
-                } else if let serverMessage = viewModel.serverMessage {
-                    feedbackRow(text: serverMessage, tint: .white.opacity(0.72))
-                }
-
-                Button {
-                    continueFromServer()
-                } label: {
-                    Group {
-                        if viewModel.isTestingConnection {
-                            ProgressView()
-                                .tint(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54)
-                        } else {
-                            Text("Continue")
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54)
-                        }
-                    }
-                }
-                .buttonStyle(NativePrimaryButtonStyle())
-                .disabled(!viewModel.canAdvanceFromServer)
-                .accessibilityIdentifier("login_server_continue")
-            }
-        }
-    }
-
-    private func credentialsCard(metrics: LoginMetrics) -> some View {
-        stageCard {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Sign in")
-                        .font(.system(size: metrics.titleSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-
-                    Text(serverHost)
-                        .font(.system(size: metrics.subtitleSize, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
-                }
-
-                VStack(spacing: 12) {
-                    TextField("Username", text: $viewModel.username)
-#if os(iOS)
-                        .textInputAutocapitalization(.never)
-#endif
-                        .autocorrectionDisabled(true)
-                        .textContentType(.username)
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .focused($focusedField, equals: .username)
-                        .submitLabel(.next)
-                        .onSubmit {
-                            focusedField = .password
-                        }
-                        .fieldSurface()
-
-                    SecureField("Password", text: $viewModel.password)
-                        .textContentType(.password)
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .focused($focusedField, equals: .password)
-                        .submitLabel(.go)
-                        .onSubmit {
-                            submitCredentials()
-                        }
-                        .fieldSurface()
-                }
-                .accessibilityIdentifier("login_credentials_sheet")
-
-                if phase == .submitting {
-                    feedbackRow(text: "Signing in", tint: .white.opacity(0.72))
-                } else if let authError = viewModel.authErrorMessage {
-                    feedbackRow(text: authError, tint: .red.opacity(0.92))
-                }
-
-                Button {
-                    submitCredentials()
-                } label: {
-                    Group {
-                        if phase == .submitting {
-                            ProgressView()
-                                .tint(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54)
-                        } else {
-                            Text("Sign in")
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54)
-                        }
-                    }
-                }
-                .buttonStyle(NativePrimaryButtonStyle())
-                .disabled(!viewModel.canSubmitCredentials || phase == .submitting)
-            }
-        }
-    }
-
-    private func successCard(metrics: LoginMetrics) -> some View {
-        stageCard {
-            VStack(alignment: .center, spacing: 18) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 54, weight: .medium))
-                    .foregroundStyle(.white)
-                    .opacity(successVisible ? 1 : 0.65)
-                    .scaleEffect(successVisible ? 1 : 0.9)
-
-                Text("Connected")
-                    .font(.system(size: metrics.titleSize - 4, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .accessibilityIdentifier("login_success_title")
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .onAppear {
-            withAnimation(entranceAnimation) {
-                successVisible = true
-            }
-        }
-    }
-
-    private func backgroundView(size: CGSize) -> some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.04, green: 0.05, blue: 0.08),
-                    Color(red: 0.02, green: 0.03, blue: 0.05),
-                    Color.black
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-
-            Circle()
-                .fill(phaseTint.opacity(0.34))
-                .frame(width: min(size.width * 0.72, 340), height: min(size.width * 0.72, 340))
-                .blur(radius: 60)
-                .offset(y: -size.height * 0.2)
-
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.03),
-                    Color.clear,
-                    Color.black.opacity(0.44)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .ignoresSafeArea()
-        .animation(stageAnimation, value: phase)
-    }
-
-    private var phaseTint: Color {
-        switch phase {
-        case .landing, .serverEntry:
-            return ReelFinTheme.onboardingBlue
-        case .credentials, .submitting:
-            return ReelFinTheme.onboardingViolet
-        case .success:
-            return ReelFinTheme.onboardingMint
-        }
-    }
-
     private var serverHost: String {
-        URL(string: viewModel.serverURLText.trimmingCharacters(in: .whitespacesAndNewlines))?.host ?? "Jellyfin account"
-    }
-
-    private func stageCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(28)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .nativeStageSurface()
-    }
-
-    private func feedbackRow(text: String, tint: Color) -> some View {
-        Text(text)
-            .font(.system(size: 13, weight: .semibold, design: .rounded))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .capsuleSurface()
+        URL(string: viewModel.serverURLText.trimmingCharacters(in: .whitespacesAndNewlines))?.host ?? "Jellyfin"
     }
 
     private func continueFromServer() {
-        guard !viewModel.isTestingConnection else {
+        guard !viewModel.isTestingConnection else { return }
+        focusedField = nil
+
+        let currentServer = viewModel.serverURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let validatedServerURL = viewModel.validatedServerURL,
+           currentServer == validatedServerURL.absoluteString
+        {
+            transition(to: .credentials)
+            focus(.username)
             return
         }
-
-        focusedField = nil
 
         Task {
             let isValid = await viewModel.testConnection()
@@ -395,9 +168,7 @@ struct LoginView: View {
     }
 
     private func submitCredentials() {
-        guard phase != .submitting, viewModel.canSubmitCredentials else {
-            return
-        }
+        guard phase != .submitting, viewModel.canSubmitCredentials else { return }
 
         focusedField = nil
         viewModel.clearAuthError()
@@ -417,41 +188,36 @@ struct LoginView: View {
 
     private func presentSuccess(for session: UserSession) async {
         await MainActor.run {
-            successVisible = false
             transition(to: .success)
         }
 
         try? await Task.sleep(nanoseconds: reduceMotion ? 180_000_000 : 360_000_000)
 
         await MainActor.run {
-#if os(iOS)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-#endif
             onLogin(session)
         }
     }
 
     private func handleBack() {
         switch phase {
-        case .landing:
+        case .onboarding, .serverEntry:
             break
-        case .serverEntry:
-            transition(to: .landing)
         case .credentials, .submitting:
             viewModel.clearAuthError()
-            transition(to: .serverEntry)
+            transition(to: .onboarding)
         case .success:
             break
         }
     }
 
-    private func transition(to newPhase: OnboardingPhase) {
+    private func transition(to newPhase: LoginPhase) {
         withAnimation(stageAnimation) {
             phase = newPhase
         }
     }
 
-    private func focus(_ field: FocusField) {
+    private func focus(_ field: LoginFocusField) {
         guard !reduceMotion else {
             focusedField = field
             return
@@ -465,161 +231,110 @@ struct LoginView: View {
         }
     }
 
-    private func layoutMetrics(for size: CGSize) -> LoginMetrics {
-        let compact = size.width < 760 || horizontalSizeClass != .regular
-
-        if compact {
-            return LoginMetrics(
-                contentWidth: min(size.width - 32, 420),
-                horizontalPadding: 16,
-                topPadding: 8,
-                topSpacer: max(36, size.height * 0.18),
-                titleSize: 34,
-                subtitleSize: 18
-            )
-        }
-
-        return LoginMetrics(
-            contentWidth: min(size.width - 96, 500),
-            horizontalPadding: 24,
-            topPadding: 18,
-            topSpacer: max(52, size.height * 0.16),
-            titleSize: 42,
-            subtitleSize: 20
-        )
+    private func applyDebugOverridesIfNeeded() {
+        guard phase == .onboarding else { return }
+        guard let overridePage = LoginDebugOptions.onboardingPage else { return }
+        guard overridePage == 0 else { return }
     }
 }
 
-private enum OnboardingPhase {
-    case landing
+private enum LoginPhase {
+    case onboarding
     case serverEntry
     case credentials
     case submitting
     case success
 }
 
-private enum FocusField {
-    case serverURL
-    case username
-    case password
+private enum LoginDebugOptions {
+    static var onboardingPage: Int? {
+        let arguments = ProcessInfo.processInfo.arguments
+
+        guard let flagIndex = arguments.firstIndex(of: "-reelfin-onboarding-page") else {
+            return nil
+        }
+
+        let valueIndex = arguments.index(after: flagIndex)
+        guard arguments.indices.contains(valueIndex) else {
+            return nil
+        }
+
+        return Int(arguments[valueIndex])
+    }
 }
 
-private struct LoginMetrics {
+private struct LoginLayoutMetrics {
+    let isCompact: Bool
     let contentWidth: CGFloat
     let horizontalPadding: CGFloat
     let topPadding: CGFloat
     let topSpacer: CGFloat
+    let bottomSpacer: CGFloat
     let titleSize: CGFloat
-    let subtitleSize: CGFloat
-}
+    let bodySize: CGFloat
+    let formTitleSize: CGFloat
+    let formBodySize: CGFloat
 
-private extension View {
-    @ViewBuilder
-    func nativeStageSurface() -> some View {
-        let shape = RoundedRectangle(cornerRadius: 30, style: .continuous)
-
-        if #available(iOS 26.0, *) {
-            self
-                .background {
-                    Color.clear
-                        .glassEffect(.regular, in: .rect(cornerRadius: 30))
-                }
-                .overlay {
-                    shape.stroke(.white.opacity(0.10), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
-        } else {
-            self
-                .background(.ultraThinMaterial, in: shape)
-                .overlay {
-                    shape.stroke(.white.opacity(0.10), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
-        }
-    }
-
-    func fieldSurface() -> some View {
-        self
-            .padding(.horizontal, 18)
-            .frame(height: 56)
-            .reelFinGlassCapsule(
-                interactive: true,
-                tint: Color.white.opacity(0.10),
-                stroke: Color.white.opacity(0.10),
-                shadowOpacity: 0.10,
-                shadowRadius: 10,
-                shadowYOffset: 4
-            )
-    }
-
-    func capsuleSurface() -> some View {
-        self
-            .reelFinGlassCapsule(
-                tint: Color.white.opacity(0.08),
-                stroke: Color.white.opacity(0.10),
-                shadowOpacity: 0.08,
-                shadowRadius: 8,
-                shadowYOffset: 4
-            )
+    init(size: CGSize, sizeClass: UserInterfaceSizeClass?) {
+        let compact = size.width < 720 || sizeClass != .regular
+        isCompact = compact
+        contentWidth = compact ? min(size.width - 32, 430) : min(size.width - 120, 500)
+        horizontalPadding = compact ? 16 : 24
+        topPadding = compact ? 10 : 18
+        topSpacer = compact ? max(44, size.height * 0.16) : max(52, size.height * 0.15)
+        bottomSpacer = compact ? 28 : 44
+        titleSize = compact ? 34 : 40
+        bodySize = compact ? 17 : 18
+        formTitleSize = compact ? 30 : 36
+        formBodySize = compact ? 16 : 17
     }
 }
 
-private struct NativePrimaryButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+private struct LoginChromeView: View {
+    let canGoBack: Bool
+    let onBack: () -> Void
 
-    func makeBody(configuration: Configuration) -> some View {
-        Group {
-            if #available(iOS 26.0, *) {
-                configuration.label
-                    .foregroundStyle(.white)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-            } else {
-                configuration.label
-                    .foregroundStyle(.white)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(.white.opacity(0.14))
-                    )
+    var body: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 10) {
+                Text("ReelFin")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(OnboardingPalette.primaryText)
+
+                Text("for Jellyfin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OnboardingPalette.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background {
+                        if #available(iOS 26.0, *) {
+                            Color.clear
+                                .glassEffect(.regular, in: .capsule)
+                        } else {
+                            Capsule(style: .continuous)
+                                .fill(.ultraThinMaterial)
+                        }
+                    }
                     .overlay {
                         Capsule(style: .continuous)
-                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
                     }
             }
+
+            Spacer(minLength: 0)
+
+            if canGoBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.backward")
+                        .font(.system(size: 14, weight: .bold))
+                }
+                .buttonStyle(ChromeCircleButtonStyle())
+            }
         }
-        .scaleEffect(configuration.isPressed ? 0.985 : 1)
-        .opacity(configuration.isPressed ? 0.96 : 1)
-        .animation(
-            reduceMotion ? .linear(duration: 0.01) : .smooth(duration: 0.14, extraBounce: 0),
-            value: configuration.isPressed
-        )
     }
 }
 
-private struct NativeCircleButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        Group {
-            if #available(iOS 26.0, *) {
-                configuration.label
-                    .glassEffect(.regular.interactive(), in: .circle)
-            } else {
-                configuration.label
-                    .background(
-                        Circle()
-                            .fill(.white.opacity(0.10))
-                    )
-                    .overlay {
-                        Circle()
-                            .stroke(.white.opacity(0.08), lineWidth: 1)
-                    }
-            }
-        }
-        .scaleEffect(configuration.isPressed ? 0.96 : 1)
-        .animation(
-            reduceMotion ? .linear(duration: 0.01) : .smooth(duration: 0.14, extraBounce: 0),
-            value: configuration.isPressed
-        )
-    }
+#Preview("Logged Out") {
+    LoginView(dependencies: ReelFinPreviewFactory.dependencies(authenticated: false)) { _ in }
 }
 #endif

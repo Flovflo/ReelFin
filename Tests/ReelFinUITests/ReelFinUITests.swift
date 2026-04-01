@@ -5,58 +5,53 @@ class ReelFinUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testLoggedOutMockLaunchShowsOnboarding() throws {
+    func testLoggedOutMockLaunchShowsConnectionEntry() throws {
         let app = launchLoggedOutMockApp()
 
-        XCTAssertTrue(app.staticTexts["login_landing_title"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["login_primary_cta"].exists)
+        XCTAssertTrue(app.staticTexts["Connect to Jellyfin"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textFields["login_server_field"].exists)
+        XCTAssertTrue(app.buttons["login_server_continue"].exists)
     }
 
     func testLoggedOutMockFlowShowsServerAndCredentialsSteps() throws {
         let app = launchLoggedOutMockApp()
 
-        let primaryCTA = app.buttons["login_primary_cta"]
-        XCTAssertTrue(primaryCTA.waitForExistence(timeout: 5))
-        primaryCTA.tap()
-
         let serverField = app.textFields["login_server_field"]
         XCTAssertTrue(serverField.waitForExistence(timeout: 5))
+        enterServerIfNeeded(serverField)
 
         let continueButton = app.buttons["login_server_continue"]
         XCTAssertTrue(continueButton.exists)
         continueButton.tap()
 
-        XCTAssertTrue(app.staticTexts["Sign in"].waitForExistence(timeout: 5))
-
-        let usernameField = app.textFields["Username"].firstMatch
-        XCTAssertTrue(usernameField.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.secureTextFields["Password"].firstMatch.exists)
+        let usernameField = app.textFields["login_username_field"].firstMatch
+        XCTAssertTrue(usernameField.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.secureTextFields["login_password_field"].firstMatch.exists)
     }
 
     func testLoggedOutMockFlowCanAuthenticateIntoHome() throws {
         let app = launchLoggedOutMockApp()
 
-        let primaryCTA = app.buttons["login_primary_cta"]
-        XCTAssertTrue(primaryCTA.waitForExistence(timeout: 5))
-        primaryCTA.tap()
-
         let continueButton = app.buttons["login_server_continue"]
         XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
+
+        let serverField = app.textFields["login_server_field"]
+        XCTAssertTrue(serverField.exists)
+        enterServerIfNeeded(serverField)
+
         continueButton.tap()
 
-        XCTAssertTrue(app.staticTexts["Sign in"].waitForExistence(timeout: 5))
-
-        let usernameField = app.textFields["Username"].firstMatch
-        XCTAssertTrue(usernameField.waitForExistence(timeout: 5))
+        let usernameField = app.textFields["login_username_field"].firstMatch
+        XCTAssertTrue(usernameField.waitForExistence(timeout: 8))
         usernameField.tap()
         usernameField.typeText("preview")
 
-        let passwordField = app.secureTextFields["Password"].firstMatch
+        let passwordField = app.secureTextFields["login_password_field"].firstMatch
         XCTAssertTrue(passwordField.exists)
         passwordField.tap()
         passwordField.typeText("password")
 
-        let signInButton = app.buttons["Sign in"].firstMatch
+        let signInButton = app.buttons["login_sign_in"].firstMatch
         XCTAssertTrue(signInButton.exists)
         signInButton.tap()
 
@@ -130,6 +125,27 @@ class ReelFinUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         return app
+    }
+
+    private func enterServerIfNeeded(_ field: XCUIElement) {
+        if let currentValue = field.value as? String {
+            if currentValue == "https://demo.reelfin.app" {
+                return
+            }
+        }
+
+        field.tap()
+
+        if let currentValue = field.value as? String {
+            if !currentValue.isEmpty,
+               currentValue != "https://server.example.com"
+            {
+                let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count)
+                field.typeText(deletes)
+            }
+        }
+
+        field.typeText("https://demo.reelfin.app")
     }
 }
 
