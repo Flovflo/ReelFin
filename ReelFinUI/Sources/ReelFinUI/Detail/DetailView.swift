@@ -26,6 +26,7 @@ private let rowContentHorizontalPadding: CGFloat = 6
 private let rowContentVerticalPadding: CGFloat = 6
 
 struct DetailView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var viewModel: DetailViewModel
@@ -61,15 +62,25 @@ struct DetailView: View {
     var body: some View {
         GeometryReader { proxy in
             let viewportSize = proxy.size
+            let safeAreaTop = proxy.safeAreaInsets.top
             let heroHeight = resolvedHeroHeight(for: viewportSize)
 
             ZStack(alignment: .top) {
+                #if os(iOS)
+                Color.black
+                    .ignoresSafeArea()
+                #else
                 ReelFinTheme.pageGradient
                     .ignoresSafeArea()
+                #endif
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: sectionSpacing) {
-                        heroSection(heroHeight: heroHeight, viewportSize: viewportSize)
+                        heroSection(
+                            heroHeight: heroHeight,
+                            viewportSize: viewportSize,
+                            safeAreaTop: safeAreaTop
+                        )
 
                         supportingContent
                             .padding(.horizontal, horizontalPadding)
@@ -81,9 +92,8 @@ struct DetailView: View {
         }
         .navigationTitle("")
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(false)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
 #elseif os(tvOS)
         .toolbar(.hidden, for: .tabBar)
         .preference(key: TVTopNavigationVisibilityPreferenceKey.self, value: false)
@@ -133,11 +143,17 @@ struct DetailView: View {
         }
     }
 
-    private func heroSection(heroHeight: CGFloat, viewportSize: CGSize) -> some View {
+    private func heroSection(heroHeight: CGFloat, viewportSize: CGSize, safeAreaTop: CGFloat) -> some View {
         #if os(tvOS)
-        tvHeroSection(heroHeight: heroHeight, viewportSize: viewportSize)
+        tvHeroSection(heroHeight: heroHeight, viewportSize: viewportSize, safeAreaTop: safeAreaTop)
         #else
-        ZStack(alignment: .bottomLeading) {
+        iosHeroSection(heroHeight: heroHeight, viewportSize: viewportSize, safeAreaTop: safeAreaTop)
+        #endif
+    }
+
+#if os(iOS)
+    private func iosHeroSection(heroHeight: CGFloat, viewportSize: CGSize, safeAreaTop: CGFloat) -> some View {
+        ZStack {
             HeroBackgroundView(
                 item: viewModel.detail.item,
                 heroHeight: heroHeight,
@@ -150,35 +166,47 @@ struct DetailView: View {
                 }
             )
 
-            HeroMetadataColumn(
+            LinearGradient(
+                stops: [
+                    .init(color: Color.black.opacity(0.06), location: 0.0),
+                    .init(color: Color.black.opacity(0.18), location: 0.22),
+                    .init(color: Color.black.opacity(0.44), location: 0.50),
+                    .init(color: Color.black.opacity(0.84), location: 0.78),
+                    .init(color: Color.black, location: 1.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            IOSDetailHeroContent(
                 item: viewModel.detail.item,
+                playbackItem: viewModel.itemToPlay,
                 preferredSource: viewModel.preferredPlaybackSource,
                 optimizationStatus: viewModel.playbackOptimizationStatus,
                 playButtonLabel: viewModel.playButtonLabel,
                 playbackStatusText: viewModel.playbackStatusText,
                 progress: resolvedHeroProgress,
                 isLoadingPlayback: isLoadingPlayback || viewModel.isWarmingPlayback,
-                isInWatchlist: viewModel.isInWatchlist,
-                isWatched: viewModel.detail.item.isPlayed || viewModel.isWatched,
-                horizontalPadding: horizontalPadding,
+                isWatched: viewModel.isWatched || viewModel.itemToPlay.isPlayed,
                 contentWidth: resolvedMetadataWidth(for: viewportSize),
+                horizontalPadding: horizontalPadding,
+                safeAreaTop: safeAreaTop,
+                bottomPadding: heroBottomPadding + 10,
                 animateIn: hasAnimatedIn,
-                focusedAction: $focusedHeroAction,
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                onBack: { dismiss() },
                 onPlay: { startPlayback() },
-                onToggleWatchlist: viewModel.toggleWatchlist,
                 onToggleWatched: viewModel.toggleWatched
             )
-            .padding(.top, heroTopPadding)
-            .padding(.bottom, heroBottomPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
         .frame(maxWidth: .infinity)
         .frame(height: heroHeight)
-        #endif
     }
+#endif
 
 #if os(tvOS)
-    private func tvHeroSection(heroHeight: CGFloat, viewportSize: CGSize) -> some View {
+    private func tvHeroSection(heroHeight: CGFloat, viewportSize: CGSize, safeAreaTop _: CGFloat) -> some View {
         let neighbors = heroNeighbors
         let sideWidth = tvHeroSidePreviewWidth(for: viewportSize)
 
@@ -291,6 +319,7 @@ struct DetailView: View {
     @ViewBuilder
     private var supportingContent: some View {
         VStack(alignment: .leading, spacing: sectionSpacing) {
+            #if os(tvOS)
             if shouldShowSeasonPicker {
                 SeasonPickerView(
                     seasons: viewModel.seasons,
@@ -304,6 +333,7 @@ struct DetailView: View {
                     }
                 )
             }
+            #endif
 
             if viewModel.detail.item.mediaType == .series {
                 episodeSection
@@ -341,6 +371,7 @@ struct DetailView: View {
         if viewModel.isLoadingEpisodes && viewModel.episodes.isEmpty {
             DetailPageSkeletonView(showsSeasonPicker: false, sectionKind: .episodesOnly)
         } else if !viewModel.episodes.isEmpty {
+            #if os(tvOS)
             DetailRowContainer(
                 title: "Episodes",
                 subtitle: viewModel.selectedSeason?.name
@@ -366,6 +397,41 @@ struct DetailView: View {
                 }
                 .scrollClipDisabled()
             }
+            #else
+            VStack(alignment: .leading, spacing: 18) {
+                IOSSeasonHeaderMenu(
+                    title: viewModel.selectedSeason?.name ?? "Season 1",
+                    seasons: viewModel.seasons,
+                    selectedSeasonID: viewModel.selectedSeason?.id,
+                    onSelect: { season in
+                        Task {
+                            await viewModel.selectSeasonIfNeeded(season)
+                        }
+                    }
+                )
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: episodeCardSpacing) {
+                        ForEach(viewModel.episodes) { episode in
+                            EpisodeCardView(
+                                episode: episode,
+                                width: episodeCardWidth,
+                                isSelected: episode.id == viewModel.selectedEpisodeID,
+                                onSelect: {
+                                    viewModel.prepareEpisodePlayback(episode)
+                                    startPlayback(item: episode)
+                                },
+                                apiClient: dependencies.apiClient,
+                                imagePipeline: dependencies.imagePipeline
+                            )
+                        }
+                    }
+                    .padding(.horizontal, rowContentHorizontalPadding)
+                    .padding(.vertical, rowContentVerticalPadding)
+                }
+                .scrollClipDisabled()
+            }
+            #endif
         }
     }
 
@@ -512,7 +578,7 @@ struct DetailView: View {
 #if os(tvOS)
         return ReelFinTheme.tvSectionHorizontalPadding
 #else
-        return horizontalSizeClass == .compact ? 24 : 40
+        return horizontalSizeClass == .compact ? 20 : 36
 #endif
     }
 
@@ -520,7 +586,7 @@ struct DetailView: View {
 #if os(tvOS)
         return ReelFinTheme.tvSectionSpacing
 #else
-        return 28
+        return 18
 #endif
     }
 
@@ -544,7 +610,7 @@ struct DetailView: View {
 #if os(tvOS)
         return 480
 #else
-        return horizontalSizeClass == .compact ? 330 : 380
+        return horizontalSizeClass == .compact ? 308 : 360
 #endif
     }
 
@@ -552,7 +618,7 @@ struct DetailView: View {
 #if os(tvOS)
         return 30
 #else
-        return 16
+        return 14
 #endif
     }
 
@@ -573,7 +639,7 @@ struct DetailView: View {
 #if os(tvOS)
         return min(viewportSize.width * 0.46, 760)
 #else
-        return horizontalSizeClass == .compact ? min(viewportSize.width - (horizontalPadding * 2), 540) : 620
+        return horizontalSizeClass == .compact ? min(viewportSize.width - (horizontalPadding * 2), 640) : 700
 #endif
     }
 
@@ -583,6 +649,604 @@ struct DetailView: View {
     }
 #endif
 }
+
+private enum HeroMetadataLayout {
+    case leading
+    case centered
+}
+
+#if os(iOS)
+private struct IOSDetailHeroContent: View {
+    let item: MediaItem
+    let playbackItem: MediaItem
+    let preferredSource: MediaSource?
+    let optimizationStatus: ApplePlaybackOptimizationStatus?
+    let playButtonLabel: String
+    let playbackStatusText: String?
+    let progress: Double?
+    let isLoadingPlayback: Bool
+    let isWatched: Bool
+    let contentWidth: CGFloat
+    let horizontalPadding: CGFloat
+    let safeAreaTop: CGFloat
+    let bottomPadding: CGFloat
+    let animateIn: Bool
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let onBack: () -> Void
+    let onPlay: () -> Void
+    let onToggleWatched: () -> Void
+
+    @State private var isSynopsisExpanded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            topBar
+
+            Spacer(minLength: 42)
+
+            VStack(spacing: 26) {
+                identityBlock
+                    .frame(maxWidth: .infinity)
+
+                detailBlock
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: min(contentWidth, 720), alignment: .center)
+        }
+        .padding(.top, safeAreaTop + 12)
+        .padding(.horizontal, horizontalPadding)
+        .padding(.bottom, bottomPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .opacity(animateIn ? 1 : 0)
+        .offset(y: animateIn ? 0 : 22)
+        .animation(.easeOut(duration: 0.45), value: animateIn)
+    }
+
+    private var topBar: some View {
+        HStack(alignment: .center) {
+            IOSHeroChromeCircleButton(
+                systemImage: "chevron.left",
+                accessibilityLabel: "Back",
+                diameter: isCompactHeroLayout ? 46 : 50,
+                action: onBack
+            )
+
+            Spacer()
+
+            HStack(spacing: 0) {
+                IOSHeroChromeBarButton(
+                    systemImage: "arrow.down",
+                    accessibilityLabel: "Download",
+                    controlWidth: isCompactHeroLayout ? 40 : 44,
+                    controlHeight: isCompactHeroLayout ? 28 : 30
+                ) {}
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.18))
+                    .frame(width: 1, height: isCompactHeroLayout ? 16 : 18)
+
+                ShareLink(
+                    item: shareText,
+                    preview: SharePreview(item.name)
+                ) {
+                    IOSHeroChromeBarGlyph(
+                        systemImage: "square.and.arrow.up",
+                        accessibilityLabel: "Share",
+                        controlWidth: isCompactHeroLayout ? 40 : 44,
+                        controlHeight: isCompactHeroLayout ? 28 : 30
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, isCompactHeroLayout ? 9 : 10)
+            .padding(.vertical, isCompactHeroLayout ? 7 : 8)
+            .reelFinGlassCapsule(
+                interactive: true,
+                tint: Color.white.opacity(0.16),
+                stroke: Color.white.opacity(0.16),
+                shadowOpacity: 0.18,
+                shadowRadius: 16,
+                shadowYOffset: 8
+            )
+        }
+    }
+
+    private var identityBlock: some View {
+        VStack(spacing: 20) {
+            IOSDetailHeroTitleView(
+                item: item,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline
+            )
+            .frame(maxWidth: 540)
+
+            HStack(spacing: 10) {
+                Text(subtitleText)
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.86))
+                    .multilineTextAlignment(.center)
+
+                if optimizationStatus == .optimized {
+                    IOSHeroAccessoryBadge(systemImage: "tv")
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            HStack(spacing: isCompactHeroLayout ? 12 : 14) {
+                IOSDetailHeroPrimaryButton(
+                    title: iosPlayButtonLabel,
+                    isLoading: isLoadingPlayback,
+                    minHeight: isCompactHeroLayout ? 52 : 56,
+                    fontSize: isCompactHeroLayout ? 16 : 17,
+                    action: onPlay
+                )
+                .frame(maxWidth: isCompactHeroLayout ? 248 : 272)
+
+                IOSDetailHeroRoundActionButton(
+                    systemImage: "checkmark",
+                    accessibilityLabel: isWatched ? "Marked Watched" : "Mark Watched",
+                    isActive: isWatched,
+                    size: isCompactHeroLayout ? 52 : 56,
+                    action: onToggleWatched
+                )
+            }
+            .frame(maxWidth: min(contentWidth, isCompactHeroLayout ? 312 : 336))
+        }
+    }
+
+    private var detailBlock: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let synopsisText, !synopsisText.isEmpty {
+                HStack(alignment: .bottom, spacing: 12) {
+                    summaryText(synopsisText)
+                        .font(.system(size: 17, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .lineLimit(isSynopsisExpanded ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if synopsisNeedsExpansion {
+                        Button(isSynopsisExpanded ? "LESS" : "MORE") {
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                isSynopsisExpanded.toggle()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 9)
+                        .background(Color.white.opacity(0.12), in: Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
+                        }
+                        .padding(.bottom, isSynopsisExpanded ? 0 : 2)
+                    }
+                }
+            }
+
+            footerRow
+        }
+    }
+
+    @ViewBuilder
+    private func summaryText(_ overview: String) -> some View {
+        if let episodeHeading {
+            Text("\(Text(episodeHeading).bold()): \(overview)")
+        } else {
+            Text(overview)
+        }
+    }
+
+    private var footerRow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !footerPrimaryText.isEmpty || !badgeLabels.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        if !footerPrimaryText.isEmpty {
+                            Text(footerPrimaryText)
+                                .font(.system(size: 15, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.78))
+                        }
+
+                        ForEach(badgeLabels, id: \.self) { badge in
+                            HeroInlineBadge(text: badge)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            if !footerPrimaryText.isEmpty {
+                                Text(footerPrimaryText)
+                                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.78))
+                            }
+
+                            ForEach(badgeLabels, id: \.self) { badge in
+                                HeroInlineBadge(text: badge)
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                    }
+                }
+            }
+        }
+    }
+
+    private var shareText: String {
+        if item.mediaType == .series, playbackItem.id != item.id {
+            return "\(item.name) • \(playbackItem.name)"
+        }
+        return item.name
+    }
+
+    private var subtitleText: String {
+        var values: [String] = []
+
+        switch item.mediaType {
+        case .series:
+            values.append("TV Show")
+        case .movie:
+            values.append("Movie")
+        case .episode:
+            values.append("Episode")
+        case .season:
+            values.append("Season")
+        case .unknown:
+            break
+        }
+
+        if !item.genres.isEmpty {
+            values.append(contentsOf: item.genres.prefix(2))
+        }
+
+        return values.joined(separator: " · ")
+    }
+
+    private var iosPlayButtonLabel: String {
+        if isWatched || playbackItem.isPlayed {
+            return "Play Again"
+        }
+        return playButtonLabel
+    }
+
+    private var episodeHeading: String? {
+        guard item.mediaType == .series || playbackItem.mediaType == .episode else { return nil }
+
+        var values: [String] = []
+        if let season = playbackItem.parentIndexNumber, let episode = playbackItem.indexNumber {
+            values.append("S\(season), E\(episode)")
+        }
+        values.append(playbackItem.name)
+        return values.joined(separator: " · ")
+    }
+
+    private var synopsisText: String? {
+        if item.mediaType == .series, playbackItem.id != item.id {
+            return playbackItem.overview ?? item.overview
+        }
+        return item.overview ?? playbackItem.overview
+    }
+
+    private var synopsisNeedsExpansion: Bool {
+        guard let synopsisText else { return false }
+        return synopsisText.count > 120
+    }
+
+    private var footerPrimaryText: String {
+        let metadataItem = item.mediaType == .series ? playbackItem : item
+        var values: [String] = []
+
+        if let year = metadataItem.year ?? item.year {
+            values.append(String(year))
+        }
+
+        if let runtimeText = runtimeFooterText(for: metadataItem) {
+            values.append(runtimeText)
+        }
+
+        return values.joined(separator: " · ")
+    }
+
+    private var badgeLabels: [String] {
+        var values: [String] = []
+        let metadataItem = item.mediaType == .series ? playbackItem : item
+
+        if metadataItem.has4K || item.has4K || preferredSource?.isLikely4K == true {
+            values.append("4K")
+        }
+        if metadataItem.hasDolbyVision || item.hasDolbyVision {
+            values.append("Dolby Vision")
+        }
+        if isLikelyAtmos {
+            values.append("Dolby Atmos")
+        }
+        if metadataItem.hasClosedCaptions || item.hasClosedCaptions {
+            values.append("CC")
+        }
+        if (preferredSource?.subtitleTracks.count ?? 0) > 1 {
+            values.append("SDH")
+        }
+
+        return values
+    }
+
+    private var isLikelyAtmos: Bool {
+        let audioProfile = (preferredSource?.audioProfile ?? "").lowercased()
+        let audioLayout = (preferredSource?.audioChannelLayout ?? "").lowercased()
+        return audioProfile.contains("atmos") || audioLayout.contains("atmos")
+    }
+
+    private func runtimeFooterText(for item: MediaItem) -> String? {
+        guard let runtimeMinutes = item.runtimeMinutes else { return nil }
+        return "\(runtimeMinutes) min"
+    }
+
+    private var isCompactHeroLayout: Bool {
+        contentWidth < 370
+    }
+}
+
+private struct IOSDetailHeroTitleView: View {
+    let item: MediaItem
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+
+    @State private var logoImage: UIImage?
+
+    var body: some View {
+        Group {
+            if let logoImage {
+                Image(uiImage: logoImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 124)
+                    .shadow(color: .black.opacity(0.42), radius: 18, x: 0, y: 8)
+                    .transition(.opacity)
+            } else {
+                Text(item.name)
+                    .font(.system(size: item.name.count > 16 ? 56 : 72, weight: .black, design: .rounded))
+                    .tracking(item.name.count <= 8 ? 10 : 3)
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.55)
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .black.opacity(0.44), radius: 18, x: 0, y: 8)
+            }
+        }
+        .task(id: item.id) {
+            await loadLogo()
+        }
+    }
+
+    private func loadLogo() async {
+        logoImage = nil
+
+        guard let url = await apiClient.imageURL(for: item.id, type: .logo, width: 900, quality: 92) else {
+            return
+        }
+
+        if let cached = await imagePipeline.cachedImage(for: url) {
+            withAnimation(.easeIn(duration: 0.24)) {
+                logoImage = cached
+            }
+            return
+        }
+
+        do {
+            let downloaded = try await imagePipeline.image(for: url)
+            withAnimation(.easeIn(duration: 0.24)) {
+                logoImage = downloaded
+            }
+        } catch {}
+    }
+}
+
+private struct IOSHeroChromeCircleButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    let diameter: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: max(18, diameter * 0.42), weight: .semibold))
+                .foregroundStyle(.white.opacity(0.94))
+                .frame(width: diameter, height: diameter)
+                .reelFinGlassCircle(
+                    interactive: true,
+                    tint: Color.white.opacity(0.16),
+                    stroke: Color.white.opacity(0.16),
+                    shadowOpacity: 0.18,
+                    shadowRadius: 16,
+                    shadowYOffset: 8
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct IOSHeroChromeBarButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    let controlWidth: CGFloat
+    let controlHeight: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: max(17, controlHeight * 0.58), weight: .semibold))
+                .foregroundStyle(.white.opacity(0.94))
+                .frame(width: controlWidth, height: controlHeight)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct IOSHeroChromeBarGlyph: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    let controlWidth: CGFloat
+    let controlHeight: CGFloat
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: max(17, controlHeight * 0.58), weight: .semibold))
+            .foregroundStyle(.white.opacity(0.94))
+            .frame(width: controlWidth, height: controlHeight)
+            .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct IOSDetailHeroPrimaryButton: View {
+    @Environment(\.isFocused) private var isFocused
+
+    let title: String
+    let isLoading: Bool
+    let minHeight: CGFloat
+    let fontSize: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                if isLoading {
+                    ProgressView()
+                        .tint(.black)
+                    Text("Preparing")
+                } else {
+                    Image(systemName: "play.fill")
+                    Text(title)
+                }
+            }
+            .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+            .foregroundStyle(.black.opacity(0.92))
+            .frame(maxWidth: .infinity, minHeight: minHeight)
+            .padding(.horizontal, 18)
+            .background(Color.white, in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(isFocused ? 0.34 : 0.20), radius: isFocused ? 20 : 12, x: 0, y: isFocused ? 10 : 6)
+            .scaleEffect(isFocused ? 1.02 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
+        .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
+}
+
+private struct IOSDetailHeroRoundActionButton: View {
+    @Environment(\.isFocused) private var isFocused
+
+    let systemImage: String
+    let accessibilityLabel: String
+    let isActive: Bool
+    let size: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: size * 0.40, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.94))
+                .frame(width: size, height: size)
+                .background(backgroundFill, in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(borderColor, lineWidth: 0.9)
+                }
+                .shadow(color: .black.opacity(isFocused ? 0.24 : 0.14), radius: isFocused ? 16 : 10, x: 0, y: isFocused ? 8 : 5)
+                .scaleEffect(isFocused ? 1.03 : 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
+
+    private var backgroundFill: Color {
+        if isFocused {
+            return Color.white.opacity(0.22)
+        }
+        return isActive ? Color.white.opacity(0.18) : Color.white.opacity(0.11)
+    }
+
+    private var borderColor: Color {
+        isFocused ? Color.white.opacity(0.34) : Color.white.opacity(isActive ? 0.20 : 0.12)
+    }
+}
+
+private struct IOSHeroAccessoryBadge: View {
+    let systemImage: String
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.84))
+            .frame(width: 26, height: 26)
+            .background(Color.white.opacity(0.10), in: Circle())
+            .overlay {
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+            }
+    }
+}
+
+private struct IOSSeasonHeaderMenu: View {
+    let title: String
+    let seasons: [MediaItem]
+    let selectedSeasonID: String?
+    let onSelect: (MediaItem) -> Void
+
+    var body: some View {
+        Group {
+            if seasons.count > 1 {
+                Menu {
+                    ForEach(seasons) { season in
+                        if season.id == selectedSeasonID {
+                            Button {
+                                onSelect(season)
+                            } label: {
+                                Label(season.name, systemImage: "checkmark")
+                            }
+                        } else {
+                            Button(season.name) {
+                                onSelect(season)
+                            }
+                        }
+                    }
+                } label: {
+                    headerLabel
+                }
+            } else {
+                headerLabel
+            }
+        }
+    }
+
+    private var headerLabel: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 31, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+
+            Image(systemName: "chevron.up")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.white.opacity(0.78))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+#endif
 
 private struct HeroBackgroundView: View {
     let item: MediaItem
@@ -858,17 +1522,21 @@ private struct HeroMetadataColumn: View {
     let onPlay: () -> Void
     let onToggleWatchlist: () -> Void
     let onToggleWatched: () -> Void
+    var layout: HeroMetadataLayout = .leading
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            metadataEyebrow
+        VStack(alignment: columnAlignment, spacing: verticalSpacing) {
+            if shouldShowMetadataEyebrow {
+                metadataEyebrow
+            }
 
             Text(item.name)
                 .font(titleFont)
                 .foregroundStyle(.white)
                 .lineLimit(3)
-                .multilineTextAlignment(.leading)
+                .multilineTextAlignment(multilineTextAlignment)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
                 .accessibilityAddTraits(.isHeader)
 
             if let subtitleText {
@@ -877,21 +1545,26 @@ private struct HeroMetadataColumn: View {
                     .foregroundStyle(.white.opacity(0.78))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(multilineTextAlignment)
+                    .frame(maxWidth: .infinity, alignment: frameAlignment)
             }
 
             HeroMetadataLine(
                 primaryText: metadataSummary,
-                badges: heroBadges
+                badges: heroBadges,
+                centered: layout == .centered
             )
 
             if let playbackStatusText, !playbackStatusText.isEmpty {
                 Text(playbackStatusText)
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.84))
+                    .multilineTextAlignment(multilineTextAlignment)
+                    .frame(maxWidth: .infinity, alignment: frameAlignment)
             }
 
             if let progress, progress > 0 {
-                HeroProgressView(progress: progress)
+                HeroProgressView(progress: progress, centered: layout == .centered)
             }
 
             PrimaryActionsRow(
@@ -899,6 +1572,7 @@ private struct HeroMetadataColumn: View {
                 isLoadingPlayback: isLoadingPlayback,
                 isInWatchlist: isInWatchlist,
                 isWatched: isWatched,
+                centered: layout == .centered,
                 focusedAction: focusedAction,
                 onPlay: onPlay,
                 onToggleWatchlist: onToggleWatchlist,
@@ -909,12 +1583,13 @@ private struct HeroMetadataColumn: View {
                 Text(overview)
                     .font(.system(size: overviewFontSize, weight: .regular, design: .rounded))
                     .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(4)
-                    .multilineTextAlignment(.leading)
+                    .lineLimit(overviewLineLimit)
+                    .multilineTextAlignment(multilineTextAlignment)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: frameAlignment)
             }
         }
-        .frame(maxWidth: contentWidth, alignment: .leading)
+        .frame(maxWidth: contentWidth, alignment: frameAlignment)
         .padding(.horizontal, horizontalPadding)
         .opacity(animateIn ? 1 : 0)
         .offset(y: animateIn ? 0 : 22)
@@ -923,7 +1598,9 @@ private struct HeroMetadataColumn: View {
 
     private var metadataEyebrow: some View {
         HStack(spacing: 10) {
-            HeroEyebrowBadge(text: item.mediaType.detailDisplayName)
+            if layout == .leading {
+                HeroEyebrowBadge(text: item.mediaType.detailDisplayName)
+            }
 
             if let airDayBadge, !airDayBadge.isEmpty {
                 HeroEyebrowBadge(text: airDayBadge)
@@ -933,6 +1610,7 @@ private struct HeroMetadataColumn: View {
                 ApplePlaybackDetailBadge(status: optimizationStatus)
             }
         }
+        .frame(maxWidth: .infinity, alignment: frameAlignment)
     }
 
     private var metadataSummary: String {
@@ -946,7 +1624,7 @@ private struct HeroMetadataColumn: View {
         if let rating = item.communityRating {
             values.append(String(format: "%.1f", rating))
         }
-        if !item.genres.isEmpty {
+        if layout == .leading, !item.genres.isEmpty {
             values.append(item.genres.prefix(2).joined(separator: " • "))
         }
         return values.joined(separator: "  ·  ")
@@ -983,6 +1661,9 @@ private struct HeroMetadataColumn: View {
     }
 
     private var subtitleText: String? {
+        if layout == .centered {
+            return centeredSubtitleText
+        }
         if item.mediaType == .episode, let seriesName = item.seriesName {
             return seriesName
         }
@@ -990,6 +1671,35 @@ private struct HeroMetadataColumn: View {
             return item.genres.prefix(2).joined(separator: " · ")
         }
         return nil
+    }
+
+    private var centeredSubtitleText: String? {
+        var values: [String] = []
+
+        switch item.mediaType {
+        case .series:
+            values.append("TV Show")
+        case .movie:
+            values.append("Movie")
+        case .episode:
+            if let season = item.parentIndexNumber, let episode = item.indexNumber {
+                values.append("S\(season), E\(episode)")
+            } else {
+                values.append("Episode")
+            }
+        case .season:
+            values.append("Season")
+        case .unknown:
+            break
+        }
+
+        if item.mediaType == .episode, let seriesName = item.seriesName, !seriesName.isEmpty {
+            values.append(seriesName)
+        } else if !item.genres.isEmpty {
+            values.append(item.genres.prefix(2).joined(separator: " · "))
+        }
+
+        return values.isEmpty ? nil : values.joined(separator: " · ")
     }
 
     private var audioBadge: String? {
@@ -1018,7 +1728,8 @@ private struct HeroMetadataColumn: View {
 #if os(tvOS)
         return .system(size: item.name.count > 26 ? 70 : 84, weight: .bold, design: .rounded)
 #else
-        return .system(size: item.name.count > 32 ? 38 : 48, weight: .bold, design: .rounded)
+        let baseSize: CGFloat = layout == .centered ? (item.name.count > 22 ? 46 : 58) : (item.name.count > 32 ? 38 : 48)
+        return .system(size: baseSize, weight: .bold, design: .rounded)
 #endif
     }
 
@@ -1026,7 +1737,7 @@ private struct HeroMetadataColumn: View {
 #if os(tvOS)
         return 26
 #else
-        return 20
+        return layout == .centered ? 18 : 20
 #endif
     }
 
@@ -1034,8 +1745,39 @@ private struct HeroMetadataColumn: View {
 #if os(tvOS)
         return 22
 #else
-        return 17
+        return layout == .centered ? 18 : 17
 #endif
+    }
+
+    private var columnAlignment: HorizontalAlignment {
+        layout == .centered ? .center : .leading
+    }
+
+    private var frameAlignment: Alignment {
+        layout == .centered ? .center : .leading
+    }
+
+    private var multilineTextAlignment: TextAlignment {
+        layout == .centered ? .center : .leading
+    }
+
+    private var overviewLineLimit: Int {
+        layout == .centered ? 3 : 4
+    }
+
+    private var verticalSpacing: CGFloat {
+#if os(tvOS)
+        return 18
+#else
+        return layout == .centered ? 16 : 18
+#endif
+    }
+
+    private var shouldShowMetadataEyebrow: Bool {
+        if layout == .leading {
+            return true
+        }
+        return (airDayBadge?.isEmpty == false) || optimizationStatus != nil
     }
 }
 
@@ -1044,12 +1786,14 @@ private struct PrimaryActionsRow: View {
     let isLoadingPlayback: Bool
     let isInWatchlist: Bool
     let isWatched: Bool
+    let centered: Bool
     let focusedAction: FocusState<DetailHeroAction?>.Binding
     let onPlay: () -> Void
     let onToggleWatchlist: () -> Void
     let onToggleWatched: () -> Void
 
     var body: some View {
+#if os(tvOS)
         HStack(spacing: 16) {
             HeroPrimaryButton(
                 title: playButtonLabel,
@@ -1075,6 +1819,34 @@ private struct PrimaryActionsRow: View {
             .focused(focusedAction, equals: .watched)
         }
         .accessibilityElement(children: .contain)
+#else
+        HStack(spacing: 18) {
+            HeroPrimaryButton(
+                title: playButtonLabel,
+                isLoading: isLoadingPlayback,
+                action: onPlay
+            )
+            .focused(focusedAction, equals: .play)
+
+            HeroIconActionButton(
+                systemImage: isInWatchlist ? "checkmark" : "plus",
+                accessibilityLabel: isInWatchlist ? "In Watchlist" : "Add to Watchlist",
+                isActive: isInWatchlist,
+                action: onToggleWatchlist
+            )
+            .focused(focusedAction, equals: .watchlist)
+
+            HeroIconActionButton(
+                systemImage: isWatched ? "checkmark" : "eye",
+                accessibilityLabel: isWatched ? "Marked Watched" : "Mark Watched",
+                isActive: isWatched,
+                action: onToggleWatched
+            )
+            .focused(focusedAction, equals: .watched)
+        }
+        .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
+        .accessibilityElement(children: .contain)
+#endif
     }
 }
 
@@ -1146,10 +1918,10 @@ private struct HeroPrimaryButton: View {
                     Text(title)
                 }
             }
-            .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .font(.system(size: 20, weight: .semibold, design: .rounded))
             .foregroundStyle(.black.opacity(0.92))
-            .frame(minWidth: 220, minHeight: 58)
-            .padding(.horizontal, 20)
+            .frame(minWidth: 278, minHeight: 68)
+            .padding(.horizontal, 28)
             .background(Color.white, in: Capsule(style: .continuous))
             .overlay {
                 Capsule(style: .continuous)
@@ -1164,6 +1936,47 @@ private struct HeroPrimaryButton: View {
     }
     #endif
 }
+
+#if os(iOS)
+private struct HeroIconActionButton: View {
+    @Environment(\.isFocused) private var isFocused
+
+    let systemImage: String
+    let accessibilityLabel: String
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.94))
+                .frame(width: 68, height: 68)
+                .background(backgroundFill, in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(borderColor, lineWidth: 0.9)
+                }
+                .shadow(color: .black.opacity(isFocused ? 0.26 : 0.14), radius: isFocused ? 18 : 12, x: 0, y: isFocused ? 10 : 6)
+                .scaleEffect(isFocused ? 1.04 : 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
+
+    private var backgroundFill: Color {
+        if isFocused {
+            return Color.white.opacity(0.22)
+        }
+        return isActive ? Color.white.opacity(0.18) : Color.white.opacity(0.11)
+    }
+
+    private var borderColor: Color {
+        isFocused ? Color.white.opacity(0.34) : Color.white.opacity(isActive ? 0.20 : 0.12)
+    }
+}
+#endif
 
 private struct HeroSecondaryButton: View {
     #if os(tvOS)
@@ -1256,26 +2069,51 @@ private struct HeroSecondaryButton: View {
 private struct HeroMetadataLine: View {
     let primaryText: String
     let badges: [String]
+    var centered: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: centered ? .center : .leading, spacing: 12) {
             if !primaryText.isEmpty {
                 Text(primaryText)
                     .font(.system(size: fontSize, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.84))
+                    .multilineTextAlignment(centered ? .center : .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
             }
 
             if !badges.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(badges, id: \.self) { badge in
-                            HeroInlineBadge(text: badge)
+                if centered {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            ForEach(badges, id: \.self) { badge in
+                                HeroInlineBadge(text: badge)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(badges, id: \.self) { badge in
+                                    HeroInlineBadge(text: badge)
+                                }
+                            }
+                            .padding(.horizontal, 4)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(badges, id: \.self) { badge in
+                                HeroInlineBadge(text: badge)
+                            }
                         }
                     }
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
     }
 
     private var fontSize: CGFloat {
@@ -1319,12 +2157,12 @@ private struct HeroInlineBadge: View {
         Text(text)
             .font(.system(size: fontSize, weight: .semibold, design: .rounded))
             .foregroundStyle(.white.opacity(0.92))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.white.opacity(0.08), in: Capsule(style: .continuous))
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .background(backgroundFill, in: badgeShape)
             .overlay {
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                badgeShape
+                    .stroke(borderColor, lineWidth: 0.8)
             }
     }
 
@@ -1335,10 +2173,47 @@ private struct HeroInlineBadge: View {
         return 12
 #endif
     }
+
+    private var horizontalPadding: CGFloat {
+#if os(tvOS)
+        return 10
+#else
+        return 9
+#endif
+    }
+
+    private var verticalPadding: CGFloat {
+#if os(tvOS)
+        return 6
+#else
+        return 5
+#endif
+    }
+
+    private var backgroundFill: Color {
+#if os(tvOS)
+        return Color.white.opacity(0.08)
+#else
+        return Color.white.opacity(0.06)
+#endif
+    }
+
+    private var borderColor: Color {
+#if os(tvOS)
+        return Color.white.opacity(0.12)
+#else
+        return Color.white.opacity(0.22)
+#endif
+    }
+
+    private var badgeShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+    }
 }
 
 private struct HeroProgressView: View {
     let progress: Double
+    var centered: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1357,7 +2232,7 @@ private struct HeroProgressView: View {
                 .font(.system(size: fontSize, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.6))
         }
-        .frame(maxWidth: 280, alignment: .leading)
+        .frame(maxWidth: 280, alignment: centered ? .center : .leading)
     }
 
     private var fontSize: CGFloat {

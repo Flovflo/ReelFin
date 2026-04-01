@@ -1099,6 +1099,8 @@ public final class PlaybackSessionController {
     public func stop() {
         let progressSnapshot = makeProgressSnapshot(isPaused: true, didFinish: false)
         let bridgeSession = nativeBridgeSession
+        let repository = self.repository
+        let apiClient = self.apiClient
 
         pause()
         tearDownCurrentItemObservers()
@@ -1168,8 +1170,13 @@ public final class PlaybackSessionController {
         localHLSServer = nil
 
         if let progressSnapshot {
-            Task { @MainActor [weak self] in
-                await self?.persistProgress(snapshot: progressSnapshot)
+            Task {
+                await Self.persistProgress(
+                    snapshot: progressSnapshot,
+                    repository: repository,
+                    apiClient: apiClient,
+                    sendStopped: true
+                )
             }
         }
 
@@ -3304,15 +3311,39 @@ public final class PlaybackSessionController {
     private func persistProgress(
         snapshot: (local: PlaybackProgress, remote: PlaybackProgressUpdate)
     ) async {
+        await Self.persistProgress(
+            snapshot: snapshot,
+            repository: repository,
+            apiClient: apiClient,
+            sendStopped: false
+        )
+    }
+
+    private nonisolated static func persistProgress(
+        snapshot: (local: PlaybackProgress, remote: PlaybackProgressUpdate),
+        repository: MetadataRepositoryProtocol,
+        apiClient: any JellyfinAPIClientProtocol & Sendable,
+        sendStopped: Bool
+    ) async {
         // Save locally regardless of whether the item is in media_items
         // (playback_progress has no FK since migration v2_playback_progress_no_fk)
         try? await repository.savePlaybackProgress(snapshot.local)
         try? await apiClient.reportPlayback(progress: snapshot.remote)
+        if sendStopped {
+            try? await apiClient.reportPlaybackStopped(progress: snapshot.remote)
+        }
     }
 
     func finishCurrentPlayback() async {
         pause()
-        await persistProgress(isPaused: true, didFinish: true)
+        if let snapshot = makeProgressSnapshot(isPaused: true, didFinish: true) {
+            await Self.persistProgress(
+                snapshot: snapshot,
+                repository: repository,
+                apiClient: apiClient,
+                sendStopped: true
+            )
+        }
         if let currentItemID {
             try? await apiClient.reportPlayed(itemID: currentItemID)
         }

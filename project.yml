@@ -48,6 +48,10 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: ReelFinIcon
+        CODE_SIGN_IDENTITY[sdk=iphoneos*]: iPhone Developer
+        CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: Sign to Run Locally
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: WZ4CHJH7TA
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.app
         PRODUCT_NAME: ReelFin
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
@@ -161,6 +165,8 @@ targets:
       - path: ReelFinApp/AppTV
       - path: ReelFinApp/App/ErrorTracking.swift
       - path: ReelFinApp/Resources/Assets.xcassets
+        buildPhase: resources
+      - path: ReelFinApp/Resources/Onboarding
         buildPhase: resources
     dependencies:
       - target: ReelFinUITV

@@ -79,6 +79,7 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
     func prefetchImages(for items: [MediaItem]) async
     func reportPlayback(progress: PlaybackProgressUpdate) async throws
+    func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws
     func reportPlayed(itemID: String) async throws
     func setPlayedState(itemID: String, isPlayed: Bool) async throws
     func setFavorite(itemID: String, isFavorite: Bool) async throws
@@ -136,6 +137,10 @@ public extension JellyfinAPIClientProtocol {
 
     func fetchMediaSegments(itemID _: String) async throws -> [MediaSegment] {
         []
+    }
+
+    func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws {
+        try await reportPlayback(progress: progress)
     }
 
     func setPlayedState(itemID: String, isPlayed: Bool) async throws {

@@ -1,123 +1,134 @@
-import PlaybackEngine
 import Shared
 import SwiftUI
+import PlaybackEngine
 
-/// A sheet that lets the user switch audio language and subtitle tracks
-/// for the current playback session.
-///
-/// Audio switching is backed by `PlaybackSessionController.selectAudioTrack(id:)`,
-/// which first tries a native AVMediaSelectionGroup switch (embedded multi-track
-/// containers) and falls back to a seamless DirectPlay reload with the desired
-/// `AudioStreamIndex`.
-///
-/// Subtitle switching uses `selectSubtitleTrack(id:)`, which similarly tries
-/// the native legible group before falling back to an HLS reload with
-/// `SubtitleStreamIndex=N&SubtitleMethod=Hls` so Jellyfin can embed the
-/// sidecar subtitle track in the manifest.
-struct TrackPickerView: View {
-    var session: PlaybackSessionController
-    @Environment(\.dismiss) private var dismiss
+enum PlaybackControlSelection {
+    case audio(String)
+    case subtitle(String?)
+}
 
-    var body: some View {
-        NavigationStack {
-            List {
-                // ── Audio ────────────────────────────────────────────────
-                if !session.availableAudioTracks.isEmpty {
-                    Section {
-                        ForEach(session.availableAudioTracks) { track in
-                            TrackRow(
-                                title: displayLanguage(for: track),
-                                badge: audioBadge(for: track),
-                                isSelected: session.selectedAudioTrackID == track.id
-                            ) {
-                                session.selectAudioTrack(id: track.id)
-                            }
-                        }
-                    } header: {
-                        Label("Piste audio", systemImage: "speaker.wave.2")
-                    }
-                }
+struct PlaybackTrackOption: Identifiable, Equatable {
+    let trackID: String?
+    let title: String
+    let badge: String?
+    let iconName: String?
+    let isSelected: Bool
 
-                // ── Subtitles ────────────────────────────────────────────
-                if !session.availableSubtitleTracks.isEmpty {
-                    Section {
-                        // "None" option
-                        TrackRow(
-                            title: "Aucun",
-                            badge: nil,
-                            icon: "minus.circle",
-                            isSelected: session.selectedSubtitleTrackID == nil
-                        ) {
-                            session.selectSubtitleTrack(id: nil)
-                        }
+    var id: String {
+        trackID ?? "__none__"
+    }
+}
 
-                        ForEach(session.availableSubtitleTracks) { track in
-                            TrackRow(
-                                title: displayLanguage(for: track),
-                                badge: subtitleBadge(for: track),
-                                isSelected: session.selectedSubtitleTrackID == track.id
-                            ) {
-                                session.selectSubtitleTrack(id: track.id)
-                            }
-                        }
-                    } header: {
-                        Label("Sous-titres", systemImage: "captions.bubble")
-                    }
-                }
-            }
-            .navigationTitle("Pistes")
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Fermer") { dismiss() }
-                }
-            }
-        }
-    #if os(iOS)
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-#endif
+struct PlaybackControlsModel: Equatable {
+    var skipSuggestion: PlaybackSkipSuggestion?
+    var audioOptions: [PlaybackTrackOption]
+    var subtitleOptions: [PlaybackTrackOption]
+
+    init(
+        skipSuggestion: PlaybackSkipSuggestion? = nil,
+        audioOptions: [PlaybackTrackOption] = [],
+        subtitleOptions: [PlaybackTrackOption] = []
+    ) {
+        self.skipSuggestion = skipSuggestion
+        self.audioOptions = audioOptions
+        self.subtitleOptions = subtitleOptions
     }
 
-    // MARK: - Helpers
+    var hasSelectableTracks: Bool {
+        !audioOptions.isEmpty || !subtitleOptions.isEmpty
+    }
 
-    /// Human-readable language name derived from the track's BCP-47 language tag.
-    /// Falls back to the raw title when no localized name is available.
-    private func displayLanguage(for track: MediaTrack) -> String {
+    static func make(
+        audioTracks: [MediaTrack],
+        subtitleTracks: [MediaTrack],
+        selectedAudioID: String?,
+        selectedSubtitleID: String?,
+        skipSuggestion: PlaybackSkipSuggestion?
+    ) -> PlaybackControlsModel {
+        let audioOptions: [PlaybackTrackOption]
+        if audioTracks.count > 1 {
+            audioOptions = audioTracks.map { track in
+                PlaybackTrackOption(
+                    trackID: track.id,
+                    title: PlaybackTrackPresentation.title(for: track),
+                    badge: PlaybackTrackPresentation.audioBadge(for: track),
+                    iconName: nil,
+                    isSelected: track.id == selectedAudioID
+                )
+            }
+        } else {
+            audioOptions = []
+        }
+
+        let subtitleOptions: [PlaybackTrackOption]
+        if subtitleTracks.isEmpty {
+            subtitleOptions = []
+        } else {
+            subtitleOptions = [
+                PlaybackTrackOption(
+                    trackID: nil,
+                    title: "Aucun",
+                    badge: nil,
+                    iconName: "minus.circle",
+                    isSelected: selectedSubtitleID == nil
+                )
+            ] + subtitleTracks.map { track in
+                PlaybackTrackOption(
+                    trackID: track.id,
+                    title: PlaybackTrackPresentation.title(for: track),
+                    badge: PlaybackTrackPresentation.subtitleBadge(for: track),
+                    iconName: nil,
+                    isSelected: track.id == selectedSubtitleID
+                )
+            }
+        }
+
+        return PlaybackControlsModel(
+            skipSuggestion: skipSuggestion,
+            audioOptions: audioOptions,
+            subtitleOptions: subtitleOptions
+        )
+    }
+}
+
+enum PlaybackTrackPresentation {
+    static func title(for track: MediaTrack) -> String {
         if let lang = track.language, !lang.isEmpty {
-            // Normalize ISO 639-2 ("fra", "eng") → 639-1 ("fr", "en") before lookup.
             let base = String(lang.prefix(2)).lowercased()
             if let localized = Locale.current.localizedString(forLanguageCode: base) {
-                return localized
+                return localized.capitalized
             }
         }
         return track.title.isEmpty ? "Piste \(track.index)" : track.title
     }
 
-    private func audioBadge(for track: MediaTrack) -> String? {
+    static func audioBadge(for track: MediaTrack) -> String? {
         var parts: [String] = []
         if let codec = track.codec {
             parts.append(normalizedAudioCodecLabel(codec))
         }
-        if track.isDefault { parts.append("Défaut") }
+        if track.isDefault {
+            parts.append("Défaut")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private func subtitleBadge(for track: MediaTrack) -> String? {
+    static func subtitleBadge(for track: MediaTrack) -> String? {
         var parts: [String] = []
         if let codec = track.codec, !codec.isEmpty {
             parts.append(codec.uppercased())
         }
         let lower = track.title.lowercased()
-        if track.isForced || lower.contains("forced") || lower.contains("forcé") { parts.append("Forcé") }
-        if track.isDefault { parts.append("Défaut") }
+        if track.isForced || lower.contains("forced") || lower.contains("forcé") {
+            parts.append("Forcé")
+        }
+        if track.isDefault {
+            parts.append("Défaut")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Pretty-print common audio codec identifiers.
-    private func normalizedAudioCodecLabel(_ codec: String) -> String {
+    private static func normalizedAudioCodecLabel(_ codec: String) -> String {
         switch codec.lowercased() {
         case "eac3", "ec-3", "ec3":
             return "Dolby Digital+"
@@ -141,6 +152,80 @@ struct TrackPickerView: View {
             return codec.uppercased()
         }
     }
+}
+
+/// A sheet that lets the user switch audio language and subtitle tracks
+/// for the current playback session.
+///
+/// Audio switching is backed by `PlaybackSessionController.selectAudioTrack(id:)`,
+/// which first tries a native AVMediaSelectionGroup switch (embedded multi-track
+/// containers) and falls back to a seamless DirectPlay reload with the desired
+/// `AudioStreamIndex`.
+///
+/// Subtitle switching uses `selectSubtitleTrack(id:)`, which similarly tries
+/// the native legible group before falling back to an HLS reload with
+/// `SubtitleStreamIndex=N&SubtitleMethod=Hls` so Jellyfin can embed the
+/// sidecar subtitle track in the manifest.
+struct TrackPickerView: View {
+    let controls: PlaybackControlsModel
+    let onSelect: (PlaybackControlSelection) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                // ── Audio ────────────────────────────────────────────────
+                if !controls.audioOptions.isEmpty {
+                    Section {
+                        ForEach(controls.audioOptions) { option in
+                            TrackRow(
+                                title: option.title,
+                                badge: option.badge,
+                                isSelected: option.isSelected
+                            ) {
+                                guard let trackID = option.trackID else { return }
+                                onSelect(.audio(trackID))
+                            }
+                        }
+                    } header: {
+                        Label("Piste audio", systemImage: "speaker.wave.2")
+                    }
+                }
+
+                // ── Subtitles ────────────────────────────────────────────
+                if !controls.subtitleOptions.isEmpty {
+                    Section {
+                        ForEach(controls.subtitleOptions) { option in
+                            TrackRow(
+                                title: option.title,
+                                badge: option.badge,
+                                icon: option.iconName,
+                                isSelected: option.isSelected
+                            ) {
+                                onSelect(.subtitle(option.trackID))
+                            }
+                        }
+                    } header: {
+                        Label("Sous-titres", systemImage: "captions.bubble")
+                    }
+                }
+            }
+            .navigationTitle("Pistes")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Fermer") { dismiss() }
+                }
+            }
+        }
+    #if os(iOS)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+#endif
+    }
+
 }
 
 // MARK: - Track Row

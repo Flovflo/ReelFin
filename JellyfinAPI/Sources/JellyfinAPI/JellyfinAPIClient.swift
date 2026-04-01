@@ -604,6 +604,24 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         )
     }
 
+    public func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws {
+        let body = PlaybackProgressRequestDTO(
+            itemID: progress.itemID,
+            positionTicks: progress.positionTicks,
+            canSeek: true,
+            isPaused: progress.isPaused,
+            isMuted: false,
+            playMethod: progress.playMethod ?? "Transcode"
+        )
+
+        let _: EmptyResponse = try await request(
+            path: "Sessions/Playing/Stopped",
+            method: "POST",
+            body: body,
+            dedupe: false
+        )
+    }
+
     public func reportPlayed(itemID: String) async throws {
         let userID = try requireUserID()
         let _: EmptyResponse = try await request(

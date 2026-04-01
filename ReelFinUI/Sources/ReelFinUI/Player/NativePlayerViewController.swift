@@ -1,14 +1,13 @@
 import AVKit
 import PlaybackEngine
-import SwiftUI
-#if os(tvOS)
 import Shared
+import SwiftUI
+#if os(iOS)
+import UIKit
 #endif
 
 struct NativePlayerViewController: UIViewControllerRepresentable {
     let player: AVPlayer
-
-#if os(tvOS)
     var audioTracks: [MediaTrack] = []
     var subtitleTracks: [MediaTrack] = []
     var selectedAudioID: String?
@@ -17,7 +16,6 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
     var onSelectSubtitle: ((String?) -> Void)?
     var skipSuggestion: PlaybackSkipSuggestion?
     var onSkipSuggestion: (() -> Void)?
-#endif
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -33,6 +31,11 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         controller.exitsFullScreenWhenPlaybackEnds = false
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = false
+        context.coordinator.installSkipOverlayIfNeeded(in: controller)
+        context.coordinator.updateSkipOverlay(
+            suggestion: skipSuggestion,
+            onSkipSuggestion: onSkipSuggestion
+        )
 #endif
         // Let AVPlayer auto-select audio and subtitle tracks according to the
         // device's language/accessibility settings. The native "···" button in
@@ -63,6 +66,13 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 #endif
             context.coordinator.startObserving(player: player, controller: controller)
         }
+#if os(iOS)
+        context.coordinator.installSkipOverlayIfNeeded(in: controller)
+        context.coordinator.updateSkipOverlay(
+            suggestion: skipSuggestion,
+            onSkipSuggestion: onSkipSuggestion
+        )
+#endif
 #if os(tvOS)
         updateTransportBarMenu(controller: controller)
 #endif
@@ -70,14 +80,15 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
 #if os(tvOS)
     private func updateTransportBarMenu(controller: AVPlayerViewController) {
-        guard audioTracks.count > 1 || !subtitleTracks.isEmpty || skipSuggestion != nil else {
+        let controls = controlsModel
+        guard controls.hasSelectableTracks || controls.skipSuggestion != nil else {
             controller.transportBarCustomMenuItems = []
             return
         }
 
         var menuItems: [UIMenuElement] = []
 
-        if let skipSuggestion {
+        if let skipSuggestion = controls.skipSuggestion {
             let onSkip = onSkipSuggestion
             menuItems.append(
                 UIAction(
@@ -89,16 +100,14 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             )
         }
 
-        if audioTracks.count > 1 {
-            let audioActions: [UIAction] = audioTracks.map { track in
-                let title = resolvedLanguageName(for: track)
-                let isSelected = track.id == selectedAudioID
+        if !controls.audioOptions.isEmpty {
+            let audioActions: [UIAction] = controls.audioOptions.compactMap { option in
                 let onSelect = onSelectAudio
-                let trackID = track.id
+                guard let trackID = option.trackID else { return nil }
                 return UIAction(
-                    title: title,
+                    title: option.title,
                     image: UIImage(systemName: "speaker.wave.2"),
-                    state: isSelected ? .on : .off
+                    state: option.isSelected ? .on : .off
                 ) { _ in
                     Task { @MainActor in onSelect?(trackID) }
                 }
@@ -111,28 +120,15 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             ))
         }
 
-        if !subtitleTracks.isEmpty {
-            let noneSelected = selectedSubtitleID == nil
+        if !controls.subtitleOptions.isEmpty {
             let onSelectSub = onSelectSubtitle
-            var subActions: [UIAction] = [
-                UIAction(
-                    title: "Aucun",
-                    image: UIImage(systemName: "minus.circle"),
-                    state: noneSelected ? .on : .off
-                ) { _ in
-                    Task { @MainActor in onSelectSub?(nil) }
-                }
-            ]
-            subActions += subtitleTracks.map { track in
-                let title = resolvedLanguageName(for: track)
-                let isSelected = track.id == selectedSubtitleID
-                let trackID = track.id
+            let subActions: [UIAction] = controls.subtitleOptions.map { option in
                 return UIAction(
-                    title: title,
-                    image: UIImage(systemName: "captions.bubble"),
-                    state: isSelected ? .on : .off
+                    title: option.title,
+                    image: UIImage(systemName: option.iconName ?? "captions.bubble"),
+                    state: option.isSelected ? .on : .off
                 ) { _ in
-                    Task { @MainActor in onSelectSub?(trackID) }
+                    Task { @MainActor in onSelectSub?(option.trackID) }
                 }
             }
             menuItems.append(UIMenu(
@@ -145,17 +141,17 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
         controller.transportBarCustomMenuItems = menuItems
     }
-
-    private func resolvedLanguageName(for track: MediaTrack) -> String {
-        if let lang = track.language, !lang.isEmpty {
-            let base = String(lang.prefix(2)).lowercased()
-            if let localized = Locale.current.localizedString(forLanguageCode: base) {
-                return localized
-            }
-        }
-        return track.title.isEmpty ? "Piste \(track.index)" : track.title
-    }
 #endif
+
+    private var controlsModel: PlaybackControlsModel {
+        PlaybackControlsModel.make(
+            audioTracks: audioTracks,
+            subtitleTracks: subtitleTracks,
+            selectedAudioID: selectedAudioID,
+            selectedSubtitleID: selectedSubtitleID,
+            skipSuggestion: skipSuggestion
+        )
+    }
 
     // MARK: - Coordinator
 
@@ -168,11 +164,15 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
     /// server-side HLS transcode). Without this re-attachment, the internal
     /// PlayerRemoteXPC process fails to connect to the late-arriving video track,
     /// resulting in a black screen with working audio.
+    @MainActor
     final class Coordinator: NSObject {
         private var itemObservation: NSKeyValueObservation?
         private var statusObservation: NSKeyValueObservation?
         private weak var controller: AVPlayerViewController?
         private var didReattachForCurrentItem = false
+#if os(iOS)
+        private let skipOverlayView = PlaybackSkipOverlayView()
+#endif
 
         func startObserving(player: AVPlayer, controller: AVPlayerViewController) {
             self.controller = controller
@@ -180,9 +180,11 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             statusObservation = nil
 
             itemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] player, _ in
-                guard let self else { return }
-                self.didReattachForCurrentItem = false
-                self.observeItemStatus(player: player)
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.didReattachForCurrentItem = false
+                    self.observeItemStatus(player: player)
+                }
             }
 
             // If there's already a current item, observe it immediately.
@@ -203,7 +205,9 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
             statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                 guard item.status == .readyToPlay else { return }
-                self?.reattachIfNeeded(player: player)
+                Task { @MainActor in
+                    self?.reattachIfNeeded(player: player)
+                }
             }
         }
 
@@ -227,5 +231,29 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 }
             }
         }
+
+#if os(iOS)
+        func installSkipOverlayIfNeeded(in controller: AVPlayerViewController) {
+            guard skipOverlayView.superview == nil else { return }
+            let overlayView = controller.contentOverlayView ?? controller.view!
+            overlayView.addSubview(skipOverlayView)
+            NSLayoutConstraint.activate([
+                skipOverlayView.leadingAnchor.constraint(equalTo: overlayView.leadingAnchor),
+                skipOverlayView.trailingAnchor.constraint(equalTo: overlayView.trailingAnchor),
+                skipOverlayView.topAnchor.constraint(equalTo: overlayView.topAnchor),
+                skipOverlayView.bottomAnchor.constraint(equalTo: overlayView.bottomAnchor)
+            ])
+        }
+
+        func updateSkipOverlay(
+            suggestion: PlaybackSkipSuggestion?,
+            onSkipSuggestion: (() -> Void)?
+        ) {
+            skipOverlayView.update(
+                suggestion: suggestion,
+                onSkipSuggestion: onSkipSuggestion
+            )
+        }
+#endif
     }
 }

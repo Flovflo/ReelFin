@@ -103,67 +103,94 @@ public struct EpisodeCardView: View {
     #if !os(tvOS)
     private var iosBody: some View {
         Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .topLeading) {
-                    EpisodeCardArtworkView(
-                        episode: episode,
-                        width: width,
-                        apiClient: apiClient,
-                        imagePipeline: imagePipeline
-                    )
+            ZStack(alignment: .bottomLeading) {
+                CachedRemoteImage(
+                    itemID: episode.id,
+                    type: .primary,
+                    width: Int(width * 2),
+                    quality: 84,
+                    contentMode: .fill,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline
+                )
+                .frame(width: width, height: iosCardHeight)
+                .clipped()
 
-                    HStack(spacing: 10) {
-                        statusBadge(
-                            title: iosEpisodeLabel,
-                            systemImage: isSelected ? "play.fill" : nil,
-                            prominent: isSelected
-                        )
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.10),
+                        .init(color: .black.opacity(0.10), location: 0.34),
+                        .init(color: .black.opacity(0.46), location: 0.58),
+                        .init(color: .black.opacity(0.84), location: 0.80),
+                        .init(color: .black.opacity(0.94), location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                if let progress = episode.playbackProgress, progress > 0, !episode.isPlayed {
+                    VStack {
+                        Spacer()
+                        GeometryReader { proxy in
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.18))
+                                .overlay(alignment: .leading) {
+                                    Capsule(style: .continuous)
+                                        .fill(Color.white.opacity(0.92))
+                                        .frame(width: proxy.size.width * CGFloat(progress))
+                                }
+                        }
+                        .frame(height: 3)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
                     }
-                    .padding(18)
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(episode.name)
-                            .font(.system(size: 18, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .lineLimit(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(iosEpisodeLabel.uppercased())
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.76))
 
-                        if isSelected {
-                            Text("Current")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.92))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    LinearGradient(
-                                        colors: [
-                                            Color.white.opacity(0.20),
-                                            Color.white.opacity(0.10)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
-                                    in: Capsule(style: .continuous)
-                                )
-                        }
-                    }
+                    Text(episode.name)
+                        .font(.system(size: 21, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
 
                     if let overview = episode.overview, !overview.isEmpty {
                         Text(overview)
                             .font(.system(size: 14, weight: .regular, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.68))
-                            .lineLimit(3)
+                            .foregroundStyle(.white.opacity(0.76))
+                            .lineLimit(4)
+                    }
+
+                    HStack(spacing: 8) {
+                        if let runtime = episode.runtimeDisplayText {
+                            Label(runtime, systemImage: "play.fill")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.92))
+                        }
+
+                        Spacer()
+
+                        if isSelected {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.72))
+                        }
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 4)
-                .padding(.bottom, 20)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(22)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
-            .frame(width: width, alignment: .leading)
-            .tvCardSurface(focused: isFocused, selected: isSelected, cornerRadius: 28)
+            .frame(width: width, height: iosCardHeight, alignment: .leading)
+            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(
+                        Color.white.opacity(isSelected ? 0.22 : 0.08),
+                        lineWidth: isSelected ? 1.0 : 0.8
+                    )
+            }
             .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
@@ -175,40 +202,13 @@ public struct EpisodeCardView: View {
     }
 
     private var iosEpisodeLabel: String {
-        let seasonText = episode.parentIndexNumber.map { "S\($0)" } ?? ""
-        let episodeText = episode.indexNumber.map { "E\($0)" } ?? "Episode"
-        return "\(seasonText) \(episodeText)".trimmingCharacters(in: .whitespaces)
+        if let index = episode.indexNumber {
+            return "Episode \(index)"
+        }
+        return "Episode"
     }
 
-    private func statusBadge(title: String, systemImage: String? = nil, prominent: Bool) -> some View {
-        HStack(spacing: 6) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 12, weight: .bold))
-            }
-            Text(title)
-                .lineLimit(1)
-        }
-        .font(.system(size: 12, weight: .bold, design: .rounded))
-        .foregroundStyle(.white.opacity(prominent ? 0.96 : 0.84))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(prominent ? 0.50 : 0.38),
-                    Color.black.opacity(prominent ? 0.26 : 0.16)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: Capsule(style: .continuous)
-        )
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(Color.white.opacity(prominent ? 0.18 : 0.10), lineWidth: 1)
-        }
-    }
+    private var iosCardHeight: CGFloat { width * 1.14 }
     #endif
 }
 
