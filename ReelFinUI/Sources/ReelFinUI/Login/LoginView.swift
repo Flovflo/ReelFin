@@ -11,13 +11,15 @@ struct LoginView: View {
     @FocusState private var focusedField: LoginFocusField?
 
     private let onLogin: (UserSession) -> Void
-    private let onboardingPage = OnboardingPageContent.pages[0]
+    private let imagePipeline: any ImagePipelineProtocol
 
     @State private var phase: LoginPhase = .onboarding
     @State private var contentVisible = false
+    @State private var onboardingPageIndex = 0
 
     init(dependencies: ReelFinDependencies, onLogin: @escaping (UserSession) -> Void) {
         _viewModel = StateObject(wrappedValue: LoginViewModel(dependencies: dependencies))
+        imagePipeline = dependencies.imagePipeline
         self.onLogin = onLogin
     }
 
@@ -42,7 +44,7 @@ struct LoginView: View {
                     Spacer(minLength: metrics.topSpacer)
 
                     stageContent(metrics: metrics)
-                        .frame(maxWidth: metrics.contentWidth)
+                        .frame(maxWidth: stageWidth(for: metrics))
 
                     Spacer(minLength: metrics.bottomSpacer)
                 }
@@ -70,15 +72,19 @@ struct LoginView: View {
 
     private var activeVisualPage: OnboardingPageContent {
         switch phase {
-        case .onboarding, .serverEntry, .credentials, .submitting, .success:
-            onboardingPage
+        case .onboarding:
+            OnboardingPageContent.pages[onboardingPageIndex]
+        case .serverEntry, .credentials, .submitting, .success:
+            OnboardingPageContent.pages[0]
         }
     }
 
     private var canGoBack: Bool {
         switch phase {
-        case .onboarding, .serverEntry:
+        case .onboarding:
             return false
+        case .serverEntry:
+            return true
         case .credentials, .submitting:
             return true
         case .success:
@@ -97,11 +103,21 @@ struct LoginView: View {
     @ViewBuilder
     private func stageContent(metrics: LoginLayoutMetrics) -> some View {
         switch phase {
-        case .onboarding, .serverEntry:
-            ConnectionLandingView(
+        case .onboarding:
+            PremiumOnboardingStageView(
                 compact: metrics.isCompact,
+                page: activeVisualPage,
+                currentPage: onboardingPageIndex,
+                pageCount: OnboardingPageContent.pages.count,
                 titleSize: metrics.titleSize,
                 bodySize: metrics.bodySize,
+                imagePipeline: imagePipeline,
+                onSelectPage: selectOnboardingPage,
+                onContinue: advanceFromOnboarding
+            )
+            .transition(stageTransition)
+        case .serverEntry:
+            ServerEntryStageView(
                 serverURLText: $viewModel.serverURLText,
                 focusedField: $focusedField,
                 hasSavedServer: viewModel.hasSavedServer,
@@ -109,6 +125,8 @@ struct LoginView: View {
                 serverMessage: viewModel.serverMessage,
                 serverErrorMessage: viewModel.serverErrorMessage,
                 canContinue: viewModel.canAdvanceFromServer,
+                titleSize: metrics.titleSize,
+                bodySize: metrics.bodySize,
                 onContinue: continueFromServer
             )
             .transition(stageTransition)
@@ -135,12 +153,35 @@ struct LoginView: View {
         }
     }
 
+    private func stageWidth(for metrics: LoginLayoutMetrics) -> CGFloat {
+        phase == .onboarding ? metrics.onboardingWidth : metrics.contentWidth
+    }
+
     private var stageTransition: AnyTransition {
         .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.985))
     }
 
     private var serverHost: String {
         URL(string: viewModel.serverURLText.trimmingCharacters(in: .whitespacesAndNewlines))?.host ?? "Jellyfin"
+    }
+
+    private func advanceFromOnboarding() {
+        if onboardingPageIndex < OnboardingPageContent.pages.count - 1 {
+            withAnimation(stageAnimation) {
+                onboardingPageIndex += 1
+            }
+            return
+        }
+
+        transition(to: .serverEntry)
+        focus(.serverURL)
+    }
+
+    private func selectOnboardingPage(_ index: Int) {
+        guard OnboardingPageContent.pages.indices.contains(index) else { return }
+        withAnimation(stageAnimation) {
+            onboardingPageIndex = index
+        }
     }
 
     private func continueFromServer() {
@@ -201,11 +242,15 @@ struct LoginView: View {
 
     private func handleBack() {
         switch phase {
-        case .onboarding, .serverEntry:
+        case .onboarding:
             break
+        case .serverEntry:
+            focusedField = nil
+            transition(to: .onboarding)
         case .credentials, .submitting:
             viewModel.clearAuthError()
-            transition(to: .onboarding)
+            transition(to: .serverEntry)
+            focus(.serverURL)
         case .success:
             break
         }
@@ -234,7 +279,8 @@ struct LoginView: View {
     private func applyDebugOverridesIfNeeded() {
         guard phase == .onboarding else { return }
         guard let overridePage = LoginDebugOptions.onboardingPage else { return }
-        guard overridePage == 0 else { return }
+        guard OnboardingPageContent.pages.indices.contains(overridePage) else { return }
+        onboardingPageIndex = overridePage
     }
 }
 
@@ -266,6 +312,7 @@ private enum LoginDebugOptions {
 private struct LoginLayoutMetrics {
     let isCompact: Bool
     let contentWidth: CGFloat
+    let onboardingWidth: CGFloat
     let horizontalPadding: CGFloat
     let topPadding: CGFloat
     let topSpacer: CGFloat
@@ -279,9 +326,10 @@ private struct LoginLayoutMetrics {
         let compact = size.width < 720 || sizeClass != .regular
         isCompact = compact
         contentWidth = compact ? min(size.width - 32, 430) : min(size.width - 120, 500)
+        onboardingWidth = compact ? min(size.width - 24, 520) : min(size.width - 120, 680)
         horizontalPadding = compact ? 16 : 24
         topPadding = compact ? 10 : 18
-        topSpacer = compact ? max(44, size.height * 0.16) : max(52, size.height * 0.15)
+        topSpacer = compact ? max(28, size.height * 0.11) : max(40, size.height * 0.12)
         bottomSpacer = compact ? 28 : 44
         titleSize = compact ? 34 : 40
         bodySize = compact ? 17 : 18
