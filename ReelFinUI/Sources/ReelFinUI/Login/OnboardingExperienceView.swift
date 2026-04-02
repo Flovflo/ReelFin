@@ -1,61 +1,64 @@
 #if os(iOS)
-import Shared
 import SwiftUI
 
-struct PremiumOnboardingStageView: View {
+struct ConnectionLandingView: View {
     let compact: Bool
-    let page: OnboardingPageContent
-    let currentPage: Int
-    let pageCount: Int
     let titleSize: CGFloat
     let bodySize: CGFloat
-    let imagePipeline: any ImagePipelineProtocol
-    let onSelectPage: (Int) -> Void
+    @Binding var serverURLText: String
+    let focusedField: FocusState<LoginFocusField?>.Binding
+    let hasSavedServer: Bool
+    let isTestingConnection: Bool
+    let serverMessage: String?
+    let serverErrorMessage: String?
+    let canContinue: Bool
     let onContinue: () -> Void
 
     var body: some View {
-        VStack(spacing: compact ? 26 : 32) {
-            OnboardingHeroStack(
-                page: page,
-                compact: compact,
-                imagePipeline: imagePipeline
-            )
-            .frame(height: compact ? 310 : 360)
-            .frame(maxWidth: .infinity)
-            .accessibilityHidden(true)
+        GlassPanel(cornerRadius: compact ? 30 : 34, padding: compact ? 24 : 28) {
+            VStack(alignment: .leading, spacing: compact ? 20 : 24) {
+                StageHeader(
+                    title: "Connect to Jellyfin",
+                    subtitle: "Fast, fluid, and built for Apple from first tap to first frame.",
+                    titleSize: titleSize,
+                    bodySize: bodySize
+                )
 
-            VStack(spacing: compact ? 18 : 22) {
-                VStack(spacing: 12) {
-                    Text(page.title)
-                        .font(.system(size: titleSize, weight: .bold))
-                        .tracking(-0.7)
+                VStack(alignment: .leading, spacing: 14) {
+                    if hasSavedServer {
+                        StageFeedbackChip(text: "Saved server ready", tint: OnboardingPalette.glowWhite)
+                    }
+
+                    TextField("https://server.example.com", text: $serverURLText)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled(true)
+                        .textContentType(.URL)
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(OnboardingPalette.primaryText)
-                        .multilineTextAlignment(.center)
-                        .accessibilityIdentifier("onboarding_title")
+                        .focused(focusedField, equals: .serverURL)
+                        .submitLabel(.continue)
+                        .onSubmit(onContinue)
+                        .accessibilityIdentifier("login_server_field")
+                        .onboardingFieldSurface()
 
-                    Text(page.body)
-                        .font(.system(size: bodySize, weight: .medium))
-                        .foregroundStyle(OnboardingPalette.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if isTestingConnection {
+                        StageFeedbackChip(text: "Checking server", tint: OnboardingPalette.secondaryText)
+                    } else if let serverErrorMessage {
+                        StageFeedbackChip(text: serverErrorMessage, tint: Color.red.opacity(0.92))
+                    } else if let serverMessage {
+                        StageFeedbackChip(text: serverMessage, tint: OnboardingPalette.secondaryText)
+                    }
+
+                    PremiumCTAButton(
+                        title: "Continue",
+                        isLoading: isTestingConnection,
+                        isEnabled: canContinue && !isTestingConnection,
+                        action: onContinue
+                    )
+                    .accessibilityIdentifier("login_server_continue")
                 }
-
-                CustomPageProgress(
-                    currentPage: currentPage,
-                    pageCount: pageCount,
-                    onSelect: onSelectPage
-                )
-                .frame(maxWidth: compact ? 320 : 360)
-
-                PremiumCTAButton(
-                    title: page.ctaTitle,
-                    action: onContinue
-                )
-                .accessibilityIdentifier("onboarding_primary_cta")
             }
-            .frame(maxWidth: compact ? 360 : 430)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, compact ? 8 : 0)
         }
         .frame(maxWidth: .infinity)
     }

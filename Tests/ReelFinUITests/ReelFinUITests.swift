@@ -5,34 +5,39 @@ class ReelFinUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testLoggedOutMockLaunchShowsPremiumOnboarding() throws {
+    func testLoggedOutMockLaunchShowsConnectionEntry() throws {
         let app = launchLoggedOutMockApp()
-
-        XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["onboarding_primary_cta"].exists)
-    }
-
-    func testLoggedOutMockFlowAdvancesFromOnboardingToServerEntry() throws {
-        let app = launchLoggedOutMockApp()
-
-        advanceThroughOnboardingIfNeeded(app)
 
         let serverField = app.textFields["login_server_field"]
         XCTAssertTrue(serverField.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["login_server_continue"].exists)
     }
 
-    func testLoggedOutMockFlowCanAuthenticateIntoHome() throws {
+    func testLoggedOutMockFlowShowsServerAndCredentialsSteps() throws {
         let app = launchLoggedOutMockApp()
 
-        advanceThroughOnboardingIfNeeded(app)
+        let serverField = app.textFields["login_server_field"]
+        XCTAssertTrue(serverField.waitForExistence(timeout: 5))
+        enterServerIfNeeded(serverField)
+
+        let continueButton = app.buttons["login_server_continue"]
+        XCTAssertTrue(continueButton.exists)
+        continueButton.tap()
+
+        let usernameField = app.textFields["login_username_field"].firstMatch
+        XCTAssertTrue(usernameField.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.secureTextFields["login_password_field"].firstMatch.exists)
+    }
+
+    func testLoggedOutMockFlowCanAuthenticateIntoHome() throws {
+        let app = launchLoggedOutMockApp()
 
         let continueButton = app.buttons["login_server_continue"]
         XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
 
         let serverField = app.textFields["login_server_field"]
         XCTAssertTrue(serverField.exists)
-        enterServerIfNeeded(serverField, forceRetype: true)
+        enterServerIfNeeded(serverField)
 
         continueButton.tap()
 
@@ -122,8 +127,8 @@ class ReelFinUITests: XCTestCase {
         return app
     }
 
-    private func enterServerIfNeeded(_ field: XCUIElement, forceRetype: Bool = false) {
-        if !forceRetype, let currentValue = field.value as? String {
+    private func enterServerIfNeeded(_ field: XCUIElement) {
+        if let currentValue = field.value as? String {
             if currentValue == "https://demo.reelfin.app" {
                 return
             }
@@ -142,29 +147,6 @@ class ReelFinUITests: XCTestCase {
 
         field.typeText("https://demo.reelfin.app")
     }
-
-    private func advanceThroughOnboardingIfNeeded(_ app: XCUIApplication) {
-        let serverField = app.textFields["login_server_field"]
-        if serverField.exists {
-            return
-        }
-
-        for _ in 0..<OnboardingScreenCount.total {
-            let onboardingButton = app.buttons["onboarding_primary_cta"]
-            XCTAssertTrue(onboardingButton.waitForExistence(timeout: 5))
-            onboardingButton.tap()
-
-            if serverField.waitForExistence(timeout: 1.5) {
-                return
-            }
-        }
-
-        XCTFail("Expected onboarding to advance to the server entry step")
-    }
-}
-
-private enum OnboardingScreenCount {
-    static let total = 4
 }
 
 final class AppStoreScreenshotTests: XCTestCase {

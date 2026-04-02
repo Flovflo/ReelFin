@@ -1,25 +1,6 @@
 #if os(iOS)
 import SwiftUI
 
-struct OnboardingGlassGroup<Content: View>: View {
-    let spacing: CGFloat
-    let content: Content
-
-    init(
-        spacing: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.spacing = spacing
-        self.content = content()
-    }
-
-    var body: some View {
-        GlassEffectContainer(spacing: spacing) {
-            content
-        }
-    }
-}
-
 struct OnboardingBackgroundView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -176,61 +157,6 @@ struct PremiumCTAButton: View {
         .frame(height: 58)
         .contentShape(Capsule(style: .continuous))
         .opacity(isEnabled ? 1 : 0.72)
-    }
-}
-
-struct CustomPageProgress: View {
-    let currentPage: Int
-    let pageCount: Int
-    let onSelect: (Int) -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 10) {
-                ForEach(0 ..< pageCount, id: \.self) { index in
-                    let isActive = currentPage == index
-
-                    Button {
-                        onSelect(index)
-                    } label: {
-                        Capsule(style: .continuous)
-                            .fill(.clear)
-                            .frame(width: isActive ? 48 : 20, height: 10)
-                            .background {
-                                if #available(iOS 26.0, *) {
-                                    Color.clear
-                                        .glassEffect(
-                                            .regular.tint(Color.white.opacity(isActive ? 0.07 : 0.03)).interactive(),
-                                            in: .capsule
-                                        )
-                                } else {
-                                    Capsule(style: .continuous)
-                                        .fill(Color.white.opacity(isActive ? 0.12 : 0.05))
-                                }
-                            }
-                            .overlay {
-                                Capsule(style: .continuous)
-                                    .fill(Color.white.opacity(isActive ? 0.92 : 0.24))
-                                    .padding(isActive ? 2 : 3)
-                            }
-                            .overlay {
-                                Capsule(style: .continuous)
-                                    .stroke(Color.white.opacity(isActive ? 0.14 : 0.08), lineWidth: 1)
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Page \(index + 1)")
-                }
-            }
-
-            Spacer(minLength: 12)
-
-            Text("\(currentPage + 1) / \(pageCount)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(OnboardingPalette.secondaryText.opacity(0.9))
-                .monospacedDigit()
-        }
-        .accessibilityIdentifier("onboarding_progress")
     }
 }
 
