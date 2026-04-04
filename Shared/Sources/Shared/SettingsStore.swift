@@ -4,6 +4,8 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
     private enum Keys {
         static let serverConfiguration = "settings.serverConfiguration"
         static let lastSession = "settings.lastSession"
+        static let hasCompletedOnboarding = "settings.hasCompletedOnboarding"
+        static let completedOnboardingVersion = "settings.completedOnboardingVersion"
     }
 
     private let defaults: UserDefaults
@@ -22,6 +24,16 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
     public var lastSession: UserSession? {
         get { decode(UserSession.self, key: Keys.lastSession) }
         set { encode(newValue, key: Keys.lastSession) }
+    }
+
+    public var hasCompletedOnboarding: Bool {
+        get { defaults.bool(forKey: Keys.hasCompletedOnboarding) }
+        set { defaults.set(newValue, forKey: Keys.hasCompletedOnboarding) }
+    }
+
+    public var completedOnboardingVersion: Int {
+        get { defaults.integer(forKey: Keys.completedOnboardingVersion) }
+        set { defaults.set(newValue, forKey: Keys.completedOnboardingVersion) }
     }
 
     private func decode<T: Decodable>(_ type: T.Type, key: String) -> T? {

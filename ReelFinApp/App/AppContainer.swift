@@ -17,6 +17,7 @@ final class AppContainer {
     let syncEngine: DefaultSyncEngine
     let seriesCache: SeriesLookupCache
     let playbackWarmupManager: PlaybackWarmupManager
+    let tvFocusWarmupCoordinator: TVFocusWarmupCoordinator
     private var sharedPlaybackSessionController: PlaybackSessionController?
 
     init() {
@@ -50,6 +51,7 @@ final class AppContainer {
         )
         seriesCache = SeriesLookupCache(apiClient: apiClient)
         playbackWarmupManager = PlaybackWarmupManager(apiClient: apiClient)
+        tvFocusWarmupCoordinator = TVFocusWarmupCoordinator()
     }
 
     @MainActor
@@ -63,6 +65,7 @@ final class AppContainer {
             settingsStore: settingsStore,
             seriesCache: seriesCache,
             playbackWarmupManager: playbackWarmupManager,
+            tvFocusWarmupCoordinator: tvFocusWarmupCoordinator,
             makePlaybackSession: {
                 self.makeSharedPlaybackSessionController()
             }

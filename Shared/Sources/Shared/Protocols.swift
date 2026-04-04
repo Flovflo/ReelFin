@@ -37,6 +37,14 @@ public enum AppError: LocalizedError, Sendable {
     }
 }
 
+public struct ImageRequestConsumerID: Hashable, Sendable {
+    public let rawValue: UUID
+
+    public init(rawValue: UUID = UUID()) {
+        self.rawValue = rawValue
+    }
+}
+
 public protocol TokenStoreProtocol: AnyObject, Sendable {
     func saveToken(_ token: String) throws
     func fetchToken() throws -> String?
@@ -46,6 +54,8 @@ public protocol TokenStoreProtocol: AnyObject, Sendable {
 public protocol SettingsStoreProtocol: AnyObject, Sendable {
     var serverConfiguration: ServerConfiguration? { get set }
     var lastSession: UserSession? { get set }
+    var hasCompletedOnboarding: Bool { get set }
+    var completedOnboardingVersion: Int { get set }
 }
 
 public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
@@ -117,9 +127,11 @@ public protocol MediaDetailRepositoryProtocol: AnyObject, Sendable {
 
 public protocol ImagePipelineProtocol: AnyObject, Sendable {
     func image(for url: URL) async throws -> UIImage
+    func image(for url: URL, consumer consumerID: ImageRequestConsumerID) async throws -> UIImage
     func cachedImage(for url: URL) async -> UIImage?
     func prefetch(urls: [URL]) async
     func cancel(url: URL)
+    func cancel(url: URL, consumer consumerID: ImageRequestConsumerID)
 }
 
 public protocol SyncEngineProtocol: AnyObject, Sendable {
@@ -149,4 +161,16 @@ public extension JellyfinAPIClientProtocol {
     }
 
     func setFavorite(itemID _: String, isFavorite _: Bool) async throws {}
+}
+
+public extension ImagePipelineProtocol {
+    func image(for url: URL, consumer consumerID: ImageRequestConsumerID) async throws -> UIImage {
+        _ = consumerID
+        return try await image(for: url)
+    }
+
+    func cancel(url: URL, consumer consumerID: ImageRequestConsumerID) {
+        _ = consumerID
+        cancel(url: url)
+    }
 }

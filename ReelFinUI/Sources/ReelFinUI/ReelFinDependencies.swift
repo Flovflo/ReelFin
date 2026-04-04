@@ -11,6 +11,7 @@ public struct ReelFinDependencies {
     public let settingsStore: SettingsStoreProtocol
     public let seriesCache: SeriesLookupCache
     public let playbackWarmupManager: PlaybackWarmupManaging
+    public let tvFocusWarmupCoordinator: TVFocusWarmupCoordinator?
     public let makePlaybackSession: @MainActor () -> PlaybackSessionController
 
     public init(
@@ -22,6 +23,7 @@ public struct ReelFinDependencies {
         settingsStore: SettingsStoreProtocol,
         seriesCache: SeriesLookupCache,
         playbackWarmupManager: PlaybackWarmupManaging,
+        tvFocusWarmupCoordinator: TVFocusWarmupCoordinator? = nil,
         makePlaybackSession: @escaping @MainActor () -> PlaybackSessionController
     ) {
         self.apiClient = apiClient
@@ -32,6 +34,7 @@ public struct ReelFinDependencies {
         self.settingsStore = settingsStore
         self.seriesCache = seriesCache
         self.playbackWarmupManager = playbackWarmupManager
+        self.tvFocusWarmupCoordinator = tvFocusWarmupCoordinator
         self.makePlaybackSession = makePlaybackSession
     }
 }

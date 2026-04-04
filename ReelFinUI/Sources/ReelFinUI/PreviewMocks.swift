@@ -283,10 +283,14 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
 final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
+    var hasCompletedOnboarding: Bool
+    var completedOnboardingVersion: Int
 
     init(authenticated: Bool = true) {
         serverConfiguration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
         lastSession = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
+        hasCompletedOnboarding = authenticated
+        completedOnboardingVersion = authenticated ? ReelFinOnboardingContent.version : 0
     }
 }
 
@@ -342,6 +346,11 @@ final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
         ArtworkPlaceholderRenderer.makeImage(seed: url.absoluteString)
     }
 
+    func image(for url: URL, consumer consumerID: ImageRequestConsumerID) async throws -> UIImage {
+        _ = consumerID
+        return try await image(for: url)
+    }
+
     func cachedImage(for url: URL) async -> UIImage? {
         nil
     }
@@ -349,6 +358,10 @@ final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     func prefetch(urls: [URL]) async {}
 
     func cancel(url: URL) {}
+
+    func cancel(url: URL, consumer consumerID: ImageRequestConsumerID) {
+        _ = consumerID
+    }
 }
 
 private enum ArtworkPlaceholderRenderer {
@@ -428,6 +441,10 @@ public enum ReelFinPreviewFactory {
         let settings = MockSettingsStore(authenticated: authenticated)
         let seriesCache = SeriesLookupCache(apiClient: api)
         let warmupManager = PlaybackWarmupManager(apiClient: api, ttl: 60)
+        let tvFocusWarmupCoordinator = TVFocusWarmupCoordinator(
+            settleDelayNanoseconds: 0,
+            maxConcurrentJobs: 1
+        )
 
         return ReelFinDependencies(
             apiClient: api,
@@ -438,6 +455,7 @@ public enum ReelFinPreviewFactory {
             settingsStore: settings,
             seriesCache: seriesCache,
             playbackWarmupManager: warmupManager,
+            tvFocusWarmupCoordinator: tvFocusWarmupCoordinator,
             makePlaybackSession: {
                 PlaybackSessionController(
                     apiClient: api,

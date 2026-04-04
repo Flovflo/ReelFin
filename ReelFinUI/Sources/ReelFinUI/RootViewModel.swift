@@ -16,6 +16,12 @@ final class RootViewModel {
     }
 
     func bootstrap() async {
+        guard dependencies.settingsStore.completedOnboardingVersion >= ReelFinOnboardingContent.version else {
+            isAuthenticated = false
+            didBootstrap = true
+            return
+        }
+
         let session = await dependencies.apiClient.currentSession() ?? dependencies.settingsStore.lastSession
         let serverConfig = await dependencies.apiClient.currentConfiguration() ?? dependencies.settingsStore.serverConfiguration
         isAuthenticated = session != nil && serverConfig != nil

@@ -8,13 +8,15 @@ class ReelFinUITests: XCTestCase {
     func testLoggedOutMockLaunchShowsConnectionEntry() throws {
         let app = launchLoggedOutMockApp()
 
-        let serverField = app.textFields["login_server_field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["login_server_continue"].exists)
+        XCTAssertTrue(app.staticTexts["onboarding_title"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["onboarding_progress"].exists)
+        XCTAssertTrue(app.buttons["onboarding_primary_cta"].exists)
     }
 
     func testLoggedOutMockFlowShowsServerAndCredentialsSteps() throws {
         let app = launchLoggedOutMockApp()
+
+        advanceThroughOnboardingIfNeeded(app)
 
         let serverField = app.textFields["login_server_field"]
         XCTAssertTrue(serverField.waitForExistence(timeout: 5))
@@ -31,6 +33,8 @@ class ReelFinUITests: XCTestCase {
 
     func testLoggedOutMockFlowCanAuthenticateIntoHome() throws {
         let app = launchLoggedOutMockApp()
+
+        advanceThroughOnboardingIfNeeded(app)
 
         let continueButton = app.buttons["login_server_continue"]
         XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
@@ -121,7 +125,7 @@ class ReelFinUITests: XCTestCase {
 
     private func launchLoggedOutMockApp() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-ui-logged-out"]
+        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-ui-logged-out", "-reelfin-force-onboarding"]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         return app
@@ -147,6 +151,29 @@ class ReelFinUITests: XCTestCase {
 
         field.typeText("https://demo.reelfin.app")
     }
+
+    private func advanceThroughOnboardingIfNeeded(_ app: XCUIApplication) {
+        let serverField = app.textFields["login_server_field"]
+        if serverField.exists {
+            return
+        }
+
+        for _ in 0..<OnboardingScreenCount.total {
+            let onboardingButton = app.buttons["onboarding_primary_cta"]
+            XCTAssertTrue(onboardingButton.waitForExistence(timeout: 5))
+            onboardingButton.tap()
+
+            if serverField.waitForExistence(timeout: 1.5) {
+                return
+            }
+        }
+
+        XCTFail("Expected onboarding to advance to the server entry step")
+    }
+}
+
+private enum OnboardingScreenCount {
+    static let total = 4
 }
 
 final class AppStoreScreenshotTests: XCTestCase {
@@ -197,6 +224,27 @@ final class AppStoreScreenshotTests: XCTestCase {
         XCTAssertTrue(playerScreen.waitForExistence(timeout: 12))
         sleep(2)
         capture(name: "player-native")
+    }
+
+    func testMockDetailShowsIOSCarouselChrome() throws {
+        let app = XCUIApplication()
+        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let firstPoster = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        ).firstMatch
+        XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
+
+        firstPoster.tap()
+
+        let carousel = app.scrollViews["detail_ios_top_carousel"].firstMatch
+        XCTAssertTrue(carousel.waitForExistence(timeout: 8))
+
+        let blurHeader = app.otherElements["detail_ios_blur_header"].firstMatch
+        XCTAssertTrue(blurHeader.exists)
     }
 
     private func openSection(named title: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {

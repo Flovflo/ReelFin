@@ -11,12 +11,20 @@ struct LoginView: View {
     @FocusState private var focusedField: LoginFocusField?
 
     private let onLogin: (UserSession) -> Void
+    private let settingsStore: SettingsStoreProtocol
+    private let imagePipeline: any ImagePipelineProtocol
 
-    @State private var phase: LoginPhase = .onboarding
+    @State private var phase: LoginPhase
     @State private var contentVisible = false
+    @State private var onboardingPageIndex: Int
 
     init(dependencies: ReelFinDependencies, onLogin: @escaping (UserSession) -> Void) {
+        let initialPhase = Self.initialPhase(settingsStore: dependencies.settingsStore)
         _viewModel = StateObject(wrappedValue: LoginViewModel(dependencies: dependencies))
+        _phase = State(initialValue: initialPhase)
+        _onboardingPageIndex = State(initialValue: Self.initialOnboardingPageIndex)
+        settingsStore = dependencies.settingsStore
+        imagePipeline = dependencies.imagePipeline
         self.onLogin = onLogin
     }
 
@@ -25,28 +33,33 @@ struct LoginView: View {
             let metrics = LoginLayoutMetrics(size: proxy.size, sizeClass: horizontalSizeClass)
 
             ZStack {
-                OnboardingBackgroundView(
-                    accent: OnboardingPalette.iceBlue,
-                    glow: OnboardingPalette.moonstone,
-                    compact: metrics.isCompact
-                )
+                backgroundView(compact: metrics.isCompact)
 
-                VStack(spacing: 0) {
-                    LoginChromeView(
-                        canGoBack: canGoBack,
-                        onBack: handleBack
-                    )
-                    .padding(.top, proxy.safeAreaInsets.top + metrics.topPadding)
+                Group {
+                    if phase == .onboarding || phase == .serverEntry {
+                        stageContent(metrics: metrics)
+                            .frame(maxWidth: stageWidth(for: metrics))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        VStack(spacing: 0) {
+                            LoginChromeView(
+                                compact: metrics.isCompact,
+                                canGoBack: canGoBack,
+                                onBack: handleBack
+                            )
+                            .padding(.top, proxy.safeAreaInsets.top + metrics.topPadding)
 
-                    Spacer(minLength: metrics.topSpacer)
+                            Spacer(minLength: metrics.topSpacer)
 
-                    stageContent(metrics: metrics)
-                        .frame(maxWidth: metrics.contentWidth)
+                            stageContent(metrics: metrics)
+                                .frame(maxWidth: stageWidth(for: metrics))
 
-                    Spacer(minLength: metrics.bottomSpacer)
+                            Spacer(minLength: metrics.bottomSpacer)
+                        }
+                        .padding(.horizontal, metrics.horizontalPadding)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    }
                 }
-                .padding(.horizontal, metrics.horizontalPadding)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .opacity(contentVisible ? 1 : 0)
                 .offset(y: contentVisible ? 0 : 12)
             }
@@ -55,8 +68,6 @@ struct LoginView: View {
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
         .onAppear {
-            applyDebugOverridesIfNeeded()
-
             guard !contentVisible else { return }
             withAnimation(entranceAnimation) {
                 contentVisible = true
@@ -67,9 +78,24 @@ struct LoginView: View {
         }
     }
 
+    @ViewBuilder
+    private func backgroundView(compact: Bool) -> some View {
+        if phase == .onboarding || phase == .serverEntry {
+            TemplateOnboardingBackgroundView(compact: compact)
+        } else {
+            OnboardingBackgroundView(
+                accent: OnboardingPalette.blue,
+                glow: OnboardingPalette.violet,
+                compact: compact
+            )
+        }
+    }
+
     private var canGoBack: Bool {
         switch phase {
-        case .onboarding, .serverEntry:
+        case .onboarding:
+            return false
+        case .serverEntry:
             return false
         case .credentials, .submitting:
             return true
@@ -89,8 +115,17 @@ struct LoginView: View {
     @ViewBuilder
     private func stageContent(metrics: LoginLayoutMetrics) -> some View {
         switch phase {
-        case .onboarding, .serverEntry:
-            ServerEntryStageView(
+        case .onboarding:
+            PremiumOnboardingStageView(
+                currentPage: onboardingPageIndex,
+                onPageChange: { onboardingPageIndex = $0 },
+                onComplete: completeOnboardingAndEnterServer
+            )
+            .transition(stageTransition)
+        case .serverEntry:
+            ConnectionLandingShowcaseView(
+                compact: metrics.isCompact,
+                imagePipeline: imagePipeline,
                 serverURLText: $viewModel.serverURLText,
                 focusedField: $focusedField,
                 hasSavedServer: viewModel.hasSavedServer,
@@ -98,8 +133,6 @@ struct LoginView: View {
                 serverMessage: viewModel.serverMessage,
                 serverErrorMessage: viewModel.serverErrorMessage,
                 canContinue: viewModel.canAdvanceFromServer,
-                titleSize: metrics.titleSize,
-                bodySize: metrics.bodySize,
                 onContinue: continueFromServer
             )
             .transition(stageTransition)
@@ -123,6 +156,15 @@ struct LoginView: View {
                 bodySize: metrics.formBodySize
             )
             .transition(stageTransition)
+        }
+    }
+
+    private func stageWidth(for metrics: LoginLayoutMetrics) -> CGFloat {
+        switch phase {
+        case .onboarding, .serverEntry:
+            return metrics.onboardingWidth
+        case .credentials, .submitting, .success:
+            return metrics.contentWidth
         }
     }
 
@@ -195,15 +237,21 @@ struct LoginView: View {
         case .onboarding:
             break
         case .serverEntry:
-            focusedField = nil
-            transition(to: .onboarding)
+            break
         case .credentials, .submitting:
             viewModel.clearAuthError()
-            transition(to: .onboarding)
+            transition(to: .serverEntry)
             focus(.serverURL)
         case .success:
             break
         }
+    }
+
+    private func completeOnboardingAndEnterServer() {
+        settingsStore.hasCompletedOnboarding = true
+        settingsStore.completedOnboardingVersion = ReelFinOnboardingContent.version
+        transition(to: .serverEntry)
+        focus(.serverURL)
     }
 
     private func transition(to newPhase: LoginPhase) {
@@ -226,10 +274,22 @@ struct LoginView: View {
         }
     }
 
-    private func applyDebugOverridesIfNeeded() {
-        guard phase == .onboarding else { return }
-        guard let overridePage = LoginDebugOptions.onboardingPage else { return }
-        guard overridePage == 0 else { return }
+    private static func initialPhase(settingsStore: SettingsStoreProtocol) -> LoginPhase {
+        if LoginDebugOptions.forceOnboarding {
+            return .onboarding
+        }
+
+        if settingsStore.completedOnboardingVersion >= ReelFinOnboardingContent.version {
+            return .serverEntry
+        }
+
+        return .onboarding
+    }
+
+    private static var initialOnboardingPageIndex: Int {
+        guard let overridePage = LoginDebugOptions.onboardingPage else { return 0 }
+        let lastIndex = max(ReelFinOnboardingContent.items.count - 1, 0)
+        return min(max(overridePage, 0), lastIndex)
     }
 }
 
@@ -242,6 +302,8 @@ private enum LoginPhase {
 }
 
 private enum LoginDebugOptions {
+    static let forceOnboarding = ProcessInfo.processInfo.arguments.contains("-reelfin-force-onboarding")
+
     static var onboardingPage: Int? {
         let arguments = ProcessInfo.processInfo.arguments
 
@@ -261,6 +323,7 @@ private enum LoginDebugOptions {
 private struct LoginLayoutMetrics {
     let isCompact: Bool
     let contentWidth: CGFloat
+    let onboardingWidth: CGFloat
     let horizontalPadding: CGFloat
     let topPadding: CGFloat
     let topSpacer: CGFloat
@@ -274,11 +337,12 @@ private struct LoginLayoutMetrics {
         let compact = size.width < 720 || sizeClass != .regular
         isCompact = compact
         contentWidth = compact ? min(size.width - 32, 430) : min(size.width - 120, 500)
+        onboardingWidth = compact ? min(size.width - 24, 520) : min(size.width - 120, 680)
         horizontalPadding = compact ? 16 : 24
-        topPadding = compact ? 10 : 18
-        topSpacer = compact ? max(44, size.height * 0.16) : max(52, size.height * 0.15)
+        topPadding = compact ? 14 : 18
+        topSpacer = compact ? max(28, size.height * 0.11) : max(40, size.height * 0.12)
         bottomSpacer = compact ? 28 : 44
-        titleSize = compact ? 34 : 40
+        titleSize = compact ? 32 : 40
         bodySize = compact ? 17 : 18
         formTitleSize = compact ? 30 : 36
         formBodySize = compact ? 16 : 17
@@ -286,6 +350,7 @@ private struct LoginLayoutMetrics {
 }
 
 private struct LoginChromeView: View {
+    let compact: Bool
     let canGoBack: Bool
     let onBack: () -> Void
 
@@ -293,27 +358,29 @@ private struct LoginChromeView: View {
         HStack(spacing: 16) {
             HStack(spacing: 10) {
                 Text("ReelFin")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: compact ? 18 : 20, weight: .bold))
                     .foregroundStyle(OnboardingPalette.primaryText)
 
-                Text("for Jellyfin")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(OnboardingPalette.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background {
-                        if #available(iOS 26.0, *) {
-                            Color.clear
-                                .glassEffect(.regular, in: .capsule)
-                        } else {
-                            Capsule(style: .continuous)
-                                .fill(.ultraThinMaterial)
+                if !compact {
+                    Text("for Jellyfin")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OnboardingPalette.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background {
+                            if #available(iOS 26.0, *) {
+                                Color.clear
+                                    .glassEffect(.regular, in: .capsule)
+                            } else {
+                                Capsule(style: .continuous)
+                                    .fill(.ultraThinMaterial)
+                            }
                         }
-                    }
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                    }
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        }
+                }
             }
 
             Spacer(minLength: 0)

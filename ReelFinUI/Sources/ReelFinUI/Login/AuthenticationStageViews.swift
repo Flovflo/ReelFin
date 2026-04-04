@@ -139,7 +139,7 @@ struct SuccessStageView: View {
     let bodySize: CGFloat
 
     var body: some View {
-        GlassPanel(cornerRadius: 34, tint: OnboardingPalette.teal.opacity(0.08), padding: 32) {
+        GlassPanel(cornerRadius: 34, tint: OnboardingPalette.mint.opacity(0.08), padding: 32) {
             VStack(alignment: .center, spacing: 18) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 56, weight: .medium))

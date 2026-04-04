@@ -2,28 +2,76 @@
 import SwiftUI
 
 enum OnboardingPalette {
-    static let backgroundTop = Color(red: 0.046, green: 0.052, blue: 0.072)
-    static let backgroundBottom = Color(red: 0.010, green: 0.012, blue: 0.018)
-    static let primaryText = Color.white.opacity(0.96)
-    static let secondaryText = Color.white.opacity(0.72)
+    static let backgroundTop = Color(red: 0.060, green: 0.030, blue: 0.180)
+    static let backgroundBottom = Color(red: 0.040, green: 0.460, blue: 0.150)
+    static let primaryText = Color.white.opacity(0.98)
+    static let secondaryText = Color.white.opacity(0.82)
     static let tertiaryText = Color.white.opacity(0.54)
-    static let glowWhite = Color.white.opacity(0.84)
-    static let panelTint = Color.white.opacity(0.028)
-    static let panelStroke = Color.white.opacity(0.06)
-    static let edgeHighlight = Color.white.opacity(0.18)
-    static let buttonText = Color.white.opacity(0.97)
-    static let buttonTint = Color(red: 0.430, green: 0.480, blue: 0.760)
-    static let buttonGlow = Color(red: 0.660, green: 0.720, blue: 0.960)
-    static let chromeFill = Color.white.opacity(0.04)
-    static let shadow = Color.black.opacity(0.18)
+    static let glowWhite = Color.white.opacity(0.92)
+    static let panelTint = Color.black.opacity(0.42)
+    static let panelStroke = Color.white.opacity(0.08)
+    static let shadow = Color.black.opacity(0.22)
 
-    static let iceBlue = Color(red: 0.520, green: 0.670, blue: 0.860)
-    static let moonstone = Color(red: 0.760, green: 0.830, blue: 0.940)
-    static let steel = Color(red: 0.470, green: 0.610, blue: 0.790)
-    static let teal = Color(red: 0.450, green: 0.740, blue: 0.760)
-    static let violet = Color(red: 0.520, green: 0.560, blue: 0.820)
-    static let gold = Color(red: 0.820, green: 0.700, blue: 0.470)
-    static let brass = Color(red: 0.620, green: 0.520, blue: 0.330)
+    static let blue = Color(red: 0.110, green: 0.550, blue: 1.000)
+    static let pink = Color(red: 1.000, green: 0.360, blue: 0.440)
+    static let violet = Color(red: 0.520, green: 0.460, blue: 1.000)
+    static let lime = Color(red: 0.690, green: 0.930, blue: 0.250)
+    static let orange = Color(red: 1.000, green: 0.610, blue: 0.280)
+    static let mint = Color(red: 0.260, green: 0.850, blue: 0.620)
 }
 
+enum ReelFinOnboardingContent {
+    static let tint = OnboardingPalette.blue
+    static let version = 2
+
+    static let items: [iOS26StyleOnBoarding.Item] = [
+        .init(
+            id: 0,
+            title: "Native Jellyfin",
+            subtitle: "Open Home, Continue Watching,\nand jump back in instantly.",
+            screenshot: UIImage(named: "reelfin-onboarding-home.png")
+        ),
+        .init(
+            id: 1,
+            title: "Fluid Library",
+            subtitle: "Browse movies and shows with\nfast filters and native controls.",
+            screenshot: UIImage(named: "reelfin-onboarding-library.png"),
+            zoomScale: 1.14,
+            zoomAnchor: .init(x: 0.5, y: 0.36)
+        ),
+        .init(
+            id: 2,
+            title: "Better Details",
+            subtitle: "Cast, actions, and playback info\nstay right where you expect them.",
+            screenshot: UIImage(named: "reelfin-onboarding-detail.png"),
+            zoomScale: 1.16,
+            zoomAnchor: .init(x: 0.5, y: 0.34)
+        ),
+        .init(
+            id: 3,
+            title: "Ready to Connect",
+            subtitle: "Set your preferences, sign in,\nand start watching.",
+            screenshot: UIImage(named: "reelfin-onboarding-settings.png"),
+            zoomScale: 1.12,
+            zoomAnchor: .init(x: 0.5, y: 0.56)
+        )
+    ]
+}
+
+enum ReelFinShowcaseContent {
+    static let accent = OnboardingPalette.blue
+    static let glow = OnboardingPalette.violet
+    static let posters = [
+        "onboarding-poster-1.jpg",
+        "onboarding-poster-3.jpg",
+        "onboarding-poster-2.jpg",
+        "onboarding-poster-4.jpg",
+        "onboarding-poster-5.webp"
+    ]
+    static let highlights = [
+        "Native playback",
+        "Fast browsing",
+        "Apple TV ready"
+    ]
+}
 #endif

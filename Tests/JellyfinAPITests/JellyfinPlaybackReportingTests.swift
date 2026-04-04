@@ -90,6 +90,8 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
 private final class PlaybackReportingSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
+    var hasCompletedOnboarding = false
+    var completedOnboardingVersion = 0
 
     init(serverConfiguration: ServerConfiguration?, lastSession: UserSession?) {
         self.serverConfiguration = serverConfiguration

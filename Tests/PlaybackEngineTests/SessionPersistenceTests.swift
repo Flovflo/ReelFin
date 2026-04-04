@@ -39,6 +39,8 @@ final class SessionPersistenceTests: XCTestCase {
 private final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
+    var hasCompletedOnboarding = false
+    var completedOnboardingVersion = 0
 
     init(serverConfiguration: ServerConfiguration?, lastSession: UserSession?) {
         self.serverConfiguration = serverConfiguration
