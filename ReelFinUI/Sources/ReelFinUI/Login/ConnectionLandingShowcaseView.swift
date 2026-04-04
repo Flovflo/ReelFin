@@ -43,11 +43,6 @@ struct ConnectionLandingShowcaseView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    OnboardingHighlightsRow(
-                        highlights: ReelFinShowcaseContent.highlights,
-                        accent: ReelFinShowcaseContent.accent
-                    )
-
                     if hasSavedServer {
                         StageFeedbackChip(text: "Saved server ready", tint: OnboardingPalette.glowWhite)
                     }

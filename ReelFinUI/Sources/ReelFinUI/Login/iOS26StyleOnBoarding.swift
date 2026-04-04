@@ -113,19 +113,24 @@ struct iOS26StyleOnBoarding: View {
         .clipShape(shape)
         .overlay {
             if screenshotSize != .zero && !hideBezels {
-                /// Device Frame UI
-                ZStack {
-                    shape
-                        .stroke(.white, lineWidth: 6)
+                ZStack(alignment: .top) {
+                    /// Device Frame UI
+                    ZStack {
+                        shape
+                            .stroke(.white, lineWidth: 6)
 
-                    shape
-                        .stroke(.black, lineWidth: 4)
+                        shape
+                            .stroke(.black, lineWidth: 4)
 
-                    shape
-                        .stroke(.black, lineWidth: 6)
-                        .padding(4)
+                        shape
+                            .stroke(.black, lineWidth: 6)
+                            .padding(4)
+                    }
+                    .padding(-7)
+
+                    DynamicIslandView()
+                        .padding(.top, dynamicIslandTopInset)
                 }
-                .padding(-7)
             }
         }
         .frame(
@@ -258,6 +263,19 @@ struct iOS26StyleOnBoarding: View {
             .ignoresSafeArea()
     }
 
+    @ViewBuilder
+    func DynamicIslandView() -> some View {
+        Capsule(style: .continuous)
+            .fill(Color.black.opacity(0.98))
+            .frame(width: dynamicIslandWidth, height: dynamicIslandHeight)
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.07), lineWidth: 0.8)
+            }
+            .shadow(color: .black.opacity(0.35), radius: 10, y: 2)
+            .allowsHitTesting(false)
+    }
+
     var deviceCornerRadius: CGFloat {
         if let imageSize = items.first?.screenshot?.size {
             let ratio = screenshotSize.height / imageSize.height
@@ -266,6 +284,18 @@ struct iOS26StyleOnBoarding: View {
         }
 
         return 0
+    }
+
+    var dynamicIslandWidth: CGFloat {
+        min(max(screenshotSize.width * 0.34, 88), 126)
+    }
+
+    var dynamicIslandHeight: CGFloat {
+        min(max(screenshotSize.width * 0.09, 24), 34)
+    }
+
+    var dynamicIslandTopInset: CGFloat {
+        min(max(screenshotSize.height * 0.027, 10), 18)
     }
 
     struct Item: Identifiable, Hashable {

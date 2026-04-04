@@ -22,7 +22,7 @@ enum OnboardingPalette {
 
 enum ReelFinOnboardingContent {
     static let tint = OnboardingPalette.blue
-    static let version = 2
+    static let version = 3
 
     static let items: [iOS26StyleOnBoarding.Item] = [
         .init(
@@ -67,11 +67,6 @@ enum ReelFinShowcaseContent {
         "onboarding-poster-2.jpg",
         "onboarding-poster-4.jpg",
         "onboarding-poster-5.webp"
-    ]
-    static let highlights = [
-        "Native playback",
-        "Fast browsing",
-        "Apple TV ready"
     ]
 }
 #endif
