@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct TVTopNavigationBar: View {
+    private let railInset: CGFloat = 6
+
     @Namespace private var highlightNamespace
     @State private var visualHighlightedDestination: TVRootDestination?
 
@@ -9,22 +11,27 @@ struct TVTopNavigationBar: View {
     let appearance: TVTopNavigationAppearance
 
     var body: some View {
+        barContent
+        .onAppear { syncVisualHighlight(animated: false) }
+        .onChange(of: focusedDestination.wrappedValue) { _, _ in
+            syncVisualHighlight()
+        }
+        .onChange(of: selectedDestination) { _, _ in
+            syncVisualHighlight()
+        }
+        .animation(.easeInOut(duration: 0.32), value: appearance)
+    }
+
+    private var barContent: some View {
         navigationItems
-            .padding(.horizontal, ReelFinTheme.tvTopNavigationHorizontalPadding)
-            .padding(.vertical, 6)
+            .padding(.horizontal, railInset)
+            .padding(.vertical, railInset)
+            .fixedSize(horizontal: true, vertical: false)
             .frame(height: ReelFinTheme.tvTopNavigationBarHeight)
-            .frame(maxWidth: ReelFinTheme.tvTopNavigationBarMaxWidth)
             .background(railBackground)
             .overlay(railStroke)
+            .clipShape(Capsule(style: .continuous))
             .shadow(color: .black.opacity(0.30), radius: 28, x: 0, y: 12)
-            .onAppear { syncVisualHighlight(animated: false) }
-            .onChange(of: focusedDestination.wrappedValue) { _, _ in
-                syncVisualHighlight()
-            }
-            .onChange(of: selectedDestination) { _, _ in
-                syncVisualHighlight()
-            }
-            .animation(.easeInOut(duration: 0.32), value: appearance)
     }
 
     private var navigationItems: some View {
@@ -45,7 +52,6 @@ struct TVTopNavigationBar: View {
                 )
             }
         }
-        .padding(.horizontal, 8)
     }
 
     private var railBackground: some View {
@@ -53,7 +59,7 @@ struct TVTopNavigationBar: View {
             if #available(tvOS 26.0, *) {
                 Color.clear
                     .glassEffect(
-                        Glass.regular.tint(appearance.railTint.color(opacity: 0.20)),
+                        Glass.regular.tint(appearance.railTint.color(opacity: 0.22)),
                         in: .capsule
                     )
             } else {

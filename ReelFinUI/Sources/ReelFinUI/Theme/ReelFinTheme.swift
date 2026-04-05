@@ -216,7 +216,7 @@ public enum TVMotion {
             case .heroButton:
                 return 1.03
             case .navItem:
-                return 1.02
+                return 1
             case .chip:
                 return 1.03
             case .posterCard:
