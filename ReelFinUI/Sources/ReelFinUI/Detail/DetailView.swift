@@ -256,6 +256,7 @@ struct DetailView: View {
     private func tvHeroSection(heroHeight: CGFloat, viewportSize: CGSize, safeAreaTop _: CGFloat) -> some View {
         let neighbors = heroNeighbors
         let sideWidth = tvHeroSidePreviewWidth(for: viewportSize)
+        let metadataWidth = resolvedMetadataWidth(for: viewportSize)
 
         return HStack(spacing: 18) {
             if let previous = neighbors.previous {
@@ -289,16 +290,16 @@ struct DetailView: View {
                         }
                     }
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 44, style: .continuous))
 
-                RoundedRectangle(cornerRadius: 40, style: .continuous)
+                RoundedRectangle(cornerRadius: 44, style: .continuous)
                     .fill(
                         LinearGradient(
                             stops: [
-                                .init(color: .white.opacity(0.06), location: 0),
-                                .init(color: .clear, location: 0.22),
-                                .init(color: .clear, location: 0.68),
-                                .init(color: .black.opacity(0.12), location: 1)
+                                .init(color: .white.opacity(0.08), location: 0),
+                                .init(color: .clear, location: 0.20),
+                                .init(color: .clear, location: 0.58),
+                                .init(color: .black.opacity(0.22), location: 1)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -306,37 +307,42 @@ struct DetailView: View {
                     )
                     .allowsHitTesting(false)
 
-                HeroMetadataColumn(
-                    item: viewModel.detail.item,
-                    preferredSource: viewModel.preferredPlaybackSource,
-                    optimizationStatus: viewModel.playbackOptimizationStatus,
-                    playButtonLabel: viewModel.playButtonLabel,
-                    playbackStatusText: viewModel.playbackStatusText,
-                    progress: resolvedHeroProgress,
-                    isLoadingPlayback: isLoadingPlayback || viewModel.isWarmingPlayback,
-                    isInWatchlist: viewModel.isInWatchlist,
-                    isWatched: viewModel.detail.item.isPlayed || viewModel.isWatched,
-                    horizontalPadding: 0,
-                    contentWidth: min(viewportSize.width * 0.38, 640),
-                    animateIn: hasAnimatedIn,
-                    focusedAction: $focusedHeroAction,
-                    onPlay: { startPlayback() },
-                    onToggleWatchlist: viewModel.toggleWatchlist,
-                    onToggleWatched: viewModel.toggleWatched
-                )
-                .padding(.horizontal, 56)
-                .padding(.top, 76)
-                .padding(.bottom, 56)
+                VStack(alignment: .leading, spacing: 0) {
+                    Spacer(minLength: 0)
+
+                    TVDetailHeroMetadataPanel(width: metadataWidth) {
+                        HeroMetadataColumn(
+                            item: viewModel.detail.item,
+                            preferredSource: viewModel.preferredPlaybackSource,
+                            optimizationStatus: viewModel.playbackOptimizationStatus,
+                            playButtonLabel: viewModel.playButtonLabel,
+                            playbackStatusText: viewModel.playbackStatusText,
+                            progress: resolvedHeroProgress,
+                            isLoadingPlayback: isLoadingPlayback || viewModel.isWarmingPlayback,
+                            isInWatchlist: viewModel.isInWatchlist,
+                            isWatched: viewModel.detail.item.isPlayed || viewModel.isWatched,
+                            horizontalPadding: 0,
+                            contentWidth: max(metadataWidth - 72, 360),
+                            animateIn: hasAnimatedIn,
+                            focusedAction: $focusedHeroAction,
+                            onPlay: { startPlayback() },
+                            onToggleWatchlist: viewModel.toggleWatchlist,
+                            onToggleWatched: viewModel.toggleWatched
+                        )
+                    }
+                    .padding(.horizontal, 48)
+                    .padding(.bottom, 44)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
             .frame(maxWidth: .infinity)
             .frame(height: heroHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 44, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 40, style: .continuous)
-                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 44, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.42), radius: 34, x: 0, y: 22)
+            .shadow(color: .black.opacity(0.48), radius: 40, x: 0, y: 24)
 
             if let next = neighbors.next {
                 TVDetailContextPreviewCard(
@@ -757,20 +763,113 @@ private struct TVDetailScreen<Hero: View, Supporting: View>: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            ReelFinTheme.pageGradient
+            TVDetailAmbientBackground()
                 .ignoresSafeArea()
 
             ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: sectionSpacing) {
                     hero()
+                        .padding(.top, 20)
 
                     supportingContent()
                         .padding(.horizontal, horizontalPadding)
                         .padding(.bottom, 96)
                 }
             }
-            .ignoresSafeArea(edges: .top)
         }
+    }
+}
+
+private struct TVDetailAmbientBackground: View {
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.020, green: 0.024, blue: 0.038),
+                    Color(red: 0.010, green: 0.012, blue: 0.022),
+                    Color.black
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [ReelFinTheme.onboardingBlue.opacity(0.16), .clear],
+                center: .topLeading,
+                startRadius: 24,
+                endRadius: 640
+            )
+            .blur(radius: 28)
+            .offset(x: -100, y: -140)
+
+            RadialGradient(
+                colors: [ReelFinTheme.onboardingViolet.opacity(0.12), .clear],
+                center: .topTrailing,
+                startRadius: 24,
+                endRadius: 620
+            )
+            .blur(radius: 34)
+            .offset(x: 80, y: -120)
+
+            LinearGradient(
+                colors: [Color.white.opacity(0.04), .clear, Color.black.opacity(0.48)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+}
+
+private struct TVDetailHeroMetadataPanel<Content: View>: View {
+    let width: CGFloat
+    let content: Content
+
+    init(width: CGFloat, @ViewBuilder content: () -> Content) {
+        self.width = width
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(.horizontal, 34)
+            .padding(.vertical, 30)
+            .frame(width: width, alignment: .leading)
+            .background {
+                ZStack {
+                    Color.clear.reelFinGlassRoundedRect(
+                        cornerRadius: 34,
+                        tint: Color.white.opacity(0.045),
+                        stroke: Color.white.opacity(0.10),
+                        shadowOpacity: 0.22,
+                        shadowRadius: 30,
+                        shadowYOffset: 16
+                    )
+
+                    RoundedRectangle(cornerRadius: 34, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.05),
+                                    Color.black.opacity(0.12),
+                                    Color.black.opacity(0.04)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+
+                    RoundedRectangle(cornerRadius: 34, style: .continuous)
+                        .fill(
+                            RadialGradient(
+                                colors: [ReelFinTheme.onboardingBlue.opacity(0.10), .clear],
+                                center: .topLeading,
+                                startRadius: 10,
+                                endRadius: 260
+                            )
+                        )
+                        .blur(radius: 24)
+                }
+            }
     }
 }
 #endif
@@ -2030,9 +2129,14 @@ private struct TVDetailContextPreviewCard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: overlayAlignment)
         }
         .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .scaleEffect(isFocused ? 1.05 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.22), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 16 : 10)
+        .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .stroke(Color.white.opacity(isFocused ? 0.16 : 0.08), lineWidth: 1)
+        }
+        .opacity(isFocused ? 1 : 0.88)
+        .scaleEffect(isFocused ? 1.04 : 0.98)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 16 : 10)
         .focusable(true, interactions: .activate)
         .onTapGesture(perform: action)
         .focusEffectDisabled(true)
@@ -2301,7 +2405,13 @@ private struct HeroMetadataColumn: View {
 
     private var titleFont: Font {
 #if os(tvOS)
-        return .system(size: item.name.count > 26 ? 70 : 84, weight: .bold, design: .rounded)
+        let baseSize: CGFloat
+        if layout == .centered {
+            baseSize = item.name.count > 26 ? 68 : 80
+        } else {
+            baseSize = item.name.count > 26 ? 62 : 74
+        }
+        return .system(size: baseSize, weight: .bold, design: .rounded)
 #else
         let baseSize: CGFloat = layout == .centered ? (item.name.count > 22 ? 46 : 58) : (item.name.count > 32 ? 38 : 48)
         return .system(size: baseSize, weight: .bold, design: .rounded)
@@ -2342,7 +2452,7 @@ private struct HeroMetadataColumn: View {
 
     private var verticalSpacing: CGFloat {
 #if os(tvOS)
-        return 18
+        return layout == .centered ? 18 : 16
 #else
         return layout == .centered ? 16 : 18
 #endif

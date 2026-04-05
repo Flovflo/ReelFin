@@ -3,6 +3,10 @@ import Observation
 import Shared
 import SwiftUI
 
+enum ReelFinOnboardingVersion {
+    static let current = 3
+}
+
 @MainActor
 @Observable
 final class RootViewModel {
@@ -16,7 +20,7 @@ final class RootViewModel {
     }
 
     func bootstrap() async {
-        guard dependencies.settingsStore.completedOnboardingVersion >= ReelFinOnboardingContent.version else {
+        guard dependencies.settingsStore.completedOnboardingVersion >= ReelFinOnboardingVersion.current else {
             isAuthenticated = false
             didBootstrap = true
             return

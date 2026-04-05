@@ -22,7 +22,7 @@ enum OnboardingPalette {
 
 enum ReelFinOnboardingContent {
     static let tint = OnboardingPalette.blue
-    static let version = 3
+    static let version = ReelFinOnboardingVersion.current
 
     static let items: [iOS26StyleOnBoarding.Item] = [
         .init(

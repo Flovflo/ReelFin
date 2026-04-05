@@ -290,7 +290,7 @@ final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
         serverConfiguration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
         lastSession = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
         hasCompletedOnboarding = authenticated
-        completedOnboardingVersion = authenticated ? ReelFinOnboardingContent.version : 0
+        completedOnboardingVersion = authenticated ? ReelFinOnboardingVersion.current : 0
     }
 }
 
