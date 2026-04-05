@@ -77,13 +77,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     }
 
     public func trim(keeping itemIDs: [String]) async {
-        var keep = Set(itemIDs)
-
-        let recentKeys = cache
-            .sorted { lhs, rhs in lhs.value.lastAccessDate > rhs.value.lastAccessDate }
-            .prefix(4)
-            .map(\.key)
-        keep.formUnion(recentKeys)
+        let keep = Set(itemIDs)
 
         for key in inFlight.keys where !keep.contains(key) {
             inFlight[key]?.cancel()

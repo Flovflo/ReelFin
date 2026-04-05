@@ -112,14 +112,16 @@ public actor PlaybackCoordinator {
 
         let selectionInterval = SignpostInterval(signposter: Signpost.playbackSelection, name: "playback_url_selection")
 
-        if let selection = select(
+        if let selection = try await select(
             itemID: itemID,
             sources: initialSources,
             configuration: configuration,
             session: session,
             allowTranscoding: initialOptions.allowTranscoding,
             transcodeProfile: transcodeProfile,
-            maxBitrate: initialOptionBitrate
+            maxBitrate: initialOptionBitrate,
+            mode: initialOptions.mode,
+            startTimeTicks: startTimeTicks
         ) {
             selectionInterval.end(name: "playback_url_selection", message: "selection_complete")
             return selection
@@ -138,14 +140,16 @@ public actor PlaybackCoordinator {
             let fallbackSources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: fallbackOptions)
             fallbackRequest.end(name: "playback_info_request_fallback", message: "fallback_sources_received")
 
-            if let fallbackSelection = select(
+            if let fallbackSelection = try await select(
                 itemID: itemID,
                 sources: fallbackSources,
                 configuration: configuration,
                 session: session,
                 allowTranscoding: true,
                 transcodeProfile: transcodeProfile,
-                maxBitrate: fallbackBitrate
+                maxBitrate: fallbackBitrate,
+                mode: fallbackOptions.mode,
+                startTimeTicks: startTimeTicks
             ) {
                 selectionInterval.end(name: "playback_url_selection", message: "fallback_selection_complete")
                 return fallbackSelection
@@ -163,8 +167,11 @@ public actor PlaybackCoordinator {
         session: UserSession,
         allowTranscoding: Bool,
         transcodeProfile: TranscodeURLProfile,
-        maxBitrate: Int
-    ) -> PlaybackAssetSelection? {
+        maxBitrate: Int,
+        mode: PlaybackMode,
+        startTimeTicks: Int64?,
+        allowDedicatedProfileRefetch: Bool = true
+    ) async throws -> PlaybackAssetSelection? {
         guard let decision = decisionEngine.decide(
             itemID: itemID,
             sources: sources,
@@ -233,6 +240,25 @@ public actor PlaybackCoordinator {
             source: source,
             url: assetURL
         )
+
+        if allowDedicatedProfileRefetch,
+           shouldRefetchDedicatedSources(
+               route: decision.route,
+               requestedProfile: requestedProfile,
+               effectiveProfile: effectiveProfile
+           ),
+           let dedicatedSelection = try await selectDedicatedProfileSelection(
+               itemID: itemID,
+               configuration: configuration,
+               session: session,
+               allowTranscoding: allowTranscoding,
+               transcodeProfile: effectiveProfile,
+               maxBitrate: maxBitrate,
+               mode: mode,
+               startTimeTicks: startTimeTicks
+           ) {
+            return dedicatedSelection
+        }
 
         if !isDirectPlayRoute(decision.route), effectiveProfile != .serverDefault {
             let effectiveBitrate: Int
@@ -304,6 +330,54 @@ public actor PlaybackCoordinator {
         return false
     }
 
+    private func shouldRefetchDedicatedSources(
+        route: PlaybackRoute,
+        requestedProfile: TranscodeURLProfile,
+        effectiveProfile: TranscodeURLProfile
+    ) -> Bool {
+        guard requestedProfile != effectiveProfile else { return false }
+        switch route {
+        case .directPlay, .nativeBridge:
+            return false
+        case .remux, .transcode:
+            return true
+        }
+    }
+
+    private func selectDedicatedProfileSelection(
+        itemID: String,
+        configuration: ServerConfiguration,
+        session: UserSession,
+        allowTranscoding: Bool,
+        transcodeProfile: TranscodeURLProfile,
+        maxBitrate: Int,
+        mode: PlaybackMode,
+        startTimeTicks: Int64?
+    ) async throws -> PlaybackAssetSelection? {
+        var options = playbackOptions(
+            mode: mode,
+            maxBitrate: maxBitrate,
+            transcodeProfile: transcodeProfile,
+            configuration: configuration
+        )
+        options.startTimeTicks = startTimeTicks
+
+        let dedicatedSources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: options)
+        let dedicatedBitrate = options.maxStreamingBitrate ?? maxBitrate
+        return try await select(
+            itemID: itemID,
+            sources: dedicatedSources,
+            configuration: configuration,
+            session: session,
+            allowTranscoding: allowTranscoding,
+            transcodeProfile: transcodeProfile,
+            maxBitrate: dedicatedBitrate,
+            mode: options.mode,
+            startTimeTicks: startTimeTicks,
+            allowDedicatedProfileRefetch: false
+        )
+    }
+
     private func forcedProfileIfNeeded(
         route: PlaybackRoute,
         configuration: ServerConfiguration,
@@ -321,6 +395,13 @@ public actor PlaybackCoordinator {
         #else
         return false
         #endif
+    }
+
+    nonisolated static func requiresCompatibilityH264Transcode(source: MediaSource) -> Bool {
+        let codec = source.normalizedVideoCodec
+        guard !codec.isEmpty else { return false }
+        guard !isH264Family(codec), !isHEVCFamily(codec) else { return false }
+        return true
     }
 
     private func playbackOptions(
@@ -583,6 +664,13 @@ public actor PlaybackCoordinator {
         guard case .transcode = route else { return requestedProfile }
         guard requestedProfile == .serverDefault else { return requestedProfile }
 
+        // Legacy video codecs exposed through Jellyfin's generic serverDefault HLS
+        // path are prone to "readyToPlay but never decodes a frame" failures on AVPlayer.
+        // Prefer a real H.264 transcode over stream-copying codecs like AVI/MPEG4.
+        if Self.requiresCompatibilityH264Transcode(source: source) {
+            return .forceH264Transcode
+        }
+
         // Apple-safe default for problematic sources:
         // MKV-family + HEVC/DV should avoid initial video stream copy.
         let container = source.normalizedContainer
@@ -634,6 +722,21 @@ public actor PlaybackCoordinator {
     private static func isDolbyVisionCodec(_ codec: String) -> Bool {
         let lower = codec.lowercased()
         return lower.contains("dvhe") || lower.contains("dvh1") || lower.contains("dovi")
+    }
+
+    private static func isH264Family(_ codec: String) -> Bool {
+        let lower = codec.lowercased()
+        return lower.contains("h264") || lower.contains("avc1")
+    }
+
+    private static func isHEVCFamily(_ codec: String) -> Bool {
+        let lower = codec.lowercased()
+        return lower.contains("hevc")
+            || lower.contains("h265")
+            || lower.contains("hvc1")
+            || lower.contains("hev1")
+            || lower.contains("dvhe")
+            || lower.contains("dvh1")
     }
 
     /// Detect Dolby Vision from broader source metadata (videoRange, videoProfile, videoRangeType).

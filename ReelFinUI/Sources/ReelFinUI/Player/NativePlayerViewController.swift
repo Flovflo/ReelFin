@@ -108,8 +108,17 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         private weak var controller: AVPlayerViewController?
 #if os(iOS)
         private var didReattachForCurrentItem = false
+        private var observedItemIdentifier: ObjectIdentifier?
+        private var reattachGeneration: UInt = 0
+        private var reattachWorkItem: DispatchWorkItem?
         private let skipOverlayView = PlaybackSkipOverlayView()
 #endif
+
+        deinit {
+#if os(iOS)
+            reattachWorkItem?.cancel()
+#endif
+        }
 
 #if os(tvOS)
         func updateTransportBarMenu(
@@ -197,13 +206,17 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         func startObserving(player: AVPlayer, controller: AVPlayerViewController) {
             self.controller = controller
             #if os(iOS)
+            reattachWorkItem?.cancel()
             didReattachForCurrentItem = false
+            observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
             statusObservation = nil
 
             itemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] player, _ in
                 Task { @MainActor in
                     guard let self else { return }
+                    self.reattachWorkItem?.cancel()
                     self.didReattachForCurrentItem = false
+                    self.observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
                     self.observeItemStatus(player: player)
                 }
             }
@@ -218,40 +231,55 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 #if os(iOS)
         private func observeItemStatus(player: AVPlayer) {
             statusObservation = nil
-            guard let item = player.currentItem else { return }
+            guard let item = player.currentItem else {
+                observedItemIdentifier = nil
+                return
+            }
+
+            observedItemIdentifier = ObjectIdentifier(item)
 
             // If item is already ready, reattach immediately.
             if item.status == .readyToPlay {
-                reattachIfNeeded(player: player)
+                reattachIfNeeded(player: player, item: item)
                 return
             }
 
             statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                 guard item.status == .readyToPlay else { return }
                 Task { @MainActor in
-                    self?.reattachIfNeeded(player: player)
+                    self?.reattachIfNeeded(player: player, item: item)
                 }
             }
         }
 
-        private func reattachIfNeeded(player: AVPlayer) {
+        private func reattachIfNeeded(player: AVPlayer, item: AVPlayerItem) {
             guard !didReattachForCurrentItem else { return }
+            guard observedItemIdentifier == ObjectIdentifier(item) else { return }
+            guard let controller else { return }
             didReattachForCurrentItem = true
-            let controller = self.controller
+            reattachWorkItem?.cancel()
+            reattachGeneration &+= 1
+            let generation = reattachGeneration
 
             DispatchQueue.main.async {
-                guard let controller else { return }
                 // Detach and re-attach the player to force AVPlayerViewController
                 // to fully re-initialize its internal video rendering pipeline (XPC).
-                let rate = player.rate
                 controller.player = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak controller] in
-                    guard let controller else { return }
+                let workItem = DispatchWorkItem { [weak self, weak controller, weak item] in
+                    guard let self, let controller, let item else { return }
+                    guard self.reattachGeneration == generation else { return }
+                    guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
+                    guard player.currentItem === item else { return }
                     controller.player = player
-                    if rate > 0 {
+                    if PlaybackResumePolicy.shouldResumeAfterControllerReattach(
+                        playerRate: player.rate,
+                        timeControlStatus: player.timeControlStatus
+                    ) {
                         player.play()
                     }
                 }
+                self.reattachWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
             }
         }
 

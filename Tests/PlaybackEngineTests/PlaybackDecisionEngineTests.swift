@@ -605,6 +605,100 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertNil(queryMap["BreakOnNonKeyFrames"])
     }
 
+    func testCoordinatorServerDefaultUpgradesLegacyAVIMpeg4ToForceH264() async throws {
+        let source = MediaSource(
+            id: "source-server-default-avi-mpeg4",
+            itemID: "item-server-default-avi-mpeg4",
+            name: "AVI MPEG4 source",
+            container: "avi",
+            videoCodec: "mpeg4",
+            audioCodec: "mp3",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/Videos/item-server-default-avi-mpeg4/master.m3u8?MediaSourceId=source-server-default-avi-mpeg4&AllowVideoStreamCopy=true&AllowAudioStreamCopy=false&AudioCodec=mp3&Container=ts&SegmentContainer=ts")
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-server-default-avi-mpeg4": [source]])
+        let coordinator = PlaybackCoordinator(apiClient: client)
+
+        let selection = try await coordinator.resolvePlayback(
+            itemID: "item-server-default-avi-mpeg4",
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .serverDefault
+        )
+
+        guard case .transcode = selection.decision.route else {
+            XCTFail("Expected transcode route")
+            return
+        }
+
+        let queryMap = queryMap(from: selection.assetURL)
+        XCTAssertEqual(queryMap["VideoCodec"], "h264")
+        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
+        XCTAssertEqual(queryMap["Container"], "ts")
+        XCTAssertEqual(queryMap["SegmentContainer"], "ts")
+        XCTAssertEqual(queryMap["BreakOnNonKeyFrames"], "False")
+    }
+
+    func testCoordinatorServerDefaultUpgradeRefetchesDedicatedCompatibilitySource() async throws {
+        let defaultSource = MediaSource(
+            id: "source-profile-upgrade",
+            itemID: "item-profile-upgrade",
+            name: "Legacy AVI source",
+            container: "avi",
+            videoCodec: "mpeg4",
+            audioCodec: "mp3",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(string: "https://example.com/Videos/item-profile-upgrade/master.m3u8?MediaSourceId=source-profile-upgrade")
+        )
+        let compatibilitySource = MediaSource(
+            id: "source-profile-upgrade",
+            itemID: "item-profile-upgrade",
+            name: "Legacy AVI source",
+            container: "avi",
+            videoCodec: "mpeg4",
+            audioCodec: "mp3",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            directStreamURL: nil,
+            directPlayURL: nil,
+            transcodeURL: URL(
+                string: "https://example.com/videos/item-profile-upgrade-compat/master.m3u8?MediaSourceId=source-profile-upgrade&DeviceId=device-1&DeviceProfileId=profile-1&PlaySessionId=session-1&Tag=tag-1"
+            )
+        )
+        let client = ProfileAwareMockPlaybackAPIClient(
+            configuration: server,
+            defaultSources: ["item-profile-upgrade": [defaultSource]],
+            compatibilityH264Sources: ["item-profile-upgrade": [compatibilitySource]]
+        )
+        let coordinator = PlaybackCoordinator(apiClient: client)
+
+        let selection = try await coordinator.resolvePlayback(
+            itemID: "item-profile-upgrade",
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .serverDefault
+        )
+
+        guard case .transcode = selection.decision.route else {
+            XCTFail("Expected transcode route")
+            return
+        }
+
+        let queryMap = queryMap(from: selection.assetURL)
+        XCTAssertEqual(queryMap["PlaySessionId"], "session-1")
+        XCTAssertEqual(queryMap["DeviceProfileId"], "profile-1")
+        XCTAssertEqual(queryMap["VideoCodec"], "h264")
+        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
+        XCTAssertEqual(queryMap["Container"], "ts")
+        XCTAssertEqual(queryMap["SegmentContainer"], "ts")
+    }
+
     func testCoordinatorConservativeProfileTranscodesAC3ToAACWhenAudioCopyIsDisabled() async throws {
         // Verifies that preferAudioTranscodeOnly: true forces AudioCodec→aac and
         // AllowAudioStreamCopy→false on the conservativeCompatibility profile.
@@ -1138,6 +1232,78 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
         throw AppError.network("Not implemented for tests.")
     }
 
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
+}
+
+private final class ProfileAwareMockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
+    private let configuration: ServerConfiguration
+    private let session: UserSession
+    private let defaultSources: [String: [MediaSource]]
+    private let compatibilityH264Sources: [String: [MediaSource]]
+
+    init(
+        configuration: ServerConfiguration,
+        defaultSources: [String: [MediaSource]],
+        compatibilityH264Sources: [String: [MediaSource]]
+    ) {
+        self.configuration = configuration
+        self.defaultSources = defaultSources
+        self.compatibilityH264Sources = compatibilityH264Sources
+        self.session = UserSession(userID: "user-1", username: "Flo", token: "token-1")
+    }
+
+    func currentConfiguration() async -> ServerConfiguration? { configuration }
+    func currentSession() async -> UserSession? { session }
+    func configure(server: ServerConfiguration) async throws { _ = server }
+    func testConnection(serverURL: URL) async throws { _ = serverURL }
+    func authenticate(credentials: UserCredentials) async throws -> UserSession {
+        _ = credentials
+        return session
+    }
+
+    func signOut() async {}
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
+    func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
+    func fetchUserViews() async throws -> [Shared.LibraryView] { [] }
+    func fetchHomeFeed(since: Date?) async throws -> HomeFeed {
+        _ = since
+        return .empty
+    }
+
+    func fetchItemDetail(id: String) async throws -> MediaDetail {
+        _ = id
+        throw AppError.network("Not implemented for tests.")
+    }
+
+    func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
+        _ = query
+        return []
+    }
+
+    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
+        defaultSources[itemID] ?? []
+    }
+
+    func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        if options.deviceProfile == .iosCompatibilityH264 {
+            return compatibilityH264Sources[itemID] ?? []
+        }
+        return defaultSources[itemID] ?? []
+    }
+
+    func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? {
+        _ = itemID
+        _ = type
+        _ = width
+        _ = quality
+        return nil
+    }
+
+    func reportPlayback(progress: PlaybackProgressUpdate) async throws { _ = progress }
+    func reportPlayed(itemID: String) async throws { _ = itemID }
+    func fetchItem(id: String) async throws -> MediaItem { throw AppError.network("Not implemented for tests.") }
     func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
     func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }

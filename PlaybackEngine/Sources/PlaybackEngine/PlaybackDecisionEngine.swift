@@ -725,7 +725,8 @@ public struct PlaybackDecisionEngine: Sendable {
             // Only fall back to transcode when codecs are truly incompatible.
             if source.supportsDirectStream, let remuxURL = source.directStreamURL {
                 let codecsCompatible = hasCompatibleCodecs(source: source)
-                if codecsCompatible {
+                if codecsCompatible,
+                   !shouldAvoidRemuxForReliability(source: source, url: remuxURL) {
                     if qualityMode(for: source, configuration: configuration) == .strictQuality,
                        !isStrictRouteAllowed(source: source, route: .remux(remuxURL)) {
                         return nil
@@ -976,6 +977,10 @@ public struct PlaybackDecisionEngine: Sendable {
     }
 
     private func isRemuxPlayable(source: MediaSource, url: URL) -> Bool {
+        if shouldAvoidRemuxForReliability(source: source, url: url) {
+            return false
+        }
+
         if isHLS(url: url) {
             return true
         }
@@ -991,6 +996,21 @@ public struct PlaybackDecisionEngine: Sendable {
         }
 
         return containers.contains("ts") || containers.contains("m2ts")
+    }
+
+    private func shouldAvoidRemuxForReliability(source: MediaSource, url: URL) -> Bool {
+        guard isHLS(url: url) else { return false }
+
+        let container = source.normalizedContainer
+        let isMatroskaFamily = container == "mkv" || container == "matroska" || container == "webm"
+        let isLegacyContainer = container == "avi"
+        guard isMatroskaFamily || isLegacyContainer else { return false }
+
+        let codec = source.normalizedVideoCodec
+        guard !codec.isEmpty else { return false }
+
+        let isH264Family = codec.contains("h264") || codec.contains("avc1")
+        return !isH264Family
     }
 
     /// Check if the source video and audio codecs are natively supported by the device,

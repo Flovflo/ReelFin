@@ -24,7 +24,6 @@ struct PlayerView: View {
         }
         .accessibilityIdentifier("native_player_screen")
         .onDisappear {
-            session.stop()
 #if os(iOS)
             OrientationManager.shared.lock = .portrait
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {

@@ -5,6 +5,7 @@ import Foundation
 public enum StartupFailureReason: String, Sendable, Equatable {
     case manifestLoadFailed = "manifest_load_failed"
     case firstSegmentTimeout = "first_segment_timeout"
+    case decodedFrameWatchdog = "decoded_frame_watchdog"
     case readyButNoVideoFrame = "item_ready_but_no_video_frame"
     case decoderStall = "decoder_stall"
     case presentationSizeZero = "video_presentation_size_zero"
@@ -20,7 +21,7 @@ public enum StartupFailureReason: String, Sendable, Equatable {
     /// Whether this failure reason should trigger automatic profile fallback recovery.
     public var shouldTriggerRecovery: Bool {
         switch self {
-        case .readyButNoVideoFrame, .decoderStall, .presentationSizeZero,
+        case .decodedFrameWatchdog, .readyButNoVideoFrame, .decoderStall, .presentationSizeZero,
              .startupWatchdogExpired, .playerItemFailed, .firstSegmentTimeout:
             return true
         case .manifestLoadFailed, .networkTimeout, .playerItemFailedTransient:

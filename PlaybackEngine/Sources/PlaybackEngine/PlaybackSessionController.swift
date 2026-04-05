@@ -674,6 +674,17 @@ public final class PlaybackSessionController {
                 self.localHLSStartupSummary = nil
             }
 
+            selection = try await repairInitialSelectionIfNeeded(
+                itemID: item.id,
+                selection: selection,
+                mode: .balanced,
+                startTimeTicks: resumeTimeTicks,
+                itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                    itemPrefersDolbyVision: item.hasDolbyVision,
+                    source: selection.source
+                )
+            )
+
             // For transcode/remux routes: Jellyfin already starts from initialResumeSecs
             // (via StartTimeTicks). Track the offset so currentTime/progress are reported
             // in movie-absolute seconds rather than HLS-stream-relative seconds.
@@ -2157,7 +2168,7 @@ public final class PlaybackSessionController {
             let delaySeconds = Double(delay) / 1_000_000_000
             AppLog.playback.warning("Decoded-frame watchdog fired after \(delaySeconds, format: .fixed(precision: 1))s.")
             if !(await self.attemptRecovery(
-                reason: "decoded_frame_watchdog",
+                reason: StartupFailureReason.decodedFrameWatchdog.rawValue,
                 userMessage: "Video decoding did not start quickly enough. Retrying profile."
             )), self.playbackErrorMessage == nil {
                 self.playbackErrorMessage = "Video decoding did not start."
@@ -2522,6 +2533,74 @@ public final class PlaybackSessionController {
             AppLog.playback.warning("Preflight failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
+    }
+
+    private func repairInitialSelectionIfNeeded(
+        itemID: String,
+        selection: PlaybackAssetSelection,
+        mode: PlaybackMode,
+        startTimeTicks: Int64?,
+        itemPrefersDolbyVision: Bool
+    ) async throws -> PlaybackAssetSelection {
+        guard case .transcode = selection.decision.route else { return selection }
+        guard !(await preflightSelection(selection)) else { return selection }
+
+        AppLog.playback.error(
+            "Initial playback preflight failed profile=\(self.activeTranscodeProfile.rawValue, privacy: .public). Trying safer source selection."
+        )
+
+        for profile in recoveryProfiles(
+            for: StartupFailureReason.firstSegmentTimeout.rawValue,
+            attempt: max(recoveryAttemptCount, 1)
+        ) {
+            do {
+                var candidate = try await coordinator.resolvePlayback(
+                    itemID: itemID,
+                    mode: mode,
+                    allowTranscodingFallbackInPerformance: !usesDirectRemuxOnly,
+                    transcodeProfile: profile,
+                    startTimeTicks: startTimeTicks
+                )
+                candidate = try await pinPreferredVariantIfNeeded(
+                    selection: candidate,
+                    itemPrefersDolbyVision: itemPrefersDolbyVision,
+                    profileOverride: Self.variantPinningProfile(
+                        from: candidate.assetURL,
+                        requestedProfile: profile
+                    )
+                )
+                candidate = try await stabilizeInitialSelectionIfNeeded(
+                    itemID: itemID,
+                    selection: candidate,
+                    itemPrefersDolbyVision: itemPrefersDolbyVision
+                )
+                candidate = try await upgradeRiskyInitialSelectionIfNeeded(
+                    itemID: itemID,
+                    selection: candidate,
+                    itemPrefersDolbyVision: itemPrefersDolbyVision
+                )
+
+                let candidateProfile = inferredTranscodeProfile(from: candidate.assetURL, fallback: profile)
+                guard registerAttempt(selection: candidate, profile: candidateProfile) else {
+                    continue
+                }
+                guard await preflightSelection(candidate) else {
+                    AppLog.playback.warning(
+                        "Initial playback preflight also failed for recovery profile=\(candidateProfile.rawValue, privacy: .public)."
+                    )
+                    continue
+                }
+
+                activeTranscodeProfile = candidateProfile
+                return candidate
+            } catch {
+                AppLog.playback.warning(
+                    "Initial preflight recovery failed profile=\(profile.rawValue, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+
+        throw AppError.network("The server returned a playlist, but the first media segment could not be loaded.")
     }
 
     private func shouldForceCompatibilityH264(for selection: PlaybackAssetSelection) async -> Bool {
@@ -3100,10 +3179,12 @@ public final class PlaybackSessionController {
         let baseProfiles: [TranscodeURLProfile]
 
         switch failureReason {
-        case .readyButNoVideoFrame, .decoderStall, .presentationSizeZero:
+        case .decodedFrameWatchdog, .readyButNoVideoFrame, .decoderStall, .presentationSizeZero:
             // Video decode failure on HEVC: skip to H264 directly when allowed
-            if (activeTranscodeProfile == .appleOptimizedHEVC || activeTranscodeProfile == .serverDefault),
-               allowSDRFallback {
+            if Self.shouldPreferImmediateH264Recovery(
+                activeProfile: activeTranscodeProfile,
+                allowSDRFallback: allowSDRFallback
+            ) {
                 baseProfiles = [.forceH264Transcode]
             } else {
                 baseProfiles = startupRecoveryProfiles(after: activeTranscodeProfile)
@@ -3126,6 +3207,22 @@ public final class PlaybackSessionController {
 
     private func startupRecoveryProfiles(after activeProfile: TranscodeURLProfile) -> [TranscodeURLProfile] {
         Self.recoveryPlan(after: activeProfile, policy: playbackPolicy, allowSDRFallback: allowSDRFallback)
+    }
+
+    nonisolated static func shouldPreferImmediateH264Recovery(
+        activeProfile: TranscodeURLProfile,
+        allowSDRFallback: Bool
+    ) -> Bool {
+        guard allowSDRFallback else { return false }
+        switch activeProfile {
+        case .serverDefault, .appleOptimizedHEVC:
+            // Once startup already failed without producing a decoded frame,
+            // a second copy-friendly attempt is usually wasted. Drop straight
+            // to H.264, which is the most reliable Apple-native recovery path.
+            return true
+        case .conservativeCompatibility, .forceH264Transcode:
+            return false
+        }
     }
 
     private func refreshDecodedVideoFrameState() {
@@ -3859,6 +3956,30 @@ public final class PlaybackSessionController {
         playerRate: Float,
         timeControlStatus: AVPlayer.TimeControlStatus
     ) -> Bool {
-        wasPlayingBeforeReplacement || playerRate > 0 || timeControlStatus == .playing
+        PlaybackResumePolicy.shouldResumeAfterItemReplacement(
+            wasPlayingBeforeReplacement: wasPlayingBeforeReplacement,
+            playerRate: playerRate,
+            timeControlStatus: timeControlStatus
+        )
+    }
+}
+
+public enum PlaybackResumePolicy {
+    public static func shouldResumeAfterItemReplacement(
+        wasPlayingBeforeReplacement: Bool,
+        playerRate: Float,
+        timeControlStatus: AVPlayer.TimeControlStatus
+    ) -> Bool {
+        wasPlayingBeforeReplacement || shouldResumeAfterControllerReattach(
+            playerRate: playerRate,
+            timeControlStatus: timeControlStatus
+        )
+    }
+
+    public static func shouldResumeAfterControllerReattach(
+        playerRate: Float,
+        timeControlStatus: AVPlayer.TimeControlStatus
+    ) -> Bool {
+        playerRate > 0 || timeControlStatus == .playing || timeControlStatus == .waitingToPlayAtSpecifiedRate
     }
 }

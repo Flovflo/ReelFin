@@ -67,4 +67,22 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
 
         XCTAssertFalse(shouldResume)
     }
+
+    func testControllerReattachResumeDecisionTreatsWaitingStateAsPlaybackIntent() {
+        let shouldResume = PlaybackResumePolicy.shouldResumeAfterControllerReattach(
+            playerRate: 0,
+            timeControlStatus: .waitingToPlayAtSpecifiedRate
+        )
+
+        XCTAssertTrue(shouldResume)
+    }
+
+    func testControllerReattachResumeDecisionKeepsExplicitPausePaused() {
+        let shouldResume = PlaybackResumePolicy.shouldResumeAfterControllerReattach(
+            playerRate: 0,
+            timeControlStatus: .paused
+        )
+
+        XCTAssertFalse(shouldResume)
+    }
 }

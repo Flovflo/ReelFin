@@ -44,6 +44,33 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertEqual(profiles, [.conservativeCompatibility])
     }
 
+    func testImmediateH264RecoveryIsPreferredAfterServerDefaultDecodeFailure() {
+        XCTAssertTrue(
+            PlaybackSessionController.shouldPreferImmediateH264Recovery(
+                activeProfile: .serverDefault,
+                allowSDRFallback: true
+            )
+        )
+    }
+
+    func testImmediateH264RecoveryRespectsSDRFallbackPolicy() {
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPreferImmediateH264Recovery(
+                activeProfile: .serverDefault,
+                allowSDRFallback: false
+            )
+        )
+    }
+
+    func testImmediateH264RecoveryDoesNotApplyAfterConservativeAttempt() {
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPreferImmediateH264Recovery(
+                activeProfile: .conservativeCompatibility,
+                allowSDRFallback: true
+            )
+        )
+    }
+
     func testInitialProfilePromotesStoredH264FallbackToHEVCForDolbyVisionItems() {
         let profile = PlaybackSessionController.initialProfile(
             stored: .forceH264Transcode,
@@ -290,7 +317,8 @@ final class PlaybackPolicyTests: XCTestCase {
         let coordinator = PlaybackCoordinator(apiClient: api)
         _ = try await coordinator.resolvePlayback(itemID: "item-2", mode: .balanced, transcodeProfile: .serverDefault)
 
-        XCTAssertEqual(api.lastOptions?.allowVideoStreamCopy, true)
+        XCTAssertEqual(api.optionsHistory.first?.allowVideoStreamCopy, true)
+        XCTAssertEqual(api.optionsHistory.last?.deviceProfile, .iosOptimizedHEVC)
     }
 
     private func lowercasedQueryMap(from url: URL) -> [String: String] {
@@ -595,6 +623,10 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertTrue(StartupFailureReason.decoderStall.shouldTriggerRecovery)
     }
 
+    func testStartupFailureReasonDecodedFrameWatchdogTriggersRecovery() {
+        XCTAssertTrue(StartupFailureReason.decodedFrameWatchdog.shouldTriggerRecovery)
+    }
+
     func testStartupFailureReasonTransientDoesNotTriggerRecovery() {
         XCTAssertFalse(StartupFailureReason.playerItemFailedTransient.shouldTriggerRecovery)
     }
@@ -607,6 +639,7 @@ final class PlaybackPolicyTests: XCTestCase {
         for reason in [
             StartupFailureReason.manifestLoadFailed,
             .firstSegmentTimeout,
+            .decodedFrameWatchdog,
             .readyButNoVideoFrame,
             .decoderStall,
             .presentationSizeZero,
@@ -766,6 +799,7 @@ private final class CapturePlaybackAPIClient: JellyfinAPIClientProtocol, @unchec
     private let sessionValue: UserSession
     private let sourcesByItem: [String: [MediaSource]]
     var lastOptions: PlaybackInfoOptions?
+    var optionsHistory: [PlaybackInfoOptions] = []
 
     init(configuration: ServerConfiguration, sources: [String: [MediaSource]]) {
         self.configurationValue = configuration
@@ -792,6 +826,7 @@ private final class CapturePlaybackAPIClient: JellyfinAPIClientProtocol, @unchec
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] { sourcesByItem[itemID] ?? [] }
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
         lastOptions = options
+        optionsHistory.append(options)
         return try await fetchPlaybackSources(itemID: itemID)
     }
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? { nil }
