@@ -40,7 +40,7 @@ public struct ReelFinRootView: View {
                 #endif
             } else {
 #if os(tvOS)
-                TVLoginView(dependencies: dependencies) { session in
+                TVAuthFlowView(dependencies: dependencies) { session in
                     viewModel.completeLogin(session)
                 }
 #else
