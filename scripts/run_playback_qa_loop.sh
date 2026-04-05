@@ -30,7 +30,7 @@ resolve_destination_id() {
     return
   fi
 
-  xcrun simctl list devices available | awk -F '[()]' '/iPhone 17 Pro Max/ && /iOS 26/ {print $2; exit}'
+  xcrun simctl list devices available | awk -F '[()]' '/iPhone 17 Pro Max/ {print $2; exit}'
 }
 
 DESTINATION_ID="$(resolve_destination_id)"
