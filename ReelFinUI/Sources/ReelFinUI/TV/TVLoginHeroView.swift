@@ -23,20 +23,20 @@ struct TVLoginBackgroundView: View {
             )
 
             RadialGradient(
-                colors: [accent.opacity(0.34), .clear],
-                center: .topLeading,
-                startRadius: 30,
-                endRadius: 920
+                colors: [Color.white.opacity(0.06), .clear],
+                center: .center,
+                startRadius: 20,
+                endRadius: 760
             )
-            .offset(x: drifting ? 60 : -40, y: drifting ? -34 : -12)
+            .offset(x: drifting ? 22 : -20, y: drifting ? -12 : 16)
 
             RadialGradient(
-                colors: [secondaryAccent.opacity(0.24), .clear],
-                center: .topTrailing,
-                startRadius: 40,
-                endRadius: 780
+                colors: [secondaryAccent.opacity(0.12), .clear],
+                center: .center,
+                startRadius: 60,
+                endRadius: 720
             )
-            .offset(x: drifting ? -36 : 44, y: drifting ? -10 : 20)
+            .offset(x: drifting ? -28 : 24, y: drifting ? 96 : 134)
 
             LinearGradient(
                 colors: [Color.white.opacity(0.04), .clear, Color.black.opacity(0.64)],
