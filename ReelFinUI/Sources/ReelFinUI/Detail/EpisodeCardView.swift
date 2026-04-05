@@ -145,9 +145,15 @@ public struct EpisodeCardView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(iosEpisodeLabel.uppercased())
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.76))
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(iosEpisodeLabel.uppercased())
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.76))
+
+                        Spacer(minLength: 0)
+
+                        playbackStatusBadge
+                    }
 
                     Text(episode.name)
                         .font(.system(size: 21, weight: .medium, design: .rounded))
@@ -197,6 +203,7 @@ public struct EpisodeCardView: View {
         .scaleEffect(isFocused ? 1.018 : 1)
         .animation(.easeOut(duration: 0.16), value: isFocused)
         .accessibilityHint("Play episode")
+        .accessibilityValue(episodeAccessibilityStatus)
     }
 
     private var iosEpisodeLabel: String {
@@ -206,9 +213,63 @@ public struct EpisodeCardView: View {
         return "Episode"
     }
 
+    @ViewBuilder
+    private var playbackStatusBadge: some View {
+        if episode.isPlayed {
+            EpisodePlaybackStatusBadge(
+                text: "Watched",
+                systemImage: "checkmark.circle.fill",
+                tint: Color(red: 0.78, green: 0.95, blue: 0.82)
+            )
+        } else if let positionText = episode.playbackPositionDisplayText {
+            EpisodePlaybackStatusBadge(
+                text: "Stopped \(positionText)",
+                systemImage: "play.circle.fill",
+                tint: Color.white.opacity(0.92)
+            )
+        }
+    }
+
+    private var episodeAccessibilityStatus: String {
+        if episode.isPlayed {
+            return "Watched"
+        }
+        if let positionText = episode.playbackPositionDisplayText {
+            return "Stopped at \(positionText)"
+        }
+        return "Not started"
+    }
+
     private var iosCardHeight: CGFloat { width * 1.14 }
     #endif
 }
+
+#if !os(tvOS)
+private struct EpisodePlaybackStatusBadge: View {
+    let text: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .bold))
+
+            Text(text)
+                .lineLimit(1)
+        }
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Color.black.opacity(0.24), in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+        }
+    }
+}
+#endif
 
 #Preview("Episode Card - TV", traits: .fixedLayout(width: 560, height: 520)) {
     ZStack {

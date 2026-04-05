@@ -11,13 +11,18 @@ public enum ApplePlaybackOptimizationStatus: Equatable, Sendable {
     }
 
     var symbolName: String {
-        "bolt.fill"
+        switch self {
+        case .optimized:
+            return "bolt.fill"
+        case .needsServerPrep:
+            return "bolt.slash.fill"
+        }
     }
 
     var detailLabel: String {
         switch self {
         case .optimized:
-            return "Apple Ready"
+            return "Direct Play"
         case .needsServerPrep:
             return "Server Prep"
         }
@@ -26,9 +31,9 @@ public enum ApplePlaybackOptimizationStatus: Equatable, Sendable {
     var accessibilityLabel: String {
         switch self {
         case .optimized:
-            return "Optimized for Apple playback"
+            return "Ready for direct play on Apple devices"
         case .needsServerPrep:
-            return "Server preparation recommended for Apple playback"
+            return "Server preparation recommended before Apple playback"
         }
     }
 

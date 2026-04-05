@@ -112,8 +112,6 @@ struct DetailView: View {
                     safeAreaTop: safeAreaTop,
                     stageMetrics: stageMetrics
                 )
-            } compactDock: { stageMetrics in
-                iosCompactDock(stageMetrics: stageMetrics)
             } supportingContent: {
                 supportingContent
             }
@@ -238,6 +236,7 @@ struct DetailView: View {
                 horizontalPadding: horizontalPadding,
                 safeAreaTop: safeAreaTop,
                 bottomPadding: heroBottomPadding + 10 - stageMetrics.bottomPaddingCompression,
+                collapseProgress: stageMetrics.topInsetProgress,
                 animateIn: hasAnimatedIn,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
@@ -250,58 +249,6 @@ struct DetailView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: stageMetrics.heroContentHeight(for: heroHeight))
-    }
-
-    private func iosCompactDock(stageMetrics: IOSDetailStageMetrics) -> some View {
-        IOSDetailCompactHeroDock(
-            title: viewModel.detail.item.name,
-            subtitle: compactDockSubtitle,
-            progress: resolvedHeroProgress,
-            visibility: stageMetrics.compactDockOpacity
-        )
-        .scaleEffect(stageMetrics.compactDockScale, anchor: .top)
-        .offset(y: stageMetrics.compactDockOffset)
-    }
-
-    private var compactDockSubtitle: String? {
-        if shouldShowResumeLabel {
-            return viewModel.playButtonLabel
-        }
-
-        if let heading = compactEpisodeHeading, !heading.isEmpty {
-            return heading
-        }
-
-        return compactGenreSummary
-    }
-
-    private var shouldShowResumeLabel: Bool {
-        viewModel.shouldShowResume || viewModel.itemToPlay.isPlayed || viewModel.isWatched
-    }
-
-    private var compactEpisodeHeading: String? {
-        guard viewModel.detail.item.mediaType == .series || viewModel.itemToPlay.mediaType == .episode else {
-            return nil
-        }
-
-        var values: [String] = []
-        if let season = viewModel.itemToPlay.parentIndexNumber,
-           let episode = viewModel.itemToPlay.indexNumber {
-            values.append("S\(season) E\(episode)")
-        }
-
-        let episodeName = viewModel.itemToPlay.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !episodeName.isEmpty, episodeName != viewModel.detail.item.name {
-            values.append(episodeName)
-        }
-
-        return values.isEmpty ? nil : values.joined(separator: " • ")
-    }
-
-    private var compactGenreSummary: String? {
-        let genres = viewModel.detail.item.genres.prefix(2)
-        guard !genres.isEmpty else { return nil }
-        return genres.joined(separator: " • ")
     }
 #endif
 
@@ -836,46 +783,51 @@ private struct IOSDetailScrollSnapshot: Equatable {
 
 private struct IOSDetailStageMetrics: Equatable {
     private let normalizedProgress: CGFloat
+    let topInsetProgress: CGFloat
 
     static let resting = IOSDetailStageMetrics()
 
-    init(snapshot: IOSDetailScrollSnapshot = .init(), heroHeight: CGFloat = 1) {
+    init(snapshot: IOSDetailScrollSnapshot = .init(), heroHeight: CGFloat = 1, topTriggerDistance: CGFloat = 1) {
         let effectiveOffset = max(0, snapshot.offsetY + snapshot.topInset - 10)
+        topInsetProgress = min(max(effectiveOffset / max(topTriggerDistance, 1), 0), 1)
         let travelDistance = max(heroHeight * 0.54, 1)
         let rawProgress = min(max(effectiveOffset / travelDistance, 0), 1)
         normalizedProgress = rawProgress * rawProgress * (3 - (2 * rawProgress))
     }
 
     func heroContentHeight(for heroHeight: CGFloat) -> CGFloat {
-        max(heroHeight - (normalizedProgress * 164), heroHeight * 0.56)
+        max(heroHeight - (normalizedProgress * 24), heroHeight * 0.95)
     }
 
-    var dockingProgress: CGFloat {
-        let rawProgress = min(max((normalizedProgress - 0.16) / 0.58, 0), 1)
-        return rawProgress * rawProgress * (3 - (2 * rawProgress))
+    func previewCardHeight(for heroHeight: CGFloat) -> CGFloat {
+        heroHeight * (0.90 - (topInsetProgress * 0.08))
     }
 
-    var artworkBleed: CGFloat { -8 * normalizedProgress }
-    var backgroundOffset: CGFloat { -84 * normalizedProgress }
-    var heroLift: CGFloat { -96 * normalizedProgress }
-    var selectedCardScaleX: CGFloat { 1 - (normalizedProgress * 0.28) }
-    var selectedCardScaleY: CGFloat { 1 - (normalizedProgress * 0.48) }
-    var bottomPaddingCompression: CGFloat { 34 * normalizedProgress }
-    var topCornerRadius: CGFloat { 30 + (26 * normalizedProgress) }
-    var bottomCornerRadius: CGFloat { 42 + (38 * normalizedProgress) }
+    func stageHeight(for heroHeight: CGFloat) -> CGFloat {
+        max(heroContentHeight(for: heroHeight), previewCardHeight(for: heroHeight)) + (24 - (topInsetProgress * 4))
+    }
+
+    var artworkBleed: CGFloat { -6 * normalizedProgress }
+    var backgroundOffset: CGFloat { -28 * normalizedProgress }
+    var heroLift: CGFloat { -14 * topInsetProgress }
+    var selectedCardScaleX: CGFloat { 1 }
+    var selectedCardScaleY: CGFloat { 1 - (normalizedProgress * 0.04) }
+    var bottomPaddingCompression: CGFloat { 1.5 * normalizedProgress }
+    var topCornerRadius: CGFloat { 32 - (topInsetProgress * 8) }
+    var bottomCornerRadius: CGFloat { 42 - (normalizedProgress * 10) }
     var previewCornerRadius: CGFloat { 34 + (10 * normalizedProgress) }
-    var shadowRadius: CGFloat { 30 - (14 * normalizedProgress) }
-    var shadowYOffset: CGFloat { 24 - (12 * normalizedProgress) }
-    var headerBlurOpacity: Double { max(0.001, min(Double(dockingProgress * 1.28), 0.92)) }
-    var headerShadeOpacity: Double { 0.12 + Double(dockingProgress * 0.28) }
-    var compactDockOpacity: Double { Double(dockingProgress) }
-    var compactDockScale: CGFloat { 0.88 + (dockingProgress * 0.12) }
-    var compactDockOffset: CGFloat { -18 + ((1 - dockingProgress) * -12) }
-    var heroContentOpacity: Double { 1 - Double(dockingProgress * 0.96) }
-    var heroContentScale: CGFloat { 1 - (dockingProgress * 0.08) }
+    var shadowRadius: CGFloat { 30 - (10 * topInsetProgress) }
+    var shadowYOffset: CGFloat { 24 - (8 * topInsetProgress) }
+    var selectedStrokeOpacity: Double { 0.14 * (1 - (topInsetProgress * 0.92)) }
+    var selectedShadowOpacity: Double { 0.38 - (topInsetProgress * 0.22) }
+    var headerBlurOpacity: Double { Double(topInsetProgress) }
+    var headerShadeOpacity: Double { 0.08 + Double(topInsetProgress * 0.18) }
+    var heroContentOpacity: Double { 1 }
+    var heroContentScale: CGFloat { 1 }
+    var contentBridgeLift: CGFloat { 2 * topInsetProgress }
 }
 
-private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting: View>: View {
+private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     let viewportSize: CGSize
     let safeAreaTop: CGFloat
     let heroHeight: CGFloat
@@ -888,23 +840,28 @@ private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting
     let imagePipeline: any ImagePipelineProtocol
     let onSelectItem: (IOSDetailCarouselEntry) -> Void
     @ViewBuilder let selectedCard: (IOSDetailStageMetrics) -> SelectedCard
-    @ViewBuilder let compactDock: (IOSDetailStageMetrics) -> CompactDock
     @ViewBuilder let supportingContent: () -> Supporting
 
     @State private var scrollSnapshot = IOSDetailScrollSnapshot()
 
     var body: some View {
-        let metrics = IOSDetailStageMetrics(snapshot: scrollSnapshot, heroHeight: heroHeight)
+        let metrics = IOSDetailStageMetrics(
+            snapshot: scrollSnapshot,
+            heroHeight: heroHeight,
+            topTriggerDistance: stageTopInset
+        )
+        let contentSpacing = max(sectionSpacing - metrics.contentBridgeLift, 8)
 
         ZStack(alignment: .top) {
             Color.black
                 .ignoresSafeArea()
 
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: sectionSpacing) {
+                LazyVStack(alignment: .leading, spacing: contentSpacing) {
                     topStage(metrics: metrics)
 
                     supportingContent()
+                        .padding(.top, -metrics.contentBridgeLift)
                         .padding(.horizontal, horizontalPadding)
                         .padding(.bottom, 96)
                 }
@@ -941,6 +898,11 @@ private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting
         GeometryReader { proxy in
             let cardWidth = resolvedCardWidth(for: proxy.size.width)
             let sideInset = max((proxy.size.width - cardWidth) * 0.5, horizontalPadding)
+            let animatedSideInset = sideInset * (1 - metrics.topInsetProgress)
+            let expandedCardWidth = min(
+                cardWidth + ((proxy.size.width - cardWidth) * metrics.topInsetProgress),
+                proxy.size.width
+            )
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 18) {
@@ -950,7 +912,9 @@ private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting
                             currentItemID: currentItemID,
                             heroHeight: heroHeight,
                             cardWidth: cardWidth,
+                            expandedCardWidth: expandedCardWidth,
                             metrics: metrics,
+                            topInsetProgress: metrics.topInsetProgress,
                             apiClient: apiClient,
                             imagePipeline: imagePipeline
                         ) {
@@ -960,21 +924,22 @@ private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting
                     }
                 }
                 .scrollTargetLayout()
-                .padding(.horizontal, sideInset)
+                .padding(.horizontal, animatedSideInset)
                 .padding(.vertical, 8)
             }
             .accessibilityIdentifier("detail_ios_top_carousel")
             .scrollClipDisabled()
+            .scrollDisabled(metrics.topInsetProgress > 0.08)
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $selectedItemID)
         }
-        .frame(height: heroHeight + 24)
+        .frame(height: metrics.stageHeight(for: heroHeight))
         .padding(.top, stageTopInset)
     }
 
     private func compactHeader(metrics: IOSDetailStageMetrics) -> some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .top) {
+            ZStack {
                 TransparentBlurView(style: .systemUltraThinMaterial)
                     .opacity(metrics.headerBlurOpacity)
 
@@ -987,10 +952,6 @@ private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting
                     startPoint: .top,
                     endPoint: .bottom
                 )
-
-                compactDock(metrics)
-                    .padding(.top, compactDockTopInset)
-                    .frame(maxWidth: .infinity)
             }
             .mask {
                 LinearGradient(
@@ -999,7 +960,7 @@ private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting
                     endPoint: .bottom
                 )
             }
-            .frame(height: safeAreaTop + 108)
+            .frame(height: safeAreaTop + 78)
             .accessibilityIdentifier("detail_ios_blur_header")
             .allowsHitTesting(false)
 
@@ -1010,10 +971,6 @@ private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting
 
     private var stageTopInset: CGFloat {
         min(max(safeAreaTop * 0.66, 40), 60)
-    }
-
-    private var compactDockTopInset: CGFloat {
-        min(max(safeAreaTop * 0.34, 18), 28)
     }
 
     private func resolvedCardWidth(for availableWidth: CGFloat) -> CGFloat {
@@ -1030,7 +987,9 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
     let currentItemID: String
     let heroHeight: CGFloat
     let cardWidth: CGFloat
+    let expandedCardWidth: CGFloat
     let metrics: IOSDetailStageMetrics
+    let topInsetProgress: CGFloat
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     @ViewBuilder let selectedContent: () -> SelectedContent
@@ -1069,14 +1028,17 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
                 previewOverlay
             }
         }
-        .frame(width: cardWidth, height: cardHeight)
+        .frame(width: resolvedCardWidth, height: cardHeight)
         .clipShape(cardShape)
         .overlay {
             cardShape
-                .stroke(Color.white.opacity(selected ? 0.14 : 0.10), lineWidth: selected ? 1 : 0.8)
+                .stroke(
+                    Color.white.opacity(selected ? metrics.selectedStrokeOpacity : 0.10),
+                    lineWidth: selected ? 1 : 0.8
+                )
         }
         .shadow(
-            color: .black.opacity(selected ? 0.38 : 0.22),
+            color: .black.opacity(selected ? metrics.selectedShadowOpacity : 0.22),
             radius: selected ? metrics.shadowRadius : 18,
             x: 0,
             y: selected ? metrics.shadowYOffset : 12
@@ -1086,7 +1048,8 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
             y: selected ? metrics.selectedCardScaleY : 0.94,
             anchor: .top
         )
-        .offset(y: selected ? metrics.heroLift : 18)
+        .opacity(selected ? 1 : 1 - Double(topInsetProgress * 0.45))
+        .offset(y: selected ? metrics.heroLift : 18 + (topInsetProgress * 12))
         .accessibilityElement(children: .contain)
     }
 
@@ -1094,11 +1057,15 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
         entry.id == currentItemID
     }
 
+    private var resolvedCardWidth: CGFloat {
+        isSelected ? expandedCardWidth : cardWidth
+    }
+
     private var cardHeight: CGFloat {
         if isSelected {
             return metrics.heroContentHeight(for: heroHeight)
         }
-        return heroHeight * 0.9
+        return metrics.previewCardHeight(for: heroHeight)
     }
 
     private var cardShape: UnevenRoundedRectangle {
@@ -1121,9 +1088,10 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
             Spacer(minLength: 0)
 
             Text(entry.displayItem.name)
-                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .font(.system(size: 34, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
                 .lineLimit(3)
+                .minimumScaleFactor(0.88)
 
             if !previewMetadata.isEmpty {
                 Text(previewMetadata)
@@ -1163,70 +1131,6 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
         }
 
         return values.joined(separator: " · ")
-    }
-}
-
-private struct IOSDetailCompactHeroDock: View {
-    let title: String
-    let subtitle: String?
-    let progress: Double?
-    let visibility: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .frame(width: 28, height: 28)
-                    .background(Color.white.opacity(0.10), in: Circle())
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.96))
-                        .lineLimit(1)
-
-                    if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.70))
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 0)
-            }
-
-            if let progress, progress > 0 {
-                GeometryReader { proxy in
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.16))
-                        .overlay(alignment: .leading) {
-                            Capsule(style: .continuous)
-                                .fill(Color.white.opacity(0.92))
-                                .frame(width: proxy.size.width * max(0.04, min(CGFloat(progress), 1)))
-                        }
-                }
-                .frame(height: 4)
-            }
-        }
-        .frame(maxWidth: 280, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background {
-            Color.clear
-                .reelFinGlassRoundedRect(
-                    cornerRadius: 26,
-                    tint: Color.white.opacity(0.10),
-                    stroke: Color.white.opacity(0.14),
-                    shadowOpacity: 0.18,
-                    shadowRadius: 20,
-                    shadowYOffset: 8
-                )
-        }
-        .opacity(visibility)
-        .accessibilityHidden(visibility < 0.12)
     }
 }
 
@@ -1307,6 +1211,7 @@ private struct IOSDetailHeroContent: View {
     let horizontalPadding: CGFloat
     let safeAreaTop: CGFloat
     let bottomPadding: CGFloat
+    let collapseProgress: CGFloat
     let animateIn: Bool
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
@@ -1320,9 +1225,9 @@ private struct IOSDetailHeroContent: View {
         VStack(spacing: 0) {
             topBar
 
-            Spacer(minLength: 42)
+            Spacer(minLength: heroTopSpacer)
 
-            VStack(spacing: 26) {
+            VStack(spacing: contentStackSpacing) {
                 identityBlock
                     .frame(maxWidth: .infinity)
 
@@ -1331,7 +1236,7 @@ private struct IOSDetailHeroContent: View {
             }
             .frame(maxWidth: min(contentWidth, 720), alignment: .center)
         }
-        .padding(.top, safeAreaTop + 12)
+        .padding(.top, safeAreaTop + 12 - (collapseProgress * 6))
         .padding(.horizontal, horizontalPadding)
         .padding(.bottom, bottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1390,7 +1295,7 @@ private struct IOSDetailHeroContent: View {
     }
 
     private var identityBlock: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: identityBlockSpacing) {
             IOSDetailHeroTitleView(
                 item: item,
                 apiClient: apiClient,
@@ -1433,7 +1338,7 @@ private struct IOSDetailHeroContent: View {
     }
 
     private var detailBlock: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: detailBlockSpacing) {
             if let synopsisText, !synopsisText.isEmpty {
                 HStack(alignment: .bottom, spacing: 12) {
                     summaryText(synopsisText)
@@ -1479,13 +1384,21 @@ private struct IOSDetailHeroContent: View {
 
     private var footerRow: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !footerPrimaryText.isEmpty || !badgeLabels.isEmpty {
+            if optimizationStatus != nil || !footerPrimaryText.isEmpty || !badgeLabels.isEmpty {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
                         if !footerPrimaryText.isEmpty {
                             Text(footerPrimaryText)
                                 .font(.system(size: 15, weight: .medium, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.78))
+                        }
+
+                        if let optimizationStatus {
+                            HeroInlineSymbolBadge(
+                                systemImage: optimizationStatus.symbolName,
+                                tint: optimizationStatus.iconTint,
+                                accessibilityLabel: optimizationStatus.accessibilityLabel
+                            )
                         }
 
                         ForEach(badgeLabels, id: \.self) { badge in
@@ -1500,6 +1413,14 @@ private struct IOSDetailHeroContent: View {
                                 Text(footerPrimaryText)
                                     .font(.system(size: 15, weight: .medium, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.78))
+                            }
+
+                            if let optimizationStatus {
+                                HeroInlineSymbolBadge(
+                                    systemImage: optimizationStatus.symbolName,
+                                    tint: optimizationStatus.iconTint,
+                                    accessibilityLabel: optimizationStatus.accessibilityLabel
+                                )
                             }
 
                             ForEach(badgeLabels, id: \.self) { badge in
@@ -1625,6 +1546,22 @@ private struct IOSDetailHeroContent: View {
     private var isCompactHeroLayout: Bool {
         contentWidth < 370
     }
+
+    private var heroTopSpacer: CGFloat {
+        max(24, 42 - (collapseProgress * 18))
+    }
+
+    private var contentStackSpacing: CGFloat {
+        max(20, 26 - (collapseProgress * 6))
+    }
+
+    private var identityBlockSpacing: CGFloat {
+        max(15, 20 - (collapseProgress * 6))
+    }
+
+    private var detailBlockSpacing: CGFloat {
+        max(14, 18 - (collapseProgress * 4))
+    }
 }
 
 private struct IOSDetailHeroTitleView: View {
@@ -1640,16 +1577,17 @@ private struct IOSDetailHeroTitleView: View {
                 Image(uiImage: logoImage)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxHeight: 124)
+                    .frame(maxWidth: 320, maxHeight: 94)
                     .shadow(color: .black.opacity(0.42), radius: 18, x: 0, y: 8)
                     .transition(.opacity)
             } else {
                 Text(item.name)
-                    .font(.system(size: item.name.count > 16 ? 56 : 72, weight: .black, design: .rounded))
-                    .tracking(item.name.count <= 8 ? 10 : 3)
+                    .font(.system(size: item.name.count > 16 ? 42 : 48, weight: .black, design: .rounded))
+                    .tracking(item.name.count <= 8 ? 6 : 2)
                     .foregroundStyle(.white)
                     .lineLimit(2)
-                    .minimumScaleFactor(0.55)
+                    .minimumScaleFactor(0.82)
+                    .allowsTightening(true)
                     .multilineTextAlignment(.center)
                     .shadow(color: .black.opacity(0.44), radius: 18, x: 0, y: 8)
             }
@@ -2841,6 +2779,70 @@ private struct HeroInlineBadge: View {
         return Color.white.opacity(0.12)
 #else
         return Color.white.opacity(0.22)
+#endif
+    }
+
+    private var badgeShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+    }
+}
+
+private struct HeroInlineSymbolBadge: View {
+    let systemImage: String
+    let tint: Color
+    let accessibilityLabel: String
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: fontSize, weight: .bold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .background(backgroundFill, in: badgeShape)
+            .overlay {
+                badgeShape
+                    .stroke(borderColor, lineWidth: 0.8)
+            }
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var fontSize: CGFloat {
+#if os(tvOS)
+        return 15
+#else
+        return 12
+#endif
+    }
+
+    private var horizontalPadding: CGFloat {
+#if os(tvOS)
+        return 10
+#else
+        return 9
+#endif
+    }
+
+    private var verticalPadding: CGFloat {
+#if os(tvOS)
+        return 6
+#else
+        return 5
+#endif
+    }
+
+    private var backgroundFill: Color {
+#if os(tvOS)
+        return Color.white.opacity(0.08)
+#else
+        return Color.white.opacity(0.06)
+#endif
+    }
+
+    private var borderColor: Color {
+#if os(tvOS)
+        return tint.opacity(0.20)
+#else
+        return tint.opacity(0.28)
 #endif
     }
 
