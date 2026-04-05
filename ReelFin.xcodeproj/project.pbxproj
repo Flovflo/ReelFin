@@ -228,6 +228,7 @@
 		81F827BEB1306855F95BFB26 /* MP4BoxWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDB3EAA467276E9EB46A3DEF /* MP4BoxWriter.swift */; };
 		821578AEC20C7EC4639756B6 /* SeasonChipButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C1F0D11222AFBCB8958EDB /* SeasonChipButton.swift */; };
 		8333AE52808014BFD7F531C5 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B42C462E7DC487B76A05928E /* Logging.swift */; };
+		8342AB3A3659E5BAD16C86CB /* PlaybackLiveSmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A5B4D0E334EDE3A7199FB09 /* PlaybackLiveSmokeUITests.swift */; };
 		845E892A4BBCEFDD3BDAB91A /* Shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F3D5AF190B72A5D423090D6 /* Shared.framework */; };
 		8488EF2AFF09EC3F55407B07 /* SyntheticHLSSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F163B6CB9831E7DF8D15BA8F /* SyntheticHLSSession.swift */; };
 		84CFCF74173DA8779C8C4B2F /* PlaybackSessionController+SkipSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D46D031DD654D1A24C6654B /* PlaybackSessionController+SkipSegments.swift */; };
@@ -954,6 +955,7 @@
 		63727D3EA69FA178DD5245A7 /* AuthenticationStageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticationStageViews.swift; sourceTree = "<group>"; };
 		670C2A6259BEFF7CB7C88734 /* NativeBridgeCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeCoreTests.swift; sourceTree = "<group>"; };
 		68853A66EE574A91E1CEABE1 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
+		6A5B4D0E334EDE3A7199FB09 /* PlaybackLiveSmokeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackLiveSmokeUITests.swift; sourceTree = "<group>"; };
 		6C236AD9F0D85B5FCF4DEB26 /* DefaultImagePipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultImagePipelineTests.swift; sourceTree = "<group>"; };
 		6D4953E6C6E30F10DAB1D582 /* TVRootDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVRootDestination.swift; sourceTree = "<group>"; };
 		7296CD841C25226EE03F6120 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -1451,6 +1453,7 @@
 		316A21B35CC3B5C5891D0AAE /* ReelFinUITests */ = {
 			isa = PBXGroup;
 			children = (
+				6A5B4D0E334EDE3A7199FB09 /* PlaybackLiveSmokeUITests.swift */,
 				B24DBEB3A10445317A4E2744 /* ReelFinUITests.swift */,
 			);
 			path = ReelFinUITests;
@@ -2673,6 +2676,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8342AB3A3659E5BAD16C86CB /* PlaybackLiveSmokeUITests.swift in Sources */,
 				45A2515F97BC10741DDFDB84 /* ReelFinUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

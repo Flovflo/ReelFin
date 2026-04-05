@@ -10,6 +10,7 @@ public struct AppMetadata: Sendable {
     public static let mockModeArgument = "-reelfin-mock-mode"
     public static let screenshotModeArgument = "-reelfin-screenshot-mode"
     public static let mockLoggedOutArgument = "-reelfin-ui-logged-out"
+    public static let uiResetAuthStateArgument = "-reelfin-ui-reset-auth-state"
 
     public let privacyPolicyURL: URL?
     public let termsOfServiceURL: URL?

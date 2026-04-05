@@ -21,9 +21,14 @@ final class AppContainer {
     private var sharedPlaybackSessionController: PlaybackSessionController?
 
     init() {
-        settingsStore = DefaultSettingsStore()
-        tokenStore = KeychainTokenStore()
-        apiClient = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settingsStore)
+        let settingsStore = DefaultSettingsStore()
+        let tokenStore = KeychainTokenStore()
+        let apiClient = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settingsStore)
+        Self.applyUITestResetIfNeeded(settingsStore: settingsStore, tokenStore: tokenStore)
+
+        self.settingsStore = settingsStore
+        self.tokenStore = tokenStore
+        self.apiClient = apiClient
 
         do {
             repository = try GRDBMetadataRepository()
@@ -52,6 +57,20 @@ final class AppContainer {
         seriesCache = SeriesLookupCache(apiClient: apiClient)
         playbackWarmupManager = PlaybackWarmupManager(apiClient: apiClient)
         tvFocusWarmupCoordinator = TVFocusWarmupCoordinator()
+    }
+
+    private static func applyUITestResetIfNeeded(
+        settingsStore: SettingsStoreProtocol,
+        tokenStore: TokenStoreProtocol
+    ) {
+        let arguments = Set(ProcessInfo.processInfo.arguments)
+        guard arguments.contains(AppMetadata.uiResetAuthStateArgument) else { return }
+
+        settingsStore.serverConfiguration = nil
+        settingsStore.lastSession = nil
+        settingsStore.hasCompletedOnboarding = false
+        settingsStore.completedOnboardingVersion = 0
+        try? tokenStore.clearToken()
     }
 
     @MainActor
