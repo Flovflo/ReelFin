@@ -171,6 +171,50 @@ final class PlaybackPolicyTests: XCTestCase {
         )
     }
 
+    func testVariantPinningProfileKeepsExplicitConservativeRecoveryProfile() {
+        let url = URL(
+            string: "https://example.com/master.m3u8?AllowVideoStreamCopy=true&AllowAudioStreamCopy=false&VideoCodec=hevc&Container=fmp4&SegmentContainer=fmp4"
+        )!
+
+        let profile = PlaybackSessionController.variantPinningProfile(
+            from: url,
+            requestedProfile: .conservativeCompatibility
+        )
+
+        XCTAssertEqual(profile, .conservativeCompatibility)
+    }
+
+    func testVariantPinningProfilePromotesServerDefaultHEVCTranscode() {
+        let url = URL(
+            string: "https://example.com/master.m3u8?AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&VideoCodec=hevc&Container=fmp4&SegmentContainer=fmp4"
+        )!
+
+        let profile = PlaybackSessionController.variantPinningProfile(
+            from: url,
+            requestedProfile: .serverDefault
+        )
+
+        XCTAssertEqual(profile, .appleOptimizedHEVC)
+    }
+
+    func testDegradedStartupVariantFlagsPinnedPlaceholderVariant() {
+        XCTAssertTrue(
+            PlaybackSessionController.isDegradedStartupVariant(
+                width: 416,
+                bandwidth: 640_000
+            )
+        )
+    }
+
+    func testDegradedStartupVariantAllowsHealthy4KStartupVariant() {
+        XCTAssertFalse(
+            PlaybackSessionController.isDegradedStartupVariant(
+                width: 3_840,
+                bandwidth: 12_000_000
+            )
+        )
+    }
+
     func testDuplicateAttemptTripleIsSkipped() {
         var attempted = Set<String>()
         let key = PlaybackSessionController.attemptTripleKey(

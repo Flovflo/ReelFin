@@ -58,8 +58,13 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
-    func loadMoreIfNeeded(for item: MediaItem) async {
-        guard shouldLoadNextPage(triggerItem: item) else { return }
+    var paginationTriggerItemID: String? {
+        guard !isLoadingPage, !isLastPage, searchQuery.isEmpty else { return nil }
+        return TVLibraryPaginationPolicy.triggerItemID(in: items)
+    }
+
+    func loadMoreIfNeeded() async {
+        guard paginationTriggerItemID != nil else { return }
         await fetchRemote(reset: false)
     }
 
@@ -130,12 +135,6 @@ final class LibraryViewModel: ObservableObject {
         } catch {
             AppLog.ui.error("Remote library load failed: \(error.localizedDescription, privacy: .public)")
         }
-    }
-
-    private func shouldLoadNextPage(triggerItem: MediaItem) -> Bool {
-        guard !isLoadingPage, !isLastPage, searchQuery.isEmpty else { return false }
-        guard let index = items.firstIndex(where: { $0.id == triggerItem.id }) else { return false }
-        return index >= max(0, items.count - 12)
     }
 
     private func sorted(_ values: [MediaItem]) -> [MediaItem] {

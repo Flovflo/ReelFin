@@ -201,3 +201,104 @@ public extension View {
             .animation(ReelFinTheme.tvFocusSpring, value: focused)
     }
 }
+
+public enum TVMotion {
+    public enum FocusRole: Sendable {
+        case heroButton
+        case navItem
+        case chip
+        case posterCard
+        case episodeCard
+        case libraryPoster
+
+        fileprivate var scale: CGFloat {
+            switch self {
+            case .heroButton:
+                return 1.03
+            case .navItem:
+                return 1.02
+            case .chip:
+                return 1.03
+            case .posterCard:
+                return 1.04
+            case .episodeCard:
+                return 1.03
+            case .libraryPoster:
+                return 1.03
+            }
+        }
+
+        fileprivate var focusedOpacity: Double {
+            switch self {
+            case .heroButton, .navItem, .chip, .posterCard, .episodeCard, .libraryPoster:
+                return 1.0
+            }
+        }
+
+        fileprivate var restingOpacity: Double {
+            switch self {
+            case .heroButton:
+                return 0.97
+            case .navItem:
+                return 0.94
+            case .chip:
+                return 0.90
+            case .posterCard:
+                return 0.96
+            case .episodeCard:
+                return 0.95
+            case .libraryPoster:
+                return 0.96
+            }
+        }
+
+        fileprivate var selectedOpacity: Double {
+            switch self {
+            case .heroButton:
+                return 0.98
+            case .navItem:
+                return 0.98
+            case .chip:
+                return 0.96
+            case .posterCard, .episodeCard, .libraryPoster:
+                return 1.0
+            }
+        }
+    }
+
+    public static let focusAnimation = Animation.easeOut(duration: 0.16)
+    public static let contentFadeAnimation = Animation.easeInOut(duration: 0.18)
+    public static let titleLoadAnimation = Animation.easeInOut(duration: 0.22)
+    public static let heroPageAnimation = Animation.easeInOut(duration: 0.20)
+    public static let overlayFadeAnimation = Animation.easeInOut(duration: 0.14)
+}
+
+public extension View {
+    func tvMotionFocus(
+        _ role: TVMotion.FocusRole,
+        isFocused: Bool,
+        isSelected: Bool = false
+    ) -> some View {
+        modifier(
+            TVMotionFocusModifier(
+                role: role,
+                isFocused: isFocused,
+                isSelected: isSelected
+            )
+        )
+    }
+}
+
+private struct TVMotionFocusModifier: ViewModifier {
+    let role: TVMotion.FocusRole
+    let isFocused: Bool
+    let isSelected: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isFocused ? role.scale : 1)
+            .opacity(isFocused ? role.focusedOpacity : (isSelected ? role.selectedOpacity : role.restingOpacity))
+            .animation(TVMotion.focusAnimation, value: isFocused)
+            .animation(TVMotion.focusAnimation, value: isSelected)
+    }
+}

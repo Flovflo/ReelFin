@@ -1,3 +1,4 @@
+import Foundation
 import Shared
 import SwiftUI
 
@@ -22,6 +23,18 @@ struct RemoteImageScalingModifier: ViewModifier {
         case .fit:
             content.scaledToFit()
         }
+    }
+}
+
+struct CachedRemoteImageRequestState: Sendable {
+    var consumerID = ImageRequestConsumerID()
+    var requestURL: URL?
+    var contentKey: String?
+
+    mutating func nextConsumerID() -> ImageRequestConsumerID {
+        let consumerID = ImageRequestConsumerID()
+        self.consumerID = consumerID
+        return consumerID
     }
 }
 

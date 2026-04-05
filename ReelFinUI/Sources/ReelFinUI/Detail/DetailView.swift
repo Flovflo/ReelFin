@@ -22,6 +22,14 @@ private struct DetailNavigationContext: Equatable {
     static let empty = DetailNavigationContext(title: nil, items: [])
 }
 
+#if os(iOS)
+private struct IOSDetailCarouselEntry: Identifiable, Equatable {
+    let id: String
+    let displayItem: MediaItem
+    let sourceItem: MediaItem
+}
+#endif
+
 private let rowContentHorizontalPadding: CGFloat = 6
 private let rowContentVerticalPadding: CGFloat = 6
 
@@ -37,6 +45,7 @@ struct DetailView: View {
     @State private var isLoadingPlayback = false
     @State private var hasAnimatedIn = false
     @State private var navigationContext: DetailNavigationContext
+    @State private var iosSelectedCarouselItemID: String?
     @FocusState private var focusedHeroAction: DetailHeroAction?
     @FocusState private var focusedSeasonID: String?
 
@@ -56,6 +65,9 @@ struct DetailView: View {
             )
         )
         _navigationContext = State(initialValue: DetailNavigationContext(title: contextTitle, items: contextItems))
+        _iosSelectedCarouselItemID = State(
+            initialValue: item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+        )
         self.dependencies = dependencies
     }
 
@@ -65,30 +77,47 @@ struct DetailView: View {
             let safeAreaTop = proxy.safeAreaInsets.top
             let heroHeight = resolvedHeroHeight(for: viewportSize)
 
-            ZStack(alignment: .top) {
-                #if os(iOS)
-                Color.black
-                    .ignoresSafeArea()
-                #else
-                ReelFinTheme.pageGradient
-                    .ignoresSafeArea()
-                #endif
-
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: sectionSpacing) {
-                        heroSection(
-                            heroHeight: heroHeight,
-                            viewportSize: viewportSize,
-                            safeAreaTop: safeAreaTop
-                        )
-
-                        supportingContent
-                            .padding(.horizontal, horizontalPadding)
-                            .padding(.bottom, 96)
-                    }
+#if os(tvOS)
+            TVDetailScreen(
+                horizontalPadding: horizontalPadding,
+                sectionSpacing: sectionSpacing,
+                hero: {
+                    heroSection(
+                        heroHeight: heroHeight,
+                        viewportSize: viewportSize,
+                        safeAreaTop: safeAreaTop
+                    )
+                },
+                supportingContent: {
+                    supportingContent
                 }
-                .ignoresSafeArea(edges: .top)
+            )
+#else
+            IOSDetailScreen(
+                viewportSize: viewportSize,
+                safeAreaTop: safeAreaTop,
+                heroHeight: heroHeight,
+                horizontalPadding: horizontalPadding,
+                sectionSpacing: sectionSpacing,
+                entries: iosCarouselEntries,
+                currentItemID: viewModel.detail.item.id,
+                selectedItemID: $iosSelectedCarouselItemID,
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                onSelectItem: handleIOSCarouselSelection
+            ) { stageMetrics in
+                iosHeroSection(
+                    heroHeight: heroHeight,
+                    viewportSize: viewportSize,
+                    safeAreaTop: safeAreaTop,
+                    stageMetrics: stageMetrics
+                )
+            } compactDock: { stageMetrics in
+                iosCompactDock(stageMetrics: stageMetrics)
+            } supportingContent: {
+                supportingContent
             }
+#endif
         }
         .navigationTitle("")
 #if os(iOS)
@@ -106,7 +135,7 @@ struct DetailView: View {
                 await DetailPresentationTelemetry.shared.markDetailVisible(for: viewModel.detail.item.id)
             }
             if !hasAnimatedIn {
-                withAnimation(.easeOut(duration: 0.45)) {
+                withAnimation(TVMotion.contentFadeAnimation) {
                     hasAnimatedIn = true
                 }
             }
@@ -118,6 +147,9 @@ struct DetailView: View {
                 }
             }
 #endif
+        }
+        .onChange(of: viewModel.detail.item.id) { _, newValue in
+            iosSelectedCarouselItemID = newValue
         }
         .alert(
             "Playback Error",
@@ -147,13 +179,25 @@ struct DetailView: View {
         #if os(tvOS)
         tvHeroSection(heroHeight: heroHeight, viewportSize: viewportSize, safeAreaTop: safeAreaTop)
         #else
-        iosHeroSection(heroHeight: heroHeight, viewportSize: viewportSize, safeAreaTop: safeAreaTop)
+        iosHeroSection(
+            heroHeight: heroHeight,
+            viewportSize: viewportSize,
+            safeAreaTop: safeAreaTop,
+            stageMetrics: .resting
+        )
         #endif
     }
 
 #if os(iOS)
-    private func iosHeroSection(heroHeight: CGFloat, viewportSize: CGSize, safeAreaTop: CGFloat) -> some View {
-        ZStack {
+    private func iosHeroSection(
+        heroHeight: CGFloat,
+        viewportSize: CGSize,
+        safeAreaTop: CGFloat,
+        stageMetrics: IOSDetailStageMetrics
+    ) -> some View {
+        let artworkBleed = stageMetrics.artworkBleed
+
+        return ZStack {
             HeroBackgroundView(
                 item: viewModel.detail.item,
                 heroHeight: heroHeight,
@@ -165,6 +209,8 @@ struct DetailView: View {
                     }
                 }
             )
+            .padding(.horizontal, artworkBleed)
+            .offset(y: stageMetrics.backgroundOffset)
 
             LinearGradient(
                 stops: [
@@ -191,7 +237,7 @@ struct DetailView: View {
                 contentWidth: resolvedMetadataWidth(for: viewportSize),
                 horizontalPadding: horizontalPadding,
                 safeAreaTop: safeAreaTop,
-                bottomPadding: heroBottomPadding + 10,
+                bottomPadding: heroBottomPadding + 10 - stageMetrics.bottomPaddingCompression,
                 animateIn: hasAnimatedIn,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
@@ -199,9 +245,63 @@ struct DetailView: View {
                 onPlay: { startPlayback() },
                 onToggleWatched: viewModel.toggleWatched
             )
+            .opacity(stageMetrics.heroContentOpacity)
+            .scaleEffect(stageMetrics.heroContentScale, anchor: .top)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: heroHeight)
+        .frame(height: stageMetrics.heroContentHeight(for: heroHeight))
+    }
+
+    private func iosCompactDock(stageMetrics: IOSDetailStageMetrics) -> some View {
+        IOSDetailCompactHeroDock(
+            title: viewModel.detail.item.name,
+            subtitle: compactDockSubtitle,
+            progress: resolvedHeroProgress,
+            visibility: stageMetrics.compactDockOpacity
+        )
+        .scaleEffect(stageMetrics.compactDockScale, anchor: .top)
+        .offset(y: stageMetrics.compactDockOffset)
+    }
+
+    private var compactDockSubtitle: String? {
+        if shouldShowResumeLabel {
+            return viewModel.playButtonLabel
+        }
+
+        if let heading = compactEpisodeHeading, !heading.isEmpty {
+            return heading
+        }
+
+        return compactGenreSummary
+    }
+
+    private var shouldShowResumeLabel: Bool {
+        viewModel.shouldShowResume || viewModel.itemToPlay.isPlayed || viewModel.isWatched
+    }
+
+    private var compactEpisodeHeading: String? {
+        guard viewModel.detail.item.mediaType == .series || viewModel.itemToPlay.mediaType == .episode else {
+            return nil
+        }
+
+        var values: [String] = []
+        if let season = viewModel.itemToPlay.parentIndexNumber,
+           let episode = viewModel.itemToPlay.indexNumber {
+            values.append("S\(season) E\(episode)")
+        }
+
+        let episodeName = viewModel.itemToPlay.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !episodeName.isEmpty, episodeName != viewModel.detail.item.name {
+            values.append(episodeName)
+        }
+
+        return values.isEmpty ? nil : values.joined(separator: " • ")
+    }
+
+    private var compactGenreSummary: String? {
+        let genres = viewModel.detail.item.genres.prefix(2)
+        guard !genres.isEmpty else { return nil }
+        return genres.joined(separator: " • ")
     }
 #endif
 
@@ -363,7 +463,6 @@ struct DetailView: View {
         }
         .opacity(hasAnimatedIn ? 1 : 0)
         .offset(y: hasAnimatedIn ? 0 : 16)
-        .animation(.easeOut(duration: 0.45), value: hasAnimatedIn)
     }
 
     @ViewBuilder
@@ -453,27 +552,77 @@ struct DetailView: View {
         }
     }
 
+#if os(iOS)
+    private var iosCarouselEntries: [IOSDetailCarouselEntry] {
+        var entries: [IOSDetailCarouselEntry] = []
+        var seenDisplayIDs: Set<String> = []
+        let sourceItems = navigationContext.items.isEmpty ? [currentCarouselSourceItem] : navigationContext.items
+
+        for sourceItem in sourceItems {
+            let displayItem = makePresentedDetailItem(from: sourceItem)
+            guard seenDisplayIDs.insert(displayItem.id).inserted else { continue }
+            entries.append(
+                IOSDetailCarouselEntry(
+                    id: displayItem.id,
+                    displayItem: displayItem.id == viewModel.detail.item.id ? viewModel.detail.item : displayItem,
+                    sourceItem: sourceItem
+                )
+            )
+        }
+
+        if let currentIndex = entries.firstIndex(where: { $0.id == viewModel.detail.item.id }) {
+            entries[currentIndex] = IOSDetailCarouselEntry(
+                id: viewModel.detail.item.id,
+                displayItem: viewModel.detail.item,
+                sourceItem: entries[currentIndex].sourceItem
+            )
+        } else {
+            entries.insert(
+                IOSDetailCarouselEntry(
+                    id: viewModel.detail.item.id,
+                    displayItem: viewModel.detail.item,
+                    sourceItem: currentCarouselSourceItem
+                ),
+                at: 0
+            )
+        }
+
+        return entries
+    }
+
+    private var currentCarouselSourceItem: MediaItem {
+        if viewModel.detail.item.mediaType == .series, viewModel.itemToPlay.mediaType == .episode {
+            return viewModel.itemToPlay
+        }
+        return viewModel.detail.item
+    }
+#endif
+
     private var heroNeighbors: (previous: MediaItem?, next: MediaItem?) {
-        guard navigationContext.items.count > 1,
-              let currentIndex = resolvedContextIndex(for: viewModel.detail.item, items: navigationContext.items) else {
+        let navigationState = DetailNeighborNavigationState(
+            currentItem: viewModel.detail.item,
+            contextItems: navigationContext.items
+        )
+        guard navigationState.contextItems.count > 1 else {
             return (nil, nil)
         }
 
-        let previous = currentIndex > 0 ? navigationContext.items[currentIndex - 1] : nil
-        let next = currentIndex < navigationContext.items.count - 1 ? navigationContext.items[currentIndex + 1] : nil
-        return (previous, next)
+        return (navigationState.previousItem, navigationState.nextItem)
     }
 
-    private func resolvedContextIndex(for item: MediaItem, items: [MediaItem]) -> Int? {
-        let targetID = item.id
-        return items.firstIndex { candidate in
-            candidate.id == targetID || candidate.parentID == targetID
-        }
+#if os(iOS)
+    private func handleIOSCarouselSelection(_ entry: IOSDetailCarouselEntry) {
+        guard entry.id != viewModel.detail.item.id else { return }
+        navigateToDetailItem(entry.sourceItem)
     }
+#endif
 
     private func navigateToDetailItem(_ item: MediaItem, context: DetailNavigationContext? = nil) {
         navigationContext = context ?? navigationContext
+#if os(iOS)
         hasAnimatedIn = false
+        iosSelectedCarouselItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+#endif
         focusedHeroAction = .play
         focusedSeasonID = nil
 
@@ -485,11 +634,13 @@ struct DetailView: View {
             let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
             await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
             await viewModel.load()
+#if os(iOS)
             await MainActor.run {
-                withAnimation(.easeOut(duration: 0.35)) {
+                withAnimation(TVMotion.contentFadeAnimation) {
                     hasAnimatedIn = true
                 }
             }
+#endif
         }
     }
 
@@ -649,6 +800,492 @@ struct DetailView: View {
     }
 #endif
 }
+
+#if os(tvOS)
+private struct TVDetailScreen<Hero: View, Supporting: View>: View {
+    let horizontalPadding: CGFloat
+    let sectionSpacing: CGFloat
+    @ViewBuilder let hero: () -> Hero
+    @ViewBuilder let supportingContent: () -> Supporting
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            ReelFinTheme.pageGradient
+                .ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: sectionSpacing) {
+                    hero()
+
+                    supportingContent()
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.bottom, 96)
+                }
+            }
+            .ignoresSafeArea(edges: .top)
+        }
+    }
+}
+#endif
+
+#if os(iOS)
+private struct IOSDetailScrollSnapshot: Equatable {
+    var offsetY: CGFloat = 0
+    var topInset: CGFloat = 0
+}
+
+private struct IOSDetailStageMetrics: Equatable {
+    private let normalizedProgress: CGFloat
+
+    static let resting = IOSDetailStageMetrics()
+
+    init(snapshot: IOSDetailScrollSnapshot = .init(), heroHeight: CGFloat = 1) {
+        let effectiveOffset = max(0, snapshot.offsetY + snapshot.topInset - 10)
+        let travelDistance = max(heroHeight * 0.54, 1)
+        let rawProgress = min(max(effectiveOffset / travelDistance, 0), 1)
+        normalizedProgress = rawProgress * rawProgress * (3 - (2 * rawProgress))
+    }
+
+    func heroContentHeight(for heroHeight: CGFloat) -> CGFloat {
+        max(heroHeight - (normalizedProgress * 164), heroHeight * 0.56)
+    }
+
+    var dockingProgress: CGFloat {
+        let rawProgress = min(max((normalizedProgress - 0.16) / 0.58, 0), 1)
+        return rawProgress * rawProgress * (3 - (2 * rawProgress))
+    }
+
+    var artworkBleed: CGFloat { -8 * normalizedProgress }
+    var backgroundOffset: CGFloat { -84 * normalizedProgress }
+    var heroLift: CGFloat { -96 * normalizedProgress }
+    var selectedCardScaleX: CGFloat { 1 - (normalizedProgress * 0.28) }
+    var selectedCardScaleY: CGFloat { 1 - (normalizedProgress * 0.48) }
+    var bottomPaddingCompression: CGFloat { 34 * normalizedProgress }
+    var topCornerRadius: CGFloat { 30 + (26 * normalizedProgress) }
+    var bottomCornerRadius: CGFloat { 42 + (38 * normalizedProgress) }
+    var previewCornerRadius: CGFloat { 34 + (10 * normalizedProgress) }
+    var shadowRadius: CGFloat { 30 - (14 * normalizedProgress) }
+    var shadowYOffset: CGFloat { 24 - (12 * normalizedProgress) }
+    var headerBlurOpacity: Double { max(0.001, min(Double(dockingProgress * 1.28), 0.92)) }
+    var headerShadeOpacity: Double { 0.12 + Double(dockingProgress * 0.28) }
+    var compactDockOpacity: Double { Double(dockingProgress) }
+    var compactDockScale: CGFloat { 0.88 + (dockingProgress * 0.12) }
+    var compactDockOffset: CGFloat { -18 + ((1 - dockingProgress) * -12) }
+    var heroContentOpacity: Double { 1 - Double(dockingProgress * 0.96) }
+    var heroContentScale: CGFloat { 1 - (dockingProgress * 0.08) }
+}
+
+private struct IOSDetailScreen<SelectedCard: View, CompactDock: View, Supporting: View>: View {
+    let viewportSize: CGSize
+    let safeAreaTop: CGFloat
+    let heroHeight: CGFloat
+    let horizontalPadding: CGFloat
+    let sectionSpacing: CGFloat
+    let entries: [IOSDetailCarouselEntry]
+    let currentItemID: String
+    @Binding var selectedItemID: String?
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let onSelectItem: (IOSDetailCarouselEntry) -> Void
+    @ViewBuilder let selectedCard: (IOSDetailStageMetrics) -> SelectedCard
+    @ViewBuilder let compactDock: (IOSDetailStageMetrics) -> CompactDock
+    @ViewBuilder let supportingContent: () -> Supporting
+
+    @State private var scrollSnapshot = IOSDetailScrollSnapshot()
+
+    var body: some View {
+        let metrics = IOSDetailStageMetrics(snapshot: scrollSnapshot, heroHeight: heroHeight)
+
+        ZStack(alignment: .top) {
+            Color.black
+                .ignoresSafeArea()
+
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: sectionSpacing) {
+                    topStage(metrics: metrics)
+
+                    supportingContent()
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.bottom, 96)
+                }
+            }
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .ignoresSafeArea(edges: .top)
+            .onScrollGeometryChange(for: IOSDetailScrollSnapshot.self) { geometry in
+                IOSDetailScrollSnapshot(
+                    offsetY: geometry.contentOffset.y,
+                    topInset: geometry.contentInsets.top
+                )
+            } action: { _, newValue in
+                scrollSnapshot = newValue
+            }
+
+            compactHeader(metrics: metrics)
+        }
+        .onAppear {
+            if selectedItemID == nil {
+                selectedItemID = currentItemID
+            }
+        }
+        .onChange(of: currentItemID) { _, newValue in
+            selectedItemID = newValue
+        }
+        .onChange(of: selectedItemID) { _, newValue in
+            guard let newValue, newValue != currentItemID else { return }
+            guard let entry = entries.first(where: { $0.id == newValue }) else { return }
+            onSelectItem(entry)
+        }
+    }
+
+    private func topStage(metrics: IOSDetailStageMetrics) -> some View {
+        GeometryReader { proxy in
+            let cardWidth = resolvedCardWidth(for: proxy.size.width)
+            let sideInset = max((proxy.size.width - cardWidth) * 0.5, horizontalPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 18) {
+                    ForEach(entries) { entry in
+                        IOSDetailTopCarouselCard(
+                            entry: entry,
+                            currentItemID: currentItemID,
+                            heroHeight: heroHeight,
+                            cardWidth: cardWidth,
+                            metrics: metrics,
+                            apiClient: apiClient,
+                            imagePipeline: imagePipeline
+                        ) {
+                            selectedCard(metrics)
+                        }
+                        .id(entry.id)
+                    }
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, sideInset)
+                .padding(.vertical, 8)
+            }
+            .accessibilityIdentifier("detail_ios_top_carousel")
+            .scrollClipDisabled()
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $selectedItemID)
+        }
+        .frame(height: heroHeight + 24)
+        .padding(.top, stageTopInset)
+    }
+
+    private func compactHeader(metrics: IOSDetailStageMetrics) -> some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .top) {
+                TransparentBlurView(style: .systemUltraThinMaterial)
+                    .opacity(metrics.headerBlurOpacity)
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(metrics.headerShadeOpacity),
+                        Color.black.opacity(metrics.headerShadeOpacity * 0.62),
+                        .clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                compactDock(metrics)
+                    .padding(.top, compactDockTopInset)
+                    .frame(maxWidth: .infinity)
+            }
+            .mask {
+                LinearGradient(
+                    colors: [.black, .black, .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .frame(height: safeAreaTop + 108)
+            .accessibilityIdentifier("detail_ios_blur_header")
+            .allowsHitTesting(false)
+
+            Spacer(minLength: 0)
+        }
+        .ignoresSafeArea(edges: .top)
+    }
+
+    private var stageTopInset: CGFloat {
+        min(max(safeAreaTop * 0.66, 40), 60)
+    }
+
+    private var compactDockTopInset: CGFloat {
+        min(max(safeAreaTop * 0.34, 18), 28)
+    }
+
+    private func resolvedCardWidth(for availableWidth: CGFloat) -> CGFloat {
+        let maxWidth = min(availableWidth - 28, 920)
+        if viewportSize.width < 430 {
+            return max(maxWidth, 0)
+        }
+        return min(maxWidth, 760)
+    }
+}
+
+private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
+    let entry: IOSDetailCarouselEntry
+    let currentItemID: String
+    let heroHeight: CGFloat
+    let cardWidth: CGFloat
+    let metrics: IOSDetailStageMetrics
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    @ViewBuilder let selectedContent: () -> SelectedContent
+
+    var body: some View {
+        let selected = isSelected
+
+        ZStack(alignment: .bottomLeading) {
+            Color.black
+
+            HeroBackgroundView(
+                item: entry.displayItem,
+                heroHeight: cardHeight,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
+                onHeroImageVisible: nil
+            )
+            .padding(.horizontal, selected ? metrics.artworkBleed : 0)
+            .offset(y: selected ? metrics.backgroundOffset : 0)
+
+            LinearGradient(
+                stops: [
+                    .init(color: Color.black.opacity(0.08), location: 0),
+                    .init(color: Color.black.opacity(0.22), location: 0.24),
+                    .init(color: Color.black.opacity(0.54), location: 0.56),
+                    .init(color: Color.black.opacity(0.88), location: 0.84),
+                    .init(color: Color.black, location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            if selected {
+                selectedContent()
+            } else {
+                previewOverlay
+            }
+        }
+        .frame(width: cardWidth, height: cardHeight)
+        .clipShape(cardShape)
+        .overlay {
+            cardShape
+                .stroke(Color.white.opacity(selected ? 0.14 : 0.10), lineWidth: selected ? 1 : 0.8)
+        }
+        .shadow(
+            color: .black.opacity(selected ? 0.38 : 0.22),
+            radius: selected ? metrics.shadowRadius : 18,
+            x: 0,
+            y: selected ? metrics.shadowYOffset : 12
+        )
+        .scaleEffect(
+            x: selected ? metrics.selectedCardScaleX : 0.94,
+            y: selected ? metrics.selectedCardScaleY : 0.94,
+            anchor: .top
+        )
+        .offset(y: selected ? metrics.heroLift : 18)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var isSelected: Bool {
+        entry.id == currentItemID
+    }
+
+    private var cardHeight: CGFloat {
+        if isSelected {
+            return metrics.heroContentHeight(for: heroHeight)
+        }
+        return heroHeight * 0.9
+    }
+
+    private var cardShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: isSelected ? metrics.topCornerRadius : metrics.previewCornerRadius,
+            bottomLeadingRadius: isSelected ? metrics.bottomCornerRadius : metrics.previewCornerRadius + 4,
+            bottomTrailingRadius: isSelected ? metrics.bottomCornerRadius : metrics.previewCornerRadius + 4,
+            topTrailingRadius: isSelected ? metrics.topCornerRadius : metrics.previewCornerRadius,
+            style: .continuous
+        )
+    }
+
+    private var previewOverlay: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(previewKicker.uppercased())
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .tracking(1.3)
+                .foregroundStyle(.white.opacity(0.66))
+
+            Spacer(minLength: 0)
+
+            Text(entry.displayItem.name)
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(3)
+
+            if !previewMetadata.isEmpty {
+                Text(previewMetadata)
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+    }
+
+    private var previewKicker: String {
+        switch entry.displayItem.mediaType {
+        case .movie:
+            return "Movie"
+        case .series:
+            return "Series"
+        case .episode:
+            return "Episode"
+        case .season:
+            return "Season"
+        case .unknown:
+            return "Details"
+        }
+    }
+
+    private var previewMetadata: String {
+        var values: [String] = []
+
+        if let year = entry.displayItem.year {
+            values.append(String(year))
+        }
+
+        if !entry.displayItem.genres.isEmpty {
+            values.append(contentsOf: entry.displayItem.genres.prefix(2))
+        }
+
+        return values.joined(separator: " · ")
+    }
+}
+
+private struct IOSDetailCompactHeroDock: View {
+    let title: String
+    let subtitle: String?
+    let progress: Double?
+    let visibility: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.10), in: Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.96))
+                        .lineLimit(1)
+
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.70))
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if let progress, progress > 0 {
+                GeometryReader { proxy in
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.16))
+                        .overlay(alignment: .leading) {
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.92))
+                                .frame(width: proxy.size.width * max(0.04, min(CGFloat(progress), 1)))
+                        }
+                }
+                .frame(height: 4)
+            }
+        }
+        .frame(maxWidth: 280, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background {
+            Color.clear
+                .reelFinGlassRoundedRect(
+                    cornerRadius: 26,
+                    tint: Color.white.opacity(0.10),
+                    stroke: Color.white.opacity(0.14),
+                    shadowOpacity: 0.18,
+                    shadowRadius: 20,
+                    shadowYOffset: 8
+                )
+        }
+        .opacity(visibility)
+        .accessibilityHidden(visibility < 0.12)
+    }
+}
+
+private struct TransparentBlurView: UIViewRepresentable {
+    let style: UIBlurEffect.Style
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: style))
+        view.clipsToBounds = true
+        view.backgroundColor = .clear
+        view.layer.backgroundColor = UIColor.clear.cgColor
+
+        DispatchQueue.main.async {
+            stripTint(from: view, coordinator: context.coordinator)
+        }
+
+        return view
+    }
+
+    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
+        uiView.effect = UIBlurEffect(style: style)
+        uiView.backgroundColor = .clear
+        uiView.layer.backgroundColor = UIColor.clear.cgColor
+
+        if !context.coordinator.didStripTint {
+            DispatchQueue.main.async {
+                stripTint(from: uiView, coordinator: context.coordinator)
+            }
+        }
+    }
+
+    private func stripTint(from view: UIVisualEffectView, coordinator: Coordinator) {
+        guard !coordinator.didStripTint else { return }
+        coordinator.didStripTint = true
+
+        view.layer.filters = []
+
+        for subview in view.subviews {
+            subview.backgroundColor = .clear
+            subview.layer.backgroundColor = UIColor.clear.cgColor
+            stripLayer(subview.layer)
+        }
+    }
+
+    private func stripLayer(_ layer: CALayer) {
+        layer.backgroundColor = UIColor.clear.cgColor
+        layer.filters = []
+        layer.sublayers?.forEach(stripLayer)
+    }
+
+    final class Coordinator {
+        var didStripTint = false
+    }
+}
+#endif
 
 private enum HeroMetadataLayout {
     case leading
@@ -1277,8 +1914,8 @@ private struct HeroBackgroundView: View {
         CachedRemoteImage(
             itemID: backdropItemID,
             type: preferredImageType,
-            width: preferredWidth(for: size, multiplier: 1.05),
-            quality: 54,
+            width: preferredWidth(for: size, profile: .heroBackdropLow),
+            quality: ArtworkRequestProfile.heroBackdropLow.quality,
             contentMode: .fill,
             apiClient: apiClient,
             imagePipeline: imagePipeline
@@ -1294,8 +1931,8 @@ private struct HeroBackgroundView: View {
         CachedRemoteImage(
             itemID: backdropItemID,
             type: preferredImageType,
-            width: preferredWidth(for: size, multiplier: 1.18),
-            quality: 82,
+            width: preferredWidth(for: size, profile: .heroBackdropHigh),
+            quality: ArtworkRequestProfile.heroBackdropHigh.quality,
             contentMode: .fill,
             apiClient: apiClient,
             imagePipeline: imagePipeline,
@@ -1388,8 +2025,8 @@ private struct HeroBackgroundView: View {
         item.backdropTag == nil ? .primary : .backdrop
     }
 
-    private func preferredWidth(for size: CGSize, multiplier: CGFloat) -> Int {
-        min(Int((max(size.width, 1) * multiplier).rounded(.up)), 2_200)
+    private func preferredWidth(for _: CGSize, profile: ArtworkRequestProfile) -> Int {
+        min(profile.width, 2_200)
     }
 }
 
@@ -1818,6 +2455,7 @@ private struct PrimaryActionsRow: View {
             )
             .focused(focusedAction, equals: .watched)
         }
+        .defaultFocus(focusedAction, .play)
         .accessibilityElement(children: .contain)
 #else
         HStack(spacing: 18) {

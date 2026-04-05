@@ -1,6 +1,12 @@
 import Shared
 import SwiftUI
 
+#if os(tvOS)
+private enum TVLibraryWarmupScope {
+    static let focus = "library.focus"
+}
+#endif
+
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel: LibraryViewModel
@@ -37,8 +43,8 @@ struct LibraryView: View {
                                     viewModel.select(item: selectedItem)
                                 }
                             )
-                            .task {
-                                await viewModel.loadMoreIfNeeded(for: item)
+                            .onAppear {
+                                handleVisibleItem(item)
                             }
 #else
                             VStack(alignment: .leading, spacing: 10) {
@@ -64,8 +70,8 @@ struct LibraryView: View {
                                     layoutStyle: .grid
                                 )
                             }
-                            .task {
-                                await viewModel.loadMoreIfNeeded(for: item)
+                            .onAppear {
+                                handleVisibleItem(item)
                             }
 #endif
                         }
@@ -96,6 +102,13 @@ struct LibraryView: View {
         }
         .onDisappear {
             warmupTask?.cancel()
+#if os(tvOS)
+            if let coordinator = dependencies.tvFocusWarmupCoordinator {
+                Task {
+                    await coordinator.cancel(scope: TVLibraryWarmupScope.focus)
+                }
+            }
+#endif
         }
         .task {
             await viewModel.loadInitial()
@@ -298,6 +311,40 @@ struct LibraryView: View {
     }
 
     private func handleFocusedItem(_ item: MediaItem) {
+#if os(tvOS)
+        if let coordinator = dependencies.tvFocusWarmupCoordinator {
+            Task(priority: .background) {
+                await coordinator.schedule(
+                    scope: TVLibraryWarmupScope.focus,
+                    detailShell: {
+                        await dependencies.detailRepository.primeItem(id: item.id)
+                        guard !Task.isCancelled else { return }
+                        await dependencies.detailRepository.primeDetail(id: item.id)
+                    },
+                    artworkPrefetch: {
+                        await dependencies.apiClient.prefetchImages(for: [item])
+                        guard !Task.isCancelled else { return }
+
+                        if let heroURL = await dependencies.apiClient.imageURL(
+                            for: item.id,
+                            type: item.backdropTag == nil ? .primary : .backdrop,
+                            width: ArtworkRequestProfile.heroBackdropHigh.width,
+                            quality: ArtworkRequestProfile.heroBackdropHigh.quality
+                        ) {
+                            await dependencies.imagePipeline.prefetch(urls: [heroURL])
+                        }
+                    },
+                    playbackWarmup: {
+                        guard !Task.isCancelled else { return }
+                        await dependencies.playbackWarmupManager.trim(keeping: [item.id])
+                        guard !Task.isCancelled else { return }
+                        await dependencies.playbackWarmupManager.warm(itemID: item.id)
+                    }
+                )
+            }
+            return
+        }
+#endif
         warmupTask?.cancel()
         warmupTask = Task(priority: .background) {
             await dependencies.detailRepository.primeItem(id: item.id)
@@ -310,8 +357,8 @@ struct LibraryView: View {
             if let heroURL = await dependencies.apiClient.imageURL(
                 for: item.id,
                 type: item.backdropTag == nil ? .primary : .backdrop,
-                width: 1_920,
-                quality: 78
+                width: ArtworkRequestProfile.heroBackdropHigh.width,
+                quality: ArtworkRequestProfile.heroBackdropHigh.quality
             ) {
                 await dependencies.imagePipeline.prefetch(urls: [heroURL])
             }
@@ -320,6 +367,13 @@ struct LibraryView: View {
             await dependencies.playbackWarmupManager.trim(keeping: [item.id])
             guard !Task.isCancelled else { return }
             await dependencies.playbackWarmupManager.warm(itemID: item.id)
+        }
+    }
+
+    private func handleVisibleItem(_ item: MediaItem) {
+        guard viewModel.paginationTriggerItemID == item.id else { return }
+        Task {
+            await viewModel.loadMoreIfNeeded()
         }
     }
 

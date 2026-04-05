@@ -4,28 +4,47 @@ import UIKit
 import ImageIO
 
 actor ImageTaskRegistry {
-    private var tasks: [URL: Task<UIImage, Error>] = [:]
+    private struct Entry {
+        var task: Task<UIImage, Error>
+        var consumers: Set<ImageRequestConsumerID>
+    }
+
+    private var entries: [URL: Entry] = [:]
 
     func existingOrRegisterTask(
         for url: URL,
+        consumer consumerID: ImageRequestConsumerID,
         makeTask: () -> Task<UIImage, Error>
     ) -> (task: Task<UIImage, Error>, isNew: Bool) {
-        if let existing = tasks[url] {
-            return (existing, false)
+        if var existing = entries[url] {
+            existing.consumers.insert(consumerID)
+            entries[url] = existing
+            return (existing.task, false)
         }
 
         let task = makeTask()
-        tasks[url] = task
+        entries[url] = Entry(task: task, consumers: [consumerID])
         return (task, true)
     }
 
-    func removeTask(for url: URL) {
-        tasks[url] = nil
+    func release(url: URL, consumer consumerID: ImageRequestConsumerID) {
+        guard var entry = entries[url] else { return }
+        entry.consumers.remove(consumerID)
+        if entry.consumers.isEmpty {
+            entry.task.cancel()
+            entries[url] = nil
+        } else {
+            entries[url] = entry
+        }
+    }
+
+    func hasConsumer(_ consumerID: ImageRequestConsumerID, for url: URL) -> Bool {
+        entries[url]?.consumers.contains(consumerID) == true
     }
 
     func cancel(url: URL) {
-        tasks[url]?.cancel()
-        tasks[url] = nil
+        entries[url]?.task.cancel()
+        entries[url] = nil
     }
 }
 
@@ -71,6 +90,10 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     }
 
     public func image(for url: URL) async throws -> UIImage {
+        try await image(for: url, consumer: ImageRequestConsumerID())
+    }
+
+    public func image(for url: URL, consumer consumerID: ImageRequestConsumerID) async throws -> UIImage {
         let interval = SignpostInterval(signposter: Signpost.imageLoading, name: "image_request")
 
         if let memoryImage = memoryCache.object(forKey: url as NSURL) {
@@ -79,10 +102,10 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
 
         let tracker = ImageLoadTracker()
-        let registered = await registry.existingOrRegisterTask(for: url) {
+        let registered = await registry.existingOrRegisterTask(for: url, consumer: consumerID) {
             Task {
                 if let diskData = await self.diskCache.data(forKey: url.absoluteString),
-                   let image = self.decodeImage(data: diskData, for: url) {
+                   let image = await self.decodeImage(data: diskData, for: url) {
                     tracker.source = "disk_hit"
                     self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
                     return image
@@ -90,7 +113,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
                 let data = try await self.fetchImageData(url: url)
 
-                guard let image = self.decodeImage(data: data, for: url) else {
+                guard let image = await self.decodeImage(data: data, for: url) else {
                     throw AppError.decoding("Invalid image payload.")
                 }
 
@@ -101,18 +124,18 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
             }
         }
 
-        defer {
-            Task {
-                await self.registry.removeTask(for: url)
-            }
-        }
-
         do {
             let image = try await registered.task.value
+            try Task.checkCancellation()
+            guard await registry.hasConsumer(consumerID, for: url) else {
+                throw CancellationError()
+            }
             interval.end(name: "image_request", message: registered.isNew ? tracker.source : "dedupe_hit")
+            await self.registry.release(url: url, consumer: consumerID)
             return image
         } catch {
             interval.end(name: "image_request", message: "network_error")
+            await self.registry.release(url: url, consumer: consumerID)
             throw error
         }
     }
@@ -161,7 +184,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         guard let data = await diskCache.data(forKey: url.absoluteString) else {
             return nil
         }
-        guard let image = decodeImage(data: data, for: url) else {
+        guard let image = await decodeImage(data: data, for: url) else {
             return nil
         }
         memoryCache.setObject(image, forKey: url as NSURL, cost: memoryCost(for: image))
@@ -186,24 +209,33 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
     }
 
-    private func decodeImage(data: Data, for url: URL) -> UIImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-            return UIImage(data: data)
+    public func cancel(url: URL, consumer consumerID: ImageRequestConsumerID) {
+        let taskRegistry = registry
+        Task {
+            await taskRegistry.release(url: url, consumer: consumerID)
         }
+    }
 
+    private func decodeImage(data: Data, for url: URL) async -> UIImage? {
         let maxPixelSize = max(requestedPixelSize(for: url), 320)
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-        ]
+        return await Task.detached(priority: .utility) {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+                return UIImage(data: data)
+            }
 
-        if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
-            return UIImage(cgImage: cgImage)
-        }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+            ]
 
-        return UIImage(data: data)
+            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                return UIImage(cgImage: cgImage)
+            }
+
+            return UIImage(data: data)
+        }.value
     }
 
     private func requestedPixelSize(for url: URL) -> Int {

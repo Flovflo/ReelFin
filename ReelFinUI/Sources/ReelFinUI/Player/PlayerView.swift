@@ -15,13 +15,9 @@ struct PlayerView: View {
 
             NativePlayerViewController(
                 player: session.player,
-                audioTracks: session.availableAudioTracks,
-                subtitleTracks: session.availableSubtitleTracks,
-                selectedAudioID: session.selectedAudioTrackID,
-                selectedSubtitleID: session.selectedSubtitleTrackID,
+                transportState: session.transportState,
                 onSelectAudio: { id in session.selectAudioTrack(id: id) },
                 onSelectSubtitle: { id in session.selectSubtitleTrack(id: id) },
-                skipSuggestion: session.activeSkipSuggestion,
                 onSkipSuggestion: { session.skipCurrentSegment() }
             )
             .ignoresSafeArea()

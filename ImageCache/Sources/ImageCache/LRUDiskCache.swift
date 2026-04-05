@@ -11,6 +11,7 @@ public actor LRUDiskCache {
     private let directoryURL: URL
     private let indexURL: URL
     private let maxSizeBytes: Int
+    private let indexPersistDelayNanoseconds: UInt64
     private let fileManager: FileManager
 
     private var entries: [String: Entry] = [:]
@@ -20,10 +21,12 @@ public actor LRUDiskCache {
     public init(
         directoryURL: URL? = nil,
         maxSizeBytes: Int = 350 * 1_024 * 1_024,
+        indexPersistDelayNanoseconds: UInt64 = 750_000_000,
         fileManager: FileManager = .default
     ) throws {
         self.fileManager = fileManager
         self.maxSizeBytes = maxSizeBytes
+        self.indexPersistDelayNanoseconds = indexPersistDelayNanoseconds
 
         if let directoryURL {
             self.directoryURL = directoryURL
@@ -146,18 +149,27 @@ public actor LRUDiskCache {
     }
 
     private func schedulePersistIndex() {
-        persistTask?.cancel()
-        persistTask = Task { [entries, indexURL] in
+        guard persistTask == nil else { return }
+        let delay = indexPersistDelayNanoseconds
+        persistTask = Task { [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 300_000_000)
+                try await Task.sleep(nanoseconds: delay)
             } catch {
                 return
             }
 
-            guard !Task.isCancelled else { return }
-            guard let data = try? JSONEncoder().encode(entries) else { return }
-            try? data.write(to: indexURL, options: .atomic)
+            await self?.persistScheduledIndex()
         }
+    }
+
+    private func persistScheduledIndex() {
+        guard let persistTask, !persistTask.isCancelled else {
+            self.persistTask = nil
+            return
+        }
+
+        self.persistTask = nil
+        persistIndex()
     }
 
     private func hash(_ value: String) -> String {

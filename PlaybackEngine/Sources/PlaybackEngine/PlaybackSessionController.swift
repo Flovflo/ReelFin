@@ -18,6 +18,60 @@ public struct PlaybackPerformanceMetrics: Sendable {
     }
 }
 
+public struct PlaybackTransportState: Sendable, Equatable {
+    public var availableAudioTracks: [MediaTrack]
+    public var availableSubtitleTracks: [MediaTrack]
+    public var selectedAudioTrackID: String?
+    public var selectedSubtitleTrackID: String?
+    public var activeSkipSuggestion: PlaybackSkipSuggestion?
+
+    public init(
+        availableAudioTracks: [MediaTrack] = [],
+        availableSubtitleTracks: [MediaTrack] = [],
+        selectedAudioTrackID: String? = nil,
+        selectedSubtitleTrackID: String? = nil,
+        activeSkipSuggestion: PlaybackSkipSuggestion? = nil
+    ) {
+        self.availableAudioTracks = availableAudioTracks
+        self.availableSubtitleTracks = availableSubtitleTracks
+        self.selectedAudioTrackID = selectedAudioTrackID
+        self.selectedSubtitleTrackID = selectedSubtitleTrackID
+        self.activeSkipSuggestion = activeSkipSuggestion
+    }
+
+    public static let empty = PlaybackTransportState()
+}
+
+@MainActor
+final class PlaybackTransportStateCommitter {
+    private var pendingCommitTask: Task<Void, Never>?
+    private let delayNanoseconds: UInt64
+
+    init(delayNanoseconds: UInt64 = 120_000_000) {
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+    func schedule(_ action: @escaping @MainActor () -> Void) {
+        pendingCommitTask?.cancel()
+        pendingCommitTask = Task { @MainActor [delayNanoseconds] in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard !Task.isCancelled else { return }
+            action()
+        }
+    }
+
+    func commitNow(_ action: @escaping @MainActor () -> Void) {
+        pendingCommitTask?.cancel()
+        pendingCommitTask = nil
+        action()
+    }
+
+    func cancel() {
+        pendingCommitTask?.cancel()
+        pendingCommitTask = nil
+    }
+}
+
 public struct PlaybackProofSnapshot: Sendable, Equatable {
     public var decodedResolution: String
     public var codecFourCC: String
@@ -164,12 +218,18 @@ public final class PlaybackSessionController {
     public private(set) var isPlaying = false
     public internal(set) var currentTime: TimeInterval = 0
     public private(set) var duration: TimeInterval = 0
-    public private(set) var availableAudioTracks: [MediaTrack] = []
-    public private(set) var availableSubtitleTracks: [MediaTrack] = []
-    public private(set) var selectedAudioTrackID: String?
-    public private(set) var selectedSubtitleTrackID: String?
-    /// External subtitle deferred until first frame to avoid HLS reload during startup.
-    private var pendingExternalSubtitleID: String?
+    public private(set) var availableAudioTracks: [MediaTrack] = [] {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
+    public private(set) var availableSubtitleTracks: [MediaTrack] = [] {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
+    public private(set) var selectedAudioTrackID: String? {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
+    public private(set) var selectedSubtitleTrackID: String? {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
     public private(set) var routeDescription: String = ""
     public private(set) var debugInfo: PlaybackDebugInfo?
     public private(set) var currentPlaybackPlan: PlaybackPlan?
@@ -177,8 +237,11 @@ public final class PlaybackSessionController {
     public private(set) var metrics = PlaybackPerformanceMetrics()
     public private(set) var isExternalPlaybackActive = false
     var playbackErrorMessage: String?
-    public internal(set) var activeSkipSuggestion: PlaybackSkipSuggestion?
+    public internal(set) var activeSkipSuggestion: PlaybackSkipSuggestion? {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
     public private(set) var playbackProof = PlaybackProofSnapshot()
+    public private(set) var transportState = PlaybackTransportState.empty
 
     public let player = AVPlayer()
 
@@ -246,6 +309,14 @@ public final class PlaybackSessionController {
     private var preferredProfilesByItemID: [String: TranscodeURLProfile] = [:]
     private var lastPreparedSelection: PlaybackAssetSelection?
     var markerRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private let transportStateCommitter = PlaybackTransportStateCommitter()
+    private var transportStateSnapshotUpdatesSuspended = false
+
+    enum StartupSubtitleLoadAction: Equatable {
+        case none
+        case applyEmbedded(String)
+        case skipExternal(String)
+    }
 
     private var readyInterval: SignpostInterval?
     private var firstFrameInterval: SignpostInterval?
@@ -326,6 +397,47 @@ public final class PlaybackSessionController {
         setupLifecycleObservers()
     }
 
+    private func beginTransportStateSnapshotBatch() {
+        transportStateSnapshotUpdatesSuspended = true
+        transportStateCommitter.cancel()
+    }
+
+    private func endTransportStateSnapshotBatch(commitNow: Bool = true) {
+        transportStateSnapshotUpdatesSuspended = false
+        if commitNow {
+            commitTransportStateSnapshotNow()
+        }
+    }
+
+    private func makeTransportState() -> PlaybackTransportState {
+        PlaybackTransportState(
+            availableAudioTracks: availableAudioTracks,
+            availableSubtitleTracks: availableSubtitleTracks,
+            selectedAudioTrackID: selectedAudioTrackID,
+            selectedSubtitleTrackID: selectedSubtitleTrackID,
+            activeSkipSuggestion: activeSkipSuggestion
+        )
+    }
+
+    private func applyTransportStateSnapshot() {
+        let snapshot = makeTransportState()
+        guard snapshot != transportState else { return }
+        transportState = snapshot
+    }
+
+    private func scheduleTransportStateSnapshotUpdate() {
+        guard !transportStateSnapshotUpdatesSuspended else { return }
+        transportStateCommitter.schedule { [weak self] in
+            self?.applyTransportStateSnapshot()
+        }
+    }
+
+    private func commitTransportStateSnapshotNow() {
+        transportStateCommitter.commitNow { [weak self] in
+            self?.applyTransportStateSnapshot()
+        }
+    }
+
     @MainActor
     deinit {
         tearDownCurrentItemObservers()
@@ -333,6 +445,7 @@ public final class PlaybackSessionController {
         lifecycleObservers.forEach {
             NotificationCenter.default.removeObserver($0)
         }
+        transportStateCommitter.cancel()
         startupWatchdogTask?.cancel()
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
@@ -351,7 +464,6 @@ public final class PlaybackSessionController {
         currentTime = 0
         duration = 0
         mediaSegments = []
-        activeSkipSuggestion = nil
         markerRefreshTask?.cancel()
         markerRefreshTask = Task { @MainActor [weak self] in
             await self?.refreshPlaybackMarkers(for: item)
@@ -410,6 +522,11 @@ public final class PlaybackSessionController {
             NativeBridgeFailureCache.clearFailure(itemID: item.id)
         }
 
+        transportStateCommitter.cancel()
+        transportState = .empty
+        beginTransportStateSnapshotBatch()
+        activeSkipSuggestion = nil
+
         // Start the overall TTFF pipeline signpost
         ttffPipelineInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_total")
         ttffInfoInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_playback_info")
@@ -458,6 +575,10 @@ public final class PlaybackSessionController {
                 itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                     itemPrefersDolbyVision: item.hasDolbyVision,
                     source: selection.source
+                ),
+                profileOverride: Self.variantPinningProfile(
+                    from: selection.assetURL,
+                    requestedProfile: activeTranscodeProfile
                 )
             )
             selection = try await stabilizeInitialSelectionIfNeeded(
@@ -513,6 +634,10 @@ public final class PlaybackSessionController {
                         itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                             itemPrefersDolbyVision: item.hasDolbyVision,
                             source: selection.source
+                        ),
+                        profileOverride: Self.variantPinningProfile(
+                            from: selection.assetURL,
+                            requestedProfile: activeTranscodeProfile
                         )
                     )
                     selection = try await stabilizeInitialSelectionIfNeeded(
@@ -980,6 +1105,7 @@ public final class PlaybackSessionController {
                 "Subtitle auto-selected: '\(track.title, privacy: .public)' lang='\(track.language ?? "?", privacy: .public)' default=\(track.isDefault, privacy: .public)"
             )
         }
+        endTransportStateSnapshotBatch(commitNow: true)
 
         routeDescription = routeLabel(for: selection.decision.route)
 
@@ -1072,11 +1198,7 @@ public final class PlaybackSessionController {
         let playerItem = AVPlayerItem(asset: asset)
         AppLog.nativeBridge.notice("[NB-DIAG] avplayeritem.created — method=\(self.playMethodForReporting, privacy: .public)")
         playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
-        let output = AVPlayerItemVideoOutput(
-            pixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
-            ]
-        )
+        let output = makeVideoOutput()
         playerItem.add(output)
         videoOutput = output
         playerItem.preferredForwardBufferDuration = forwardBuffer
@@ -1096,6 +1218,14 @@ public final class PlaybackSessionController {
         pendingResumeSeconds = resumeSeconds.flatMap { $0 > 0 ? $0 : nil }
     }
 
+    private func makeVideoOutput() -> AVPlayerItemVideoOutput {
+        AVPlayerItemVideoOutput(
+            pixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            ]
+        )
+    }
+
     public func stop() {
         let progressSnapshot = makeProgressSnapshot(isPaused: true, didFinish: false)
         let bridgeSession = nativeBridgeSession
@@ -1106,6 +1236,9 @@ public final class PlaybackSessionController {
         tearDownCurrentItemObservers()
         player.replaceCurrentItem(with: nil)
 
+        transportStateCommitter.cancel()
+        transportState = .empty
+        beginTransportStateSnapshotBatch()
         currentTime = 0
         duration = 0
         availableAudioTracks = []
@@ -1124,6 +1257,7 @@ public final class PlaybackSessionController {
         nextEpisodeQueue = []
         mediaSegments = []
         activeSkipSuggestion = nil
+        endTransportStateSnapshotBatch(commitNow: true)
 
         currentItemID = nil
         currentItemHasDolbyVision = false
@@ -1263,6 +1397,11 @@ public final class PlaybackSessionController {
         guard let selection = lastPreparedSelection else { return }
 
         let currentSeconds = player.currentTime().seconds.isFinite ? max(0, player.currentTime().seconds) : 0
+        let shouldResumePlayback = Self.shouldResumePlaybackAfterTrackReload(
+            wasPlayingBeforeReplacement: isPlaying,
+            playerRate: player.rate,
+            timeControlStatus: player.timeControlStatus
+        )
         guard var components = URLComponents(url: selection.assetURL, resolvingAgainstBaseURL: false) else { return }
 
         var items = components.queryItems ?? []
@@ -1292,7 +1431,8 @@ public final class PlaybackSessionController {
         let newItem = AVPlayerItem(asset: newAsset)
         newItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
 
-        player.replaceCurrentItem(with: newItem)
+        replaceCurrentItemForTrackReload(newItem)
+        lastPreparedSelection?.assetURL = newURL
         selectedAudioTrackID = track.id
 
         if currentSeconds > 0 {
@@ -1300,7 +1440,7 @@ public final class PlaybackSessionController {
             let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
             await player.seek(to: seekTarget, toleranceBefore: tolerance, toleranceAfter: tolerance)
         }
-        if isPlaying { player.play() }
+        if shouldResumePlayback { player.play() }
     }
 
     public func selectSubtitleTrack(id: String?) {
@@ -1359,6 +1499,11 @@ public final class PlaybackSessionController {
     /// EXT-X-MEDIA TYPE=SUBTITLES entry referencing the sidecar WebVTT.
     private func reloadForSubtitleTrack(_ track: MediaTrack) async {
         guard let selection = lastPreparedSelection else { return }
+        let shouldResumePlayback = Self.shouldResumePlaybackAfterTrackReload(
+            wasPlayingBeforeReplacement: isPlaying,
+            playerRate: player.rate,
+            timeControlStatus: player.timeControlStatus
+        )
 
         // Prefer the HLS direct-stream URL so Jellyfin can embed the subtitle
         // track in the manifest. Fall back to the transcode URL when no direct
@@ -1410,7 +1555,8 @@ public final class PlaybackSessionController {
         let newItem = AVPlayerItem(asset: newAsset)
         newItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
 
-        player.replaceCurrentItem(with: newItem)
+        replaceCurrentItemForTrackReload(newItem)
+        lastPreparedSelection?.assetURL = hlsURL
         selectedSubtitleTrackID = track.id
 
         // Resume from the same timestamp after the reload.
@@ -1419,7 +1565,21 @@ public final class PlaybackSessionController {
             let tolerance = CMTime(seconds: 2.0, preferredTimescale: 600)
             await player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
         }
-        if isPlaying { player.play() }
+        if shouldResumePlayback { player.play() }
+    }
+
+    private func replaceCurrentItemForTrackReload(_ item: AVPlayerItem) {
+        videoOutputPollTask?.cancel()
+        let output = makeVideoOutput()
+        item.add(output)
+        videoOutput = output
+        hasDecodedVideoFrame = false
+        lastPlayerItemStatus = "unknown"
+        playbackProof.playerItemStatus = "unknown"
+        player.replaceCurrentItem(with: item)
+        configureObservers(for: item)
+        updatePlaybackProof(from: item)
+        startVideoOutputPolling(for: item)
     }
 
     /// Log the expected dynamic range outcome for the current playback session.
@@ -1763,15 +1923,23 @@ public final class PlaybackSessionController {
                     self.emitLocalHLSStartupSummary(avplayerResult: "readyToPlay")
                     // Apply the initial subtitle selection now that AVFoundation media
                     // selection groups are available. This is a no-op if nil.
-                    // Only select embedded subtitles immediately; external subtitles
-                    // (SRT/ASS) trigger a full HLS reload which would interrupt first-frame
-                    // decoding. Defer those until after the first frame is displayed.
-                    if let initialSubID = self.selectedSubtitleTrackID {
-                        if self.isSubtitleEmbedded(id: initialSubID, in: observedItem) {
-                            self.selectSubtitleTrack(id: initialSubID)
-                        } else {
-                            self.pendingExternalSubtitleID = initialSubID
+                    // Only apply embedded subtitles automatically. External subtitle
+                    // injection requires a full HLS reload, which is disruptive
+                    // enough to look like a startup restart to the user.
+                    switch Self.startupSubtitleLoadAction(
+                        autoSelectedTrackID: self.selectedSubtitleTrackID,
+                        isEmbedded: self.selectedSubtitleTrackID.map { self.isSubtitleEmbedded(id: $0, in: observedItem) } ?? false
+                    ) {
+                    case .applyEmbedded(let trackID):
+                        self.selectSubtitleTrack(id: trackID)
+                    case .skipExternal(let trackID):
+                        if let track = self.availableSubtitleTracks.first(where: { $0.id == trackID }) {
+                            AppLog.playback.info(
+                                "Skipping automatic external subtitle reload at startup: track='\(track.title, privacy: .public)'"
+                            )
                         }
+                    case .none:
+                        break
                     }
                 } else if observedItem.status == .failed {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_failed")
@@ -1859,14 +2027,6 @@ public final class PlaybackSessionController {
 
         if playMethodForReporting == "NativeBridge", let itemID = currentItemID {
             NativeBridgeFailureCache.clearFailure(itemID: itemID)
-        }
-
-        // Apply deferred external subtitle selection now that the first frame is displayed.
-        // This avoids the HLS reload (player item replacement) during startup which would
-        // abort first-frame decoding and trigger the startup watchdog.
-        if let deferredSubID = pendingExternalSubtitleID {
-            pendingExternalSubtitleID = nil
-            selectSubtitleTrack(id: deferredSubID)
         }
     }
 
@@ -2376,6 +2536,11 @@ public final class PlaybackSessionController {
         let sourceLikelyHighQuality = (selection.source.bitrate ?? 0) >= 15_000_000 || (selection.source.videoBitDepth ?? 8) >= 10
         guard sourceLikelyHighQuality else { return false }
 
+        if let variant = selectedVariantInfo,
+           Self.isDegradedStartupVariant(width: variant.width, bandwidth: variant.bandwidth) {
+            return true
+        }
+
         do {
             let manifest = try await fetchPlaylist(url: selection.assetURL, headers: selection.headers)
             guard let streamInfLine = manifest.split(whereSeparator: \.isNewline).map(String.init).first(where: {
@@ -2386,10 +2551,8 @@ public final class PlaybackSessionController {
 
             let bandwidth = parseIntAttribute("BANDWIDTH", from: streamInfLine)
             let (width, _) = parseResolution(from: streamInfLine)
-            let isDegradedBandwidth = bandwidth > 0 && bandwidth < 2_000_000
-            let isLowResolutionVariant = width > 0 && width < 960
 
-            return isDegradedBandwidth || isLowResolutionVariant
+            return Self.isDegradedStartupVariant(width: width, bandwidth: bandwidth)
         } catch {
             return false
         }
@@ -2608,6 +2771,43 @@ public final class PlaybackSessionController {
             allowSDRFallback: allowSDRFallback,
             itemHasDolbyVision: itemHasDolbyVision
         )
+    }
+
+    nonisolated static func variantPinningProfile(
+        from url: URL?,
+        requestedProfile: TranscodeURLProfile
+    ) -> TranscodeURLProfile {
+        guard let url else { return requestedProfile }
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return requestedProfile
+        }
+
+        var query: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            guard let value = item.value else { continue }
+            query[item.name.lowercased()] = value.lowercased()
+        }
+
+        let allowVideoCopy = query["allowvideostreamcopy"] == "true"
+        let codec = query["videocodec"] ?? ""
+        if codec == "h264", !allowVideoCopy {
+            return .forceH264Transcode
+        }
+        if codec == "hevc", !allowVideoCopy {
+            return .appleOptimizedHEVC
+        }
+        if allowVideoCopy {
+            return requestedProfile == .conservativeCompatibility ? .conservativeCompatibility : .serverDefault
+        }
+
+        return requestedProfile
+    }
+
+    nonisolated static func isDegradedStartupVariant(width: Int, bandwidth: Int) -> Bool {
+        let isDegradedBandwidth = bandwidth > 0 && bandwidth < 2_000_000
+        let isLowResolutionVariant = width > 0 && width < 960
+        return isDegradedBandwidth || isLowResolutionVariant
     }
 
     private func isMKVHEVCSource(_ source: MediaSource) -> Bool {
@@ -2832,6 +3032,10 @@ public final class PlaybackSessionController {
                     itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                         itemPrefersDolbyVision: currentItemHasDolbyVision || (currentSource?.isLikelyHDRorDV ?? false),
                         source: selection.source
+                    ),
+                    profileOverride: Self.variantPinningProfile(
+                        from: selection.assetURL,
+                        requestedProfile: profile
                     )
                 )
                 selection = try await stabilizeInitialSelectionIfNeeded(
@@ -3238,22 +3442,7 @@ public final class PlaybackSessionController {
     }
 
     private func inferredTranscodeProfile(from url: URL?, fallback: TranscodeURLProfile) -> TranscodeURLProfile {
-        guard let url else { return fallback }
-        let query = transcodeQueryMap(from: url)
-        guard !query.isEmpty else { return fallback }
-
-        let allowVideoCopy = query["allowvideostreamcopy"] == "true"
-        let codec = query["videocodec"] ?? ""
-        if codec == "h264", !allowVideoCopy {
-            return .forceH264Transcode
-        }
-        if codec == "hevc", !allowVideoCopy {
-            return .appleOptimizedHEVC
-        }
-        if allowVideoCopy {
-            return fallback == .conservativeCompatibility ? .conservativeCompatibility : .serverDefault
-        }
-        return fallback
+        Self.variantPinningProfile(from: url, requestedProfile: fallback)
     }
 
     private static func loadStoredPreferredProfiles() -> [String: TranscodeURLProfile] {
@@ -3655,5 +3844,21 @@ public final class PlaybackSessionController {
             UInt8(n & 0xff)
         ]
         return String(bytes: bytes, encoding: .ascii)?.lowercased() ?? ""
+    }
+
+    nonisolated static func startupSubtitleLoadAction(
+        autoSelectedTrackID: String?,
+        isEmbedded: Bool
+    ) -> StartupSubtitleLoadAction {
+        guard let trackID = autoSelectedTrackID else { return .none }
+        return isEmbedded ? .applyEmbedded(trackID) : .skipExternal(trackID)
+    }
+
+    nonisolated static func shouldResumePlaybackAfterTrackReload(
+        wasPlayingBeforeReplacement: Bool,
+        playerRate: Float,
+        timeControlStatus: AVPlayer.TimeControlStatus
+    ) -> Bool {
+        wasPlayingBeforeReplacement || playerRate > 0 || timeControlStatus == .playing
     }
 }

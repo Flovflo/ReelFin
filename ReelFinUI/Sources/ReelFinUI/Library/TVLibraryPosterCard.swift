@@ -18,7 +18,6 @@ struct TVLibraryPosterCard: View {
                 imagePipeline: dependencies.imagePipeline,
                 layoutStyle: .grid
             )
-            .tvFocusElevation(focused: isFocused, cornerRadius: ReelFinTheme.cardCornerRadius)
 
             PosterCardMetadataView(
                 item: item,
@@ -32,7 +31,7 @@ struct TVLibraryPosterCard: View {
         .padding(10)
         .background { focusSurface }
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .scaleEffect(isFocused ? 1.02 : 1)
+        .tvMotionFocus(.libraryPoster, isFocused: isFocused)
         .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
@@ -43,7 +42,6 @@ struct TVLibraryPosterCard: View {
             guard focused else { return }
             onFocus(item)
         }
-        .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
     }
 
     @ViewBuilder

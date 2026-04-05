@@ -83,9 +83,7 @@ public struct PosterCardView: View {
         }
         .frame(width: PosterCardMetrics.posterWidth(for: layoutStyle, compact: isCompact), alignment: .leading)
         #if os(tvOS)
-        .scaleEffect(isFocused ? 1.05 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 28 : 14, x: 0, y: isFocused ? 18 : 8)
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
+        .tvMotionFocus(.posterCard, isFocused: isFocused)
         #endif
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("media_card_\(item.id)")
@@ -151,9 +149,7 @@ public struct PosterCardArtworkView: View {
             )
             .frame(width: metrics.posterWidth, height: metrics.posterHeight)
             .clipShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
-            #if os(tvOS)
-            .shadow(color: .black.opacity(0.22), radius: 12, x: 0, y: 8)
-            #else
+            #if !os(tvOS)
             .shadow(color: .black.opacity(isFocused ? focusedShadowOpacity : 0.18), radius: isFocused ? focusedShadowRadius : 10, x: 0, y: isFocused ? focusedShadowYOffset : 6)
             #endif
             .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))

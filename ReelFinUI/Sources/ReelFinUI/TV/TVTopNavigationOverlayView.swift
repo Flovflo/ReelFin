@@ -21,7 +21,5 @@ struct TVTopNavigationOverlayView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.22), value: isVisible)
-        .animation(.easeInOut(duration: 0.35), value: appearance)
     }
 }

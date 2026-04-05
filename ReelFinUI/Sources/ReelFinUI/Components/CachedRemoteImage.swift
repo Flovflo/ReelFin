@@ -17,8 +17,7 @@ public struct CachedRemoteImage: View {
     private let onImageLoaded: (() -> Void)?
 
     @State private var image: UIImage?
-    @State private var requestURL: URL?
-    @State private var currentContentKey: String?
+    @State private var request = CachedRemoteImageRequestState()
 
     public init(
         itemID: String,
@@ -61,22 +60,21 @@ public struct CachedRemoteImage: View {
             await load()
         }
         .onDisappear {
-            if let requestURL {
-                imagePipeline.cancel(url: requestURL)
+            if let requestURL = request.requestURL {
+                imagePipeline.cancel(url: requestURL, consumer: request.consumerID)
+                request.requestURL = nil
             }
         }
     }
 
+    @MainActor
     private func load() async {
-        if let requestURL {
-            imagePipeline.cancel(url: requestURL)
-        }
-        requestURL = nil
-
+        let previousConsumerID = request.consumerID
+        let consumerID = request.nextConsumerID()
         let contentKey = "\(itemID)-\(type.rawValue)"
-        if currentContentKey != contentKey {
+        if request.contentKey != contentKey {
             image = nil
-            currentContentKey = contentKey
+            request.contentKey = contentKey
         }
 
         guard let url = await apiClient.imageURL(
@@ -85,21 +83,33 @@ public struct CachedRemoteImage: View {
             width: normalizedWidth,
             quality: quality
         ) else {
+            if let requestURL = request.requestURL {
+                imagePipeline.cancel(url: requestURL, consumer: previousConsumerID)
+            }
             return
         }
 
-        requestURL = url
+        var activeURL = url
+        if let requestURL = request.requestURL, requestURL != url {
+            imagePipeline.cancel(url: requestURL, consumer: previousConsumerID)
+        }
+        request.requestURL = activeURL
+        defer {
+            imagePipeline.cancel(url: activeURL, consumer: consumerID)
+        }
 
-        if let cached = await imagePipeline.cachedImage(for: url) {
+        if let cached = await imagePipeline.cachedImage(for: activeURL) {
             image = cached
             onImageLoaded?()
             return
         }
 
         do {
-            let downloaded = try await imagePipeline.image(for: url)
+            let downloaded = try await imagePipeline.image(for: activeURL, consumer: consumerID)
             image = downloaded
             onImageLoaded?()
+        } catch is CancellationError {
+            return
         } catch {
             if Self.shouldIgnoreImageError(error) {
                 return
@@ -113,10 +123,18 @@ public struct CachedRemoteImage: View {
                 width: normalizedWidth,
                 quality: quality
                ) {
+                if activeURL != fallbackURL {
+                    imagePipeline.cancel(url: activeURL, consumer: consumerID)
+                }
+                activeURL = fallbackURL
+                request.requestURL = activeURL
+
                 do {
-                    let fallbackImage = try await imagePipeline.image(for: fallbackURL)
+                    let fallbackImage = try await imagePipeline.image(for: fallbackURL, consumer: consumerID)
                     image = fallbackImage
                     onImageLoaded?()
+                    return
+                } catch is CancellationError {
                     return
                 } catch {
                     if Self.shouldIgnoreImageError(error) {

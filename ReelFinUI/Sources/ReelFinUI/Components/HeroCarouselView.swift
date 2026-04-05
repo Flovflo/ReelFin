@@ -1,6 +1,8 @@
-import Combine
 import Shared
 import SwiftUI
+#if os(iOS)
+import Combine
+#endif
 
 public struct HeroCarouselView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -15,7 +17,9 @@ public struct HeroCarouselView: View {
     private let onVisibleItemChange: ((MediaItem) -> Void)?
 
     @State private var currentIndex = 0
+    #if os(iOS)
     private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
+    #endif
 
     public init(
         items: [MediaItem],
@@ -85,13 +89,15 @@ public struct HeroCarouselView: View {
             .frame(width: proxy.size.width, height: heroHeight, alignment: .bottom)
         }
         .frame(height: heroHeight)
+        #if os(iOS)
         .onReceive(timer) { _ in
             if items.count > 1 {
-                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                withAnimation(TVMotion.heroPageAnimation) {
                     currentIndex = (currentIndex + 1) % items.count
                 }
             }
         }
+        #endif
         .onAppear {
             if let currentItem = items[safe: currentIndex] ?? items.first {
                 onVisibleItemChange?(currentItem)
@@ -191,12 +197,6 @@ public struct HeroCarouselView: View {
         .ignoresSafeArea(edges: .top)
         .focusSection()
         .onMoveCommand(perform: handleMoveCommand)
-        .onReceive(timer) { _ in
-            guard items.count > 1 else { return }
-            withAnimation(.easeInOut(duration: 0.8)) {
-                currentIndex = (currentIndex + 1) % items.count
-            }
-        }
         .onAppear {
             if let item = items[safe: currentIndex] ?? items.first {
                 onVisibleItemChange?(item)
@@ -225,8 +225,7 @@ public struct HeroCarouselView: View {
         .frame(width: size.width, height: heroHeight)
         .clipped()
         .id(item.id) // triggers crossfade
-        .transition(.opacity.animation(.easeInOut(duration: 0.6)))
-        .animation(.easeInOut(duration: 0.6), value: currentIndex)
+        .transition(.opacity.animation(TVMotion.contentFadeAnimation))
     }
 
     // MARK: Gradient Overlay
@@ -321,7 +320,6 @@ public struct HeroCarouselView: View {
             .frame(maxWidth: size.width * 0.52, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .animation(.easeInOut(duration: 0.5), value: currentIndex)
     }
 
     // MARK: Genre · Rating Row
@@ -440,7 +438,6 @@ public struct HeroCarouselView: View {
                 Circle()
                     .fill(index == currentIndex ? .white : .white.opacity(0.35))
                     .frame(width: index == currentIndex ? 10 : 7, height: index == currentIndex ? 10 : 7)
-                    .animation(.easeInOut(duration: 0.25), value: currentIndex)
             }
         }
     }
@@ -449,14 +446,14 @@ public struct HeroCarouselView: View {
 
     private func pageForward() {
         guard items.count > 1 else { return }
-        withAnimation(.easeInOut(duration: 0.5)) {
+        withAnimation(TVMotion.heroPageAnimation) {
             currentIndex = (currentIndex + 1) % items.count
         }
     }
 
     private func pageBackward() {
         guard items.count > 1 else { return }
-        withAnimation(.easeInOut(duration: 0.5)) {
+        withAnimation(TVMotion.heroPageAnimation) {
             currentIndex = (currentIndex - 1 + items.count) % items.count
         }
     }
@@ -673,14 +670,12 @@ private struct TVHeroCapsuleButton: View {
         .padding(.vertical, 16)
         .background { backgroundView }
         .contentShape(Capsule(style: .continuous))
-        .scaleEffect(isFocused ? 1.04 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.16), radius: isFocused ? 22 : 10, x: 0, y: isFocused ? 12 : 6)
+        .tvMotionFocus(.heroButton, isFocused: isFocused)
         .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
         .onMoveCommand(perform: handleMoveCommand)
         .onTapGesture(perform: action)
-        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Swipe left or right to browse featured titles.")
     }
@@ -775,13 +770,13 @@ private struct TVHeroTitleView: View {
 
         // Try cache first
         if let cached = await imagePipeline.cachedImage(for: url) {
-            withAnimation(.easeIn(duration: 0.3)) { logoImage = cached }
+            withAnimation(TVMotion.titleLoadAnimation) { logoImage = cached }
             return
         }
 
         do {
             let downloaded = try await imagePipeline.image(for: url)
-            withAnimation(.easeIn(duration: 0.3)) { logoImage = downloaded }
+            withAnimation(TVMotion.titleLoadAnimation) { logoImage = downloaded }
         } catch {
             logoFailed = true
         }

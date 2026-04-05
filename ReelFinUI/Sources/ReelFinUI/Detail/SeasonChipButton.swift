@@ -33,15 +33,14 @@ struct SeasonChipButton: View {
             .padding(.vertical, 12)
             .background { tvBackground }
             .contentShape(Capsule(style: .continuous))
-            .scaleEffect(isFocused ? 1.04 : 1)
+            .tvMotionFocus(.chip, isFocused: isFocused, isSelected: isSelected)
             .focusable(true, interactions: .activate)
             .focused($isFocused)
             .focusEffectDisabled(true)
             .onTapGesture(perform: action)
-            .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
             .accessibilityAddTraits(.isButton)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityValue(isSelected ? "Current season" : "")
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .accessibilityValue(isSelected ? "Current season" : "")
     }
     #endif
 
@@ -109,7 +108,6 @@ struct SeasonChipButton: View {
                         Capsule(style: .continuous)
                             .stroke(Color.white.opacity(isFocused ? 0.26 : (isSelected ? 0.16 : 0.10)), lineWidth: 1)
                     }
-                    .shadow(color: .black.opacity(isFocused ? 0.18 : 0.10), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 8 : 4)
             } else {
                 Color.clear.reelFinGlassCapsule(
                     interactive: true,
