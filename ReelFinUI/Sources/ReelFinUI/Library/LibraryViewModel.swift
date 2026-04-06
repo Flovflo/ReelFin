@@ -11,7 +11,11 @@ final class LibraryViewModel: ObservableObject {
 
     @Published var items: [MediaItem] = []
     @Published var searchQuery = ""
+#if os(tvOS)
+    @Published var selectedFilter: MediaType? = .movie
+#else
     @Published var selectedFilter: MediaType? = nil
+#endif
     @Published var sortMode: SortMode = .recent
     @Published var isLoadingPage = false
     @Published var selectedItem: MediaItem?

@@ -2,9 +2,17 @@
 import Shared
 import SwiftUI
 
+enum TVLibraryControlFocus: Hashable {
+    case movies
+    case shows
+    case sort
+}
+
 struct TVLibraryControlBar: View {
     let selectedFilter: MediaType?
     let sortMode: LibraryViewModel.SortMode
+    let focusedControl: FocusState<TVLibraryControlFocus?>.Binding
+    let allowsTopNavigationRedirect: Bool
     let onFilterChange: (MediaType?) -> Void
     let onSortToggle: () -> Void
 
@@ -25,6 +33,7 @@ struct TVLibraryControlBar: View {
         }
         .padding(.horizontal, 56)
         .padding(.top, 22)
+        .focusSection()
     }
 
     private var controls: some View {
@@ -40,6 +49,10 @@ struct TVLibraryControlBar: View {
                 title: sortMode.displayTitle,
                 systemImage: "arrow.up.arrow.down",
                 isSelected: false,
+                topNavigationDestination: .library,
+                allowsTopNavigationRedirect: allowsTopNavigationRedirect,
+                focusedControl: focusedControl,
+                focusID: .sort,
                 action: onSortToggle
             )
         }
@@ -47,10 +60,24 @@ struct TVLibraryControlBar: View {
 
     private var controlRow: some View {
         HStack(spacing: 12) {
-            TVLibraryPillButton(title: "Movies", isSelected: selectedFilter == .movie) {
+            TVLibraryPillButton(
+                title: "Movies",
+                isSelected: selectedFilter == .movie,
+                topNavigationDestination: .library,
+                allowsTopNavigationRedirect: allowsTopNavigationRedirect,
+                focusedControl: focusedControl,
+                focusID: .movies
+            ) {
                 onFilterChange(.movie)
             }
-            TVLibraryPillButton(title: "Shows", isSelected: selectedFilter == .series) {
+            TVLibraryPillButton(
+                title: "Shows",
+                isSelected: selectedFilter == .series,
+                topNavigationDestination: .library,
+                allowsTopNavigationRedirect: allowsTopNavigationRedirect,
+                focusedControl: focusedControl,
+                focusID: .shows
+            ) {
                 onFilterChange(.series)
             }
         }

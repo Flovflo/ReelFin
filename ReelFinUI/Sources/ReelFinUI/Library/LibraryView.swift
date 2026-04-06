@@ -9,9 +9,16 @@ private enum TVLibraryWarmupScope {
 
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#if os(tvOS)
+    @FocusState private var focusedControl: TVLibraryControlFocus?
+#endif
     @StateObject private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
     @State private var warmupTask: Task<Void, Never>?
+#if os(tvOS)
+    @State private var allowsControlBarTopNavigation = true
+    @State private var controlBarNavigationUnlockTask: Task<Void, Never>?
+#endif
 
     init(dependencies: ReelFinDependencies) {
         _viewModel = StateObject(wrappedValue: LibraryViewModel(dependencies: dependencies))
@@ -21,71 +28,7 @@ struct LibraryView: View {
     var body: some View {
         ZStack {
             ReelFinTheme.pageGradient.ignoresSafeArea()
-
-            VStack(spacing: 14) {
-                topBar
-
-                ScrollView(showsIndicators: false) {
-                    LazyVGrid(columns: columns, spacing: gridSpacing) {
-                        ForEach(viewModel.items) { item in
-#if os(tvOS)
-                            TVLibraryPosterCard(
-                                item: item,
-                                dependencies: dependencies,
-                                onFocus: { focusedItem in
-                                    handleFocusedItem(focusedItem)
-                                },
-                                onSelect: { selectedItem in
-                                    let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
-                                    Task {
-                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
-                                    }
-                                    viewModel.select(item: selectedItem)
-                                }
-                            )
-                            .onAppear {
-                                handleVisibleItem(item)
-                            }
-#else
-                            VStack(alignment: .leading, spacing: 10) {
-                                Button {
-                                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
-                                    Task {
-                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
-                                    }
-                                    viewModel.select(item: item)
-                                } label: {
-                                    PosterCardArtworkView(
-                                        item: item,
-                                        apiClient: dependencies.apiClient,
-                                        imagePipeline: dependencies.imagePipeline,
-                                        layoutStyle: .grid
-                                    )
-                                }
-                                .accessibilityIdentifier("media_card_button_\(item.id)")
-                                .buttonStyle(.plain)
-
-                                PosterCardMetadataView(
-                                    item: item,
-                                    layoutStyle: .grid
-                                )
-                            }
-                            .onAppear {
-                                handleVisibleItem(item)
-                            }
-#endif
-                        }
-                    }
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.bottom, 24)
-
-                    if viewModel.isLoadingPage {
-                        ProgressView()
-                            .tint(.white)
-                            .padding(.bottom, 16)
-                    }
-                }
-            }
+            libraryContent
         }
         .navigationDestination(
             isPresented: Binding(
@@ -103,6 +46,7 @@ struct LibraryView: View {
         .onDisappear {
             warmupTask?.cancel()
 #if os(tvOS)
+            controlBarNavigationUnlockTask?.cancel()
             if let coordinator = dependencies.tvFocusWarmupCoordinator {
                 Task {
                     await coordinator.cancel(scope: TVLibraryWarmupScope.focus)
@@ -136,6 +80,90 @@ struct LibraryView: View {
     }
 
     @ViewBuilder
+    private var libraryContent: some View {
+#if os(tvOS)
+        GeometryReader { proxy in
+            libraryContent(topRowItemIDs: tvTopRowItemIDs(containerWidth: proxy.size.width))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+#else
+        libraryContent(topRowItemIDs: [])
+#endif
+    }
+
+    private func libraryContent(topRowItemIDs: Set<String>) -> some View {
+        VStack(spacing: 14) {
+            topBar
+
+            ScrollView(showsIndicators: false) {
+                LazyVGrid(columns: columns, spacing: gridSpacing) {
+                    ForEach(viewModel.items) { item in
+#if os(tvOS)
+                        TVLibraryPosterCard(
+                            item: item,
+                            dependencies: dependencies,
+                            onFocus: { focusedItem in
+                                handleFocusedItem(focusedItem)
+                            },
+                            onMoveUp: topRowItemIDs.contains(item.id) ? focusPreferredControlBar : nil,
+                            onSelect: { selectedItem in
+                                let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
+                                Task {
+                                    await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                }
+                                viewModel.select(item: selectedItem)
+                            }
+                        )
+                        .onAppear {
+                            handleVisibleItem(item)
+                        }
+#else
+                        VStack(alignment: .leading, spacing: 10) {
+                            Button {
+                                let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                                Task {
+                                    await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                }
+                                viewModel.select(item: item)
+                            } label: {
+                                PosterCardArtworkView(
+                                    item: item,
+                                    apiClient: dependencies.apiClient,
+                                    imagePipeline: dependencies.imagePipeline,
+                                    layoutStyle: .grid
+                                )
+                            }
+                            .accessibilityIdentifier("media_card_button_\(item.id)")
+                            .buttonStyle(.plain)
+
+                            PosterCardMetadataView(
+                                item: item,
+                                layoutStyle: .grid
+                            )
+                        }
+                        .onAppear {
+                            handleVisibleItem(item)
+                        }
+#endif
+                    }
+                }
+                .padding(.top, 56)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.bottom, 24)
+
+                if viewModel.isLoadingPage {
+                    ProgressView()
+                        .tint(.white)
+                        .padding(.bottom, 16)
+                }
+            }
+#if os(tvOS)
+            .focusSection()
+#endif
+        }
+    }
+
+    @ViewBuilder
     private var topBar: some View {
 #if os(tvOS)
         tvTopBar
@@ -149,6 +177,8 @@ struct LibraryView: View {
         TVLibraryControlBar(
             selectedFilter: viewModel.selectedFilter,
             sortMode: viewModel.sortMode,
+            focusedControl: $focusedControl,
+            allowsTopNavigationRedirect: allowsControlBarTopNavigation,
             onFilterChange: setTVFilter,
             onSortToggle: toggleTVSortMode
         )
@@ -385,5 +415,59 @@ struct LibraryView: View {
     private func toggleTVSortMode() {
         viewModel.sortMode = viewModel.sortMode == .recent ? .title : .recent
     }
+
+    private func focusPreferredControlBar() {
+        focusControlBar(preferredControlBarTarget)
+    }
+
+    private func focusControlBar(_ target: TVLibraryControlFocus) {
+        controlBarNavigationUnlockTask?.cancel()
+        allowsControlBarTopNavigation = false
+        focusedControl = target
+
+        controlBarNavigationUnlockTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+            allowsControlBarTopNavigation = true
+        }
+    }
+
+    private var preferredControlBarTarget: TVLibraryControlFocus {
+        viewModel.selectedFilter == .series ? .shows : .movies
+    }
+
+    private func tvTopRowItemIDs(containerWidth: CGFloat) -> Set<String> {
+        TVAdaptiveGridFocusLayout(
+            containerWidth: containerWidth,
+            horizontalPadding: horizontalPadding,
+            minimumItemWidth: 240,
+            interItemSpacing: 32
+        )
+        .firstRowItemIDs(in: viewModel.items)
+    }
+#endif
+}
+
+struct TVAdaptiveGridFocusLayout: Equatable {
+    let containerWidth: CGFloat
+    let horizontalPadding: CGFloat
+    let minimumItemWidth: CGFloat
+    let interItemSpacing: CGFloat
+
+    var columnCount: Int {
+        let usableWidth = max(containerWidth - (horizontalPadding * 2), minimumItemWidth)
+        return max(Int((usableWidth + interItemSpacing) / (minimumItemWidth + interItemSpacing)), 1)
+    }
+
+    func isInFirstRow(index: Int) -> Bool {
+        index >= 0 && index < columnCount
+    }
+
+    func firstRowItemIDs<Item: Identifiable>(in items: [Item]) -> Set<Item.ID> where Item.ID: Hashable {
+        Set(items.prefix(columnCount).map(\.id))
+    }
+
+#if os(tvOS)
+    // Reserved for tvOS focus logic on the first visible row.
 #endif
 }
