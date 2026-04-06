@@ -1,5 +1,16 @@
 # ReelFin App Store Submission
 
+## Release target
+
+- Initial release path: iOS and iPadOS beta through TestFlight
+- Bundle ID: `com.reelfin.app`
+- Category: Entertainment
+- Support email: `floriantaffin@gmail.com`
+- Marketing URL: `https://flovflo.github.io/ReelFin/`
+- Support URL: `https://flovflo.github.io/ReelFin/support.html`
+- Privacy Policy URL: `https://flovflo.github.io/ReelFin/privacy.html`
+- Terms of Service URL: `https://flovflo.github.io/ReelFin/terms.html`
+
 ## App description
 
 ReelFin is a native iPhone and iPad client for Jellyfin built around Apple playback frameworks. Browse your library, pick up where you left off, and switch quickly between home recommendations, search, and detailed playback controls without a server-specific web wrapper.
@@ -14,7 +25,19 @@ Why ReelFin:
 
 ReelFin is designed for users who want a cleaner, more deterministic Jellyfin experience on iOS and iPadOS, with playback behavior that stays close to the platform instead of relying on a generic embedded player.
 
-Character count: 915
+Terms of Service: https://flovflo.github.io/ReelFin/terms.html
+Privacy Policy: https://flovflo.github.io/ReelFin/privacy.html
+
+## TestFlight beta information
+
+- Beta App Description:
+  ReelFin is a native beta client for self-hosted Jellyfin servers on iPhone and iPad.
+- Feedback Email:
+  `floriantaffin@gmail.com`
+- What to Test:
+  Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and iPad.
+- Beta review notes:
+  Use [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) as the copy-ready template.
 
 ## App privacy answers
 
@@ -22,18 +45,25 @@ Character count: 915
   - Contact info: support email only if the user chooses to contact support
   - User content: server URL and Jellyfin account session used to sign in
   - Diagnostics: crash reports if Sentry is configured at build time
-- Data not used for tracking
-- Kids category: not targeted to children, so COPPA-specific kid targeting does not apply
-- Suggested age rating: 13+ because the app surfaces media libraries that may contain mature content and user-generated server catalogs
+- Data is not used for tracking
+- Kids category: not targeted to children
+- Suggested age rating: 13+ because the app can surface user-managed media libraries that may contain mature content
+
+## Export compliance
+
+- ReelFin uses standard Apple platform encryption only: HTTPS/TLS network transport and iOS Keychain storage.
+- `ITSAppUsesNonExemptEncryption` is set to `NO` in the generated Info.plist for the app targets.
+- App Store Connect export compliance answers still need to be confirmed on upload.
 
 ## Third-party SDK inventory
 
-- GRDB `6.29.3`
-- Sentry Cocoa `8.55.1`
+- GRDB via Swift Package Manager from `6.29.3`
+- Sentry Cocoa via Swift Package Manager from `8.55.1`
+- Local build resolution on April 5, 2026: `Sentry 8.58.0`, `GRDB 6.29.3`
 
-## Support
+## Review blockers that remain outside the repo
 
-- Support email: `floriantaffin@gmail.com`
-- Support URL: `https://github.com/Flovflo/ReelFin/blob/main/Docs/support.html`
-- Privacy policy URL: `https://github.com/Flovflo/ReelFin/blob/main/Docs/privacy-policy.html`
-- Terms of service URL: `https://github.com/Flovflo/ReelFin/blob/main/Docs/terms-of-service.html`
+- App Store Connect app record creation or update
+- App Privacy questionnaire answers in App Store Connect
+- Beta App Review credentials for a working Jellyfin review server
+- GitHub Pages deployment of the public support site before using the public URLs above

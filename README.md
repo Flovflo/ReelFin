@@ -110,9 +110,11 @@ If you are working on the repo with an AI agent or joining the project as a new 
 ## App Store And Support
 
 - App Store submission notes: `Docs/AppStore-Submission.md`
-- Privacy policy: `Docs/privacy-policy.html`
-- Terms of service: `Docs/terms-of-service.html`
-- Support page: `Docs/support.html`
+- TestFlight checklist: `Docs/TestFlight-Launch-Checklist.md`
+- App Review notes template: `Docs/AppReview-Notes.md`
+- Public support site source: `Site/`
+- GitHub Pages workflow: `.github/workflows/deploy-site.yml`
+- Release preflight script: `scripts/preflight_testflight_release.sh`
 
 ## Keywords
 
