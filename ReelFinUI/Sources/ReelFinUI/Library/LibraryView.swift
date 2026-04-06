@@ -147,7 +147,7 @@ struct LibraryView: View {
 #endif
                     }
                 }
-                .padding(.top, 56)
+                .padding(.top, 52)
                 .padding(.horizontal, horizontalPadding)
                 .padding(.bottom, 24)
 
