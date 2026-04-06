@@ -27,6 +27,7 @@ public struct PosterCardView: View {
     private let ranking: Int?
     private let progress: Double?
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
+    private let showsTopTrailingBadges: Bool
     private let titleLineLimit: Int
     private let subtitleLineLimit: Int
 
@@ -40,6 +41,7 @@ public struct PosterCardView: View {
         ranking: Int? = nil,
         progress: Double? = nil,
         optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
+        showsTopTrailingBadges: Bool = true,
         titleLineLimit: Int = 1,
         subtitleLineLimit: Int = 1
     ) {
@@ -52,6 +54,7 @@ public struct PosterCardView: View {
         self.ranking = ranking
         self.progress = progress
         self.optimizationStatus = optimizationStatus
+        self.showsTopTrailingBadges = showsTopTrailingBadges
         self.titleLineLimit = titleLineLimit
         self.subtitleLineLimit = subtitleLineLimit
     }
@@ -67,7 +70,8 @@ public struct PosterCardView: View {
                 namespace: namespace,
                 ranking: ranking,
                 progress: progress,
-                optimizationStatus: optimizationStatus
+                optimizationStatus: optimizationStatus,
+                showsTopTrailingBadges: showsTopTrailingBadges
             )
 
             PosterCardMetadataView(
@@ -115,6 +119,7 @@ public struct PosterCardArtworkView: View {
     private let ranking: Int?
     private let progress: Double?
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
+    private let showsTopTrailingBadges: Bool
 
     public init(
         item: MediaItem,
@@ -125,7 +130,8 @@ public struct PosterCardArtworkView: View {
         namespace: Namespace.ID? = nil,
         ranking: Int? = nil,
         progress: Double? = nil,
-        optimizationStatus: ApplePlaybackOptimizationStatus? = nil
+        optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
+        showsTopTrailingBadges: Bool = true
     ) {
         self.item = item
         self.apiClient = apiClient
@@ -136,6 +142,7 @@ public struct PosterCardArtworkView: View {
         self.ranking = ranking
         self.progress = progress
         self.optimizationStatus = optimizationStatus
+        self.showsTopTrailingBadges = showsTopTrailingBadges
     }
 
     public var body: some View {
@@ -160,23 +167,25 @@ public struct PosterCardArtworkView: View {
             }
             #endif
             .overlay(alignment: .topTrailing) {
-                VStack(alignment: .trailing, spacing: 8) {
-                    if item.isPlayed {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 28, height: 28)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .overlay {
-                                Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-                            }
-                    }
+                if showsTopTrailingBadges {
+                    VStack(alignment: .trailing, spacing: 8) {
+                        if item.isPlayed {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(.ultraThinMaterial, in: Circle())
+                                .overlay {
+                                    Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                                }
+                        }
 
-                    if let optimizationStatus {
-                        ApplePlaybackPosterBadge(status: optimizationStatus)
+                        if let optimizationStatus {
+                            ApplePlaybackPosterBadge(status: optimizationStatus)
+                        }
                     }
+                    .padding(8)
                 }
-                .padding(8)
             }
 
             if !item.isPlayed, let progressValue = progress ?? item.playbackProgress, progressValue > 0 {

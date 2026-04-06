@@ -29,40 +29,19 @@ private struct TVCardButton: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: cardContentSpacing) {
-            // Artwork — scale/shadow applied directly, no Button glass container
-            PosterCardArtworkView(
-                item: item,
-                apiClient: apiClient,
-                imagePipeline: imagePipeline,
-                layoutStyle: layoutStyle,
-                namespace: namespaceProvider(item.id),
-                ranking: isTop10 ? (index + 1) : nil,
-                progress: progress,
-                optimizationStatus: optimizationStatus
-            )
-            .modifier(TVMatchedTransitionSource(itemID: item.id, namespace: namespaceProvider(item.id)))
-            .tvMotionFocus(.posterCard, isFocused: isFocused)
-            .scaleEffect(isActivating ? 1.075 : 1, anchor: .center)
-            .shadow(
-                color: .black.opacity(isActivating ? 0.54 : 0),
-                radius: isActivating ? 42 : 0,
-                x: 0,
-                y: isActivating ? 22 : 0
-            )
-            .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
-
-            PosterCardMetadataView(
-                item: item,
-                layoutStyle: layoutStyle,
-                titleLineLimit: isLandscapeRail ? 2 : 1
-            )
-            .padding(.horizontal, 4)
-            .opacity(isActivating ? 1 : (isFocused ? 1.0 : 0.68))
-            .offset(y: isActivating ? 4 : 0)
-            .animation(TVMotion.focusAnimation, value: isFocused)
-            .animation(.spring(response: 0.26, dampingFraction: 0.82), value: isActivating)
-        }
+        TVHomeShelfCard(
+            item: item,
+            kind: kind,
+            ranking: isTop10 ? (index + 1) : nil,
+            layoutStyle: layoutStyle,
+            progress: progress,
+            optimizationStatus: optimizationStatus,
+            namespace: namespaceProvider(item.id),
+            apiClient: apiClient,
+            imagePipeline: imagePipeline,
+            isFocused: isFocused,
+            isActivating: isActivating
+        )
         // focusable on the VStack itself — no Button = no Liquid Glass container.
         // onTapGesture fires when the Siri Remote touchpad is clicked on the focused element.
         .focusable(true, interactions: .activate)
@@ -85,10 +64,6 @@ private struct TVCardButton: View {
         isLandscapeRail ? .landscape : .row
     }
 
-    private var cardContentSpacing: CGFloat {
-        ReelFinTheme.tvCardMetadataSpacing
-    }
-
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
         guard direction == .up, kind == .continueWatching else { return }
         requestTopNavigationFocus?(.watchNow)
@@ -104,6 +79,283 @@ private struct TVCardButton: View {
             try? await Task.sleep(nanoseconds: 105_000_000)
             onSelect(item)
             isActivating = false
+        }
+    }
+}
+
+private struct TVHomeShelfCard: View {
+    let item: MediaItem
+    let kind: HomeSectionKind
+    let ranking: Int?
+    let layoutStyle: PosterCardLayoutStyle
+    let progress: Double?
+    let optimizationStatus: ApplePlaybackOptimizationStatus?
+    let namespace: Namespace.ID?
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let isFocused: Bool
+    let isActivating: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            PosterCardArtworkView(
+                item: item,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
+                layoutStyle: layoutStyle,
+                namespace: namespace,
+                ranking: nil,
+                progress: progress,
+                optimizationStatus: optimizationStatus,
+                showsTopTrailingBadges: false
+            )
+            .modifier(TVMatchedTransitionSource(itemID: item.id, namespace: namespace))
+
+            LinearGradient(
+                stops: gradientStops,
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: contentSpacing) {
+                HStack(alignment: .center, spacing: 10) {
+                    Text(eyebrowText.uppercased())
+                        .font(.system(size: eyebrowFontSize, weight: .medium, design: .rounded))
+                        .tracking(1.0)
+                        .foregroundStyle(.white.opacity(isFocused ? 0.82 : 0.66))
+
+                    Spacer(minLength: 0)
+
+                    playbackStatusBadge
+                }
+
+                Text(primaryTitle)
+                    .font(.system(size: titleFontSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(layoutStyle == .landscape ? 2 : 3)
+
+                if let secondaryTitle {
+                    Text(secondaryTitle)
+                        .font(.system(size: secondaryFontSize, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(isFocused ? 0.84 : 0.74))
+                        .lineLimit(layoutStyle == .landscape ? 2 : 1)
+                }
+
+                HStack(spacing: 10) {
+                    if let runtime = item.runtimeDisplayText {
+                        Label(runtime, systemImage: "play.fill")
+                            .font(.system(size: footerFontSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.92))
+                    } else if let year = item.year {
+                        Text(String(year))
+                            .font(.system(size: footerFontSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.92))
+                    }
+
+                    if let metadataText {
+                        Text(metadataText)
+                            .font(.system(size: footerFontSize, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(contentPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+        .frame(width: cardWidth, height: cardHeight)
+        .background(Color.white.opacity(0.03), in: cardShape)
+        .overlay {
+            cardShape
+                .stroke(
+                    Color.white.opacity(isFocused ? 0.18 : 0.08),
+                    lineWidth: isFocused ? 1.2 : 0.9
+                )
+        }
+        .clipShape(cardShape)
+        .contentShape(cardShape)
+        .tvMotionFocus(.posterCard, isFocused: isFocused)
+        .scaleEffect(isActivating ? 1.075 : 1, anchor: .center)
+        .shadow(
+            color: .black.opacity(isActivating ? 0.54 : (isFocused ? 0.30 : 0.18)),
+            radius: isActivating ? 42 : (isFocused ? 24 : 14),
+            x: 0,
+            y: isActivating ? 22 : (isFocused ? 14 : 8)
+        )
+        .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
+        .animation(TVMotion.focusAnimation, value: isFocused)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var primaryTitle: String {
+        if item.mediaType == .episode, let seriesName = item.seriesName, !seriesName.isEmpty {
+            return seriesName
+        }
+        return item.name
+    }
+
+    private var secondaryTitle: String? {
+        if layoutStyle == .landscape {
+            return nil
+        }
+        guard item.mediaType == .episode, let episodeTitle = episodeTitle else { return nil }
+        return episodeTitle
+    }
+
+    private var episodeTitle: String? {
+        guard let seriesName = item.seriesName, !seriesName.isEmpty, seriesName != item.name else {
+            return nil
+        }
+        return item.name
+    }
+
+    private var metadataText: String? {
+        if item.mediaType == .episode,
+           let season = item.parentIndexNumber,
+           let episode = item.indexNumber {
+            return "S\(season) • E\(episode)"
+        }
+
+        if let firstGenre = item.genres.first, layoutStyle == .landscape {
+            return firstGenre
+        }
+
+        return nil
+    }
+
+    private var eyebrowText: String {
+        if let ranking {
+            return "#\(ranking) \(kind == .trending ? "Trending" : "Featured")"
+        }
+
+        switch item.mediaType {
+        case .episode:
+            if let episode = item.indexNumber {
+                return "Episode \(episode)"
+            }
+            return "Episode"
+        case .movie:
+            return "Movie"
+        case .series:
+            return "Series"
+        case .season:
+            return "Season"
+        case .unknown:
+            return "Library"
+        }
+    }
+
+    @ViewBuilder
+    private var playbackStatusBadge: some View {
+        if layoutStyle == .landscape {
+            EmptyView()
+        } else if item.isPlayed {
+            TVHomePlaybackStatusBadge(
+                text: "Watched",
+                systemImage: "checkmark.circle.fill",
+                tint: Color(red: 0.78, green: 0.95, blue: 0.82)
+            )
+        } else if let positionText = item.playbackPositionDisplayText {
+            TVHomePlaybackStatusBadge(
+                text: positionText,
+                systemImage: "play.circle.fill",
+                tint: Color.white.opacity(0.92)
+            )
+        }
+    }
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: layoutStyle == .landscape ? 30 : 26, style: .continuous)
+    }
+
+    private var cardWidth: CGFloat {
+        switch layoutStyle {
+        case .row:
+            return 220
+        case .grid:
+            return 240
+        case .landscape:
+            return 400
+        }
+    }
+
+    private var cardHeight: CGFloat {
+        switch layoutStyle {
+        case .landscape:
+            return cardWidth * (9.0 / 16.0)
+        default:
+            return cardWidth * 1.55
+        }
+    }
+
+    private var contentPadding: CGFloat {
+        layoutStyle == .landscape ? 22 : 18
+    }
+
+    private var contentSpacing: CGFloat {
+        layoutStyle == .landscape ? 12 : 8
+    }
+
+    private var eyebrowFontSize: CGFloat {
+        layoutStyle == .landscape ? 14 : 12
+    }
+
+    private var titleFontSize: CGFloat {
+        layoutStyle == .landscape ? 28 : 22
+    }
+
+    private var secondaryFontSize: CGFloat {
+        layoutStyle == .landscape ? 18 : 15
+    }
+
+    private var footerFontSize: CGFloat {
+        layoutStyle == .landscape ? 14 : 13
+    }
+
+    private var gradientStops: [Gradient.Stop] {
+        if layoutStyle == .landscape {
+            return [
+                .init(color: .clear, location: 0.10),
+                .init(color: .black.opacity(0.10), location: 0.34),
+                .init(color: .black.opacity(0.42), location: 0.58),
+                .init(color: .black.opacity(0.82), location: 0.82),
+                .init(color: .black.opacity(0.96), location: 1)
+            ]
+        }
+
+        return [
+            .init(color: .clear, location: 0.14),
+            .init(color: .black.opacity(0.10), location: 0.44),
+            .init(color: .black.opacity(0.48), location: 0.70),
+            .init(color: .black.opacity(0.88), location: 0.92),
+            .init(color: .black.opacity(0.96), location: 1)
+        ]
+    }
+}
+
+private struct TVHomePlaybackStatusBadge: View {
+    let text: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+            Text(text)
+                .lineLimit(1)
+        }
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.24), in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.9)
         }
     }
 }

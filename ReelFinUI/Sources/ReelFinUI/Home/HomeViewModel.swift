@@ -323,7 +323,39 @@ final class HomeViewModel: ObservableObject {
         orderedSectionKinds: [HomeSectionKind],
         hiddenSectionKinds: Set<HomeSectionKind>
     ) -> (rows: [HomeRow], rowIDByItemID: [String: String]) {
-        let filteredRows = rows.filter { !hiddenSectionKinds.contains($0.kind) && !$0.items.isEmpty }
+        let normalizedRows = rows.compactMap { row -> HomeRow? in
+            var normalizedRow = row
+
+#if os(tvOS)
+            switch row.kind {
+            case .continueWatching:
+                normalizedRow.items = row.items.filter { item in
+                    !item.isPlayed && ((item.playbackProgress ?? 0) > 0 || (item.playbackPositionTicks ?? 0) > 0)
+                }
+            case .nextUp:
+                normalizedRow.items = row.items.filter { !$0.isPlayed }
+            default:
+                break
+            }
+#endif
+
+            return normalizedRow.items.isEmpty ? nil : normalizedRow
+        }
+
+        let filteredRows = normalizedRows.filter { row in
+#if os(tvOS)
+            switch row.kind {
+            case .popular, .trending:
+                return false
+            case .recentlyAddedMovies, .recentlyAddedSeries:
+                return true
+            default:
+                break
+            }
+#endif
+
+            return !hiddenSectionKinds.contains(row.kind)
+        }
         guard !filteredRows.isEmpty else {
             return ([], [:])
         }
