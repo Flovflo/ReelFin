@@ -466,8 +466,4 @@ struct TVAdaptiveGridFocusLayout: Equatable {
     func firstRowItemIDs<Item: Identifiable>(in items: [Item]) -> Set<Item.ID> where Item.ID: Hashable {
         Set(items.prefix(columnCount).map(\.id))
     }
-
-#if os(tvOS)
-    // Reserved for tvOS focus logic on the first visible row.
-#endif
 }
