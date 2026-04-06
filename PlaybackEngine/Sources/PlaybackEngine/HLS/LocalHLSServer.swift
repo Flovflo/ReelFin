@@ -16,11 +16,13 @@ public struct LocalHLSResponse: Sendable {
     public let statusCode: Int
     public let contentType: String
     public let body: Data
+    public let headers: [String: String]
 
-    public init(statusCode: Int, contentType: String, body: Data) {
+    public init(statusCode: Int, contentType: String, body: Data, headers: [String: String] = [:]) {
         self.statusCode = statusCode
         self.contentType = contentType
         self.body = body
+        self.headers = headers
     }
 }
 
@@ -207,7 +209,12 @@ public final class LocalHLSServer: LocalHLSServerProtocol, @unchecked Sendable {
             case "/", "/master.m3u8":
                 let playlist = try await session.masterPlaylist(baseURL: baseURL)
                 let body = wantsBody ? Data(playlist.utf8) : Data()
-                return LocalHLSResponse(statusCode: 200, contentType: "application/vnd.apple.mpegurl", body: body)
+                return LocalHLSResponse(
+                    statusCode: 200,
+                    contentType: "application/vnd.apple.mpegurl",
+                    body: body,
+                    headers: ["Cache-Control": "public, max-age=300, immutable"]
+                )
             case "/video.m3u8":
                 let snapshotMode = currentStartupPreflightSnapshotMode()
                 let playlist = try await session.mediaPlaylist(
@@ -215,11 +222,21 @@ public final class LocalHLSServer: LocalHLSServerProtocol, @unchecked Sendable {
                     startupPreflightSnapshot: snapshotMode
                 )
                 let body = wantsBody ? Data(playlist.utf8) : Data()
-                return LocalHLSResponse(statusCode: 200, contentType: "application/vnd.apple.mpegurl", body: body)
+                return LocalHLSResponse(
+                    statusCode: 200,
+                    contentType: "application/vnd.apple.mpegurl",
+                    body: body,
+                    headers: ["Cache-Control": "no-cache"]
+                )
             case "/init.mp4":
                 let data = try await session.initSegment()
                 let body = wantsBody ? data : Data()
-                return LocalHLSResponse(statusCode: 200, contentType: "video/mp4", body: body)
+                return LocalHLSResponse(
+                    statusCode: 200,
+                    contentType: "video/mp4",
+                    body: body,
+                    headers: ["Cache-Control": "public, max-age=31536000, immutable"]
+                )
             default:
                 if request.path.hasPrefix("/segment_"), request.path.hasSuffix(".m4s") {
                     let sequenceString = request.path
@@ -229,7 +246,12 @@ public final class LocalHLSServer: LocalHLSServerProtocol, @unchecked Sendable {
                     let data = try await session.segment(sequence: sequence)
                     let body = wantsBody ? data : Data()
                     // fMP4 segments use video/iso.segment MIME type per CMAF spec
-                    return LocalHLSResponse(statusCode: 200, contentType: "video/iso.segment", body: body)
+                    return LocalHLSResponse(
+                        statusCode: 200,
+                        contentType: "video/iso.segment",
+                        body: body,
+                        headers: ["Cache-Control": "public, max-age=31536000, immutable"]
+                    )
                 }
                 return LocalHLSResponse(statusCode: 404, contentType: "text/plain", body: Data("Not Found".utf8))
             }
@@ -295,7 +317,10 @@ public final class LocalHLSServer: LocalHLSServerProtocol, @unchecked Sendable {
         var headers = "HTTP/1.1 \(response.statusCode) \(reasonPhrase(for: response.statusCode))\r\n"
         headers += "Content-Type: \(response.contentType)\r\n"
         headers += "Content-Length: \(response.body.count)\r\n"
-        headers += "Cache-Control: no-cache\r\n"
+        headers += "Cache-Control: \(response.headers["Cache-Control"] ?? "no-cache")\r\n"
+        for (name, value) in response.headers.sorted(by: { $0.key < $1.key }) where name.lowercased() != "cache-control" {
+            headers += "\(name): \(value)\r\n"
+        }
         headers += "Access-Control-Allow-Origin: *\r\n"
         headers += "Connection: close\r\n"
         headers += "\r\n"

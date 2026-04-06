@@ -499,6 +499,11 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 maxStreamingBitrate: maxBitrate,
                 maxAudioChannels: options.maxAudioChannels ?? 8
             )
+        case .tvOSSimulatorCompatibilityH264:
+            profile = DeviceProfileRequestDTO.tvOSSimulatorCompatibilityH264(
+                maxStreamingBitrate: maxBitrate,
+                maxAudioChannels: options.maxAudioChannels ?? 2
+            )
         }
 
         let body = PlaybackInfoRequestDTO(

@@ -413,7 +413,11 @@ public actor PlaybackCoordinator {
         // On tvOS, always use the tvOS-optimized profile which tells Jellyfin
         // exactly what Apple TV can direct play/remux and what needs transcoding.
         if Self.isTvOS {
+            #if targetEnvironment(simulator)
+            return .tvOSSimulatorCompatibility(maxStreamingBitrate: maxBitrate)
+            #else
             return .tvOSOptimized(maxStreamingBitrate: maxBitrate)
+            #endif
         }
 
         if transcodeProfile == .serverDefault, configuration.playbackPolicy != .auto {

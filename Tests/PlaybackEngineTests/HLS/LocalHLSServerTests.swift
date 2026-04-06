@@ -133,6 +133,21 @@ final class LocalHLSServerTests: XCTestCase {
         )
     }
 
+    func testServerUsesImmutableCacheHeadersForInitAndSegmentsButNotPlaylist() async throws {
+        let serverBundle = try await makePreparedServerBundle()
+        let server = serverBundle.server
+        defer { server.stop(reason: "test_teardown_cache_headers") }
+
+        let playlistResponse = try await fetchResponse(from: serverBundle.baseURL.appendingPathComponent("video.m3u8"))
+        XCTAssertEqual(playlistResponse.value(forHTTPHeaderField: "Cache-Control"), "no-cache")
+
+        let initResponse = try await fetchResponse(from: serverBundle.baseURL.appendingPathComponent("init.mp4"))
+        XCTAssertEqual(initResponse.value(forHTTPHeaderField: "Cache-Control"), "public, max-age=31536000, immutable")
+
+        let segmentResponse = try await fetchResponse(from: serverBundle.baseURL.appendingPathComponent("segment_0.m4s"))
+        XCTAssertEqual(segmentResponse.value(forHTTPHeaderField: "Cache-Control"), "public, max-age=31536000, immutable")
+    }
+
     private func makePreparedServerBundle() async throws -> (server: LocalHLSServer, baseURL: URL) {
         let plan = NativeBridgePlan(
             itemID: "local-hls-test-item",
@@ -201,6 +216,17 @@ final class LocalHLSServerTests: XCTestCase {
             throw NSError(domain: "LocalHLSServerTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "HTTP fetch failed for \(url.absoluteString)"])
         }
         return data
+    }
+
+    private func fetchResponse(from url: URL) async throws -> HTTPURLResponse {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "LocalHLSServerTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "HTTP response fetch failed for \(url.absoluteString)"])
+        }
+        return http
     }
 
     private func firstMediaLine(in playlist: String) -> String? {

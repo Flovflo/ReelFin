@@ -3,7 +3,7 @@ import XCTest
 @testable import PlaybackEngine
 
 final class PlaybackTVOSCachingPolicyTests: XCTestCase {
-    func testStartupForwardBufferDurationUsesLargeTvOSFloor() {
+    func testStartupForwardBufferDurationKeepsTvOSStartupBufferModest() {
         let target = PlaybackTVOSCachingPolicy.startupForwardBufferDuration(
             baseBufferDuration: 6,
             route: .transcode(URL(string: "https://example.com/master.m3u8")!),
@@ -11,7 +11,7 @@ final class PlaybackTVOSCachingPolicyTests: XCTestCase {
             isTVOS: true
         )
 
-        XCTAssertEqual(target, 240)
+        XCTAssertEqual(target, 6)
     }
 
     func testStartupForwardBufferDurationLeavesNonTvOSUnchanged() {
@@ -25,32 +25,70 @@ final class PlaybackTVOSCachingPolicyTests: XCTestCase {
         XCTAssertEqual(target, 6)
     }
 
-    func testAggressiveForwardBufferDurationExpandsToRemainingRuntimeWhenHeadroomIsHigh() {
-        let target = PlaybackTVOSCachingPolicy.aggressiveForwardBufferDuration(
-            currentBufferDuration: 240,
-            observedBitrate: 30_000_000,
+    func testAdaptiveCachingHintEntersWarmPhaseAfterStartup() {
+        let hint = PlaybackTVOSCachingPolicy.adaptiveCachingHint(
+            currentBufferDuration: 6,
+            observedBitrate: 20_000_000,
             indicatedBitrate: 12_000_000,
             sourceBitrate: 10_000_000,
-            currentTime: 120,
+            currentTime: 20,
             runtimeSeconds: 3_600,
+            healthySampleCount: 1,
             isTVOS: true
         )
 
-        XCTAssertEqual(target, 3_480)
+        XCTAssertEqual(hint?.phase, .warm)
+        XCTAssertEqual(hint?.forwardBufferDuration, 24)
+        XCTAssertEqual(hint?.syntheticPreloadCount, 6)
+        XCTAssertEqual(hint?.syntheticLookaheadSegments, 4)
     }
 
-    func testAggressiveForwardBufferDurationIgnoresLowHeadroom() {
-        let target = PlaybackTVOSCachingPolicy.aggressiveForwardBufferDuration(
-            currentBufferDuration: 240,
+    func testAdaptiveCachingHintPromotesToDeepPhaseAfterSustainedHeadroom() {
+        let hint = PlaybackTVOSCachingPolicy.adaptiveCachingHint(
+            currentBufferDuration: 90,
+            observedBitrate: 28_000_000,
+            indicatedBitrate: 12_000_000,
+            sourceBitrate: 10_000_000,
+            currentTime: 180,
+            runtimeSeconds: 3_600,
+            healthySampleCount: 6,
+            isTVOS: true
+        )
+
+        XCTAssertEqual(hint?.phase, .deep)
+        XCTAssertEqual(hint?.forwardBufferDuration, 300)
+        XCTAssertEqual(hint?.syntheticPreloadCount, 14)
+        XCTAssertEqual(hint?.syntheticLookaheadSegments, 8)
+    }
+
+    func testAdaptiveCachingHintIgnoresLowHeadroom() {
+        let hint = PlaybackTVOSCachingPolicy.adaptiveCachingHint(
+            currentBufferDuration: 24,
             observedBitrate: 13_000_000,
             indicatedBitrate: 12_000_000,
             sourceBitrate: 10_000_000,
-            currentTime: 120,
+            currentTime: 90,
             runtimeSeconds: 3_600,
+            healthySampleCount: 3,
             isTVOS: true
         )
 
-        XCTAssertNil(target)
+        XCTAssertNil(hint)
+    }
+
+    func testAdaptiveCachingHintStaysDisabledDuringStartupWindow() {
+        let hint = PlaybackTVOSCachingPolicy.adaptiveCachingHint(
+            currentBufferDuration: 6,
+            observedBitrate: 30_000_000,
+            indicatedBitrate: 12_000_000,
+            sourceBitrate: 10_000_000,
+            currentTime: 8,
+            runtimeSeconds: 3_600,
+            healthySampleCount: 1,
+            isTVOS: true
+        )
+
+        XCTAssertNil(hint)
     }
 
     func testSyntheticReaderConfigurationOnlyGrowsOnTvOS() {

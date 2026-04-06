@@ -108,6 +108,35 @@ final class SyntheticHLSSessionTests: XCTestCase {
         )
     }
 
+    func testPromotePrefetchExpandsGeneratedSegmentWindow() async throws {
+        let samples = makeSamples(count: 1_200)
+        let demuxer = MockDemuxer(samples: samples)
+        let repackager = MockRepackager()
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: demuxer,
+            repackager: repackager,
+            defaultPreloadCount: 4
+        )
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist()
+
+        let startupCount = try await waitForGeneratedSegmentCount(
+            in: session,
+            atLeast: 4
+        )
+        XCTAssertGreaterThanOrEqual(startupCount, 4)
+
+        await session.promotePrefetch(preloadCount: 10, lookaheadSegments: 6)
+
+        let promotedCount = try await waitForGeneratedSegmentCount(
+            in: session,
+            atLeast: 10
+        )
+        XCTAssertGreaterThanOrEqual(promotedCount, 10)
+    }
+
     // MARK: - Packaging Mode Tests
 
     /// Mode A: DV Profile 8.1 backward-compatible — hvc1 entry + dvcC + SUPPLEMENTAL-CODECS
@@ -261,6 +290,22 @@ final class SyntheticHLSSessionTests: XCTestCase {
             output.append(sample)
         }
         return output
+    }
+
+    private func waitForGeneratedSegmentCount(
+        in session: SyntheticHLSSession,
+        atLeast minimumCount: Int,
+        attempts: Int = 150
+    ) async throws -> Int {
+        for _ in 0..<attempts {
+            let count = await session.generatedSequenceCountForTesting()
+            if count >= minimumCount {
+                return count
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        return await session.generatedSequenceCountForTesting()
     }
 
     private func makeInterleavedAVSamples() -> [Sample] {

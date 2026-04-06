@@ -205,7 +205,7 @@ public actor PackagingSchedulerActor {
 
 public actor SyntheticHLSSession {
     private static let minimumPreloadSegments = 3
-    private static let playlistGrowthStepSegments = 2
+    private static let defaultPlaylistGrowthStepSegments = 2
 
     private let plan: NativeBridgePlan
     private let demuxer: Demuxer
@@ -227,6 +227,8 @@ public actor SyntheticHLSSession {
     private var reachedEndOfStream = false
     private var prefetchInFlight = false
     private var prefetchTargetSequence = 0
+    private var adaptivePreloadCount: Int
+    private var adaptiveLookaheadSegments: Int
 
     public init(
         plan: NativeBridgePlan,
@@ -241,6 +243,8 @@ public actor SyntheticHLSSession {
         self.repackager = repackager
         self.cache = cache
         self.defaultPreloadCount = max(Self.minimumPreloadSegments, defaultPreloadCount)
+        self.adaptivePreloadCount = max(Self.minimumPreloadSegments, defaultPreloadCount)
+        self.adaptiveLookaheadSegments = Self.defaultPlaylistGrowthStepSegments
         self.requestedPackagingMode = packagingMode
         self.scheduler = PackagingSchedulerActor(
             demuxer: demuxer,
@@ -282,6 +286,8 @@ public actor SyntheticHLSSession {
         reachedEndOfStream = false
         prefetchInFlight = false
         prefetchTargetSequence = 0
+        adaptivePreloadCount = defaultPreloadCount
+        adaptiveLookaheadSegments = Self.defaultPlaylistGrowthStepSegments
         _ = try await scheduler.segment(for: 0)
     }
 
@@ -341,8 +347,9 @@ public actor SyntheticHLSSession {
         }
 
         if !reachedEndOfStream, !startupPreflightSnapshot {
-            let baselineCount = max(Self.minimumPreloadSegments, preloadCount ?? defaultPreloadCount)
-            let desiredSegmentCount = max(baselineCount, sequences.count + Self.playlistGrowthStepSegments)
+            let baselineCount = max(Self.minimumPreloadSegments, preloadCount ?? adaptivePreloadCount)
+            let growthStepSegments = max(Self.defaultPlaylistGrowthStepSegments, adaptiveLookaheadSegments)
+            let desiredSegmentCount = max(baselineCount, sequences.count + growthStepSegments)
             let desiredLastSequence = max(0, desiredSegmentCount - 1)
             requestPrefetch(upTo: desiredLastSequence)
         }
@@ -386,6 +393,22 @@ public actor SyntheticHLSSession {
         )
     }
 
+    public func promotePrefetch(preloadCount: Int, lookaheadSegments: Int) async {
+        adaptivePreloadCount = max(adaptivePreloadCount, max(Self.minimumPreloadSegments, preloadCount))
+        adaptiveLookaheadSegments = max(
+            adaptiveLookaheadSegments,
+            max(Self.defaultPlaylistGrowthStepSegments, lookaheadSegments)
+        )
+
+        let generated = await scheduler.generatedSequences()
+        let baselineTargetSequence = max(0, adaptivePreloadCount - 1)
+        let lookaheadTargetSequence = max(0, (generated.last ?? -1) + adaptiveLookaheadSegments)
+        requestPrefetch(upTo: max(baselineTargetSequence, lookaheadTargetSequence))
+        AppLog.nativeBridge.notice(
+            "[NB-DIAG] hls.prefetch.promoted — preload=\(self.adaptivePreloadCount, privacy: .public) lookahead=\(self.adaptiveLookaheadSegments, privacy: .public) generated=\(generated.count, privacy: .public)"
+        )
+    }
+
     public func invalidateForSeek(targetPTS: Int64) async throws {
         _ = try await demuxer.seek(to: targetPTS)
         await cache.invalidateForSeek(targetPTS: targetPTS)
@@ -393,6 +416,10 @@ public actor SyntheticHLSSession {
         reachedEndOfStream = false
         prefetchInFlight = false
         prefetchTargetSequence = 0
+    }
+
+    func generatedSequenceCountForTesting() async -> Int {
+        await scheduler.generatedSequences().count
     }
 
     private func requestPrefetch(upTo sequence: Int) {

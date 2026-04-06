@@ -275,6 +275,7 @@ public final class PlaybackSessionController {
     private var pendingResumeSeconds: Double?
     private var transcodeStartOffset: Double = 0
     private var currentForwardBufferDuration: Double = 0
+    private var tvosHealthyAccessLogSamples: Int = 0
     private var playbackStrategy: PlaybackStrategy = .bestQualityFastest
     private var playbackPolicy: PlaybackPolicy = .auto
     private var allowSDRFallback = true
@@ -306,6 +307,7 @@ public final class PlaybackSessionController {
     private let subtitlePolicy = SubtitleCompatibilityPolicy()
     private let assetURLValidator = AssetURLValidator()
     private var startDate = Date()
+    private var loadStartDate = Date()
     private var preferredProfilesByItemID: [String: TranscodeURLProfile] = [:]
     private var lastPreparedSelection: PlaybackAssetSelection?
     var markerRefreshTask: Task<Void, Never>?
@@ -469,12 +471,14 @@ public final class PlaybackSessionController {
             await self?.refreshPlaybackMarkers(for: item)
         }
         currentItemHasDolbyVision = item.hasDolbyVision
-        startDate = Date()
+        loadStartDate = Date()
+        startDate = loadStartDate
         hasMarkedFirstFrame = false
         hasDecodedVideoFrame = false
         pendingResumeSeconds = nil
         transcodeStartOffset = 0
         currentForwardBufferDuration = 0
+        tvosHealthyAccessLogSamples = 0
         recoveryAttemptCount = 0
         metrics = PlaybackPerformanceMetrics()
         playbackErrorMessage = nil
@@ -1276,6 +1280,7 @@ public final class PlaybackSessionController {
         pendingResumeSeconds = nil
         transcodeStartOffset = 0
         currentForwardBufferDuration = 0
+        tvosHealthyAccessLogSamples = 0
         didResumeAfterForeground = false
         hasMarkedFirstFrame = false
         hasDecodedVideoFrame = false
@@ -1904,7 +1909,11 @@ public final class PlaybackSessionController {
                 if event.observedBitrate > 0 {
                     self.playbackProof.observedBitrate = Int(event.observedBitrate)
                 }
-                self.updateTVOSForwardBufferIfNeeded(item: item, observedBitrate: event.observedBitrate, indicatedBitrate: event.indicatedBitrate)
+                await self.updateTVOSAdaptiveCachingIfNeeded(
+                    item: item,
+                    observedBitrate: event.observedBitrate,
+                    indicatedBitrate: event.indicatedBitrate
+                )
                 self.updatePlaybackProof(from: item)
             }
         }
@@ -2018,9 +2027,10 @@ public final class PlaybackSessionController {
         startupWatchdogTask?.cancel()
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
-        let elapsedMs = Date().timeIntervalSince(startDate) * 1000
-        metrics.timeToFirstFrameMs = elapsedMs
-        AppLog.nativeBridge.notice("[NB-DIAG] avplayer.first-frame — elapsedMs=\(elapsedMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
+        let playerStartupMs = Date().timeIntervalSince(startDate) * 1000
+        let totalTTFFMs = Date().timeIntervalSince(loadStartDate) * 1000
+        metrics.timeToFirstFrameMs = totalTTFFMs
+        AppLog.nativeBridge.notice("[NB-DIAG] avplayer.first-frame — elapsedMs=\(playerStartupMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
         emitLocalHLSStartupSummary(avplayerResult: "firstFrame")
         firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
         firstFrameInterval = nil
@@ -2033,7 +2043,7 @@ public final class PlaybackSessionController {
         let method = playMethodForReporting
         let profile = activeTranscodeProfile.rawValue
         AppLog.playback.info(
-            "TTFF \(elapsedMs, format: .fixed(precision: 1))ms [info=\(self.ttffInfoMs, format: .fixed(precision: 1))ms resolve=\(self.ttffResolveMs, format: .fixed(precision: 1))ms ready=\(self.ttffReadyMs, format: .fixed(precision: 1))ms] method=\(method, privacy: .public) profile=\(profile, privacy: .public)"
+            "TTFF \(totalTTFFMs, format: .fixed(precision: 1))ms [info=\(self.ttffInfoMs, format: .fixed(precision: 1))ms resolve=\(self.ttffResolveMs, format: .fixed(precision: 1))ms ready=\(self.ttffReadyMs, format: .fixed(precision: 1))ms player=\(playerStartupMs, format: .fixed(precision: 1))ms] method=\(method, privacy: .public) profile=\(profile, privacy: .public)"
         )
 
         if playMethodForReporting == "NativeBridge", let itemID = currentItemID {
@@ -2450,40 +2460,44 @@ public final class PlaybackSessionController {
         guard case .transcode = selection.decision.route else { return true }
 
         do {
-            let firstManifest = try await fetchPlaylist(
-                url: selection.assetURL,
-                headers: selection.headers
-            )
-            guard
-                let firstLine = firstMediaLine(in: firstManifest),
-                let firstURL = resolveSegmentURL(
-                    firstSegmentLine: firstLine,
-                    masterURL: selection.assetURL
-                )
-            else {
-                AppLog.playback.warning("Preflight failed: no playable line in master playlist.")
-                return false
-            }
-
             let probeURL: URL
-            if firstURL.pathExtension.lowercased() == "m3u8" {
-                let childManifest = try await fetchPlaylist(
-                    url: firstURL,
+            if let cachedProbeURL = cachedPreflightProbeURL(for: selection) {
+                probeURL = cachedProbeURL
+            } else {
+                let firstManifest = try await fetchPlaylist(
+                    url: selection.assetURL,
                     headers: selection.headers
                 )
                 guard
-                    let childLine = firstMediaLine(in: childManifest),
-                    let childURL = resolveSegmentURL(
-                        firstSegmentLine: childLine,
-                        masterURL: firstURL
+                    let firstLine = firstMediaLine(in: firstManifest),
+                    let firstURL = resolveSegmentURL(
+                        firstSegmentLine: firstLine,
+                        masterURL: selection.assetURL
                     )
                 else {
-                    AppLog.playback.warning("Preflight failed: no segment in child playlist.")
+                    AppLog.playback.warning("Preflight failed: no playable line in master playlist.")
                     return false
                 }
-                probeURL = childURL
-            } else {
-                probeURL = firstURL
+
+                if firstURL.pathExtension.lowercased() == "m3u8" {
+                    let childManifest = try await fetchPlaylist(
+                        url: firstURL,
+                        headers: selection.headers
+                    )
+                    guard
+                        let childLine = firstMediaLine(in: childManifest),
+                        let childURL = resolveSegmentURL(
+                            firstSegmentLine: childLine,
+                            masterURL: firstURL
+                        )
+                    else {
+                        AppLog.playback.warning("Preflight failed: no segment in child playlist.")
+                        return false
+                    }
+                    probeURL = childURL
+                } else {
+                    probeURL = firstURL
+                }
             }
 
             var segmentData = Data()
@@ -2533,6 +2547,22 @@ public final class PlaybackSessionController {
             AppLog.playback.warning("Preflight failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
+    }
+
+    private func cachedPreflightProbeURL(for selection: PlaybackAssetSelection) -> URL? {
+        guard selection.assetURL == selectedVariantInfo?.resolvedURL else { return nil }
+        guard let firstSegmentURI = selectedVariantPlaylistInspection?.firstSegmentURI else { return nil }
+        guard let probeURL = resolveSegmentURL(
+            firstSegmentLine: firstSegmentURI,
+            masterURL: selection.assetURL
+        ) else {
+            return nil
+        }
+
+        AppLog.playback.notice(
+            "Preflight reusing pinned variant inspection url=\(selection.assetURL.absoluteString, privacy: .public)"
+        )
+        return probeURL
     }
 
     private func repairInitialSelectionIfNeeded(
@@ -3295,12 +3325,23 @@ public final class PlaybackSessionController {
         return isHEVCCodec(codec)
     }
 
-    private func updateTVOSForwardBufferIfNeeded(
+    private func updateTVOSAdaptiveCachingIfNeeded(
         item: AVPlayerItem,
         observedBitrate: Double,
         indicatedBitrate: Double
-    ) {
+    ) async {
         guard Self.isTvOSPlatform else { return }
+
+        if PlaybackTVOSCachingPolicy.isHealthyAccessLogSample(
+            observedBitrate: observedBitrate,
+            indicatedBitrate: indicatedBitrate,
+            sourceBitrate: currentSource?.bitrate,
+            isTVOS: Self.isTvOSPlatform
+        ) {
+            tvosHealthyAccessLogSamples += 1
+        } else {
+            tvosHealthyAccessLogSamples = 0
+        }
 
         let runtimeSeconds =
             currentMediaItem?.runtimeTicks.map { Double($0) / 10_000_000 }
@@ -3310,22 +3351,29 @@ public final class PlaybackSessionController {
                 return itemDuration + transcodeStartOffset
             }()
 
-        guard let targetBuffer = PlaybackTVOSCachingPolicy.aggressiveForwardBufferDuration(
+        guard let hint = PlaybackTVOSCachingPolicy.adaptiveCachingHint(
             currentBufferDuration: currentForwardBufferDuration,
             observedBitrate: observedBitrate,
             indicatedBitrate: indicatedBitrate,
             sourceBitrate: currentSource?.bitrate,
             currentTime: currentTime,
             runtimeSeconds: runtimeSeconds,
+            healthySampleCount: tvosHealthyAccessLogSamples,
             isTVOS: Self.isTvOSPlatform
         ) else {
             return
         }
 
-        item.preferredForwardBufferDuration = targetBuffer
-        currentForwardBufferDuration = targetBuffer
+        item.preferredForwardBufferDuration = hint.forwardBufferDuration
+        currentForwardBufferDuration = hint.forwardBufferDuration
+        if let syntheticHLSSession {
+            await syntheticHLSSession.promotePrefetch(
+                preloadCount: hint.syntheticPreloadCount,
+                lookaheadSegments: hint.syntheticLookaheadSegments
+            )
+        }
         AppLog.playback.info(
-            "tvOS aggressive buffering enabled buffer=\(targetBuffer, format: .fixed(precision: 1))s observed=\(observedBitrate, format: .fixed(precision: 0))bps indicated=\(indicatedBitrate, format: .fixed(precision: 0))bps"
+            "tvOS caching ramp phase=\(String(describing: hint.phase), privacy: .public) buffer=\(hint.forwardBufferDuration, format: .fixed(precision: 1))s preload=\(hint.syntheticPreloadCount, privacy: .public) lookahead=\(hint.syntheticLookaheadSegments, privacy: .public) headroom=\(hint.headroomRatio, format: .fixed(precision: 2))x"
         )
     }
 

@@ -899,6 +899,58 @@ struct DeviceProfileRequestDTO: Encodable {
             ]
         )
     }
+
+    /// Conservative tvOS Simulator profile.
+    /// Startup timings on simulator are not representative of Apple TV hardware,
+    /// so this profile prefers the lowest-risk H.264 + AAC path.
+    static func tvOSSimulatorCompatibilityH264(maxStreamingBitrate: Int, maxAudioChannels: Int) -> DeviceProfileRequestDTO {
+        DeviceProfileRequestDTO(
+            name: "ReelFin tvOS Simulator H264",
+            id: "3b1168e1-0d4c-4d70-a5b6-91f8b4fb7c8d",
+            maxStreamingBitrate: maxStreamingBitrate,
+            musicStreamingTranscodingBitrate: 192_000,
+            directPlayProfiles: [
+                DirectPlayProfileRequestDTO(
+                    container: "mp4,m4v,mov",
+                    audioCodec: "aac",
+                    videoCodec: "h264,avc1",
+                    type: .video
+                )
+            ],
+            transcodingProfiles: [
+                TranscodingProfileRequestDTO(
+                    container: "ts",
+                    type: .video,
+                    videoCodec: "h264",
+                    audioCodec: "aac",
+                    protocolValue: .hls,
+                    context: .streaming,
+                    maxAudioChannels: String(maxAudioChannels),
+                    enableSubtitlesInManifest: false,
+                    estimateContentLength: false,
+                    copyTimestamps: true,
+                    enableAudioVbrEncoding: true
+                )
+            ],
+            subtitleProfiles: [
+                SubtitleProfileRequestDTO(
+                    format: "srt",
+                    method: .external
+                ),
+                SubtitleProfileRequestDTO(
+                    format: "vtt",
+                    method: .external
+                )
+            ],
+            responseProfiles: [
+                ResponseProfileRequestDTO(
+                    type: .video,
+                    container: "m4v",
+                    mimeType: "video/mp4"
+                )
+            ]
+        )
+    }
 }
 
 struct DirectPlayProfileRequestDTO: Encodable {

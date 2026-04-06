@@ -24,6 +24,20 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertEqual(profiles, [.appleOptimizedHEVC, .forceH264Transcode])
     }
 
+    func testTvOSSimulatorCompatibilityPlaybackOptionsPreferH264Startup() {
+        let options = PlaybackInfoOptions.tvOSSimulatorCompatibility(maxStreamingBitrate: 40_000_000)
+
+        XCTAssertEqual(options.mode, .balanced)
+        XCTAssertTrue(options.enableDirectPlay)
+        XCTAssertFalse(options.enableDirectStream)
+        XCTAssertTrue(options.allowTranscoding)
+        XCTAssertEqual(options.maxStreamingBitrate, 12_000_000)
+        XCTAssertEqual(options.allowVideoStreamCopy, false)
+        XCTAssertEqual(options.allowAudioStreamCopy, false)
+        XCTAssertEqual(options.maxAudioChannels, 2)
+        XCTAssertEqual(options.deviceProfile, .tvOSSimulatorCompatibilityH264)
+    }
+
     func testRecoveryPlanAppleOptimizedFallsToConservativeThenH264() {
         let profiles = PlaybackSessionController.recoveryPlan(
             after: .appleOptimizedHEVC,

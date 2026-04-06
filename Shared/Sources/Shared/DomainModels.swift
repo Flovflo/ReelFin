@@ -299,11 +299,15 @@ public struct HomeRow: Codable, Hashable, Identifiable, Sendable {
     public var title: String
     public var items: [MediaItem]
 
-    public init(id: String = UUID().uuidString, kind: HomeSectionKind, title: String, items: [MediaItem]) {
-        self.id = id
+    public init(id: String? = nil, kind: HomeSectionKind, title: String, items: [MediaItem]) {
+        self.id = id ?? Self.defaultID(kind: kind, title: title)
         self.kind = kind
         self.title = title
         self.items = items
+    }
+
+    private static func defaultID(kind: HomeSectionKind, title: String) -> String {
+        "home.\(kind.rawValue).\(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
     }
 }
 
@@ -532,6 +536,7 @@ public enum PlaybackDeviceProfile: String, Codable, CaseIterable, Sendable {
     case iosOptimizedHEVC
     case iosCompatibilityH264
     case tvOSOptimized
+    case tvOSSimulatorCompatibilityH264
 }
 
 public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
@@ -635,6 +640,21 @@ public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
             allowAudioStreamCopy: true,
             maxAudioChannels: 8,
             deviceProfile: .tvOSOptimized
+        )
+    }
+
+    public static func tvOSSimulatorCompatibility(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
+        let bitrate = min(maxStreamingBitrate ?? 12_000_000, 12_000_000)
+        return PlaybackInfoOptions(
+            mode: .balanced,
+            enableDirectPlay: true,
+            enableDirectStream: false,
+            allowTranscoding: true,
+            maxStreamingBitrate: bitrate,
+            allowVideoStreamCopy: false,
+            allowAudioStreamCopy: false,
+            maxAudioChannels: 2,
+            deviceProfile: .tvOSSimulatorCompatibilityH264
         )
     }
 }

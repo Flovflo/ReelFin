@@ -1,44 +1,162 @@
 import Foundation
 
 enum PlaybackTVOSCachingPolicy {
-    private static let directPlayStartupFloorSeconds: Double = 120
-    private static let remuxStartupFloorSeconds: Double = 180
-    private static let transcodeStartupFloorSeconds: Double = 240
-    private static let nativeBridgeStartupFloorSeconds: Double = 180
-    private static let aggressiveHeadroomRatio: Double = 1.4
-    private static let minimumBufferGrowthSeconds: Double = 45
-    private static let maximumWholeAssetBufferHintSeconds: Double = 3 * 60 * 60
+    struct AdaptiveCachingHint: Equatable, Sendable {
+        enum Phase: Int, Comparable, Sendable {
+            case warm
+            case hot
+            case deep
+            case flood
+
+            static func < (lhs: Phase, rhs: Phase) -> Bool {
+                lhs.rawValue < rhs.rawValue
+            }
+        }
+
+        let phase: Phase
+        let headroomRatio: Double
+        let forwardBufferDuration: Double
+        let syntheticPreloadCount: Int
+        let syntheticLookaheadSegments: Int
+    }
+
+    private struct RampConfiguration: Sendable {
+        let phase: AdaptiveCachingHint.Phase
+        let minimumPlaybackSeconds: Double
+        let minimumHealthySamples: Int
+        let minimumHeadroomRatio: Double
+        let forwardBufferDuration: Double
+        let syntheticPreloadCount: Int
+        let syntheticLookaheadSegments: Int
+    }
+
+    private static let minimumAggressiveBufferPlaybackSeconds: Double = 12
+    private static let minimumBufferGrowthSeconds: Double = 15
+    private static let healthyHeadroomRatio: Double = 1.25
+
+    private static let rampConfigurations: [RampConfiguration] = [
+        RampConfiguration(
+            phase: .warm,
+            minimumPlaybackSeconds: 12,
+            minimumHealthySamples: 1,
+            minimumHeadroomRatio: 1.3,
+            forwardBufferDuration: 24,
+            syntheticPreloadCount: 6,
+            syntheticLookaheadSegments: 4
+        ),
+        RampConfiguration(
+            phase: .hot,
+            minimumPlaybackSeconds: 45,
+            minimumHealthySamples: 3,
+            minimumHeadroomRatio: 1.6,
+            forwardBufferDuration: 90,
+            syntheticPreloadCount: 10,
+            syntheticLookaheadSegments: 6
+        ),
+        RampConfiguration(
+            phase: .deep,
+            minimumPlaybackSeconds: 120,
+            minimumHealthySamples: 6,
+            minimumHeadroomRatio: 2.1,
+            forwardBufferDuration: 300,
+            syntheticPreloadCount: 14,
+            syntheticLookaheadSegments: 8
+        ),
+        RampConfiguration(
+            phase: .flood,
+            minimumPlaybackSeconds: 300,
+            minimumHealthySamples: 10,
+            minimumHeadroomRatio: 2.8,
+            forwardBufferDuration: 900,
+            syntheticPreloadCount: 18,
+            syntheticLookaheadSegments: 12
+        )
+    ]
 
     static let syntheticReaderCacheSizeBytes = 192 * 1024 * 1024
     static let syntheticSegmentCacheSizeBytes = 128 * 1024 * 1024
-    static let syntheticReadAheadChunks = 6
-    static let syntheticPlaylistPreloadCount = 10
+    static let syntheticReadAheadChunks = 2
+    static let syntheticPlaylistPreloadCount = 4
 
     static func startupForwardBufferDuration(
         baseBufferDuration: Double,
-        route: PlaybackRoute,
+        route _: PlaybackRoute,
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) -> Double {
         guard isTVOS else { return baseBufferDuration }
-
-        let startupFloor: Double
-        switch route {
-        case .directPlay:
-            startupFloor = directPlayStartupFloorSeconds
-        case .remux:
-            startupFloor = remuxStartupFloorSeconds
-        case .transcode:
-            startupFloor = transcodeStartupFloorSeconds
-        case .nativeBridge:
-            startupFloor = nativeBridgeStartupFloorSeconds
-        }
-
-        let target = max(baseBufferDuration, startupFloor)
         guard let runtimeSeconds, runtimeSeconds.isFinite, runtimeSeconds > 0 else {
-            return target
+            return baseBufferDuration
         }
-        return min(target, runtimeSeconds)
+        return min(baseBufferDuration, runtimeSeconds)
+    }
+
+    static func adaptiveCachingHint(
+        currentBufferDuration: Double,
+        observedBitrate: Double,
+        indicatedBitrate: Double,
+        sourceBitrate: Int?,
+        currentTime: Double,
+        runtimeSeconds: Double?,
+        healthySampleCount: Int,
+        isTVOS: Bool
+    ) -> AdaptiveCachingHint? {
+        guard isTVOS else { return nil }
+        guard currentBufferDuration.isFinite, currentBufferDuration >= 0 else { return nil }
+        guard currentTime.isFinite, currentTime >= minimumAggressiveBufferPlaybackSeconds else { return nil }
+        guard let runtimeSeconds, runtimeSeconds.isFinite, runtimeSeconds > 0 else { return nil }
+        guard observedBitrate.isFinite, observedBitrate > 0 else { return nil }
+
+        let remainingDuration = max(0, runtimeSeconds - max(0, currentTime))
+        guard remainingDuration > currentBufferDuration + minimumBufferGrowthSeconds else {
+            return nil
+        }
+
+        let requiredBitrate = self.requiredBitrate(
+            indicatedBitrate: indicatedBitrate,
+            sourceBitrate: sourceBitrate
+        )
+        guard requiredBitrate > 0 else { return nil }
+
+        let headroomRatio = observedBitrate / requiredBitrate
+        guard headroomRatio >= healthyHeadroomRatio else { return nil }
+
+        guard let configuration = rampConfigurations.last(where: {
+            currentTime >= $0.minimumPlaybackSeconds &&
+                healthySampleCount >= $0.minimumHealthySamples &&
+                headroomRatio >= $0.minimumHeadroomRatio
+        }) else {
+            return nil
+        }
+
+        let targetBufferDuration = min(remainingDuration, configuration.forwardBufferDuration)
+        guard targetBufferDuration > currentBufferDuration + minimumBufferGrowthSeconds else {
+            return nil
+        }
+
+        return AdaptiveCachingHint(
+            phase: configuration.phase,
+            headroomRatio: headroomRatio,
+            forwardBufferDuration: targetBufferDuration,
+            syntheticPreloadCount: configuration.syntheticPreloadCount,
+            syntheticLookaheadSegments: configuration.syntheticLookaheadSegments
+        )
+    }
+
+    static func isHealthyAccessLogSample(
+        observedBitrate: Double,
+        indicatedBitrate: Double,
+        sourceBitrate: Int?,
+        isTVOS: Bool
+    ) -> Bool {
+        guard isTVOS else { return false }
+        guard observedBitrate.isFinite, observedBitrate > 0 else { return false }
+        let requiredBitrate = self.requiredBitrate(
+            indicatedBitrate: indicatedBitrate,
+            sourceBitrate: sourceBitrate
+        )
+        guard requiredBitrate > 0 else { return false }
+        return (observedBitrate / requiredBitrate) >= healthyHeadroomRatio
     }
 
     static func aggressiveForwardBufferDuration(
@@ -48,32 +166,19 @@ enum PlaybackTVOSCachingPolicy {
         sourceBitrate: Int?,
         currentTime: Double,
         runtimeSeconds: Double?,
+        healthySampleCount: Int = .max,
         isTVOS: Bool
     ) -> Double? {
-        guard isTVOS else { return nil }
-        guard currentBufferDuration.isFinite, currentBufferDuration >= 0 else { return nil }
-        guard let runtimeSeconds, runtimeSeconds.isFinite, runtimeSeconds > 0 else { return nil }
-        guard observedBitrate.isFinite, observedBitrate > 0 else { return nil }
-
-        let remainingDuration = max(0, runtimeSeconds - max(0, currentTime))
-        guard remainingDuration > currentBufferDuration + minimumBufferGrowthSeconds else {
-            return nil
-        }
-
-        let requiredBitrate = max(
-            indicatedBitrate.isFinite ? indicatedBitrate : 0,
-            Double(sourceBitrate ?? 0)
-        )
-        guard requiredBitrate > 0 else { return nil }
-
-        let headroomRatio = observedBitrate / requiredBitrate
-        guard headroomRatio >= aggressiveHeadroomRatio else { return nil }
-
-        let target = min(remainingDuration, maximumWholeAssetBufferHintSeconds)
-        guard target > currentBufferDuration + minimumBufferGrowthSeconds else {
-            return nil
-        }
-        return target
+        adaptiveCachingHint(
+            currentBufferDuration: currentBufferDuration,
+            observedBitrate: observedBitrate,
+            indicatedBitrate: indicatedBitrate,
+            sourceBitrate: sourceBitrate,
+            currentTime: currentTime,
+            runtimeSeconds: runtimeSeconds,
+            healthySampleCount: healthySampleCount,
+            isTVOS: isTVOS
+        )?.forwardBufferDuration
     }
 
     static func syntheticReaderConfiguration(
@@ -95,5 +200,15 @@ enum PlaybackTVOSCachingPolicy {
 
     static func syntheticPlaylistPreloadCount(isTVOS: Bool) -> Int {
         isTVOS ? syntheticPlaylistPreloadCount : 3
+    }
+
+    private static func requiredBitrate(
+        indicatedBitrate: Double,
+        sourceBitrate: Int?
+    ) -> Double {
+        max(
+            indicatedBitrate.isFinite ? indicatedBitrate : 0,
+            Double(sourceBitrate ?? 0)
+        )
     }
 }
