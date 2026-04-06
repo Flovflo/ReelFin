@@ -3,6 +3,7 @@
 #if os(tvOS)
 import Shared
 import SwiftUI
+import UIKit
 
 @MainActor
 final class TVSearchViewModel: ObservableObject {
@@ -76,11 +77,14 @@ final class TVSearchViewModel: ObservableObject {
 
 struct TVSearchView: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
-    @FocusState private var isSearchFieldFocused: Bool
+    @FocusState private var isSearchBarFocused: Bool
     @StateObject private var viewModel: TVSearchViewModel
+    @State private var searchActivationToken = 0
+    @State private var isSearchEditing = false
     private let dependencies: ReelFinDependencies
 
     private let columns = [GridItem(.adaptive(minimum: 220, maximum: 260), spacing: 30)]
+    private let contentHorizontalPadding: CGFloat = 72
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
@@ -88,14 +92,27 @@ struct TVSearchView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            searchHeader
-            searchContent
+        GeometryReader { proxy in
+            let topRowItemIDs = TVAdaptiveGridFocusLayout(
+                containerWidth: proxy.size.width,
+                horizontalPadding: contentHorizontalPadding,
+                minimumItemWidth: 220,
+                interItemSpacing: 30
+            )
+            .firstRowItemIDs(in: viewModel.results)
+
+            VStack(alignment: .leading, spacing: 28) {
+                searchHeader(containerWidth: proxy.size.width)
+                searchContent(topRowItemIDs: topRowItemIDs)
+            }
+            .padding(.horizontal, contentHorizontalPadding)
+            .padding(.top, 18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(searchScreenBackground.ignoresSafeArea())
+            .overlay(alignment: .topLeading) {
+                hiddenSearchInput
+            }
         }
-        .padding(.horizontal, 72)
-        .padding(.top, 28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.black.ignoresSafeArea())
         .onChange(of: viewModel.query) { _, _ in
             viewModel.search()
         }
@@ -112,62 +129,45 @@ struct TVSearchView: View {
         }
     }
 
-    private var searchHeader: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Search")
-                .font(.system(size: 48, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+    private func searchHeader(containerWidth: CGFloat) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(isSearchChromeHighlighted ? .white.opacity(0.92) : .white.opacity(0.68))
 
-            HStack(spacing: 18) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(isSearchFieldFocused ? Color.black.opacity(0.86) : .white.opacity(0.72))
-                    .frame(width: 58, height: 58)
-                    .background { searchIconBackground }
-
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Color(red: 0.20, green: 0.20, blue: 0.22).opacity(isSearchFieldFocused ? 0.98 : 0.92))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .stroke(Color.white.opacity(isSearchFieldFocused ? 0.12 : 0.06), lineWidth: 0.8)
-                        }
-                        .allowsHitTesting(false)
-
-                    Text(searchDisplayText)
-                        .font(.system(size: 30, weight: .semibold, design: .rounded))
-                        .foregroundStyle(searchDisplayColor)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .allowsHitTesting(false)
-
-                    TextField("", text: $viewModel.query)
-                        .textFieldStyle(.plain)
-                        .focused($isSearchFieldFocused)
-                        .focusEffectDisabled(true)
-                        .foregroundStyle(.clear)
-                        .tint(.clear)
-                        .opacity(0.18)
-                        .submitLabel(.search)
-                        .onMoveCommand { direction in
-                            guard direction == .up else { return }
-                            requestTopNavigationFocus?(.search)
-                        }
-                }
-                .frame(maxWidth: .infinity, minHeight: 60)
+            Text(searchDisplayText)
+                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .foregroundStyle(searchDisplayColor)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 22)
-            .frame(width: 980, height: 104, alignment: .leading)
-            .background { searchFieldBackground }
-            .overlay { searchFieldStroke }
-            .shadow(color: .black.opacity(isSearchFieldFocused ? 0.28 : 0.18), radius: isSearchFieldFocused ? 28 : 18, x: 0, y: isSearchFieldFocused ? 16 : 10)
         }
+        .padding(.horizontal, 24)
+        .frame(width: searchFieldWidth(for: containerWidth), height: 72, alignment: .leading)
+        .background { searchFieldBackground }
+        .overlay { searchFieldStroke }
+        .shadow(
+            color: .black.opacity(isSearchChromeHighlighted ? 0.18 : 0.10),
+            radius: isSearchChromeHighlighted ? 18 : 12,
+            x: 0,
+            y: isSearchChromeHighlighted ? 10 : 7
+        )
+        .frame(maxWidth: .infinity, alignment: .center)
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .focusable(true, interactions: .activate)
+        .focused($isSearchBarFocused)
+        .focusEffectDisabled(true)
+        .onTapGesture {
+            activateSearch()
+        }
+        .onMoveCommand { direction in
+            guard direction == .up else { return }
+            requestTopNavigationFocus?(.search)
+        }
+        .animation(TVMotion.focusAnimation, value: isSearchChromeHighlighted)
     }
 
     @ViewBuilder
-    private var searchContent: some View {
+    private func searchContent(topRowItemIDs: Set<String>) -> some View {
         if viewModel.isSearching {
             TVSearchStateView(
                 icon: "progress.indicator",
@@ -193,6 +193,9 @@ struct TVSearchView: View {
                         TVSearchCardButton(
                             item: item,
                             dependencies: dependencies,
+                            onMoveUp: topRowItemIDs.contains(item.id) ? {
+                                isSearchBarFocused = true
+                            } : nil,
                             onSelect: { viewModel.select(item: $0) }
                         )
                     }
@@ -210,26 +213,27 @@ private struct TVSearchStateView: View {
     let subtitle: String
 
     var body: some View {
-        VStack(spacing: 18) {
-            Spacer()
+        VStack(spacing: 14) {
             Image(systemName: icon)
-                .font(.system(size: 62, weight: .thin))
-                .foregroundStyle(.white.opacity(0.46))
+                .font(.system(size: 46, weight: .thin))
+                .foregroundStyle(.white.opacity(0.38))
             Text(title)
-                .font(.system(size: 34, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.86))
+                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
             Text(subtitle)
-                .font(.system(size: 22, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.46))
-            Spacer()
+                .font(.system(size: 19, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.42))
+                .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, 88)
     }
 }
 
 private struct TVSearchCardButton: View {
     let item: MediaItem
     let dependencies: ReelFinDependencies
+    var onMoveUp: (() -> Void)? = nil
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
@@ -237,6 +241,7 @@ private struct TVSearchCardButton: View {
             item: item,
             dependencies: dependencies,
             onFocus: { _ in },
+            onMoveUp: onMoveUp,
             onSelect: onSelect
         )
         .accessibilityElement(children: .combine)
@@ -246,62 +251,158 @@ private struct TVSearchCardButton: View {
 }
 
 private extension TVSearchView {
-    @ViewBuilder
-    var searchIconBackground: some View {
-        if #available(tvOS 26.0, *) {
-            Color.clear
-                .glassEffect(
-                    Glass.regular
-                        .tint(Color.white.opacity(isSearchFieldFocused ? 0.30 : 0.10))
-                        .interactive(),
-                    in: .circle
-                )
-        } else {
-            Circle()
-                .fill(Color.white.opacity(isSearchFieldFocused ? 0.20 : 0.08))
-        }
+    var hiddenSearchInput: some View {
+        TVSearchKeyboardField(
+            text: $viewModel.query,
+            activationToken: searchActivationToken,
+            isEditing: $isSearchEditing,
+            onMoveUp: {
+                requestTopNavigationFocus?(.search)
+            }
+        )
+            .frame(width: 1, height: 1)
+            .clipped()
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+            .offset(x: -10_000, y: -10_000)
     }
 
-    @ViewBuilder
+    var searchScreenBackground: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(red: 0.010, green: 0.012, blue: 0.016),
+                Color.black
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottom
+        )
+    }
+
     var searchFieldBackground: some View {
-        if #available(tvOS 26.0, *) {
-            Color.clear
-                .glassEffect(
-                    Glass.regular
-                        .tint(Color.white.opacity(isSearchFieldFocused ? 0.18 : 0.07))
-                        .interactive(),
-                    in: .rect(cornerRadius: 30)
-                )
-        } else {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(ReelFinTheme.tvSurfaceMutedFill)
-        }
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(Color.white.opacity(isSearchChromeHighlighted ? 0.065 : 0.040))
     }
 
     var searchFieldStroke: some View {
-        RoundedRectangle(cornerRadius: 30, style: .continuous)
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
             .stroke(
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(isSearchFieldFocused ? 0.34 : 0.16),
-                        Color.white.opacity(isSearchFieldFocused ? 0.16 : 0.06)
+                        Color.white.opacity(isSearchChromeHighlighted ? 0.16 : 0.10),
+                        Color.white.opacity(isSearchChromeHighlighted ? 0.06 : 0.03)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ),
-                lineWidth: isSearchFieldFocused ? 1.3 : 1
+                lineWidth: isSearchChromeHighlighted ? 1.0 : 0.9
             )
+    }
+
+    func searchFieldWidth(for containerWidth: CGFloat) -> CGFloat {
+        min(max(containerWidth * 0.48, 620), 860)
     }
 
     var searchDisplayText: String {
         let trimmed = viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Movies, shows, cast, directors" : viewModel.query
+        return trimmed.isEmpty ? "Search movies, shows, cast" : viewModel.query
     }
 
     var searchDisplayColor: Color {
         viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? .white.opacity(isSearchFieldFocused ? 0.62 : 0.42)
-            : .white
+            ? .white.opacity(isSearchChromeHighlighted ? 0.42 : 0.28)
+            : .white.opacity(0.92)
+    }
+
+    var isSearchChromeHighlighted: Bool {
+        isSearchBarFocused || isSearchEditing
+    }
+
+    func activateSearch() {
+        isSearchBarFocused = true
+        searchActivationToken += 1
+    }
+}
+
+private struct TVSearchKeyboardField: UIViewRepresentable {
+    @Binding var text: String
+    let activationToken: Int
+    @Binding var isEditing: Bool
+    let onMoveUp: () -> Void
+
+    func makeUIView(context: Context) -> TVSearchTextField {
+        let textField = TVSearchTextField(frame: .zero)
+        textField.delegate = context.coordinator
+        textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        textField.onMoveUp = onMoveUp
+        textField.backgroundColor = .clear
+        textField.borderStyle = .none
+        textField.textColor = .clear
+        textField.tintColor = .clear
+        textField.returnKeyType = .search
+        textField.enablesReturnKeyAutomatically = false
+        textField.autocorrectionType = .no
+        textField.spellCheckingType = .no
+        return textField
+    }
+
+    func updateUIView(_ uiView: TVSearchTextField, context: Context) {
+        uiView.onMoveUp = onMoveUp
+        if uiView.text != text {
+            uiView.text = text
+        }
+
+        if context.coordinator.lastActivationToken != activationToken {
+            context.coordinator.lastActivationToken = activationToken
+            DispatchQueue.main.async {
+                uiView.becomeFirstResponder()
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, isEditing: $isEditing)
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        @Binding private var text: String
+        @Binding private var isEditing: Bool
+        var lastActivationToken = 0
+
+        init(text: Binding<String>, isEditing: Binding<Bool>) {
+            _text = text
+            _isEditing = isEditing
+        }
+
+        @objc
+        func textDidChange(_ textField: UITextField) {
+            text = textField.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            isEditing = true
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            isEditing = false
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            textField.resignFirstResponder()
+            return true
+        }
+    }
+}
+
+private final class TVSearchTextField: UITextField {
+    var onMoveUp: (() -> Void)?
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .upArrow }) {
+            onMoveUp?()
+            return
+        }
+
+        super.pressesBegan(presses, with: event)
     }
 }
 #endif
