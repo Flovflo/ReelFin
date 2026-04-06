@@ -1,20 +1,20 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg" alt="Jellyfin logo" width="120" height="120">
   <h1>ReelFin</h1>
-  <p><strong>Native Jellyfin client for iPhone and iPad</strong></p>
+  <p><strong>Native Jellyfin client for iPhone, iPad, and Apple TV</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/Platform-iOS%2026%2B-blue.svg" alt="Platform">
+    <img src="https://img.shields.io/badge/Platform-iOS%20%26%20tvOS%2026%2B-blue.svg" alt="Platform">
     <img src="https://img.shields.io/badge/Swift-5.9%2B-orange.svg" alt="Swift">
     <img src="https://img.shields.io/badge/UI-SwiftUI-informational.svg" alt="SwiftUI">
     <img src="https://img.shields.io/badge/Status-Beta-success.svg" alt="Status">
   </p>
 </div>
 
-ReelFin is a native Jellyfin app focused on deterministic playback, modern SwiftUI interfaces, and Apple-first media pipelines. The project avoids VLC-style embedded stacks and instead leans on `AVFoundation`, `AVKit`, and `VideoToolbox` to keep playback debuggable, efficient, and App Store friendly.
+ReelFin is a native Jellyfin app focused on deterministic playback, modern SwiftUI interfaces, and Apple-first media pipelines. The project avoids VLC-style embedded stacks and instead leans on `AVFoundation`, `AVKit`, and `VideoToolbox` to keep playback debuggable, efficient, and App Store friendly across iPhone, iPad, and Apple TV.
 
 ## Why ReelFin
 
-- Native Jellyfin playback path for iPhone and iPad
+- Native Jellyfin playback path across iPhone, iPad, and Apple TV
 - Direct-play-first decision engine for Apple-compatible streams
 - On-device remux path for MKV to fragmented MP4 when needed
 - Deterministic fallback profiles instead of opaque playback heuristics
@@ -25,7 +25,8 @@ ReelFin is a native Jellyfin app focused on deterministic playback, modern Swift
 
 - Apple-native playback through `AVPlayer`
 - HEVC, HDR10, and Dolby Vision aware playback planning
-- Jellyfin home feed, library browsing, detail pages, and settings
+- Jellyfin home feed, library browsing, detail pages, search, and settings
+- tvOS-first focus navigation, cinematic shelves, and Apple TV optimized layouts
 - Local metadata persistence with GRDB
 - Image pipeline with memory and disk cache
 - Test coverage around playback planning, HLS generation, subtitles, and image cache behavior
@@ -34,8 +35,8 @@ ReelFin is a native Jellyfin app focused on deterministic playback, modern Swift
 
 ### Core modules
 
-- `ReelFinApp`: app bootstrap and dependency container
-- `ReelFinUI`: SwiftUI screens, theming, and view models
+- `ReelFinApp`: iOS and tvOS app bootstrap and dependency container
+- `ReelFinUI`: shared SwiftUI screens, theming, tvOS shells, and view models
 - `PlaybackEngine`: playback planning, native bridge, local HLS server, subtitle strategy
 - `JellyfinAPI`: async/await network client and DTO decoding
 - `DataStore`: GRDB-backed metadata repository
@@ -65,7 +66,7 @@ For the detailed playback contract, see `Docs/Playback-Architecture-Current.md`.
 
 ### Requirements
 
-- Xcode with iOS 26 simulators installed
+- Xcode with iOS 26 and tvOS 26 simulators installed
 - XcodeGen available in your local environment
 
 ### Generate the project
@@ -79,6 +80,9 @@ xcodegen generate
 ```bash
 xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
   -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation)'
 ```
 
 ### Test
