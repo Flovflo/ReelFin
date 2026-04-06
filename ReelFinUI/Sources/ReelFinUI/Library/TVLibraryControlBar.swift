@@ -42,15 +42,11 @@ struct TVLibraryControlBar: View {
                 isSelected: false,
                 action: onSortToggle
             )
-            .background(quietSortBackground)
         }
     }
 
     private var controlRow: some View {
         HStack(spacing: 12) {
-            TVLibraryPillButton(title: "All", isSelected: selectedFilter == nil) {
-                onFilterChange(nil)
-            }
             TVLibraryPillButton(title: "Movies", isSelected: selectedFilter == .movie) {
                 onFilterChange(.movie)
             }
@@ -61,23 +57,23 @@ struct TVLibraryControlBar: View {
     }
 
     private var railBackground: some View {
-        Capsule(style: .continuous)
-            .fill(Color.white.opacity(0.10))
+        Group {
+            if #available(tvOS 26.0, *) {
+                Color.clear
+                    .glassEffect(
+                        Glass.regular.tint(Color.white.opacity(0.12)),
+                        in: .capsule
+                    )
+            } else {
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.10))
+            }
+        }
     }
 
     private var railStroke: some View {
         Capsule(style: .continuous)
             .stroke(Color.white.opacity(0.10), lineWidth: 1)
-    }
-
-    private var quietSortBackground: some View {
-        Capsule(style: .continuous)
-            .fill(Color.white.opacity(0.10))
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.18), radius: 16, x: 0, y: 8)
     }
 }
 

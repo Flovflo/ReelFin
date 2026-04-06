@@ -46,10 +46,7 @@ struct TVLibraryPosterCard: View {
 
     @ViewBuilder
     private var focusSurface: some View {
-        if isFocused {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.white.opacity(0.05))
-        }
+        Color.clear.tvCardSurface(focused: isFocused, cornerRadius: 24)
     }
 }
 #endif

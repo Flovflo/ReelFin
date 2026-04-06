@@ -15,6 +15,7 @@ public struct HeroCarouselView: View {
     private let onTap: (MediaItem) -> Void
     private let onPlay: ((MediaItem) -> Void)?
     private let onVisibleItemChange: ((MediaItem) -> Void)?
+    private let selectedItemID: Binding<String?>?
 
     @State private var currentIndex = 0
     #if os(iOS)
@@ -25,6 +26,7 @@ public struct HeroCarouselView: View {
         items: [MediaItem],
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
+        selectedItemID: Binding<String?>? = nil,
         onVisibleItemChange: ((MediaItem) -> Void)? = nil,
         onPlay: ((MediaItem) -> Void)? = nil,
         onTap: @escaping (MediaItem) -> Void
@@ -32,6 +34,7 @@ public struct HeroCarouselView: View {
         self.items = items
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
+        self.selectedItemID = selectedItemID
         self.onVisibleItemChange = onVisibleItemChange
         self.onPlay = onPlay
         self.onTap = onTap
@@ -99,14 +102,20 @@ public struct HeroCarouselView: View {
         }
         #endif
         .onAppear {
+            syncSelectionFromBinding()
             if let currentItem = items[safe: currentIndex] ?? items.first {
+                selectedItemID?.wrappedValue = currentItem.id
                 onVisibleItemChange?(currentItem)
             }
         }
         .onChange(of: currentIndex) { _, newValue in
             if let currentItem = items[safe: newValue] {
+                selectedItemID?.wrappedValue = currentItem.id
                 onVisibleItemChange?(currentItem)
             }
+        }
+        .onChange(of: selectedItemValue) { _, _ in
+            syncSelectionFromBinding()
         }
     }
 
@@ -198,14 +207,20 @@ public struct HeroCarouselView: View {
         .focusSection()
         .onMoveCommand(perform: handleMoveCommand)
         .onAppear {
+            syncSelectionFromBinding()
             if let item = items[safe: currentIndex] ?? items.first {
+                selectedItemID?.wrappedValue = item.id
                 onVisibleItemChange?(item)
             }
         }
         .onChange(of: currentIndex) { _, newValue in
             if let item = items[safe: newValue] {
+                selectedItemID?.wrappedValue = item.id
                 onVisibleItemChange?(item)
             }
+        }
+        .onChange(of: selectedItemValue) { _, _ in
+            syncSelectionFromBinding()
         }
     }
 
@@ -469,6 +484,21 @@ public struct HeroCarouselView: View {
         }
     }
     #endif
+
+    private var selectedItemValue: String? {
+        selectedItemID?.wrappedValue
+    }
+
+    private func syncSelectionFromBinding() {
+        guard
+            let selectedItemValue,
+            let newIndex = items.firstIndex(where: { $0.id == selectedItemValue }),
+            newIndex != currentIndex
+        else {
+            return
+        }
+        currentIndex = newIndex
+    }
 
     // ──────────────────────────────────────────────
     // MARK: - Shared helpers

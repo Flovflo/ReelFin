@@ -27,20 +27,26 @@ struct SeasonChipButton: View {
     #if os(tvOS)
     private var tvBody: some View {
         Text(title)
-            .font(.system(size: 24, weight: isSelected ? .semibold : .regular))
-            .foregroundStyle(isSelected || isFocused ? Color.black.opacity(0.92) : Color.white.opacity(0.72))
-            .padding(.horizontal, 22)
-            .padding(.vertical, 12)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .font(.system(size: 24, weight: isSelected || isFocused ? .semibold : .medium, design: .rounded))
+            .foregroundStyle(tvForeground)
+            .padding(.horizontal, 26)
+            .frame(minHeight: 66)
             .background { tvBackground }
             .contentShape(Capsule(style: .continuous))
-            .tvMotionFocus(.chip, isFocused: isFocused, isSelected: isSelected)
-            .focusable(true, interactions: .activate)
-            .focused($isFocused)
-            .focusEffectDisabled(true)
-            .onTapGesture(perform: action)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
-            .accessibilityValue(isSelected ? "Current season" : "")
+        .focusable(true, interactions: .activate)
+        .onTapGesture(perform: action)
+        .tvMotionFocus(.chip, isFocused: isFocused, isSelected: isSelected)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .scaleEffect(isFocused ? 1.02 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.26 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
+        .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityValue(isSelected ? "Current season" : "")
+        .accessibilityRepresentation { Button(title, action: action) }
     }
     #endif
 
@@ -95,36 +101,36 @@ struct SeasonChipButton: View {
     #if os(tvOS)
     private var tvBackground: some View {
         Group {
-            if #available(tvOS 26.0, *) {
+            if isFocused {
                 Capsule(style: .continuous)
-                    .fill(isFocused || isSelected ? Color.white.opacity(0.08) : .clear)
-                    .glassEffect(
-                        Glass.regular
-                            .tint(tvTint)
-                            .interactive(),
-                        in: .capsule
-                    )
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(isFocused ? 0.26 : (isSelected ? 0.16 : 0.10)), lineWidth: 1)
-                    }
+                    .fill(Color.white.opacity(0.96))
             } else {
                 Color.clear.reelFinGlassCapsule(
                     interactive: true,
                     tint: tvTint,
-                    stroke: Color.white.opacity(isFocused ? 0.26 : (isSelected ? 0.16 : 0.10)),
-                    shadowOpacity: isFocused ? 0.18 : 0.10,
-                    shadowRadius: isFocused ? 18 : 10,
-                    shadowYOffset: isFocused ? 8 : 4
+                    stroke: .clear,
+                    strokeWidth: 0,
+                    shadowOpacity: 0.10,
+                    shadowRadius: 10,
+                    shadowYOffset: 5
                 )
             }
         }
     }
 
+    private var tvForeground: Color {
+        if isFocused {
+            return Color.black.opacity(0.90)
+        }
+        if isSelected {
+            return Color.white.opacity(0.98)
+        }
+        return Color.white.opacity(0.78)
+    }
+
     private var tvTint: Color {
-        if isFocused { return Color.white.opacity(0.26) }
-        if isSelected { return Color.white.opacity(0.18) }
-        return Color.white.opacity(0.06)
+        if isSelected { return Color.white.opacity(0.20) }
+        return Color.white.opacity(0.08)
     }
     #else
     private var iosTint: Color {

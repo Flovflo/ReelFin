@@ -6,10 +6,34 @@ import SwiftUI
 struct EpisodeCardArtworkView: View {
     let episode: MediaItem
     let width: CGFloat
+    let height: CGFloat?
+    let cornerRadius: CGFloat?
+    let showsRuntimeBadge: Bool
+    let showsProgressBar: Bool
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
 
-    private var artworkHeight: CGFloat { width * 0.56 }
+    init(
+        episode: MediaItem,
+        width: CGFloat,
+        height: CGFloat? = nil,
+        cornerRadius: CGFloat? = nil,
+        showsRuntimeBadge: Bool = true,
+        showsProgressBar: Bool = true,
+        apiClient: any JellyfinAPIClientProtocol,
+        imagePipeline: any ImagePipelineProtocol
+    ) {
+        self.episode = episode
+        self.width = width
+        self.height = height
+        self.cornerRadius = cornerRadius
+        self.showsRuntimeBadge = showsRuntimeBadge
+        self.showsProgressBar = showsProgressBar
+        self.apiClient = apiClient
+        self.imagePipeline = imagePipeline
+    }
+
+    private var artworkHeight: CGFloat { height ?? (width * 0.56) }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -37,7 +61,7 @@ struct EpisodeCardArtworkView: View {
             )
 
             // ── Runtime badge (play ▶ Xm) — bottom-left ────────────────────
-            if let runtime = episode.runtimeDisplayText {
+            if showsRuntimeBadge, let runtime = episode.runtimeDisplayText {
                 HStack(spacing: 5) {
                     Image(systemName: "play.fill")
                         .font(.system(size: runtimeIconSize, weight: .bold))
@@ -52,7 +76,7 @@ struct EpisodeCardArtworkView: View {
             }
 
             // ── Progress bar — thin, at very bottom ─────────────────────────
-            if let progress = episode.playbackProgress, progress > 0, !episode.isPlayed {
+            if showsProgressBar, let progress = episode.playbackProgress, progress > 0, !episode.isPlayed {
                 VStack {
                     Spacer()
                     GeometryReader { proxy in
@@ -75,6 +99,10 @@ struct EpisodeCardArtworkView: View {
     }
 
     private var artworkCornerRadius: CGFloat {
+        if let cornerRadius {
+            return cornerRadius
+        }
+
         #if os(tvOS)
         return 16
         #else

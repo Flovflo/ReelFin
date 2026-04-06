@@ -27,7 +27,7 @@ struct TVLibraryPillButton: View {
         .frame(minHeight: 60)
         .background { highlightBackground }
         .contentShape(Capsule(style: .continuous))
-        .scaleEffect(isFocused ? 1.01 : 1)
+        .scaleEffect(isFocused ? 1.02 : 1)
         .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
@@ -43,19 +43,39 @@ struct TVLibraryPillButton: View {
 
     @ViewBuilder
     private var highlightBackground: some View {
-        if isHighlighted {
-            Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.94))
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(0.42), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(isFocused ? 0.22 : 0.16), radius: isFocused ? 14 : 10, x: 0, y: isFocused ? 8 : 6)
-        }
+        Color.clear.reelFinGlassCapsule(
+            interactive: true,
+            tint: backgroundTint,
+            stroke: borderColor,
+            strokeWidth: isFocused ? 1.2 : 1,
+            shadowOpacity: isFocused ? 0.22 : 0.12,
+            shadowRadius: isFocused ? 16 : 10,
+            shadowYOffset: isFocused ? 9 : 5
+        )
     }
 
     private var isHighlighted: Bool {
         isFocused || isSelected
+    }
+
+    private var backgroundTint: Color {
+        if isFocused {
+            return Color.white.opacity(0.32)
+        }
+        if isSelected {
+            return Color.white.opacity(0.22)
+        }
+        return Color.white.opacity(0.05)
+    }
+
+    private var borderColor: Color {
+        if isFocused {
+            return Color.white.opacity(0.32)
+        }
+        if isSelected {
+            return Color.white.opacity(0.18)
+        }
+        return Color.white.opacity(0.10)
     }
 }
 #endif

@@ -113,33 +113,56 @@ struct TVSearchView: View {
     }
 
     private var searchHeader: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             Text("Search")
                 .font(.system(size: 48, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 
             HStack(spacing: 18) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.66))
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(isSearchFieldFocused ? Color.black.opacity(0.86) : .white.opacity(0.72))
+                    .frame(width: 58, height: 58)
+                    .background { searchIconBackground }
 
-                TextField("Movies, shows, cast, directors", text: $viewModel.query)
-                    .focused($isSearchFieldFocused)
-                    .font(.system(size: 34, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .submitLabel(.search)
-                    .onMoveCommand { direction in
-                        guard direction == .up else { return }
-                        requestTopNavigationFocus?(.search)
-                    }
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color(red: 0.20, green: 0.20, blue: 0.22).opacity(isSearchFieldFocused ? 0.98 : 0.92))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(Color.white.opacity(isSearchFieldFocused ? 0.12 : 0.06), lineWidth: 0.8)
+                        }
+                        .allowsHitTesting(false)
+
+                    Text(searchDisplayText)
+                        .font(.system(size: 30, weight: .semibold, design: .rounded))
+                        .foregroundStyle(searchDisplayColor)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 20)
+                        .allowsHitTesting(false)
+
+                    TextField("", text: $viewModel.query)
+                        .textFieldStyle(.plain)
+                        .focused($isSearchFieldFocused)
+                        .focusEffectDisabled(true)
+                        .foregroundStyle(.clear)
+                        .tint(.clear)
+                        .opacity(0.18)
+                        .submitLabel(.search)
+                        .onMoveCommand { direction in
+                            guard direction == .up else { return }
+                            requestTopNavigationFocus?(.search)
+                        }
+                }
+                .frame(maxWidth: .infinity, minHeight: 60)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 28)
-            .frame(width: 920, height: 84, alignment: .leading)
-            .background(ReelFinTheme.tvSurfaceMutedFill, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(isSearchFieldFocused ? ReelFinTheme.tvStrongStroke : ReelFinTheme.tvStroke, lineWidth: isSearchFieldFocused ? 1.4 : 1)
-            }
+            .padding(.horizontal, 22)
+            .frame(width: 980, height: 104, alignment: .leading)
+            .background { searchFieldBackground }
+            .overlay { searchFieldStroke }
+            .shadow(color: .black.opacity(isSearchFieldFocused ? 0.28 : 0.18), radius: isSearchFieldFocused ? 28 : 18, x: 0, y: isSearchFieldFocused ? 16 : 10)
         }
     }
 
@@ -205,27 +228,80 @@ private struct TVSearchStateView: View {
 }
 
 private struct TVSearchCardButton: View {
-    @FocusState private var isFocused: Bool
-
     let item: MediaItem
     let dependencies: ReelFinDependencies
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        PosterCardView(
+        TVLibraryPosterCard(
             item: item,
-            apiClient: dependencies.apiClient,
-            imagePipeline: dependencies.imagePipeline,
-            layoutStyle: .grid,
-            titleLineLimit: 2
+            dependencies: dependencies,
+            onFocus: { _ in },
+            onSelect: onSelect
         )
-        .focusable(true, interactions: .activate)
-        .focused($isFocused)
-        .focusEffectDisabled(true)
-        .onTapGesture { onSelect(item) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.name)
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+private extension TVSearchView {
+    @ViewBuilder
+    var searchIconBackground: some View {
+        if #available(tvOS 26.0, *) {
+            Color.clear
+                .glassEffect(
+                    Glass.regular
+                        .tint(Color.white.opacity(isSearchFieldFocused ? 0.30 : 0.10))
+                        .interactive(),
+                    in: .circle
+                )
+        } else {
+            Circle()
+                .fill(Color.white.opacity(isSearchFieldFocused ? 0.20 : 0.08))
+        }
+    }
+
+    @ViewBuilder
+    var searchFieldBackground: some View {
+        if #available(tvOS 26.0, *) {
+            Color.clear
+                .glassEffect(
+                    Glass.regular
+                        .tint(Color.white.opacity(isSearchFieldFocused ? 0.18 : 0.07))
+                        .interactive(),
+                    in: .rect(cornerRadius: 30)
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(ReelFinTheme.tvSurfaceMutedFill)
+        }
+    }
+
+    var searchFieldStroke: some View {
+        RoundedRectangle(cornerRadius: 30, style: .continuous)
+            .stroke(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(isSearchFieldFocused ? 0.34 : 0.16),
+                        Color.white.opacity(isSearchFieldFocused ? 0.16 : 0.06)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: isSearchFieldFocused ? 1.3 : 1
+            )
+    }
+
+    var searchDisplayText: String {
+        let trimmed = viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Movies, shows, cast, directors" : viewModel.query
+    }
+
+    var searchDisplayColor: Color {
+        viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .white.opacity(isSearchFieldFocused ? 0.62 : 0.42)
+            : .white
     }
 }
 #endif

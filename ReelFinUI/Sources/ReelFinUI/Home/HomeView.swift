@@ -12,6 +12,7 @@ import SwiftUI
 private struct TVCardButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
+    @State private var isActivating = false
 
     let item: MediaItem
     let index: Int
@@ -20,6 +21,7 @@ private struct TVCardButton: View {
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     let namespaceProvider: (String) -> Namespace.ID?
+    let focusedItemID: FocusState<String?>.Binding?
     let isLandscapeRail: Bool
     let progress: Double?
     let optimizationStatus: ApplePlaybackOptimizationStatus?
@@ -39,7 +41,16 @@ private struct TVCardButton: View {
                 progress: progress,
                 optimizationStatus: optimizationStatus
             )
+            .modifier(TVMatchedTransitionSource(itemID: item.id, namespace: namespaceProvider(item.id)))
             .tvMotionFocus(.posterCard, isFocused: isFocused)
+            .scaleEffect(isActivating ? 1.075 : 1, anchor: .center)
+            .shadow(
+                color: .black.opacity(isActivating ? 0.54 : 0),
+                radius: isActivating ? 42 : 0,
+                x: 0,
+                y: isActivating ? 22 : 0
+            )
+            .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
 
             PosterCardMetadataView(
                 item: item,
@@ -47,16 +58,20 @@ private struct TVCardButton: View {
                 titleLineLimit: isLandscapeRail ? 2 : 1
             )
             .padding(.horizontal, 4)
-            .opacity(isFocused ? 1.0 : 0.68)
+            .opacity(isActivating ? 1 : (isFocused ? 1.0 : 0.68))
+            .offset(y: isActivating ? 4 : 0)
             .animation(TVMotion.focusAnimation, value: isFocused)
+            .animation(.spring(response: 0.26, dampingFraction: 0.82), value: isActivating)
         }
         // focusable on the VStack itself — no Button = no Liquid Glass container.
         // onTapGesture fires when the Siri Remote touchpad is clicked on the focused element.
         .focusable(true, interactions: .activate)
         .onMoveCommand(perform: handleMoveCommand)
-        .onTapGesture { onSelect(item) }
+        .onTapGesture(perform: handleActivation)
         .focusEffectDisabled(true)
         .focused($isFocused)
+        .modifier(TVHomeItemFocusModifier(itemID: item.id, focusedItemID: focusedItemID))
+        .id(item.id)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
@@ -78,11 +93,61 @@ private struct TVCardButton: View {
         guard direction == .up, kind == .continueWatching else { return }
         requestTopNavigationFocus?(.watchNow)
     }
+
+    private func handleActivation() {
+        guard !isActivating else { return }
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
+            isActivating = true
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 105_000_000)
+            onSelect(item)
+            isActivating = false
+        }
+    }
 }
 
 private enum TVHomeWarmupScope {
     static let hero = "home.hero"
     static let focus = "home.focus"
+}
+
+private enum TVHomeReturnTarget: Equatable {
+    case featured(itemID: String)
+    case row(rowID: String, itemID: String)
+}
+
+private struct TVMatchedTransitionSource: ViewModifier {
+    let itemID: String
+    let namespace: Namespace.ID?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let namespace {
+            if #available(tvOS 18.0, *) {
+                content.matchedTransitionSource(id: "poster-\(itemID)", in: namespace)
+            } else {
+                content.matchedGeometryEffect(id: "poster-\(itemID)", in: namespace)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+private struct TVHomeItemFocusModifier: ViewModifier {
+    let itemID: String
+    let focusedItemID: FocusState<String?>.Binding?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let focusedItemID {
+            content.focused(focusedItemID, equals: itemID)
+        } else {
+            content
+        }
+    }
 }
 #endif
 
@@ -95,6 +160,7 @@ public struct SectionRow: View {
     private let apiClient: JellyfinAPIClientProtocol
     private let imagePipeline: ImagePipelineProtocol
     private let namespaceProvider: (String) -> Namespace.ID?
+    private let focusedItemID: FocusState<String?>.Binding?
     private let optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)?
     private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
     private let onSelect: (MediaItem) -> Void
@@ -106,6 +172,7 @@ public struct SectionRow: View {
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         namespaceProvider: @escaping (String) -> Namespace.ID?,
+        focusedItemID: FocusState<String?>.Binding? = nil,
         optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)? = nil,
         onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
         onSelect: @escaping (MediaItem) -> Void
@@ -116,6 +183,7 @@ public struct SectionRow: View {
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
         self.namespaceProvider = namespaceProvider
+        self.focusedItemID = focusedItemID
         self.optimizationStatusProvider = optimizationStatusProvider
         self.onFocus = onFocus
         self.onSelect = onSelect
@@ -149,6 +217,7 @@ public struct SectionRow: View {
                             apiClient: apiClient,
                             imagePipeline: imagePipeline,
                             namespaceProvider: namespaceProvider,
+                            focusedItemID: focusedItemID,
                             isLandscapeRail: isLandscapeRail,
                             progress: progress(for: item),
                             optimizationStatus: optimizationStatus,
@@ -242,13 +311,24 @@ struct HomeView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var viewModel: HomeViewModel
     @Namespace private var posterNamespace
+#if os(tvOS)
+    @FocusState private var focusedHomeItemID: String?
+#endif
 
     private let dependencies: ReelFinDependencies
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
+    @State private var selectedDetailTransitionSourceID: String?
     @State private var selectedDetailContextItems: [MediaItem] = []
     @State private var selectedDetailContextTitle: String?
+#if os(tvOS)
+    @State private var lastSelectedHomeRowID: String?
+    @State private var lastSelectedHomeItemID: String?
+    @State private var featuredHeroItemID: String?
+    @State private var homeReturnTarget: TVHomeReturnTarget?
+    @State private var homeReturnRequest = 0
+#endif
     @State private var playerSession: PlaybackSessionController?
     @State private var playerItem: MediaItem?
     @State private var showPlayer = false
@@ -289,9 +369,10 @@ struct HomeView: View {
                 get: { viewModel.selectedItem != nil },
                 set: {
                     if !$0 {
-                        selectedDetailNamespace = nil
-                        selectedDetailContextItems = []
-                        selectedDetailContextTitle = nil
+#if os(tvOS)
+                        focusedHomeItemID = nil
+                        homeReturnRequest += 1
+#endif
                         viewModel.dismissDetail()
                     }
                 }
@@ -304,7 +385,9 @@ struct HomeView: View {
                     preferredEpisode: viewModel.selectedEpisode,
                     contextItems: selectedDetailContextItems,
                     contextTitle: selectedDetailContextTitle,
-                    namespace: selectedDetailNamespace
+                    namespace: selectedDetailNamespace,
+                    transitionSourceID: selectedDetailTransitionSourceID,
+                    onDisplayedSourceItemChange: handleDisplayedDetailSourceItemChange
                 )
             }
         }
@@ -388,57 +471,72 @@ struct HomeView: View {
         visibleRows: [HomeRow],
         rowIDByItemID: [String: String]
     ) -> some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: sectionSpacing) {
-                if viewModel.isInitialLoading && visibleRows.isEmpty {
-                    loadingSkeleton
-                        .padding(.top, 48)
-                } else if visibleRows.isEmpty && viewModel.feed.featured.isEmpty {
-                    emptyState
-                        .padding(.top, 48)
-                } else {
-                    featuredSection
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: sectionSpacing) {
+                    if viewModel.isInitialLoading && visibleRows.isEmpty {
+                        loadingSkeleton
+                            .padding(.top, 48)
+                    } else if visibleRows.isEmpty && viewModel.feed.featured.isEmpty {
+                        emptyState
+                            .padding(.top, 48)
+                    } else {
+                        featuredSection
 
-                    ForEach(visibleRows) { row in
-                        SectionRow(
-                            title: row.title,
-                            items: row.items,
-                            kind: row.kind,
-                            apiClient: dependencies.apiClient,
-                            imagePipeline: dependencies.imagePipeline,
-                            namespaceProvider: { itemID in
-                                rowIDByItemID[itemID] == row.id ? posterNamespace : nil
-                            },
-                            optimizationStatusProvider: { item in
-                                appleOptimizationStatuses[item.id]
-                            },
-                            onFocus: { item, neighbors in
-                                handleFocusedItem(item, neighbors: neighbors)
-                            },
-                            onSelect: { item in
-                                selectedDetailNamespace = rowIDByItemID[item.id] == row.id ? posterNamespace : nil
-                                selectedDetailContextItems = row.items
-                                selectedDetailContextTitle = row.title
-#if os(iOS)
-                                ambientItem = item
-                                scheduleWarmup(
-                                    for: item,
-                                    neighbors: row.items,
-                                    settleDelayNanoseconds: 0
-                                )
+                        ForEach(visibleRows) { row in
+                            SectionRow(
+                                title: row.title,
+                                items: row.items,
+                                kind: row.kind,
+                                apiClient: dependencies.apiClient,
+                                imagePipeline: dependencies.imagePipeline,
+                                namespaceProvider: { itemID in
+                                    rowIDByItemID[itemID] == row.id ? posterNamespace : nil
+                                },
+                                focusedItemID: homeFocusedItemBinding,
+                                optimizationStatusProvider: { item in
+                                    appleOptimizationStatuses[item.id]
+                                },
+                                onFocus: { item, neighbors in
+                                    handleFocusedItem(item, neighbors: neighbors)
+                                },
+                                onSelect: { item in
+                                    selectedDetailNamespace = rowIDByItemID[item.id] == row.id ? posterNamespace : nil
+                                    selectedDetailTransitionSourceID = rowIDByItemID[item.id] == row.id ? item.id : nil
+                                    selectedDetailContextItems = row.items
+                                    selectedDetailContextTitle = row.title
+#if os(tvOS)
+                                    lastSelectedHomeRowID = row.id
+                                    lastSelectedHomeItemID = item.id
+                                    homeReturnTarget = .row(rowID: row.id, itemID: item.id)
 #endif
-                                let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
-                                Task {
-                                    await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+#if os(iOS)
+                                    ambientItem = item
+                                    scheduleWarmup(
+                                        for: item,
+                                        neighbors: row.items,
+                                        settleDelayNanoseconds: 0
+                                    )
+#endif
+                                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                                    Task {
+                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                                    }
+                                    viewModel.select(item: item)
                                 }
-                                viewModel.select(item: item)
-                            }
-                        )
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                            )
+                            .id(row.id)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            #if os(tvOS)
+            .onChange(of: homeReturnRequest) { _, _ in
+                restoreHomeSelection(using: proxy)
+            }
+            #endif
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
 #if os(tvOS)
@@ -471,6 +569,7 @@ struct HomeView: View {
                 items: featuredItems,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
+                selectedItemID: $featuredHeroItemID,
                 onVisibleItemChange: { item in
                     scheduleWarmup(
                         for: item,
@@ -478,11 +577,13 @@ struct HomeView: View {
                         scope: TVHomeWarmupScope.hero,
                         settleDelayNanoseconds: 0
                     )
+                    featuredHeroItemID = item.id
                     tvScreenState.scheduleNavigationAppearance(for: item)
                 },
                 onPlay: handleFeaturedPlay,
                 onTap: handleFeaturedSelection
             )
+            .id(featuredScrollAnchorID)
             #else
             ZStack(alignment: .top) {
                 HeroCarouselView(
@@ -563,6 +664,14 @@ struct HomeView: View {
 
     private var featuredItems: [MediaItem] {
         Array(viewModel.feed.featured.prefix(10))
+    }
+
+    private var homeFocusedItemBinding: FocusState<String?>.Binding? {
+#if os(tvOS)
+        $focusedHomeItemID
+#else
+        nil
+#endif
     }
 
     private func preloadOptimizationStatuses() async {
@@ -717,8 +826,15 @@ struct HomeView: View {
         )
 #endif
         selectedDetailNamespace = nil
+        selectedDetailTransitionSourceID = nil
         selectedDetailContextItems = featuredItems
         selectedDetailContextTitle = "Featured"
+#if os(tvOS)
+        lastSelectedHomeRowID = nil
+        lastSelectedHomeItemID = nil
+        featuredHeroItemID = item.id
+        homeReturnTarget = .featured(itemID: item.id)
+#endif
 
         let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
         Task {
@@ -908,6 +1024,50 @@ struct HomeView: View {
         playerItem = nil
         showPlayer = false
         isPreparingPlayback = false
+    }
+
+#if os(tvOS)
+    private func restoreHomeSelection(using proxy: ScrollViewProxy) {
+        guard let homeReturnTarget else { return }
+
+        switch homeReturnTarget {
+        case let .featured(itemID):
+            featuredHeroItemID = itemID
+            withAnimation(.easeInOut(duration: 0.34)) {
+                proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
+            }
+        case let .row(rowID, itemID):
+            withAnimation(.easeInOut(duration: 0.34)) {
+                proxy.scrollTo(rowID, anchor: .top)
+            }
+
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 220_000_000)
+                focusedHomeItemID = itemID
+            }
+        }
+    }
+#endif
+
+    private var featuredScrollAnchorID: String {
+        "home.featured.anchor"
+    }
+
+    private func handleDisplayedDetailSourceItemChange(_ item: MediaItem) {
+#if os(tvOS)
+        if featuredItems.contains(where: { $0.id == item.id }) {
+            featuredHeroItemID = item.id
+            homeReturnTarget = .featured(itemID: item.id)
+            lastSelectedHomeRowID = nil
+            lastSelectedHomeItemID = nil
+            return
+        }
+
+        guard let rowID = viewModel.rowIDByItemID[item.id] else { return }
+        lastSelectedHomeRowID = rowID
+        lastSelectedHomeItemID = item.id
+        homeReturnTarget = .row(rowID: rowID, itemID: item.id)
+#endif
     }
 }
 
