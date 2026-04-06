@@ -20,20 +20,29 @@ final class RootViewModel {
     }
 
     func bootstrap() async {
+        let session = await dependencies.apiClient.currentSession() ?? dependencies.settingsStore.lastSession
+        let serverConfig = await dependencies.apiClient.currentConfiguration() ?? dependencies.settingsStore.serverConfiguration
+
+        if session != nil && serverConfig != nil {
+            markOnboardingCompletedIfNeeded()
+            isAuthenticated = true
+            didBootstrap = true
+            return
+        }
+
         guard dependencies.settingsStore.completedOnboardingVersion >= ReelFinOnboardingVersion.current else {
             isAuthenticated = false
             didBootstrap = true
             return
         }
 
-        let session = await dependencies.apiClient.currentSession() ?? dependencies.settingsStore.lastSession
-        let serverConfig = await dependencies.apiClient.currentConfiguration() ?? dependencies.settingsStore.serverConfiguration
-        isAuthenticated = session != nil && serverConfig != nil
+        isAuthenticated = false
         didBootstrap = true
     }
 
     func completeLogin(_ session: UserSession) {
         dependencies.settingsStore.lastSession = session
+        markOnboardingCompletedIfNeeded()
         withAnimation(.easeInOut(duration: 0.2)) {
             isAuthenticated = true
         }
@@ -48,5 +57,14 @@ final class RootViewModel {
                 }
             }
         }
+    }
+
+    private func markOnboardingCompletedIfNeeded() {
+        guard dependencies.settingsStore.completedOnboardingVersion < ReelFinOnboardingVersion.current else {
+            return
+        }
+
+        dependencies.settingsStore.hasCompletedOnboarding = true
+        dependencies.settingsStore.completedOnboardingVersion = ReelFinOnboardingVersion.current
     }
 }

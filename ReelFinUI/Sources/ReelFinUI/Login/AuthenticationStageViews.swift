@@ -114,7 +114,6 @@ struct CredentialsStageView: View {
                         .accessibilityIdentifier("login_password_field")
                         .onboardingFieldSurface()
                 }
-                .accessibilityIdentifier("login_credentials_sheet")
 
                 if isSubmitting {
                     StageFeedbackChip(text: "Signing in", tint: OnboardingPalette.secondaryText)

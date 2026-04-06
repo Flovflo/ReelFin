@@ -60,9 +60,10 @@ targets:
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/privacy-policy.html
-        INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/terms-of-service.html
-        INFOPLIST_KEY_REELFIN_SUPPORT_URL: https://github.com/Flovflo/ReelFin/blob/main/Docs/support.html
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL: https://flovflo.github.io/ReelFin/privacy.html
+        INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL: https://flovflo.github.io/ReelFin/terms.html
+        INFOPLIST_KEY_REELFIN_SUPPORT_URL: https://flovflo.github.io/ReelFin/support.html
         INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL: floriantaffin@gmail.com
         INFOPLIST_KEY_REELFIN_SENTRY_DSN: $(REELFIN_SENTRY_DSN)
         REELFIN_SENTRY_DSN: ""
@@ -186,8 +187,13 @@ targets:
         TVOS_DEPLOYMENT_TARGET: 26.0
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: ReelFin
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
+        INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL: https://flovflo.github.io/ReelFin/privacy.html
         INFOPLIST_KEY_REELFIN_SENTRY_DSN: $(REELFIN_SENTRY_DSN)
+        INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL: floriantaffin@gmail.com
+        INFOPLIST_KEY_REELFIN_SUPPORT_URL: https://flovflo.github.io/ReelFin/support.html
+        INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL: https://flovflo.github.io/ReelFin/terms.html
         REELFIN_SENTRY_DSN: ""
 
   # ──────────────────────────────────────────────
@@ -313,6 +319,7 @@ targets:
     dependencies:
       - target: PlaybackEngine
       - target: JellyfinAPI
+      - target: ReelFinUI
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback.tests

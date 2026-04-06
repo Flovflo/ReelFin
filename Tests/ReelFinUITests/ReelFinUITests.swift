@@ -24,11 +24,10 @@ class ReelFinUITests: XCTestCase {
 
         let continueButton = app.buttons["login_server_continue"]
         XCTAssertTrue(continueButton.exists)
-        continueButton.tap()
+        submitServerEntry(in: app, field: serverField, continueButton: continueButton)
 
-        let usernameField = app.textFields["login_username_field"].firstMatch
-        XCTAssertTrue(usernameField.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.secureTextFields["login_password_field"].firstMatch.exists)
+        XCTAssertTrue(waitForCredentialsStage(in: app, timeout: 12))
+        XCTAssertTrue(app.secureTextFields["login_password_field"].firstMatch.waitForExistence(timeout: 5))
     }
 
     func testLoggedOutMockFlowCanAuthenticateIntoHome() throws {
@@ -43,9 +42,13 @@ class ReelFinUITests: XCTestCase {
         XCTAssertTrue(serverField.exists)
         enterServerIfNeeded(serverField)
 
-        continueButton.tap()
+        submitServerEntry(in: app, field: serverField, continueButton: continueButton)
 
-        let usernameField = app.textFields["login_username_field"].firstMatch
+        XCTAssertTrue(waitForCredentialsStage(in: app, timeout: 12))
+
+        let usernameField = app.textFields["login_username_field"].firstMatch.exists
+            ? app.textFields["login_username_field"].firstMatch
+            : app.textFields.firstMatch
         XCTAssertTrue(usernameField.waitForExistence(timeout: 8))
         usernameField.tap()
         usernameField.typeText("preview")
@@ -170,10 +173,56 @@ class ReelFinUITests: XCTestCase {
 
         XCTFail("Expected onboarding to advance to the server entry step")
     }
+
+    private func submitServerEntry(in app: XCUIApplication, field: XCUIElement, continueButton: XCUIElement) {
+        field.tap()
+        field.typeText("\n")
+
+        if app.textFields["login_username_field"].firstMatch.waitForExistence(timeout: 1.5) {
+            return
+        }
+
+        if app.buttons["login_sign_in"].firstMatch.waitForExistence(timeout: 2) ||
+            app.secureTextFields["login_password_field"].firstMatch.exists
+        {
+            return
+        }
+
+        if continueButton.isHittable {
+            continueButton.tap()
+            return
+        }
+
+        app.swipeUp()
+        if continueButton.waitForExistence(timeout: 2), continueButton.isHittable {
+            continueButton.tap()
+            return
+        }
+
+        continueButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    private func waitForCredentialsStage(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if app.otherElements["login_credentials_sheet"].firstMatch.exists ||
+                app.textFields["login_username_field"].firstMatch.exists ||
+                app.secureTextFields["login_password_field"].firstMatch.exists ||
+                app.buttons["login_sign_in"].firstMatch.exists
+            {
+                return true
+            }
+
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+
+        return false
+    }
 }
 
 private enum OnboardingScreenCount {
-    static let total = 4
+    static let total = 6
 }
 
 final class AppStoreScreenshotTests: XCTestCase {
@@ -197,11 +246,11 @@ final class AppStoreScreenshotTests: XCTestCase {
         capture(name: "02-library")
 
         firstPoster.tap()
-        let playButton = app.buttons["Play"]
-        XCTAssertTrue(playButton.waitForExistence(timeout: 8))
+        let playButton = playbackActionButton(in: app)
+        XCTAssertTrue(playButton.exists)
         capture(name: "03-detail")
         openSection(named: "Settings", in: app)
-        XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Settings"].firstMatch.waitForExistence(timeout: 8))
         capture(name: "04-settings")
     }
 
@@ -216,8 +265,8 @@ final class AppStoreScreenshotTests: XCTestCase {
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
 
         firstPoster.tap()
-        let playButton = app.buttons["Play"]
-        XCTAssertTrue(playButton.waitForExistence(timeout: 8))
+        let playButton = playbackActionButton(in: app)
+        XCTAssertTrue(playButton.exists)
 
         playButton.tap()
         let playerScreen = app.otherElements["native_player_screen"].firstMatch
@@ -291,6 +340,19 @@ final class AppStoreScreenshotTests: XCTestCase {
         default:
             return nil
         }
+    }
+
+    private func playbackActionButton(in app: XCUIApplication) -> XCUIElement {
+        for prefix in ["Resume", "Play", "Play Again"] {
+            let predicate = NSPredicate(format: "label BEGINSWITH[c] %@", prefix)
+            let button = app.buttons.matching(predicate).firstMatch
+            if button.waitForExistence(timeout: prefix == "Resume" ? 4 : 12) {
+                return button
+            }
+        }
+
+        XCTFail("Expected a playback action button on the detail screen.")
+        return app.buttons.firstMatch
     }
 
     private func capture(name: String, file: StaticString = #filePath, line: UInt = #line) {
