@@ -621,6 +621,9 @@ struct HomeView: View {
                 get: { viewModel.selectedItem != nil },
                 set: {
                     if !$0 {
+#if os(iOS)
+                        ambientItem = nil
+#endif
 #if os(tvOS)
                         focusedHomeItemID = nil
                         homeReturnRequest += 1
@@ -701,7 +704,8 @@ struct HomeView: View {
 #else
         ZStack(alignment: .bottom) {
             CinematicBackdropView(
-                item: ambientItem ?? viewModel.feed.featured.first,
+                item: ambientItem,
+                fallbackItem: viewModel.feed.featured.first,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 sharpnessOpacity: 0.78,

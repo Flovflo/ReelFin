@@ -231,10 +231,36 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func applyEnrichedFeed(_ processed: HomeFeed) {
-        guard feed != processed else { return }
-        ensureKnownSectionKinds(from: processed.rows)
-        feed = processed
+        let merged = mergeEnrichedFeed(current: feed, processed: processed)
+        guard feed != merged else { return }
+        ensureKnownSectionKinds(from: merged.rows)
+        feed = merged
         rebuildVisibleRowsCache()
+    }
+
+    private func mergeEnrichedFeed(current: HomeFeed, processed: HomeFeed) -> HomeFeed {
+        let currentRowIDs = Set(current.rows.map(\.id))
+        let processedRowIDs = Set(processed.rows.map(\.id))
+
+        guard
+            !current.rows.isEmpty,
+            processed.rows.count < current.rows.count,
+            processedRowIDs.isSubset(of: currentRowIDs)
+        else {
+            return processed
+        }
+
+        let processedRowsByID = Dictionary(uniqueKeysWithValues: processed.rows.map { ($0.id, $0) })
+        let mergedRows = current.rows.map { processedRowsByID[$0.id] ?? $0 }
+
+        let mergedFeatured: [MediaItem]
+        if current.featured.isEmpty, !processed.featured.isEmpty {
+            mergedFeatured = processed.featured
+        } else {
+            mergedFeatured = current.featured
+        }
+
+        return HomeFeed(featured: mergedFeatured, rows: mergedRows)
     }
 
     private func ensureKnownSectionKinds(from rows: [HomeRow]) {

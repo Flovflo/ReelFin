@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CinematicBackdropView: View {
     let item: MediaItem?
+    let fallbackItem: MediaItem?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     var sharpnessOpacity: Double = 0.84
@@ -16,6 +17,11 @@ struct CinematicBackdropView: View {
         GeometryReader { proxy in
             ZStack {
                 baseGradient
+
+                if let fallbackItem, fallbackItem.id != item?.id {
+                    backdropLayer(for: fallbackItem, size: proxy.size)
+                        .opacity(0.9)
+                }
 
                 if let item {
                     backdropLayer(for: item, size: proxy.size)
