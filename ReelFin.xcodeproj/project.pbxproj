@@ -18,6 +18,7 @@
 		0645AF619E9102245CD31B94 /* TVAppBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8BFAE38CD4269729EAF2EE /* TVAppBootstrap.swift */; };
 		07169BC78256D2EB0709ED4C /* SessionPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA8A73A634C0467F018BA267 /* SessionPersistenceTests.swift */; };
 		077DC4D87843C05F915A72EF /* DataStore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CBE87E846E1375DE69C99A6B /* DataStore.framework */; };
+		099996BBEA5657CF0CBE57E7 /* IOSDetailCarouselLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A57A9EE3A60D57ED6543CE /* IOSDetailCarouselLayout.swift */; };
 		09F19370AF5C19324383D9CB /* PlaybackAssetSelection+Optimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4607F6D9D24232BDC6E482A3 /* PlaybackAssetSelection+Optimization.swift */; };
 		0A143F0F6BFA1279283F5A4D /* PlaybackSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */; };
 		0A2AEA70DF9E6AEA5ED95B2E /* SeriesLookupCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8263D17251B4545771D4C295 /* SeriesLookupCache.swift */; };
@@ -117,6 +118,7 @@
 		423A1EBC8AF77E4EBE3707CF /* HLSManifestBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98FEA188AA02F7A4185213C5 /* HLSManifestBuilder.swift */; };
 		42A34AA7FD52210EC7017CDB /* SyncEngine.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1F83CBA96B4D8E249D2882AE /* SyncEngine.framework */; };
 		433D070EA15C2BFB483AC551 /* FMP4Repackager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5FA65414CC033FC848F3531 /* FMP4Repackager.swift */; };
+		43B9F1BD782FD77D2779ABF3 /* IOSDetailCarouselLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A57A9EE3A60D57ED6543CE /* IOSDetailCarouselLayout.swift */; };
 		43E5573A58CAB4D39BC9E872 /* JellyfinMediaProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A164609BDF223CECCCCD10A1 /* JellyfinMediaProbe.swift */; };
 		4437F5830F6177B2EBA7FD31 /* CachedRemoteImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01249E8039C24C249302DDF3 /* CachedRemoteImage.swift */; };
 		4468DD58DE36B5046FD577FA /* TVTopNavigationAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB201377975967C85B4152E /* TVTopNavigationAppearance.swift */; };
@@ -1066,6 +1068,7 @@
 		C251052A4CE389B8FAD71013 /* SeriesLookupCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeriesLookupCacheTests.swift; sourceTree = "<group>"; };
 		C4137FB7B8BB940DB43C47C6 /* PlaybackTransportStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackTransportStateTests.swift; sourceTree = "<group>"; };
 		C5429DE19A8858F367430C7B /* NativeBridgeIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeIntegrationTests.swift; sourceTree = "<group>"; };
+		C8A57A9EE3A60D57ED6543CE /* IOSDetailCarouselLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSDetailCarouselLayout.swift; sourceTree = "<group>"; };
 		C9CCA2B4D82AD985212A520C /* ReelFinGlassCurves.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinGlassCurves.swift; sourceTree = "<group>"; };
 		CA56F9E61184B8C99410842F /* reelfin-tv-onboarding-home.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "reelfin-tv-onboarding-home.png"; sourceTree = "<group>"; };
 		CA8A73A634C0467F018BA267 /* SessionPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistenceTests.swift; sourceTree = "<group>"; };
@@ -2521,6 +2524,7 @@
 				AF896ED47A8F7637D388050F /* HeroCarouselView.swift in Sources */,
 				BE69735CBA2980A4B6ECFDD1 /* HomeView.swift in Sources */,
 				BC697DC025E0B11C067BDA5C /* HomeViewModel.swift in Sources */,
+				099996BBEA5657CF0CBE57E7 /* IOSDetailCarouselLayout.swift in Sources */,
 				8790AAC2D65CBE395DFEBAB7 /* LibraryView.swift in Sources */,
 				4A8E256D5F890A45F045F8FC /* LibraryViewModel.swift in Sources */,
 				FDA8463211001F336498468E /* LoginView.swift in Sources */,
@@ -2683,6 +2687,7 @@
 				8811AEF54C2ED9AF45748A33 /* HeroCarouselView.swift in Sources */,
 				C96CBAB54F663041DF099B55 /* HomeView.swift in Sources */,
 				ADBDB5733D2ACFFCD8047713 /* HomeViewModel.swift in Sources */,
+				43B9F1BD782FD77D2779ABF3 /* IOSDetailCarouselLayout.swift in Sources */,
 				69BA996BD6744C1D8AD8C71F /* LibraryView.swift in Sources */,
 				F4202E229EB0B43D507F2027 /* LibraryViewModel.swift in Sources */,
 				3BE0498061619C34A3DF8D5F /* LoginView.swift in Sources */,

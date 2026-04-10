@@ -253,10 +253,10 @@ struct DetailView: View {
                 endPoint: .bottom
             )
 
-            IOSDetailHeroContent(
-                item: viewModel.detail.item,
-                playbackItem: viewModel.itemToPlay,
-                preferredSource: viewModel.preferredPlaybackSource,
+                IOSDetailHeroContent(
+                    item: viewModel.detail.item,
+                    playbackItem: viewModel.itemToPlay,
+                    preferredSource: viewModel.preferredPlaybackSource,
                 optimizationStatus: viewModel.playbackOptimizationStatus,
                 playButtonLabel: viewModel.playButtonLabel,
                 playbackStatusText: viewModel.playbackStatusText,
@@ -266,13 +266,14 @@ struct DetailView: View {
                 contentWidth: resolvedMetadataWidth(for: viewportSize),
                 horizontalPadding: horizontalPadding,
                 safeAreaTop: safeAreaTop,
-                bottomPadding: heroBottomPadding + 10 - stageMetrics.bottomPaddingCompression,
-                collapseProgress: stageMetrics.topInsetProgress,
-                animateIn: hasAnimatedIn,
-                apiClient: dependencies.apiClient,
-                imagePipeline: dependencies.imagePipeline,
-                onBack: { dismiss() },
-                onPlay: { startPlayback() },
+                    bottomPadding: heroBottomPadding + 10 - stageMetrics.bottomPaddingCompression,
+                    collapseProgress: stageMetrics.topInsetProgress,
+                    animateIn: hasAnimatedIn,
+                    prefersNativeZoomTransition: prefersNativeZoomTransition,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline,
+                    onBack: { dismiss() },
+                    onPlay: { startPlayback() },
                 onToggleWatched: viewModel.toggleWatched
             )
             .opacity(stageMetrics.heroContentOpacity)
@@ -484,7 +485,7 @@ struct DetailView: View {
             }
         }
         .opacity(hasAnimatedIn ? 1 : 0)
-        .offset(y: hasAnimatedIn ? 0 : 16)
+        .offset(y: hasAnimatedIn ? 0 : supportingContentEntryOffset)
     }
 
     @ViewBuilder
@@ -643,13 +644,14 @@ struct DetailView: View {
 #endif
 
     private func navigateToDetailItem(_ item: MediaItem, context: DetailNavigationContext? = nil) {
+        let targetItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
         navigationContext = context ?? navigationContext
 #if os(tvOS)
         tvHeroRevealProgress = 0
 #endif
         hasAnimatedIn = false
 #if os(iOS)
-        iosSelectedCarouselItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+        iosSelectedCarouselItemID = targetItemID
 #endif
         currentReturnSourceItem = item
         focusedHeroAction = .play
@@ -660,8 +662,7 @@ struct DetailView: View {
         viewModel.setDetailItem(detailItem, preferredEpisode: preferredEpisode)
 
         Task {
-            let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
-            await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+            await DetailPresentationTelemetry.shared.beginNavigation(for: targetItemID)
             await viewModel.load()
             await MainActor.run {
                 animateHeroEntryIfNeeded()
@@ -672,7 +673,7 @@ struct DetailView: View {
     @MainActor
     private func animateHeroEntryIfNeeded() {
         if !hasAnimatedIn {
-            withAnimation(TVMotion.contentFadeAnimation) {
+            withAnimation(detailEntryAnimation) {
                 hasAnimatedIn = true
             }
         }
@@ -683,6 +684,25 @@ struct DetailView: View {
             tvHeroRevealProgress = 1
         }
 #endif
+    }
+
+    private var prefersNativeZoomTransition: Bool {
+#if os(iOS)
+        if #available(iOS 18.0, *) {
+            return transitionNamespace != nil && transitionSourceID == currentReturnSourceItem.id
+        }
+#endif
+        return false
+    }
+
+    private var detailEntryAnimation: Animation {
+        prefersNativeZoomTransition
+            ? .easeOut(duration: 0.24)
+            : TVMotion.contentFadeAnimation
+    }
+
+    private var supportingContentEntryOffset: CGFloat {
+        prefersNativeZoomTransition ? 0 : 16
     }
 
 #if os(tvOS)
@@ -1010,15 +1030,6 @@ private struct TVDetailAmbientBackground: View {
             )
 
             RadialGradient(
-                colors: [ReelFinTheme.onboardingBlue.opacity(0.16), .clear],
-                center: .topLeading,
-                startRadius: 24,
-                endRadius: 640
-            )
-            .blur(radius: 28)
-            .offset(x: -100, y: -140)
-
-            RadialGradient(
                 colors: [ReelFinTheme.onboardingViolet.opacity(0.12), .clear],
                 center: .topTrailing,
                 startRadius: 24,
@@ -1110,6 +1121,7 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     @ViewBuilder let supportingContent: () -> Supporting
 
     @State private var scrollSnapshot = IOSDetailScrollSnapshot()
+    @State private var lastAlignedCarouselItemID: String?
 
     var body: some View {
         let metrics = IOSDetailStageMetrics(
@@ -1164,41 +1176,59 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     private func topStage(metrics: IOSDetailStageMetrics) -> some View {
         GeometryReader { proxy in
             let cardWidth = resolvedCardWidth(for: proxy.size.width)
-            let sideInset = max((proxy.size.width - cardWidth) * 0.5, horizontalPadding)
+            let sideInset = resolvedSideInset(for: proxy.size.width, cardWidth: cardWidth)
             let animatedSideInset = sideInset * (1 - metrics.topInsetProgress)
             let expandedCardWidth = min(
                 cardWidth + ((proxy.size.width - cardWidth) * metrics.topInsetProgress),
                 proxy.size.width
             )
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 18) {
-                    ForEach(entries) { entry in
-                        IOSDetailTopCarouselCard(
-                            entry: entry,
-                            currentItemID: currentItemID,
-                            heroHeight: heroHeight,
-                            cardWidth: cardWidth,
-                            expandedCardWidth: expandedCardWidth,
-                            metrics: metrics,
-                            topInsetProgress: metrics.topInsetProgress,
-                            apiClient: apiClient,
-                            imagePipeline: imagePipeline
-                        ) {
-                            selectedCard(metrics)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 18) {
+                        ForEach(entries) { entry in
+                            IOSDetailTopCarouselCard(
+                                entry: entry,
+                                currentItemID: currentItemID,
+                                heroHeight: heroHeight,
+                                cardWidth: cardWidth,
+                                expandedCardWidth: expandedCardWidth,
+                                metrics: metrics,
+                                topInsetProgress: metrics.topInsetProgress,
+                                apiClient: apiClient,
+                                imagePipeline: imagePipeline
+                            ) {
+                                selectedCard(metrics)
+                            }
+                            .id(entry.id)
                         }
-                        .id(entry.id)
                     }
                 }
                 .scrollTargetLayout()
                 .padding(.horizontal, animatedSideInset)
                 .padding(.vertical, 8)
+                .onAppear {
+                    alignCarouselIfNeeded(
+                        to: selectedItemID ?? currentItemID,
+                        using: proxy
+                    )
+                }
+                .onChange(of: currentItemID) { _, newValue in
+                    alignCarouselIfNeeded(to: newValue, using: proxy)
+                }
+                .onChange(of: entries.map(\.id)) { _, _ in
+                    alignCarouselIfNeeded(
+                        to: selectedItemID ?? currentItemID,
+                        using: proxy,
+                        force: true
+                    )
+                }
+                .scrollClipDisabled()
+                .scrollDisabled(metrics.topInsetProgress > 0.08)
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: $selectedItemID)
             }
             .accessibilityIdentifier("detail_ios_top_carousel")
-            .scrollClipDisabled()
-            .scrollDisabled(metrics.topInsetProgress > 0.08)
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $selectedItemID)
         }
         .frame(height: metrics.stageHeight(for: heroHeight))
         .padding(.top, stageTopInset)
@@ -1241,11 +1271,36 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     }
 
     private func resolvedCardWidth(for availableWidth: CGFloat) -> CGFloat {
-        let maxWidth = min(availableWidth - 28, 920)
-        if viewportSize.width < 430 {
-            return max(maxWidth, 0)
+        IOSDetailCarouselLayout.cardWidth(
+            for: availableWidth,
+            minimumPadding: horizontalPadding,
+            viewportWidth: viewportSize.width
+        )
+    }
+
+    private func resolvedSideInset(for availableWidth: CGFloat, cardWidth: CGFloat) -> CGFloat {
+        IOSDetailCarouselLayout.sideInset(
+            for: availableWidth,
+            cardWidth: cardWidth,
+            minimumPadding: horizontalPadding,
+            viewportWidth: viewportSize.width
+        )
+    }
+
+    private func alignCarouselIfNeeded(
+        to itemID: String,
+        using proxy: ScrollViewProxy,
+        force: Bool = false
+    ) {
+        guard force || lastAlignedCarouselItemID != itemID else { return }
+        lastAlignedCarouselItemID = itemID
+
+        Task { @MainActor in
+            await Task.yield()
+            withTransaction(Transaction(animation: nil)) {
+                proxy.scrollTo(itemID, anchor: .leading)
+            }
         }
-        return min(maxWidth, 760)
     }
 }
 
@@ -1317,6 +1372,7 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
         )
         .opacity(selected ? 1 : 1 - Double(topInsetProgress * 0.45))
         .offset(y: selected ? metrics.heroLift : 18 + (topInsetProgress * 12))
+        .accessibilityIdentifier("detail_top_card_\(entry.id)")
         .accessibilityElement(children: .contain)
     }
 
@@ -1480,6 +1536,7 @@ private struct IOSDetailHeroContent: View {
     let bottomPadding: CGFloat
     let collapseProgress: CGFloat
     let animateIn: Bool
+    let prefersNativeZoomTransition: Bool
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     let onBack: () -> Void
@@ -1508,8 +1565,8 @@ private struct IOSDetailHeroContent: View {
         .padding(.bottom, bottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .opacity(animateIn ? 1 : 0)
-        .offset(y: animateIn ? 0 : 22)
-        .animation(.easeOut(duration: 0.45), value: animateIn)
+        .offset(y: animateIn ? 0 : entryOffset)
+        .animation(entryAnimation, value: animateIn)
     }
 
     private var topBar: some View {
@@ -1638,6 +1695,16 @@ private struct IOSDetailHeroContent: View {
 
             footerRow
         }
+    }
+
+    private var entryAnimation: Animation {
+        prefersNativeZoomTransition
+            ? .easeOut(duration: 0.24)
+            : .easeOut(duration: 0.45)
+    }
+
+    private var entryOffset: CGFloat {
+        prefersNativeZoomTransition ? 0 : 22
     }
 
     @ViewBuilder

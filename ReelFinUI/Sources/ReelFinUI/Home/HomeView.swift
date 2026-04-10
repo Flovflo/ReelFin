@@ -1,6 +1,9 @@
 import PlaybackEngine
 import Shared
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Components (Merged here to avoid missing .pbxproj references)
 
@@ -105,8 +108,9 @@ private struct TVHomeShelfCard: View {
                 layoutStyle: layoutStyle,
                 namespace: namespace,
                 ranking: nil,
-                progress: progress,
+                progress: usesTVContinueWatchingStyle ? nil : progress,
                 optimizationStatus: optimizationStatus,
+                showsProgressOverlay: !usesTVContinueWatchingStyle,
                 showsTopTrailingBadges: false
             )
             .modifier(TVMatchedTransitionSource(itemID: item.id, namespace: namespace))
@@ -118,53 +122,7 @@ private struct TVHomeShelfCard: View {
             )
             .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: contentSpacing) {
-                HStack(alignment: .center, spacing: 10) {
-                    Text(eyebrowText.uppercased())
-                        .font(.system(size: eyebrowFontSize, weight: .medium, design: .rounded))
-                        .tracking(1.0)
-                        .foregroundStyle(.white.opacity(isFocused ? 0.82 : 0.66))
-
-                    Spacer(minLength: 0)
-
-                    playbackStatusBadge
-                }
-
-                Text(primaryTitle)
-                    .font(.system(size: titleFontSize, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(layoutStyle == .landscape ? 2 : 3)
-
-                if let secondaryTitle {
-                    Text(secondaryTitle)
-                        .font(.system(size: secondaryFontSize, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(isFocused ? 0.84 : 0.74))
-                        .lineLimit(layoutStyle == .landscape ? 2 : 1)
-                }
-
-                HStack(spacing: 10) {
-                    if let runtime = item.runtimeDisplayText {
-                        Label(runtime, systemImage: "play.fill")
-                            .font(.system(size: footerFontSize, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.92))
-                    } else if let year = item.year {
-                        Text(String(year))
-                            .font(.system(size: footerFontSize, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.92))
-                    }
-
-                    if let metadataText {
-                        Text(metadataText)
-                            .font(.system(size: footerFontSize, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.62))
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-            }
-            .padding(contentPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            defaultOverlay
         }
         .frame(width: cardWidth, height: cardHeight)
         .background(Color.white.opacity(0.03), in: cardShape)
@@ -188,6 +146,74 @@ private struct TVHomeShelfCard: View {
         .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
         .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityElement(children: .combine)
+    }
+
+    private var defaultOverlay: some View {
+        VStack(alignment: .leading, spacing: contentSpacing) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(eyebrowText.uppercased())
+                    .font(.system(size: eyebrowFontSize, weight: .medium, design: .rounded))
+                    .tracking(1.0)
+                    .foregroundStyle(.white.opacity(isFocused ? 0.82 : 0.66))
+
+                Spacer(minLength: 0)
+
+                playbackStatusBadge
+            }
+
+            Text(primaryTitle)
+                .font(.system(size: titleFontSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(layoutStyle == .landscape ? 2 : 3)
+
+            if let secondaryTitle {
+                Text(secondaryTitle)
+                    .font(.system(size: secondaryFontSize, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(isFocused ? 0.84 : 0.74))
+                    .lineLimit(layoutStyle == .landscape ? 2 : 1)
+            }
+
+            HStack(spacing: 10) {
+                if usesTVContinueWatchingStyle {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: footerFontSize, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.94))
+
+                    TVContinueWatchingInlineProgressTrack(
+                        progress: resolvedProgress,
+                        width: 54
+                    )
+
+                    if let footerText = continueWatchingFooterText {
+                        Text(footerText)
+                            .font(.system(size: footerFontSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .lineLimit(1)
+                    }
+                } else {
+                    if let runtime = item.runtimeDisplayText {
+                        Label(runtime, systemImage: "play.fill")
+                            .font(.system(size: footerFontSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.92))
+                    } else if let year = item.year {
+                        Text(String(year))
+                            .font(.system(size: footerFontSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.92))
+                    }
+
+                    if let metadataText {
+                        Text(metadataText)
+                            .font(.system(size: footerFontSize, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(contentPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 
     private var primaryTitle: String {
@@ -224,6 +250,32 @@ private struct TVHomeShelfCard: View {
         }
 
         return nil
+    }
+
+    private var continueWatchingFooterText: String? {
+        var values: [String] = []
+
+        if item.mediaType == .episode,
+           let season = item.parentIndexNumber,
+           let episode = item.indexNumber {
+            values.append("S\(season), E\(episode)")
+        }
+
+        if let runtime = item.runtimeDisplayText {
+            values.append(runtime)
+        } else if let year = item.year {
+            values.append(String(year))
+        }
+
+        return values.isEmpty ? nil : values.joined(separator: " • ")
+    }
+
+    private var resolvedProgress: Double {
+        min(max(progress ?? item.playbackProgress ?? 0, 0), 1)
+    }
+
+    private var usesTVContinueWatchingStyle: Bool {
+        kind == .continueWatching && layoutStyle == .landscape
     }
 
     private var eyebrowText: String {
@@ -336,6 +388,23 @@ private struct TVHomeShelfCard: View {
     }
 }
 
+private struct TVContinueWatchingInlineProgressTrack: View {
+    let progress: Double
+    let width: CGFloat
+
+    var body: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.28))
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.96))
+                    .frame(width: max(width * progress, 10))
+            }
+        .frame(width: width, height: 6)
+        .accessibilityHidden(true)
+    }
+}
+
 private struct TVHomePlaybackStatusBadge: View {
     let text: String
     let systemImage: String
@@ -403,6 +472,311 @@ private struct TVHomeItemFocusModifier: ViewModifier {
 }
 #endif
 
+#if os(iOS)
+private struct ContinueWatchingRowCard: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    let item: MediaItem
+    let progress: Double?
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let namespace: Namespace.ID?
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            artwork
+
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.18),
+                    .init(color: .black.opacity(0.12), location: 0.42),
+                    .init(color: .black.opacity(0.48), location: 0.66),
+                    .init(color: .black.opacity(0.84), location: 0.88),
+                    .init(color: .black.opacity(0.96), location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .clipShape(cardShape)
+            .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 0) {
+                ContinueWatchingArtworkTitleView(
+                    itemID: imageItemID,
+                    fallbackTitle: primaryTitle,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline,
+                    maxWidth: titleMaxWidth,
+                    maxHeight: titleMaxHeight,
+                    fallbackFontSize: titleFontSize
+                )
+                .padding(.top, titleTopPadding)
+                .padding(.horizontal, contentHorizontalPadding)
+
+                Spacer(minLength: 0)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.94))
+
+                    ContinueWatchingProgressTrack(
+                        progress: resolvedProgress,
+                        width: progressTrackWidth
+                    )
+
+                    if let footerText {
+                        Text(footerText)
+                            .font(.system(size: metadataFontSize, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.90))
+                            .lineLimit(1)
+                            .shadow(color: .black.opacity(0.26), radius: 2, x: 0, y: 1)
+                    }
+                }
+                .padding(.horizontal, contentHorizontalPadding)
+                .padding(.bottom, contentBottomPadding)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(width: cardWidth, height: cardHeight)
+        .background(Color.white.opacity(0.04), in: cardShape)
+        .overlay {
+            cardShape
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
+        }
+        .clipShape(cardShape)
+        .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
+        .contentShape(cardShape)
+        .shadow(color: .black.opacity(0.26), radius: 18, x: 0, y: 10)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var artwork: some View {
+        let image = CachedRemoteImage(
+            itemID: imageItemID,
+            type: .backdrop,
+            width: Int(cardWidth * 2),
+            quality: 86,
+            apiClient: apiClient,
+            imagePipeline: imagePipeline
+        )
+        .frame(width: cardWidth, height: cardHeight)
+        .clipped()
+
+        image
+    }
+
+    private var imageItemID: String {
+        item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+    }
+
+    private var primaryTitle: String {
+        if item.mediaType == .episode, let seriesName = item.seriesName, !seriesName.isEmpty {
+            return seriesName
+        }
+        return item.name
+    }
+
+    private var footerText: String? {
+        var values: [String] = []
+
+        if let season = item.parentIndexNumber, let episode = item.indexNumber {
+            values.append("S\(season), E\(episode)")
+        }
+
+        if let runtime = item.runtimeDisplayText {
+            values.append(runtime)
+        } else if let position = item.playbackPositionDisplayText {
+            values.append(position)
+        } else if let year = item.year {
+            values.append(String(year))
+        }
+
+        return values.isEmpty ? nil : values.joined(separator: " • ")
+    }
+
+    private var resolvedProgress: Double {
+        min(max(progress ?? item.playbackProgress ?? 0, 0), 1)
+    }
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 28, style: .continuous)
+    }
+
+    private var cardWidth: CGFloat {
+        horizontalSizeClass == .compact ? 296 : 420
+    }
+
+    private var cardHeight: CGFloat {
+        cardWidth * (9.0 / 16.0)
+    }
+
+    private var titleFontSize: CGFloat {
+        horizontalSizeClass == .compact ? 22 : 28
+    }
+
+    private var metadataFontSize: CGFloat {
+        horizontalSizeClass == .compact ? 15 : 18
+    }
+
+    private var progressTrackWidth: CGFloat {
+        horizontalSizeClass == .compact ? 38 : 46
+    }
+
+    private var contentHorizontalPadding: CGFloat {
+        horizontalSizeClass == .compact ? 16 : 20
+    }
+
+    private var contentBottomPadding: CGFloat {
+        horizontalSizeClass == .compact ? 14 : 18
+    }
+
+    private var titleTopPadding: CGFloat {
+        horizontalSizeClass == .compact ? 18 : 24
+    }
+
+    private var titleMaxWidth: CGFloat {
+        horizontalSizeClass == .compact ? 190 : 250
+    }
+
+    private var titleMaxHeight: CGFloat {
+        horizontalSizeClass == .compact ? 44 : 58
+    }
+}
+
+private struct ContinueWatchingArtworkTitleView: View {
+    let itemID: String
+    let fallbackTitle: String
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let maxWidth: CGFloat
+    let maxHeight: CGFloat
+    let fallbackFontSize: CGFloat
+
+    @State private var logoImage: UIImage?
+
+    var body: some View {
+        Group {
+            if let logoImage {
+                Image(uiImage: logoImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: maxWidth, maxHeight: maxHeight, alignment: .leading)
+                    .shadow(color: .black.opacity(0.30), radius: 8, x: 0, y: 4)
+                    .transition(.opacity)
+            } else {
+                Text(fallbackTitle.uppercased())
+                    .font(.system(size: fallbackFontSize, weight: .heavy, design: .rounded))
+                    .tracking(fallbackTracking)
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.78)
+                    .frame(maxWidth: maxWidth, alignment: .leading)
+                    .shadow(color: .black.opacity(0.28), radius: 6, x: 0, y: 3)
+            }
+        }
+        .task(id: itemID) {
+            await loadLogo()
+        }
+    }
+
+    private func loadLogo() async {
+        logoImage = nil
+
+        guard let url = await apiClient.imageURL(
+            for: itemID,
+            type: .logo,
+            width: ArtworkRequestProfile.logo.width,
+            quality: ArtworkRequestProfile.logo.quality
+        ) else {
+            return
+        }
+
+        // Mock screenshot mode serves opaque placeholder images for logo requests.
+        // Generate a clean text-based wordmark for mock screenshots so the card
+        // keeps the same composition as the production UI.
+        if url.scheme == "mock-image" {
+            logoImage = mockLogoImage()
+            return
+        }
+
+        if let cached = await imagePipeline.cachedImage(for: url) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                logoImage = cached
+            }
+            return
+        }
+
+        do {
+            let downloaded = try await imagePipeline.image(for: url)
+            withAnimation(.easeInOut(duration: 0.18)) {
+                logoImage = downloaded
+            }
+        } catch {
+            return
+        }
+    }
+
+    private var fallbackTracking: CGFloat {
+        fallbackTitle.count <= 8 ? 5 : 1.4
+    }
+
+    private func mockLogoImage() -> UIImage {
+        let size = CGSize(width: max(maxWidth * 2.6, 260), height: max(maxHeight * 2.4, 100))
+        let renderer = UIGraphicsImageRenderer(size: size)
+
+        return renderer.image { _ in
+            let text = fallbackTitle.uppercased() as NSString
+            let style = NSMutableParagraphStyle()
+            style.alignment = .left
+            style.lineBreakMode = .byTruncatingTail
+
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: fallbackFontSize * 1.4, weight: .heavy),
+                .foregroundColor: UIColor.white,
+                .paragraphStyle: style,
+                .kern: fallbackTracking
+            ]
+
+            text.draw(
+                in: CGRect(x: 0, y: 0, width: size.width, height: size.height),
+                withAttributes: attributes
+            )
+        }
+    }
+}
+
+private struct ContinueWatchingProgressTrack: View {
+    let progress: Double
+    let width: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let trackWidth = proxy.size.width
+            let trackHeight = proxy.size.height
+            let knobSize = trackHeight
+            let knobOffset = max(
+                0,
+                min(trackWidth - knobSize, (trackWidth - knobSize) * progress)
+            )
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.16))
+
+                Circle()
+                    .fill(Color.white.opacity(0.96))
+                    .frame(width: knobSize, height: knobSize)
+                    .offset(x: knobOffset)
+            }
+        }
+        .frame(width: width, height: 7)
+        .accessibilityHidden(true)
+    }
+}
+#endif
+
 public struct SectionRow: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -445,13 +819,16 @@ public struct SectionRow: View {
         VStack(alignment: .leading, spacing: sectionHeaderSpacing) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title)
-                    .reelFinSectionStyle()
+                    .font(sectionTitleFont)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
 #if os(iOS)
                 Image(systemName: "chevron.right")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .font(sectionChevronFont)
+                    .foregroundStyle(sectionChevronColor)
 #endif
             }
             .padding(.horizontal, horizontalPadding)
@@ -482,19 +859,35 @@ public struct SectionRow: View {
                         Button {
                             onSelect(item)
                         } label: {
-                            PosterCardView(
-                                item: item,
-                                apiClient: apiClient,
-                                imagePipeline: imagePipeline,
-                                layoutStyle: isLandscapeRail ? .landscape : .row,
-                                namespace: namespaceProvider(item.id),
-                                ranking: isTop10 ? (index + 1) : nil,
-                                progress: progress(for: item),
-                                optimizationStatus: optimizationStatus
-                            )
-                            .scrollTransition(axis: .horizontal) { content, phase in
-                                content
-                                    .scaleEffect(phase.isIdentity ? 1 : 0.95)
+                            if usesImmersiveContinueWatchingCard {
+                                ContinueWatchingRowCard(
+                                    item: item,
+                                    progress: progress(for: item),
+                                    apiClient: apiClient,
+                                    imagePipeline: imagePipeline,
+                                    namespace: namespaceProvider(item.id)
+                                )
+                                .scrollTransition(axis: .horizontal) { content, phase in
+                                    content
+                                        .scaleEffect(phase.isIdentity ? 1 : 0.95)
+                                }
+                            } else {
+                                PosterCardView(
+                                    item: item,
+                                    apiClient: apiClient,
+                                    imagePipeline: imagePipeline,
+                                    layoutStyle: isLandscapeRail ? .landscape : .row,
+                                    namespace: namespaceProvider(item.id),
+                                    ranking: isTop10 ? (index + 1) : nil,
+                                    progress: progress(for: item),
+                                    optimizationStatus: optimizationStatus,
+                                    showsArtworkProgress: !usesInlineContinueWatchingProgress,
+                                    showsInlineProgress: usesInlineContinueWatchingProgress
+                                )
+                                .scrollTransition(axis: .horizontal) { content, phase in
+                                    content
+                                        .scaleEffect(phase.isIdentity ? 1 : 0.95)
+                                }
                             }
                         }
                         .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
@@ -515,6 +908,9 @@ public struct SectionRow: View {
 #if os(tvOS)
         return ReelFinTheme.tvRailSpacing
 #else
+        if usesImmersiveContinueWatchingCard {
+            return 18
+        }
         return 16
 #endif
     }
@@ -525,6 +921,14 @@ public struct SectionRow: View {
 
     private var isLandscapeRail: Bool {
         kind == .continueWatching || kind == .nextUp
+    }
+
+    private var usesImmersiveContinueWatchingCard: Bool {
+        kind == .continueWatching && isLandscapeRail
+    }
+
+    private var usesInlineContinueWatchingProgress: Bool {
+        kind == .continueWatching && isLandscapeRail
     }
 
     private func progress(for item: MediaItem) -> Double? {
@@ -546,7 +950,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHeaderSpacing
         #else
-        return 14
+        return usesImmersiveContinueWatchingCard ? 12 : 14
         #endif
     }
 
@@ -554,7 +958,36 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvRailVerticalPadding
         #else
-        return 14
+        return usesImmersiveContinueWatchingCard ? 10 : 14
+        #endif
+    }
+
+    private var sectionTitleFont: Font {
+        #if os(tvOS)
+        return .system(size: 24, weight: .bold, design: .rounded)
+        #else
+        if usesImmersiveContinueWatchingCard {
+            return .system(size: 30, weight: .heavy)
+        }
+        return .system(size: 24, weight: .bold, design: .rounded)
+        #endif
+    }
+
+    private var sectionChevronFont: Font {
+        #if os(tvOS)
+        return .body.weight(.semibold)
+        #else
+        return usesImmersiveContinueWatchingCard
+            ? .system(size: 28, weight: .bold)
+            : .headline.weight(.semibold)
+        #endif
+    }
+
+    private var sectionChevronColor: Color {
+        #if os(tvOS)
+        return .white.opacity(0.4)
+        #else
+        return usesImmersiveContinueWatchingCard ? .white.opacity(0.7) : .white.opacity(0.4)
         #endif
     }
 }
@@ -799,6 +1232,10 @@ struct HomeView: View {
         .contentMargins(.zero, for: .scrollContent)
 #endif
 #if os(iOS)
+        .safeAreaInset(edge: .bottom) {
+            Color.clear
+                .frame(height: 116)
+        }
         .refreshable {
             await viewModel.manualRefresh()
         }
@@ -905,7 +1342,7 @@ struct HomeView: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionSpacing
         #else
-        return 32
+        return 24
         #endif
     }
 

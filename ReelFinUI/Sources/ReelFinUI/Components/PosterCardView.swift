@@ -27,6 +27,8 @@ public struct PosterCardView: View {
     private let ranking: Int?
     private let progress: Double?
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
+    private let showsArtworkProgress: Bool
+    private let showsInlineProgress: Bool
     private let showsTopTrailingBadges: Bool
     private let titleLineLimit: Int
     private let subtitleLineLimit: Int
@@ -41,6 +43,8 @@ public struct PosterCardView: View {
         ranking: Int? = nil,
         progress: Double? = nil,
         optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
+        showsArtworkProgress: Bool = true,
+        showsInlineProgress: Bool = false,
         showsTopTrailingBadges: Bool = true,
         titleLineLimit: Int = 1,
         subtitleLineLimit: Int = 1
@@ -54,6 +58,8 @@ public struct PosterCardView: View {
         self.ranking = ranking
         self.progress = progress
         self.optimizationStatus = optimizationStatus
+        self.showsArtworkProgress = showsArtworkProgress
+        self.showsInlineProgress = showsInlineProgress
         self.showsTopTrailingBadges = showsTopTrailingBadges
         self.titleLineLimit = titleLineLimit
         self.subtitleLineLimit = subtitleLineLimit
@@ -69,14 +75,16 @@ public struct PosterCardView: View {
                 focusStyle: focusStyle,
                 namespace: namespace,
                 ranking: ranking,
-                progress: progress,
+                progress: showsArtworkProgress ? progress : nil,
                 optimizationStatus: optimizationStatus,
+                showsProgressOverlay: showsArtworkProgress,
                 showsTopTrailingBadges: showsTopTrailingBadges
             )
 
             PosterCardMetadataView(
                 item: item,
                 layoutStyle: layoutStyle,
+                inlineProgress: showsInlineProgress ? progress : nil,
                 titleLineLimit: titleLineLimit,
                 subtitleLineLimit: subtitleLineLimit
             )
@@ -119,6 +127,7 @@ public struct PosterCardArtworkView: View {
     private let ranking: Int?
     private let progress: Double?
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
+    private let showsProgressOverlay: Bool
     private let showsTopTrailingBadges: Bool
 
     public init(
@@ -131,6 +140,7 @@ public struct PosterCardArtworkView: View {
         ranking: Int? = nil,
         progress: Double? = nil,
         optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
+        showsProgressOverlay: Bool = true,
         showsTopTrailingBadges: Bool = true
     ) {
         self.item = item
@@ -142,6 +152,7 @@ public struct PosterCardArtworkView: View {
         self.ranking = ranking
         self.progress = progress
         self.optimizationStatus = optimizationStatus
+        self.showsProgressOverlay = showsProgressOverlay
         self.showsTopTrailingBadges = showsTopTrailingBadges
     }
 
@@ -159,7 +170,6 @@ public struct PosterCardArtworkView: View {
             #if !os(tvOS)
             .shadow(color: .black.opacity(isFocused ? focusedShadowOpacity : 0.18), radius: isFocused ? focusedShadowRadius : 10, x: 0, y: isFocused ? focusedShadowYOffset : 6)
             #endif
-            .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
             #if os(iOS)
             .overlay {
                 RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
@@ -188,7 +198,10 @@ public struct PosterCardArtworkView: View {
                 }
             }
 
-            if !item.isPlayed, let progressValue = progress ?? item.playbackProgress, progressValue > 0 {
+            if showsProgressOverlay,
+               !item.isPlayed,
+               let progressValue = progress ?? item.playbackProgress,
+               progressValue > 0 {
                 GeometryReader { geo in
                     Capsule()
                         .fill(.white.opacity(0.3))
@@ -219,6 +232,7 @@ public struct PosterCardArtworkView: View {
             }
         }
         .frame(width: metrics.posterWidth, height: metrics.posterHeight)
+        .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
         .contentShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
         #if os(iOS)
         .scaleEffect(isFocused ? focusedScale : 1)
@@ -284,17 +298,20 @@ public struct PosterCardMetadataView: View {
     #endif
     private let item: MediaItem
     private let layoutStyle: PosterCardLayoutStyle
+    private let inlineProgress: Double?
     private let titleLineLimit: Int
     private let subtitleLineLimit: Int
 
     public init(
         item: MediaItem,
         layoutStyle: PosterCardLayoutStyle = .row,
+        inlineProgress: Double? = nil,
         titleLineLimit: Int = 1,
         subtitleLineLimit: Int = 1
     ) {
         self.item = item
         self.layoutStyle = layoutStyle
+        self.inlineProgress = inlineProgress
         self.titleLineLimit = titleLineLimit
         self.subtitleLineLimit = subtitleLineLimit
     }
@@ -403,7 +420,24 @@ public struct PosterCardMetadataView: View {
 
     @ViewBuilder
     private var secondaryMetadata: some View {
-        if item.mediaType == .episode, let index = item.indexNumber {
+        if let inlineFooterText, let inlineProgress, inlineProgress > 0 {
+            HStack(spacing: 8) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: badgeFontSize, weight: .semibold))
+                    .foregroundStyle(badgeForeground)
+
+                PosterCardInlineProgressTrack(
+                    progress: inlineProgress,
+                    width: inlineProgressWidth
+                )
+
+                Text(inlineFooterText)
+                    .font(.system(size: subtitleFontSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(subtitleColor)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: secondaryMetadataHeight, alignment: .topLeading)
+        } else if item.mediaType == .episode, let index = item.indexNumber {
             let seasonText = item.parentIndexNumber.map { "S\($0)" } ?? ""
             Text("\(seasonText) E\(index)")
                 .font(.system(size: badgeFontSize, weight: .bold, design: .rounded))
@@ -430,7 +464,7 @@ public struct PosterCardMetadataView: View {
         let lineHeight = max(subtitleFontSize * 1.24, badgeFontSize + 8)
         return ceil(lineHeight)
         #else
-        return 0
+        return layoutStyle == .landscape ? ceil(max(subtitleFontSize * 1.24, badgeFontSize + 8)) : 0
         #endif
     }
 
@@ -440,6 +474,50 @@ public struct PosterCardMetadataView: View {
         #else
         return false
         #endif
+    }
+
+    private var inlineFooterText: String? {
+        guard layoutStyle == .landscape else { return nil }
+
+        var values: [String] = []
+        if item.mediaType == .episode,
+           let season = item.parentIndexNumber,
+           let episode = item.indexNumber {
+            values.append("S\(season), E\(episode)")
+        }
+
+        if let runtime = item.runtimeDisplayText {
+            values.append(runtime)
+        } else if let year = item.year {
+            values.append(String(year))
+        }
+
+        return values.isEmpty ? nil : values.joined(separator: " • ")
+    }
+
+    private var inlineProgressWidth: CGFloat {
+        #if os(tvOS)
+        return 56
+        #else
+        return 34
+        #endif
+    }
+}
+
+private struct PosterCardInlineProgressTrack: View {
+    let progress: Double
+    let width: CGFloat
+
+    var body: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.28))
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.96))
+                    .frame(width: max(width * progress, 10))
+            }
+            .frame(width: width, height: 6)
+            .accessibilityHidden(true)
     }
 }
 
@@ -483,13 +561,18 @@ private struct PosterCardMetrics {
     }
 }
 
-private struct MatchedCardModifier: ViewModifier {
+struct MatchedCardModifier: ViewModifier {
     let itemID: String
     let namespace: Namespace.ID?
 
+    @ViewBuilder
     func body(content: Content) -> some View {
         if let namespace {
-            content.matchedGeometryEffect(id: "poster-\(itemID)", in: namespace)
+            if #available(iOS 18.0, tvOS 18.0, *) {
+                content.matchedTransitionSource(id: "poster-\(itemID)", in: namespace)
+            } else {
+                content.matchedGeometryEffect(id: "poster-\(itemID)", in: namespace)
+            }
         } else {
             content
         }
