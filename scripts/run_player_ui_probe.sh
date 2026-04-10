@@ -82,7 +82,7 @@ echo "Extracting tap log..."
 rg '^\[UI-TAP\]' "${RUN_DIR}/xcodebuild.log" > "${RUN_DIR}/taps.log" || true
 
 echo "Extracting playback summary..."
-rg -n 'Playback selected method|Playback URL|avplayer.first-frame|Decoded-frame watchdog|playback.startup.failure|fallback.triggered|readyToPlay|native_player_screen' \
+rg -n 'playback\.session\.start|playback\.selection|playback\.load\.selection|playback\.ttff|playback\.watchdog|playback\.startup\.failure|playback\.fallback|avplayer\.first-frame|readyToPlay|native_player_screen' \
   "${RUN_DIR}/reelfin.log" > "${RUN_DIR}/playback-summary.log" || true
 
 echo

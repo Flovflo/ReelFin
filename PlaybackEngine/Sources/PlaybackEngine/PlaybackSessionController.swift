@@ -303,6 +303,7 @@ public final class PlaybackSessionController {
     private var lastFailureCode: Int?
     private var lastFailureReason: String?
     private var lastRecoverySuggestion: String?
+    private var playbackLogSessionID = "none"
     private let audioSelector = AudioCompatibilitySelector()
     private let subtitlePolicy = SubtitleCompatibilityPolicy()
     private let assetURLValidator = AssetURLValidator()
@@ -318,6 +319,29 @@ public final class PlaybackSessionController {
         case none
         case applyEmbedded(String)
         case skipExternal(String)
+    }
+
+    nonisolated static func makePlaybackLogSessionID(itemID: String) -> String {
+        "\(AppLogFormat.shortIdentifier(itemID))-\(UUID().uuidString.prefix(6))"
+    }
+
+    nonisolated static func playbackLogScope(
+        sessionID: String,
+        itemID: String?,
+        attempt: Int? = nil
+    ) -> String {
+        var parts = [
+            "session=\(sessionID)",
+            "item=\(AppLogFormat.shortIdentifier(itemID))"
+        ]
+        if let attempt {
+            parts.append("attempt=\(attempt)")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func playbackLogScope(attempt: Int? = nil) -> String {
+        Self.playbackLogScope(sessionID: playbackLogSessionID, itemID: currentItemID, attempt: attempt)
     }
 
     private var readyInterval: SignpostInterval?
@@ -461,6 +485,7 @@ public final class PlaybackSessionController {
         upNextEpisodes: [MediaItem] = []
     ) async throws {
         currentItemID = item.id
+        playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
         currentMediaItem = item
         nextEpisodeQueue = upNextEpisodes
         currentTime = 0
@@ -513,6 +538,9 @@ public final class PlaybackSessionController {
         }
         activeTranscodeProfile = initialProfileForItem(itemID: item.id, itemHasDolbyVision: item.hasDolbyVision)
         playbackStrategy = await currentPlaybackStrategy()
+        AppLog.playback.notice(
+            "playback.session.start — \(Self.playbackLogScope(sessionID: self.playbackLogSessionID, itemID: item.id), privacy: .public) autoplay=\(autoPlay, privacy: .public) strategy=\(self.playbackStrategy.rawValue, privacy: .public) policy=\(self.playbackPolicy.rawValue, privacy: .public) quality=\(self.playbackQualityMode.rawValue, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)"
+        )
         // Enable strict DV packaging only when user explicitly locks playback to HDR/DV.
         // In auto mode we keep safer HDR10 fallback behavior for Profile 8 sources.
         let shouldForceStrictDV =
@@ -813,7 +841,7 @@ public final class PlaybackSessionController {
 
                 let baseURL = try localServer.start()
                 guard let port = baseURL.port, port > 0 else {
-                    throw AppError.network("Local HLS server returned invalid port: \(baseURL.absoluteString)")
+                    throw AppError.network("Local HLS server returned invalid port: \(baseURL.reelfinLogString)")
                 }
 
                 let masterURL = baseURL.appendingPathComponent("master.m3u8")
@@ -834,9 +862,9 @@ public final class PlaybackSessionController {
                     keyframePresent: nil
                 )
 
-                AppLog.playback.info("Using synthetic local HLS delivery \(masterURL.absoluteString, privacy: .public)")
+                AppLog.playback.info("Using synthetic local HLS delivery \(masterURL.reelfinLogString, privacy: .public)")
                 AppLog.nativeBridge.notice(
-                    "[NB-DIAG] hls.startup.summary — lane=nativeBridge host=127.0.0.1 port=\(port, privacy: .public) master=\(masterURL.absoluteString, privacy: .public) initBytes=\(preflight.initBytes, privacy: .public) firstSegBytes=\(preflight.firstSegmentBytes, privacy: .public) firstSegDuration=\(preflight.firstSegmentDurationSeconds, format: .fixed(precision: 3)) keyframe=unknown preflight=pass avplayer=not_created"
+                    "[NB-DIAG] hls.startup.summary — lane=nativeBridge host=127.0.0.1 port=\(port, privacy: .public) master=\(masterURL.reelfinLogString, privacy: .public) initBytes=\(preflight.initBytes, privacy: .public) firstSegBytes=\(preflight.firstSegmentBytes, privacy: .public) firstSegDuration=\(preflight.firstSegmentDurationSeconds, format: .fixed(precision: 3)) keyframe=unknown preflight=pass avplayer=not_created"
                 )
                 return masterURL
             } catch {
@@ -885,10 +913,10 @@ public final class PlaybackSessionController {
 
     private func preflightSyntheticLocalHLS(masterURL: URL) async throws -> LocalHLSPreflightResult {
         guard let port = masterURL.port, port > 0 else {
-            throw AppError.network("Invalid local HLS URL (missing/non-positive port): \(masterURL.absoluteString)")
+            throw AppError.network("Invalid local HLS URL (missing/non-positive port): \(masterURL.reelfinLogString)")
         }
 
-        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.master.start — url=\(masterURL.absoluteString, privacy: .public)")
+        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.master.start — url=\(masterURL.reelfinLogString, privacy: .public)")
         let masterProbe = try await fetchHTTPProbe(url: masterURL)
         guard masterProbe.statusCode == 200 else {
             throw AppError.network("Local HLS master preflight failed with status \(masterProbe.statusCode).")
@@ -906,7 +934,7 @@ public final class PlaybackSessionController {
             throw AppError.network("Local HLS master playlist has no child media playlist.")
         }
 
-        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.media.start — url=\(mediaURL.absoluteString, privacy: .public)")
+        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.media.start — url=\(mediaURL.reelfinLogString, privacy: .public)")
         let mediaProbe = try await fetchHTTPProbe(url: mediaURL)
         guard mediaProbe.statusCode == 200 else {
             throw AppError.network("Local HLS media preflight failed with status \(mediaProbe.statusCode).")
@@ -939,7 +967,7 @@ public final class PlaybackSessionController {
             throw AppError.network("Local HLS media playlist has no segment URI.")
         }
 
-        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.init.start — url=\(initURL.absoluteString, privacy: .public)")
+        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.init.start — url=\(initURL.reelfinLogString, privacy: .public)")
         let initProbe = try await fetchHTTPProbe(url: initURL)
         guard initProbe.statusCode == 200, !initProbe.data.isEmpty else {
             throw AppError.network("Local HLS init segment preflight failed (status=\(initProbe.statusCode), bytes=\(initProbe.data.count)).")
@@ -950,7 +978,7 @@ public final class PlaybackSessionController {
             AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.init.tree\n\(BMFFInspector.formatTree(initTree), privacy: .public)")
         }
 
-        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.segment.start — url=\(firstSegmentURL.absoluteString, privacy: .public)")
+        AppLog.nativeBridge.notice("[NB-DIAG] hls.preflight.segment.start — url=\(firstSegmentURL.reelfinLogString, privacy: .public)")
         let firstSegmentProbe = try await fetchHTTPProbe(url: firstSegmentURL)
         guard firstSegmentProbe.statusCode == 200, !firstSegmentProbe.data.isEmpty else {
             throw AppError.network("Local HLS first segment preflight failed (status=\(firstSegmentProbe.statusCode), bytes=\(firstSegmentProbe.data.count)).")
@@ -1035,6 +1063,11 @@ public final class PlaybackSessionController {
         }
         runtimeHDRMode = selection.debugInfo.hdrMode
         playMethodForReporting = selection.decision.playMethod
+        let selectionRoute = routeLabel(for: selection.decision.route)
+        let resumeLabel = resumeSeconds.map { String(format: "%.1fs", $0) } ?? "none"
+        AppLog.playback.notice(
+            "playback.load.selection — \(self.playbackLogScope(), privacy: .public) route=\(selectionRoute, privacy: .public) method=\(selection.decision.playMethod, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public) resume=\(resumeLabel, privacy: .public) url=\(selection.assetURL.reelfinCompactLogString, privacy: .public)"
+        )
         let deviceCaps = DeviceCapabilityFingerprint.current()
         let routeIsNativeApple = selection.assetURL.pathExtension.lowercased() == "m3u8" || playMethodForReporting == "NativeBridge"
         playbackProof = PlaybackProofSnapshot(
@@ -1064,8 +1097,8 @@ public final class PlaybackSessionController {
             deviceDolbyVisionCapable: deviceCaps.supportsDolbyVision,
             nativePlayerPathActive: routeIsNativeApple,
             strictQualityModeEnabled: strictQualityIsActive,
-            selectedMasterPlaylistURL: selectedMasterPlaylistURL?.absoluteString,
-            selectedVariantURL: selectedVariantInfo?.resolvedURL.absoluteString,
+            selectedMasterPlaylistURL: selectedMasterPlaylistURL?.reelfinCompactLogString,
+            selectedVariantURL: selectedVariantInfo?.resolvedURL.reelfinCompactLogString,
             selectedVideoRange: selectedVariantInfo?.videoRange,
             selectedSupplementalCodecs: selectedVariantInfo?.supplementalCodecs,
             selectedAudioCodec: selection.source.audioCodec,
@@ -1098,7 +1131,7 @@ public final class PlaybackSessionController {
         selectedAudioTrackID = preferredAudioTrack?.id
         playbackProof.sourceAudioTrackSelected = preferredAudioTrack?.title
         AppLog.playback.info(
-            "Audio selected: '\(preferredAudioTrack?.title ?? "none", privacy: .public)' lang='\(preferredAudioTrack?.language ?? "?", privacy: .public)' codec=\(audioSelection.selectedCodec, privacy: .public) reason=[\(audioSelection.reason, privacy: .public)]"
+            "playback.audio.selection — \(self.playbackLogScope(), privacy: .public) track='\(preferredAudioTrack?.title ?? "none", privacy: .public)' lang='\(preferredAudioTrack?.language ?? "?", privacy: .public)' codec=\(audioSelection.selectedCodec, privacy: .public) default=\(preferredAudioTrack?.isDefault ?? false, privacy: .public) reason=\(audioSelection.reason, privacy: .public)"
         )
         if audioSelection.trueHDWasDeprioritized {
             AppLog.playback.notice("\(PlaybackFailureReason.trueHDDeprioritizedForNativePath.localizedDescription ?? "TrueHD deprioritized", privacy: .public)")
@@ -1117,7 +1150,7 @@ public final class PlaybackSessionController {
         if let initialSubID = selectedSubtitleTrackID,
            let track = availableSubtitleTracks.first(where: { $0.id == initialSubID }) {
             AppLog.playback.info(
-                "Subtitle auto-selected: '\(track.title, privacy: .public)' lang='\(track.language ?? "?", privacy: .public)' default=\(track.isDefault, privacy: .public)"
+                "playback.subtitle.selection — \(self.playbackLogScope(), privacy: .public) track='\(track.title, privacy: .public)' lang='\(track.language ?? "?", privacy: .public)' default=\(track.isDefault, privacy: .public) forced=\(track.isForced, privacy: .public)"
             )
         }
         endTransportStateSnapshotBatch(commitNow: true)
@@ -1161,11 +1194,11 @@ public final class PlaybackSessionController {
         player.automaticallyWaitsToMinimizeStalling = waitsToMinimize
 
         if let urlValidationError = assetURLValidator.validate(url: selection.assetURL) {
-            AppLog.playback.error("Asset URL validation failed: \(urlValidationError.localizedDescription, privacy: .public)")
+            AppLog.playback.error("playback.asset.invalid — \(self.playbackLogScope(), privacy: .public) reason=\(urlValidationError.localizedDescription, privacy: .public)")
             playbackErrorMessage = urlValidationError.localizedDescription
             return
         }
-        AppLog.playback.notice("Preparing AVURLAsset url=\(selection.assetURL.absoluteString, privacy: .public)")
+        AppLog.playback.notice("playback.asset.prepare — \(self.playbackLogScope(), privacy: .public) url=\(selection.assetURL.reelfinCompactLogString, privacy: .public)")
 
         let asset: AVURLAsset
         if let bridgeSession = self.nativeBridgeSession {
@@ -1173,7 +1206,7 @@ public final class PlaybackSessionController {
         } else {
             if isLocalSyntheticHLSURL(selection.assetURL) {
                 guard let localHLSServer else {
-                    AppLog.nativeBridge.error("[NB-DIAG] hls.server.missing-before-avasset — url=\(selection.assetURL.absoluteString, privacy: .public)")
+                    AppLog.nativeBridge.error("[NB-DIAG] hls.server.missing-before-avasset — url=\(selection.assetURL.reelfinLogString, privacy: .public)")
                     playbackErrorMessage = "Local HLS server is unavailable."
                     return
                 }
@@ -1203,15 +1236,15 @@ public final class PlaybackSessionController {
 #endif
             if !selection.headers.isEmpty {
                 AppLog.playback.notice(
-                    "Ignoring unsupported AVURLAsset header injection for stable playback (headerCount=\(selection.headers.count, privacy: .public))."
+                    "playback.asset.headers_ignored — \(self.playbackLogScope(), privacy: .public) headerCount=\(selection.headers.count, privacy: .public)"
                 )
             }
             asset = AVURLAsset(url: selection.assetURL, options: assetOptions)
-            AppLog.nativeBridge.notice("[NB-DIAG] avasset.created — url=\(selection.assetURL.absoluteString, privacy: .public)")
+            AppLog.nativeBridge.notice("[NB-DIAG] avasset.created — \(self.playbackLogScope(), privacy: .public) url=\(selection.assetURL.reelfinCompactLogString, privacy: .public)")
         }
 
         let playerItem = AVPlayerItem(asset: asset)
-        AppLog.nativeBridge.notice("[NB-DIAG] avplayeritem.created — method=\(self.playMethodForReporting, privacy: .public)")
+        AppLog.nativeBridge.notice("[NB-DIAG] avplayeritem.created — \(self.playbackLogScope(), privacy: .public) method=\(self.playMethodForReporting, privacy: .public)")
         playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = true
         let output = makeVideoOutput()
         playerItem.add(output)
@@ -1678,16 +1711,16 @@ public final class PlaybackSessionController {
         }
 
         AppLog.playback.notice(
-            "HDR expectation: expected='\(expected, privacy: .public)' source=\(sourceDV ? "DV" : (sourceHDR10Plus ? "HDR10+" : "HDR10"), privacy: .public) route=\(selection.decision.playMethod, privacy: .public) reason='\(reason, privacy: .public)'"
+            "playback.hdr.expectation — \(self.playbackLogScope(), privacy: .public) expected=\(expected, privacy: .public) source=\(sourceDV ? "DV" : (sourceHDR10Plus ? "HDR10+" : "HDR10"), privacy: .public) route=\(selection.decision.playMethod, privacy: .public) reason=\(reason, privacy: .public)"
         )
         if sourceDV && expected.contains("HDR10") {
             AppLog.playback.warning(
-                "HDR downgrade: Dolby Vision source will play as HDR10 on this route. To preserve DV, use direct play or ensure server-side DV packaging is enabled."
+                "playback.hdr.downgrade — \(self.playbackLogScope(), privacy: .public) from=DolbyVision to=HDR10 reason=route_limitations"
             )
         }
         if sourceHDR10Plus && !expected.contains("HDR10+") {
             AppLog.playback.info(
-                "HDR10+: dynamic HDR metadata (HDR10+) present in source but will not be preserved on this route."
+                "playback.hdr10plus.lost — \(self.playbackLogScope(), privacy: .public) reason=route_drops_dynamic_metadata"
             )
         }
     }
@@ -1931,7 +1964,7 @@ public final class PlaybackSessionController {
                 }
                 self.lastPlayerItemStatus = statusText
                 self.playbackProof.playerItemStatus = statusText
-                AppLog.nativeBridge.notice("[NB-DIAG] avplayeritem.status — status=\(statusText, privacy: .public)")
+                AppLog.nativeBridge.notice("[NB-DIAG] avplayeritem.status — \(self.playbackLogScope(), privacy: .public) status=\(statusText, privacy: .public)")
 
                 if observedItem.status == .readyToPlay {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_to_play")
@@ -1955,7 +1988,7 @@ public final class PlaybackSessionController {
                     case .skipExternal(let trackID):
                         if let track = self.availableSubtitleTracks.first(where: { $0.id == trackID }) {
                             AppLog.playback.info(
-                                "Skipping automatic external subtitle reload at startup: track='\(track.title, privacy: .public)'"
+                                "playback.subtitle.reload_skipped — \(self.playbackLogScope(), privacy: .public) track='\(track.title, privacy: .public)' reason=external_startup_reload"
                             )
                         }
                     case .none:
@@ -1976,16 +2009,16 @@ public final class PlaybackSessionController {
                         self.playbackProof.failureReason = nsError.localizedFailureReason
                         self.playbackProof.recoverySuggestion = nsError.localizedRecoverySuggestion
                         AppLog.playback.error(
-                            "AVPlayerItem error domain=\(nsError.domain, privacy: .public) code=\(nsError.code) message=\(message, privacy: .public)"
+                            "playback.avplayer.error — \(self.playbackLogScope(), privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code) message=\(message, privacy: .public)"
                         )
                         if let reason = nsError.localizedFailureReason {
-                            AppLog.playback.error("AVPlayerItem failureReason=\(reason, privacy: .public)")
+                            AppLog.playback.error("playback.avplayer.failure_reason — \(self.playbackLogScope(), privacy: .public) value=\(reason, privacy: .public)")
                         }
                         if let suggestion = nsError.localizedRecoverySuggestion {
-                            AppLog.playback.error("AVPlayerItem recoverySuggestion=\(suggestion, privacy: .public)")
+                            AppLog.playback.error("playback.avplayer.recovery_suggestion — \(self.playbackLogScope(), privacy: .public) value=\(suggestion, privacy: .public)")
                         }
                     }
-                    AppLog.playback.error("AVPlayerItem failed: \(message, privacy: .public)")
+                    AppLog.playback.error("playback.avplayer.failed — \(self.playbackLogScope(), privacy: .public) message=\(message, privacy: .public)")
                     self.emitLocalHLSStartupSummary(avplayerResult: "failed")
 
                     if await self.handlePlaybackFailure(message: message, error: observedItem.error as NSError?) {
@@ -2030,7 +2063,7 @@ public final class PlaybackSessionController {
         let playerStartupMs = Date().timeIntervalSince(startDate) * 1000
         let totalTTFFMs = Date().timeIntervalSince(loadStartDate) * 1000
         metrics.timeToFirstFrameMs = totalTTFFMs
-        AppLog.nativeBridge.notice("[NB-DIAG] avplayer.first-frame — elapsedMs=\(playerStartupMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
+        AppLog.nativeBridge.notice("[NB-DIAG] avplayer.first-frame — \(self.playbackLogScope(), privacy: .public) elapsedMs=\(playerStartupMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
         emitLocalHLSStartupSummary(avplayerResult: "firstFrame")
         firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
         firstFrameInterval = nil
@@ -2043,7 +2076,7 @@ public final class PlaybackSessionController {
         let method = playMethodForReporting
         let profile = activeTranscodeProfile.rawValue
         AppLog.playback.info(
-            "TTFF \(totalTTFFMs, format: .fixed(precision: 1))ms [info=\(self.ttffInfoMs, format: .fixed(precision: 1))ms resolve=\(self.ttffResolveMs, format: .fixed(precision: 1))ms ready=\(self.ttffReadyMs, format: .fixed(precision: 1))ms player=\(playerStartupMs, format: .fixed(precision: 1))ms] method=\(method, privacy: .public) profile=\(profile, privacy: .public)"
+            "playback.ttff — \(self.playbackLogScope(), privacy: .public) totalMs=\(totalTTFFMs, format: .fixed(precision: 1)) infoMs=\(self.ttffInfoMs, format: .fixed(precision: 1)) resolveMs=\(self.ttffResolveMs, format: .fixed(precision: 1)) readyMs=\(self.ttffReadyMs, format: .fixed(precision: 1)) playerMs=\(playerStartupMs, format: .fixed(precision: 1)) method=\(method, privacy: .public) profile=\(profile, privacy: .public)"
         )
 
         if playMethodForReporting == "NativeBridge", let itemID = currentItemID {
@@ -2105,7 +2138,7 @@ public final class PlaybackSessionController {
         }
 
         AppLog.nativeBridge.notice(
-            "[NB-DIAG] hls.startup.summary — lane=nativeBridge host=\(summary.host, privacy: .public) port=\(summary.port, privacy: .public) master=\(summary.masterURL.absoluteString, privacy: .public) initBytes=\(summary.initBytes, privacy: .public) firstSegBytes=\(summary.firstSegmentBytes, privacy: .public) firstSegDuration=\(summary.firstSegmentDurationSeconds, format: .fixed(precision: 3)) keyframe=\(keyframeValue, privacy: .public) preflight=pass avplayer=\(avplayerResult, privacy: .public)"
+            "[NB-DIAG] hls.startup.summary — \(self.playbackLogScope(), privacy: .public) lane=nativeBridge host=\(summary.host, privacy: .public) port=\(summary.port, privacy: .public) master=\(summary.masterURL.reelfinCompactLogString, privacy: .public) initBytes=\(summary.initBytes, privacy: .public) firstSegBytes=\(summary.firstSegmentBytes, privacy: .public) firstSegDuration=\(summary.firstSegmentDurationSeconds, format: .fixed(precision: 3)) keyframe=\(keyframeValue, privacy: .public) preflight=pass avplayer=\(avplayerResult, privacy: .public)"
         )
     }
 
@@ -2136,7 +2169,7 @@ public final class PlaybackSessionController {
                 let totalDelay = delaySeconds + Double(extensionNs) / 1_000_000_000
                 let reason = StartupFailureReason.readyButNoVideoFrame
                 AppLog.playback.error(
-                    "playback.startup.failure — reason=\(reason.rawValue, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public) hardDeadline=\(totalDelay, format: .fixed(precision: 1))s status=readyToPlay decodedFrame=false"
+                    "playback.startup.failure — \(self.playbackLogScope(), privacy: .public) reason=\(reason.rawValue, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public) hardDeadline=\(totalDelay, format: .fixed(precision: 1))s status=readyToPlay decodedFrame=false"
                 )
                 if !(await self.attemptRecovery(
                     reason: reason.rawValue,
@@ -2147,7 +2180,7 @@ public final class PlaybackSessionController {
                 return
             }
 
-            AppLog.playback.warning("Startup watchdog fired: no first frame after \(delaySeconds, format: .fixed(precision: 1))s.")
+            AppLog.playback.warning("playback.watchdog.startup — \(self.playbackLogScope(), privacy: .public) elapsed=\(delaySeconds, format: .fixed(precision: 1))s decodedFrame=false")
             if !(await self.attemptRecovery(
                 reason: StartupFailureReason.startupWatchdogExpired.rawValue,
                 userMessage: "Startup was too slow. Retrying with safer playback profile."
@@ -2176,7 +2209,7 @@ public final class PlaybackSessionController {
             guard playbackHasStarted else { return }
 
             let delaySeconds = Double(delay) / 1_000_000_000
-            AppLog.playback.warning("Decoded-frame watchdog fired after \(delaySeconds, format: .fixed(precision: 1))s.")
+            AppLog.playback.warning("playback.watchdog.decoded_frame — \(self.playbackLogScope(), privacy: .public) elapsed=\(delaySeconds, format: .fixed(precision: 1))s playbackTime=\(playbackSeconds, format: .fixed(precision: 2)) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)")
             if !(await self.attemptRecovery(
                 reason: StartupFailureReason.decodedFrameWatchdog.rawValue,
                 userMessage: "Video decoding did not start quickly enough. Retrying profile."
@@ -2238,11 +2271,11 @@ public final class PlaybackSessionController {
 
         let attempt = recoveryAttemptCount
         if let action = plannedFallbackAction(for: attempt) {
-            AppLog.playback.notice("Plan fallback step #\(attempt, privacy: .public): \(action.rawValue, privacy: .public)")
+            AppLog.playback.notice("playback.fallback.step — \(self.playbackLogScope(attempt: attempt), privacy: .public) action=\(action.rawValue, privacy: .public)")
         }
         let elapsed = Date().timeIntervalSince(startDate) * 1000
         AppLog.playback.warning(
-            "playback.fallback.triggered — attempt=\(attempt, privacy: .public) reason=\(reason, privacy: .public) fromProfile=\(self.activeTranscodeProfile.rawValue, privacy: .public) elapsedMs=\(elapsed, format: .fixed(precision: 1)) maxAttempts=\(self.maxRecoveryAttempts, privacy: .public)"
+            "playback.fallback.triggered — \(self.playbackLogScope(attempt: attempt), privacy: .public) reason=\(reason, privacy: .public) fromProfile=\(self.activeTranscodeProfile.rawValue, privacy: .public) elapsedMs=\(elapsed, format: .fixed(precision: 1)) maxAttempts=\(self.maxRecoveryAttempts, privacy: .public)"
         )
         fallbackOccurred = true
         fallbackReason = reason
@@ -2560,7 +2593,7 @@ public final class PlaybackSessionController {
         }
 
         AppLog.playback.notice(
-            "Preflight reusing pinned variant inspection url=\(selection.assetURL.absoluteString, privacy: .public)"
+            "Preflight reusing pinned variant inspection url=\(selection.assetURL.reelfinLogString, privacy: .public)"
         )
         return probeURL
     }
@@ -2742,7 +2775,7 @@ public final class PlaybackSessionController {
     }
 
     private func fetchPlaylist(url: URL, headers: [String: String]) async throws -> String {
-        AppLog.playback.notice("Loading HLS playlist url=\(url.absoluteString, privacy: .public)")
+        AppLog.playback.notice("playback.hls.fetch.start — \(self.playbackLogScope(), privacy: .public) kind=playlist url=\(url.reelfinCompactLogString, privacy: .public)")
         let request = makeProbeRequest(url: url, headers: headers, range: nil)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
@@ -2752,12 +2785,12 @@ public final class PlaybackSessionController {
         guard let manifest = String(data: data, encoding: .utf8), manifest.contains("#EXTM3U") else {
             throw AppError.network("Invalid HLS playlist.")
         }
-        AppLog.playback.notice("Loaded HLS playlist url=\(url.absoluteString, privacy: .public) status=\(http.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)")
+        AppLog.playback.notice("playback.hls.fetch.ok — \(self.playbackLogScope(), privacy: .public) kind=playlist status=\(http.statusCode, privacy: .public) bytes=\(data.count, privacy: .public) url=\(url.reelfinCompactLogString, privacy: .public)")
         return manifest
     }
 
     private func fetchInitSegmentData(url: URL, headers: [String: String]) async throws -> Data {
-        AppLog.playback.notice("Loading HLS init segment url=\(url.absoluteString, privacy: .public)")
+        AppLog.playback.notice("playback.hls.fetch.start — \(self.playbackLogScope(), privacy: .public) kind=init_segment url=\(url.reelfinCompactLogString, privacy: .public)")
         let request = makeProbeRequest(url: url, headers: headers, range: "bytes=0-524287")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) || http.statusCode == 206 else {
@@ -2766,7 +2799,7 @@ public final class PlaybackSessionController {
         guard !data.isEmpty else {
             throw AppError.network("Init segment is empty.")
         }
-        AppLog.playback.notice("Loaded HLS init segment url=\(url.absoluteString, privacy: .public) status=\(http.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)")
+        AppLog.playback.notice("playback.hls.fetch.ok — \(self.playbackLogScope(), privacy: .public) kind=init_segment status=\(http.statusCode, privacy: .public) bytes=\(data.count, privacy: .public) url=\(url.reelfinCompactLogString, privacy: .public)")
         return data
     }
 
@@ -2940,7 +2973,7 @@ public final class PlaybackSessionController {
     }
 
     private func registerAttempt(selection: PlaybackAssetSelection, profile: TranscodeURLProfile) -> Bool {
-        let variantURL = selectedVariantInfo?.resolvedURL.absoluteString ?? selection.assetURL.absoluteString
+        let variantURL = selectedVariantInfo?.resolvedURL.reelfinCacheKey ?? selection.assetURL.reelfinCacheKey
         let key = Self.attemptTripleKey(
             profile: profile,
             routeLabel: routeLabel(for: selection.decision.route),
@@ -2985,7 +3018,7 @@ public final class PlaybackSessionController {
             }
             for variant in variants {
                 AppLog.playback.notice(
-                    "HLS variant candidate url=\(variant.resolvedURL.absoluteString, privacy: .public) \(variant.loggingSummary, privacy: .public)"
+                    "playback.hls.variant.candidate — \(self.playbackLogScope(), privacy: .public) url=\(variant.resolvedURL.reelfinCompactLogString, privacy: .public) \(variant.loggingSummary, privacy: .public)"
                 )
             }
 
@@ -3021,7 +3054,7 @@ public final class PlaybackSessionController {
             var updated = selection
             updated.assetURL = preferred.resolvedURL
             AppLog.playback.info(
-                    "Pinned HLS variant bandwidth=\(preferred.bandwidth, privacy: .public) resolution=\(preferred.width, privacy: .public)x\(preferred.height, privacy: .public) codec=\(preferred.normalizedCodec, privacy: .public) codecs=\(preferred.codecs, privacy: .public) supplemental=\(preferred.supplementalCodecs, privacy: .public) videoRange=\(preferred.videoRange, privacy: .public) allowVideoCopy=\(String(describing: preferred.allowsVideoCopy), privacy: .public)"
+                    "playback.hls.variant.pinned — \(self.playbackLogScope(), privacy: .public) bandwidth=\(preferred.bandwidth, privacy: .public) resolution=\(preferred.width, privacy: .public)x\(preferred.height, privacy: .public) codec=\(preferred.normalizedCodec, privacy: .public) codecs=\(preferred.codecs, privacy: .public) supplemental=\(preferred.supplementalCodecs, privacy: .public) videoRange=\(preferred.videoRange, privacy: .public) allowVideoCopy=\(String(describing: preferred.allowsVideoCopy), privacy: .public)"
             )
 
             let variantManifest = try await fetchPlaylist(url: preferred.resolvedURL, headers: selection.headers)
@@ -3032,7 +3065,7 @@ public final class PlaybackSessionController {
             selectedVariantPlaylistInspection = variantInspection
             let transport = StreamVariantInspector.inferTransport(from: preferred, playlist: variantInspection)
             AppLog.playback.notice(
-                "HLS selected variant url=\(preferred.resolvedURL.absoluteString, privacy: .public) transport=\(transport, privacy: .public) map=\(variantInspection.mapURI ?? "none", privacy: .public) firstSegment=\(variantInspection.firstSegmentURI ?? "none", privacy: .public)"
+                "playback.hls.variant.selected — \(self.playbackLogScope(), privacy: .public) url=\(preferred.resolvedURL.reelfinCompactLogString, privacy: .public) transport=\(transport, privacy: .public) map=\(variantInspection.mapURI ?? "none", privacy: .public) firstSegment=\(variantInspection.firstSegmentURI ?? "none", privacy: .public)"
             )
 
             if strictQualityIsActive, selection.source.isLikelyHDRorDV, transport != "fMP4" {
@@ -3224,7 +3257,7 @@ public final class PlaybackSessionController {
         }
 
         AppLog.playback.notice(
-            "playback.fallback.profiles — reason=\(reason, privacy: .public) active=\(self.activeTranscodeProfile.rawValue, privacy: .public) candidates=\(baseProfiles.map(\.rawValue).joined(separator: ","), privacy: .public)"
+            "playback.fallback.profiles — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public) active=\(self.activeTranscodeProfile.rawValue, privacy: .public) candidates=\(baseProfiles.map(\.rawValue).joined(separator: ","), privacy: .public)"
         )
 
         return deduplicatedProfiles(baseProfiles)
@@ -3838,11 +3871,11 @@ public final class PlaybackSessionController {
             updated.variantResolution = "\(variant.width)x\(variant.height)"
             updated.variantBandwidth = variant.bandwidth
             updated.variantCodecs = variant.codecs
-            updated.selectedVariantURL = variant.resolvedURL.absoluteString
+            updated.selectedVariantURL = variant.resolvedURL.reelfinLogString
             updated.selectedVideoRange = variant.videoRange
             updated.selectedSupplementalCodecs = variant.supplementalCodecs
         }
-        updated.selectedMasterPlaylistURL = selectedMasterPlaylistURL?.absoluteString
+        updated.selectedMasterPlaylistURL = selectedMasterPlaylistURL?.reelfinLogString
         updated.strictQualityModeEnabled = strictQualityIsActive
         updated.playerItemStatus = lastPlayerItemStatus
         updated.fallbackOccurred = fallbackOccurred
@@ -3896,7 +3929,7 @@ public final class PlaybackSessionController {
         if updated != playbackProof {
             playbackProof = updated
             AppLog.playback.info(
-                "Playback proof resolution=\(updated.decodedResolution, privacy: .public) codec=\(updated.codecFourCC, privacy: .public) bitDepth=\(updated.bitDepth ?? 0, privacy: .public) hdr=\(updated.hdrTransfer, privacy: .public) dv=\(updated.dolbyVisionActive, privacy: .public) method=\(updated.playbackMethod, privacy: .public) profile=\(updated.transcodeProfile ?? "n/a", privacy: .public) srcBitrate=\(updated.sourceBitrate ?? 0, privacy: .public) container=\(updated.sourceContainer ?? "n/a", privacy: .public) dvProfile=\(updated.dvProfile ?? 0, privacy: .public) dvLevel=\(updated.dvLevel ?? 0, privacy: .public) videoRange=\(updated.videoRangeType ?? "n/a", privacy: .public) observedBitrate=\(updated.observedBitrate ?? 0, privacy: .public)"
+                "playback.proof — \(self.playbackLogScope(), privacy: .public) resolution=\(updated.decodedResolution, privacy: .public) codec=\(updated.codecFourCC, privacy: .public) bitDepth=\(updated.bitDepth ?? 0, privacy: .public) hdr=\(updated.hdrTransfer, privacy: .public) dv=\(updated.dolbyVisionActive, privacy: .public) method=\(updated.playbackMethod, privacy: .public) profile=\(updated.transcodeProfile ?? "n/a", privacy: .public) srcBitrate=\(updated.sourceBitrate ?? 0, privacy: .public) container=\(updated.sourceContainer ?? "n/a", privacy: .public) dvProfile=\(updated.dvProfile ?? 0, privacy: .public) dvLevel=\(updated.dvLevel ?? 0, privacy: .public) videoRange=\(updated.videoRangeType ?? "n/a", privacy: .public) observedBitrate=\(updated.observedBitrate ?? 0, privacy: .public)"
             )
         }
     }

@@ -308,10 +308,10 @@ public actor PlaybackCoordinator {
         } else {
             profileLabel = "\(requestedProfile.rawValue)->\(effectiveProfile.rawValue)"
         }
+        let bitrateLabel = debug.bitrate.map(String.init) ?? "unknown"
         AppLog.playback.info(
-            "Playback selected method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) profile=\(profileLabel, privacy: .public)"
+            "playback.selection — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) hdr=\(debug.hdrMode.rawValue, privacy: .public) bitrate=\(bitrateLabel, privacy: .public) profile=\(profileLabel, privacy: .public) url=\(assetURL.reelfinCompactLogString, privacy: .public)"
         )
-        AppLog.playback.debug("Playback URL \(assetURL.absoluteString, privacy: .private(mask: .hash))")
 
         return PlaybackAssetSelection(
             source: source,

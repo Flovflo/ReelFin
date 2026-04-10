@@ -12,6 +12,14 @@ public enum AppLog {
     public static let nativeBridge = Logger(subsystem: subsystem, category: "nativeBridge")
 }
 
+public enum AppLogFormat {
+    public static func shortIdentifier(_ value: String?, prefixLength: Int = 8) -> String {
+        guard let value, !value.isEmpty else { return "unknown" }
+        guard prefixLength > 0, value.count > prefixLength else { return value }
+        return String(value.prefix(prefixLength))
+    }
+}
+
 public final class SignpostInterval {
     private let signposter: OSSignposter
     private let state: OSSignpostIntervalState
