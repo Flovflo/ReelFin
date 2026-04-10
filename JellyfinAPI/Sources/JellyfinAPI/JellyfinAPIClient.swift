@@ -74,12 +74,16 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         self.deviceID = deviceID ?? Self.defaultDeviceID()
         self.clientVersion = clientVersion ?? Self.defaultClientVersion()
         self.configuration = settingsStore.serverConfiguration
-        self.activeSession = settingsStore.lastSession
+        let persistedSession = settingsStore.lastSession
+        if let persistedSession {
+            self.settingsStore.lastSession = persistedSession
+        }
 
-        if let keychainToken = try? tokenStore.fetchToken(), var sessionValue = self.activeSession {
+        if let keychainToken = try? tokenStore.fetchToken(), var sessionValue = persistedSession {
             sessionValue.token = keychainToken
             self.activeSession = sessionValue
-            self.settingsStore.lastSession = sessionValue
+        } else {
+            self.activeSession = nil
         }
     }
 
@@ -546,10 +550,6 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         if let quality {
             queryItems.append(URLQueryItem(name: "quality", value: String(quality)))
         }
-        if let token = activeSession?.token {
-            queryItems.append(URLQueryItem(name: "api_key", value: token))
-        }
-
         let imagePath: String
         if type == .backdrop {
             imagePath = "Items/\(itemID)/Images/\(type.rawValue)/0"
@@ -585,7 +585,10 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                     continue
                 }
 
-                let request = URLRequest(url: imageURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
+                var request = URLRequest(url: imageURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
+                if let token = activeSession?.token, !token.isEmpty {
+                    request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+                }
                 _ = try? await urlSession.data(for: request)
             }
         }

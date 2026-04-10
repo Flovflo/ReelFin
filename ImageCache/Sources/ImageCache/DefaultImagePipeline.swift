@@ -56,15 +56,18 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     private let memoryCache = NSCache<NSURL, UIImage>()
     private let diskCache: LRUDiskCache
     private let urlSession: URLSession
+    private let tokenStore: TokenStoreProtocol
     private let registry = ImageTaskRegistry()
 
     public init(
         diskCache: LRUDiskCache? = nil,
         urlSession: URLSession = .shared,
+        tokenStore: TokenStoreProtocol = KeychainTokenStore(),
         memoryCapacity: Int = 220
     ) {
         self.diskCache = diskCache ?? Self.makeDiskCache()
         self.urlSession = urlSession
+        self.tokenStore = tokenStore
         memoryCache.countLimit = memoryCapacity
         memoryCache.totalCostLimit = 130 * 1_024 * 1_024
     }
@@ -102,9 +105,10 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
 
         let tracker = ImageLoadTracker()
+        let cacheKey = url.reelfinCacheKey
         let registered = await registry.existingOrRegisterTask(for: url, consumer: consumerID) {
             Task {
-                if let diskData = await self.diskCache.data(forKey: url.absoluteString),
+                if let diskData = await self.diskCache.data(forKey: cacheKey),
                    let image = await self.decodeImage(data: diskData, for: url) {
                     tracker.source = "disk_hit"
                     self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
@@ -119,7 +123,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
                 tracker.source = "network_hit"
                 self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
-                await self.diskCache.setData(data, forKey: url.absoluteString)
+                await self.diskCache.setData(data, forKey: cacheKey)
                 return image
             }
         }
@@ -144,6 +148,9 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
         request.setValue("image/*", forHTTPHeaderField: "Accept")
+        if let token = try? tokenStore.fetchToken(), !token.isEmpty {
+            request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        }
 
         let (data, response) = try await urlSession.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -154,15 +161,6 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
             return data
         }
 
-        if (httpResponse.statusCode == 401 || httpResponse.statusCode == 403), let token = tokenFromImageURL(url) {
-            var retryRequest = request
-            retryRequest.setValue(token, forHTTPHeaderField: "X-Emby-Token")
-            let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
-            if let retryHTTP = retryResponse as? HTTPURLResponse, (200 ..< 300).contains(retryHTTP.statusCode) {
-                return retryData
-            }
-        }
-
         if httpResponse.statusCode == 404 {
             throw AppError.network("Image request failed (404)")
         }
@@ -170,18 +168,11 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         throw AppError.network("Image request failed (\(httpResponse.statusCode))")
     }
 
-    private func tokenFromImageURL(_ url: URL) -> String? {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-        return components.queryItems?.first(where: { $0.name == "api_key" })?.value
-    }
-
     public func cachedImage(for url: URL) async -> UIImage? {
         if let image = memoryCache.object(forKey: url as NSURL) {
             return image
         }
-        guard let data = await diskCache.data(forKey: url.absoluteString) else {
+        guard let data = await diskCache.data(forKey: url.reelfinCacheKey) else {
             return nil
         }
         guard let image = await decodeImage(data: data, for: url) else {

@@ -296,6 +296,26 @@ final class AppStoreScreenshotTests: XCTestCase {
         XCTAssertTrue(blurHeader.exists)
     }
 
+    func testMockDetailOpensCarouselOnSelectedContextItem() throws {
+        let app = XCUIApplication()
+        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let resumeMovie = app.buttons["media_card_button_continueWatching_cw-movie-1"].firstMatch
+        XCTAssertTrue(resumeMovie.waitForExistence(timeout: 12))
+        resumeMovie.tap()
+
+        let movieMetadata = app.staticTexts["Movie · Adventure"].firstMatch
+        XCTAssertTrue(movieMetadata.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitUntilHittable(movieMetadata, timeout: 5))
+
+        let resumeButton = app.buttons["Resume"].firstMatch
+        XCTAssertTrue(resumeButton.exists)
+        XCTAssertTrue(waitUntilHittable(resumeButton, timeout: 5))
+    }
+
     private func openSection(named title: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let tabButton = app.tabBars.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
         if tabButton.exists {
@@ -353,6 +373,20 @@ final class AppStoreScreenshotTests: XCTestCase {
 
         XCTFail("Expected a playback action button on the detail screen.")
         return app.buttons.firstMatch
+    }
+
+    private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if element.exists && element.isHittable {
+                return true
+            }
+
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        return element.exists && element.isHittable
     }
 
     private func capture(name: String, file: StaticString = #filePath, line: UInt = #line) {

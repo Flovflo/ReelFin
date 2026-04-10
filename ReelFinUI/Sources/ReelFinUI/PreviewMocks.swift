@@ -384,27 +384,12 @@ private enum ArtworkPlaceholderRenderer {
             )
 
             UIColor.white.withAlphaComponent(0.07).setFill()
-            cgContext.fillEllipse(in: CGRect(x: -120, y: -80, width: 520, height: 520))
             cgContext.fillEllipse(in: CGRect(x: size.width - 420, y: size.height - 520, width: 560, height: 560))
 
             let symbolConfiguration = UIImage.SymbolConfiguration(pointSize: 220, weight: .bold)
             let symbol = UIImage(systemName: "film.stack.fill", withConfiguration: symbolConfiguration)?
                 .withTintColor(.white.withAlphaComponent(0.16), renderingMode: .alwaysOriginal)
             symbol?.draw(in: CGRect(x: 72, y: size.height - 360, width: 220, height: 220))
-
-            let pillRect = CGRect(x: 56, y: 64, width: 220, height: 40)
-            UIBezierPath(roundedRect: pillRect, cornerRadius: 20).addClip()
-            UIColor.white.withAlphaComponent(0.12).setFill()
-            UIRectFill(pillRect)
-
-            let badgeText = NSString(string: "REELFIN")
-            badgeText.draw(
-                in: CGRect(x: pillRect.minX + 18, y: pillRect.minY + 10, width: 184, height: 22),
-                withAttributes: [
-                    .font: UIFont.systemFont(ofSize: 18, weight: .bold),
-                    .foregroundColor: UIColor.white.withAlphaComponent(0.92)
-                ]
-            )
         }
     }
 

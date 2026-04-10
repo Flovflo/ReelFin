@@ -143,7 +143,7 @@ public struct CachedRemoteImage: View {
                 }
             }
 
-            AppLog.caching.error("Image load failed for \(url.absoluteString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            AppLog.caching.error("Image load failed for \(url.reelfinLogString, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 

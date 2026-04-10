@@ -7,6 +7,7 @@ import XCTest
 final class DefaultImagePipelineTests: XCTestCase {
     override func tearDown() {
         BlockingImageURLProtocol.reset()
+        AuthenticatedImageURLProtocol.reset()
         super.tearDown()
     }
 
@@ -46,9 +47,51 @@ final class DefaultImagePipelineTests: XCTestCase {
         XCTAssertEqual(BlockingImageURLProtocol.requestCount, 1)
     }
 
+    func testPersistsDiskCacheWithoutSensitiveQueryItems() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = try LRUDiskCache(directoryURL: cacheDir)
+        let session = makeBlockingSession()
+        let pipeline = DefaultImagePipeline(diskCache: cache, urlSession: session)
+        let url = URL(string: "mock-image://poster?api_key=secret-token&maxWidth=320")!
+
+        let loadTask = Task { try await pipeline.image(for: url) }
+        try await waitUntil(timeout: 2.0) {
+            BlockingImageURLProtocol.requestCount == 1
+        }
+        BlockingImageURLProtocol.resumePendingRequests(with: Self.samplePNGData)
+
+        _ = try await loadTask.value
+
+        let indexURL = cacheDir.appendingPathComponent("index.json")
+        let data = try Data(contentsOf: indexURL)
+        let rawIndex = try XCTUnwrap(String(data: data, encoding: .utf8))
+
+        XCTAssertFalse(rawIndex.contains("secret-token"))
+        XCTAssertFalse(rawIndex.contains("api_key"))
+        XCTAssertTrue(rawIndex.contains("maxWidth"))
+    }
+
+    func testAddsTokenHeaderWhenFetchingImages() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = try LRUDiskCache(directoryURL: cacheDir)
+        let session = makeAuthenticatedSession()
+        let tokenStore = MockImageTokenStore(storedToken: "header-token")
+        let pipeline = DefaultImagePipeline(diskCache: cache, urlSession: session, tokenStore: tokenStore)
+
+        _ = try await pipeline.image(for: URL(string: "https://example.com/Items/item-1/Images/Primary?maxWidth=320")!)
+
+        XCTAssertEqual(AuthenticatedImageURLProtocol.lastTokenHeader, "header-token")
+    }
+
     private func makeBlockingSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BlockingImageURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    private func makeAuthenticatedSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AuthenticatedImageURLProtocol.self]
         return URLSession(configuration: configuration)
     }
 
@@ -64,7 +107,7 @@ final class DefaultImagePipelineTests: XCTestCase {
         XCTAssertTrue(condition(), "Timed out waiting for condition")
     }
 
-    private static let samplePNGData: Data = {
+    fileprivate static let samplePNGData: Data = {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
         let image = renderer.image { context in
             UIColor.white.setFill()
@@ -72,6 +115,67 @@ final class DefaultImagePipelineTests: XCTestCase {
         }
         return image.pngData()!
     }()
+}
+
+private final class AuthenticatedImageURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var lastTokenHeaderStorage: String?
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.scheme == "https"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        Self.lock.withLock {
+            Self.lastTokenHeaderStorage = request.value(forHTTPHeaderField: "X-Emby-Token")
+        }
+
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "image/png"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: DefaultImagePipelineTests.samplePNGData)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    static func reset() {
+        lock.withLock {
+            lastTokenHeaderStorage = nil
+        }
+    }
+
+    static var lastTokenHeader: String? {
+        lock.withLock { lastTokenHeaderStorage }
+    }
+}
+
+private final class MockImageTokenStore: TokenStoreProtocol, @unchecked Sendable {
+    var storedToken: String?
+
+    init(storedToken: String?) {
+        self.storedToken = storedToken
+    }
+
+    func saveToken(_ token: String) throws {
+        storedToken = token
+    }
+
+    func fetchToken() throws -> String? {
+        storedToken
+    }
+
+    func clearToken() throws {
+        storedToken = nil
+    }
 }
 
 private final class BlockingImageURLProtocol: URLProtocol {

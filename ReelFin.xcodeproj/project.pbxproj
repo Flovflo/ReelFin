@@ -57,6 +57,7 @@
 		1AACB66D9F920D45F0259771 /* TVTopNavigationFocusAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F8F27FCA48F8248145A642 /* TVTopNavigationFocusAction.swift */; };
 		1B04A876AFE41A4B97F40942 /* DolbyVisionPackagingMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF615B9F765B5BDB05B3D698 /* DolbyVisionPackagingMode.swift */; };
 		1B38ECD5E598971F1EE2FE73 /* ReelFinApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6F24B53C7764E6BEEC84610 /* ReelFinApp.swift */; };
+		1BCFD526CB6DA343E50A06AD /* IOSDetailCarouselLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31DB072DD94FAB5502430BE0 /* IOSDetailCarouselLayoutTests.swift */; };
 		1D89811A920B24CE4A239CE1 /* ConnectionLandingShowcaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FE34C89C36384A6BAD5242A /* ConnectionLandingShowcaseView.swift */; };
 		1EAC50B3D32749A37A523E86 /* DefaultSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102FF4EAEF0063502203BF54 /* DefaultSyncEngine.swift */; };
 		202BF388D775880160E54FED /* AuthenticationStageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63727D3EA69FA178DD5245A7 /* AuthenticationStageViews.swift */; };
@@ -77,6 +78,7 @@
 		27FA6271892833BB8AF9A8B0 /* TVTopNavigationItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C78B83DC7FFFD2985F48173 /* TVTopNavigationItem.swift */; };
 		2829EC9C9567FE337685E2D4 /* onboarding-poster-1.jpg in Resources */ = {isa = PBXBuildFile; fileRef = EE04FB95D68A8F975F5EC4B9 /* onboarding-poster-1.jpg */; };
 		29B3C387D4FBCB321D97F084 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = FF8888C7FB1BB219DBD781C5 /* PrivacyInfo.xcprivacy */; };
+		2A04EFDA004ACEAE6C4186EA /* JellyfinImageURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62C5B321051505611263B495 /* JellyfinImageURLTests.swift */; };
 		2A352E2DA684E60BFEBFA278 /* TVTopNavigationAppearancePreferenceKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F553D3C5F9B9745B65654F1 /* TVTopNavigationAppearancePreferenceKey.swift */; };
 		2B892D829C48BC2575585526 /* CapabilityEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5EB6098E8E6224D00131D96 /* CapabilityEngine.swift */; };
 		2BC86AA80FB00A67F649390F /* RootViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A35C22C38C67694B324D66D /* RootViewModel.swift */; };
@@ -175,6 +177,7 @@
 		5B77F78985778736C0B61E8E /* PlaybackResumeSeekPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59762CB1E5C452AC16E9DEB9 /* PlaybackResumeSeekPlanner.swift */; };
 		5C068B81FDA17176969F66C2 /* DomainModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F3F10DA8B1866FF58564479 /* DomainModels.swift */; };
 		5CCE2FAE5496B84D4B7771EC /* MatroskaDemuxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB866E5FBCE2122BB44F1A3C /* MatroskaDemuxer.swift */; };
+		5D6AC2937A9E296A472515D7 /* DefaultSettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD523D408DB66F2CBB169B4 /* DefaultSettingsStoreTests.swift */; };
 		5E67973F018BCEDE7E680AEB /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 5E687C50C88B01A739B36062 /* LaunchScreen.storyboard */; };
 		5EF96AA732F2C71F935E27A4 /* CMAFSegmentTimelineBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFFE168EF3E0D6C393827652 /* CMAFSegmentTimelineBuilderTests.swift */; };
 		5F0941F4163FD8C4DCC9430C /* EpisodeCardArtworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DD9E3C11FA9CDFB7956119E /* EpisodeCardArtworkView.swift */; };
@@ -429,6 +432,7 @@
 		FCF6DCD66A7A04B017947FFA /* SRTWebVTTConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F0EF79EB4162473FD3D69F9 /* SRTWebVTTConverter.swift */; };
 		FD80CE7459F4D71A54372C5A /* JellyfinAPITV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2819989736E2EE16CE9EFB8C /* JellyfinAPITV.framework */; };
 		FDA8463211001F336498468E /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1BD154EC0D9E7CF7D9B6D1 /* LoginView.swift */; };
+		FDEA909C88B7ED2E8259F713 /* PlaybackLoggingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AE4246223C29D917C6CE17B /* PlaybackLoggingTests.swift */; };
 		FEC625AA87C0F10EF2233934 /* NativeBridgeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D12B3F1442B546D44D88C65 /* NativeBridgeSession.swift */; };
 		FEDBCB04B15F03964473688A /* ConnectionLandingShowcaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FE34C89C36384A6BAD5242A /* ConnectionLandingShowcaseView.swift */; };
 		FEF58B22EBE48B08D728B178 /* PlaybackSkipOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8245374E2C78CA95B1A7BC5 /* PlaybackSkipOverlayView.swift */; };
@@ -941,6 +945,7 @@
 		2E30E991FB7D72EE23D67CAC /* ImageCacheTV.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ImageCacheTV.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		30105DE0640A21BAE8AA7B9C /* TVOnboardingContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVOnboardingContent.swift; sourceTree = "<group>"; };
 		307996619FE2A2C1DB0D24BB /* LocalHLSServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalHLSServerTests.swift; sourceTree = "<group>"; };
+		31DB072DD94FAB5502430BE0 /* IOSDetailCarouselLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSDetailCarouselLayoutTests.swift; sourceTree = "<group>"; };
 		3234F69539CC1AC781C94AA3 /* PlaybackTVOSCachingPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackTVOSCachingPolicy.swift; sourceTree = "<group>"; };
 		34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ReelFinUI.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		350F4EF4FE96508EC249CBA5 /* OnboardingContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingContent.swift; sourceTree = "<group>"; };
@@ -961,6 +966,7 @@
 		48D988A1D91BABBD518E1E53 /* reelfin-onboarding-home.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "reelfin-onboarding-home.png"; sourceTree = "<group>"; };
 		494437190B761932A9CBBD32 /* CinematicBackdropView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CinematicBackdropView.swift; sourceTree = "<group>"; };
 		49C9AE4A0724FEDF4FE5F86E /* PlaybackCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinator.swift; sourceTree = "<group>"; };
+		4AE4246223C29D917C6CE17B /* PlaybackLoggingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackLoggingTests.swift; sourceTree = "<group>"; };
 		4AE76255A48C2A67DF3B42B9 /* HTTPRangeReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPRangeReader.swift; sourceTree = "<group>"; };
 		4AEA75482E4F64438855A4DE /* DemuxerProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemuxerProtocol.swift; sourceTree = "<group>"; };
 		4D12B3F1442B546D44D88C65 /* NativeBridgeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeSession.swift; sourceTree = "<group>"; };
@@ -982,6 +988,7 @@
 		6077705BD1EA11297063D830 /* PlaybackWarmupManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackWarmupManagerTests.swift; sourceTree = "<group>"; };
 		612DF7C0B11D453DFED1600E /* ImageCache.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ImageCache.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		619E387F8C72261BEEEF0E35 /* HTTPRangeReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPRangeReaderTests.swift; sourceTree = "<group>"; };
+		62C5B321051505611263B495 /* JellyfinImageURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JellyfinImageURLTests.swift; sourceTree = "<group>"; };
 		63727D3EA69FA178DD5245A7 /* AuthenticationStageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticationStageViews.swift; sourceTree = "<group>"; };
 		670C2A6259BEFF7CB7C88734 /* NativeBridgeCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridgeCoreTests.swift; sourceTree = "<group>"; };
 		68853A66EE574A91E1CEABE1 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
@@ -1016,6 +1023,7 @@
 		8BEC9D87AD8994B535C904F6 /* TVTopNavigationBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTopNavigationBar.swift; sourceTree = "<group>"; };
 		8C45085D8B5DC89B05188205 /* LRUDiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LRUDiskCache.swift; sourceTree = "<group>"; };
 		8E1D5947441FFF81A1C9859E /* ApplePlaybackBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplePlaybackBadge.swift; sourceTree = "<group>"; };
+		8FD523D408DB66F2CBB169B4 /* DefaultSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultSettingsStoreTests.swift; sourceTree = "<group>"; };
 		905182D0689DB6FCD9960AED /* PlaybackPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackPlan.swift; sourceTree = "<group>"; };
 		9102230AF45615307CE1B58A /* LRUDiskCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LRUDiskCacheTests.swift; sourceTree = "<group>"; };
 		91E947B29760F1595A9D44DF /* DetailPresentationTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPresentationTelemetry.swift; sourceTree = "<group>"; };
@@ -1300,10 +1308,13 @@
 		031FB493EE696C919BDAE977 /* PlaybackEngineTests */ = {
 			isa = PBXGroup;
 			children = (
+				8FD523D408DB66F2CBB169B4 /* DefaultSettingsStoreTests.swift */,
 				43B61DC916BBE48C488EC64A /* HLSVariantSelectorTests.swift */,
+				31DB072DD94FAB5502430BE0 /* IOSDetailCarouselLayoutTests.swift */,
 				D5856409E4884E7A94EBF081 /* MediaSourceDTOURLResolutionTests.swift */,
 				3EDEC76279535B378065ADED /* PlaybackAssetSelectionOptimizationTests.swift */,
 				7CE4D6101DFA4DC12F0610F9 /* PlaybackDecisionEngineTests.swift */,
+				4AE4246223C29D917C6CE17B /* PlaybackLoggingTests.swift */,
 				24B3034DA8A68BB551341CFD /* PlaybackPolicyTests.swift */,
 				55DFFEACAAE2FB1A37D62F76 /* PlaybackResumeSeekPlannerTests.swift */,
 				73FF48BD18D84618105A1E67 /* PlaybackSessionControllerTrackReloadTests.swift */,
@@ -1526,6 +1537,7 @@
 				88A504B0F6B67CACD92FEFBA /* GRDBMetadataRepositoryTests.swift */,
 				8452F8E08E0039A61C8A8185 /* HomeRowIdentityTests.swift */,
 				AEDC064B9A4591D327C892D6 /* JellyfinDTODecodingTests.swift */,
+				62C5B321051505611263B495 /* JellyfinImageURLTests.swift */,
 				EE0BA95DB3523F946C2F332E /* JellyfinPlaybackReportingTests.swift */,
 				772F152F17A37E7C179F4F11 /* MediaDetailRepositoryTests.swift */,
 				C251052A4CE389B8FAD71013 /* SeriesLookupCacheTests.swift */,
@@ -1669,6 +1681,7 @@
 				22816F1747FC380C2F569328 /* DetailViewModel.swift */,
 				2DD9E3C11FA9CDFB7956119E /* EpisodeCardArtworkView.swift */,
 				38FD3C4A7FBB705C2E6F9B2D /* EpisodeCardView.swift */,
+				C8A57A9EE3A60D57ED6543CE /* IOSDetailCarouselLayout.swift */,
 				C1C1F0D11222AFBCB8958EDB /* SeasonChipButton.swift */,
 			);
 			path = Detail;
@@ -2640,11 +2653,13 @@
 				03B31CFA78BABB9E7A2BA54D /* BMFFValidatorTests.swift in Sources */,
 				5EF96AA732F2C71F935E27A4 /* CMAFSegmentTimelineBuilderTests.swift in Sources */,
 				168DF8C451591B29047FE8C2 /* CapabilityEngineTests.swift in Sources */,
+				5D6AC2937A9E296A472515D7 /* DefaultSettingsStoreTests.swift in Sources */,
 				65A9F08B5A89CE84AE04C44B /* DolbyVisionPackagingDecisionTests.swift in Sources */,
 				A027B62E3A64DB7374EEE01F /* FMP4RepackagerFilteringTests.swift in Sources */,
 				33ED6D1B0126DAE3447754FB /* HLSManifestBuilderTests.swift in Sources */,
 				681E81CC04EE1AB8F31A3C52 /* HLSVariantSelectorTests.swift in Sources */,
 				E0F99FA82B7E607591393572 /* HTTPRangeReaderTests.swift in Sources */,
+				1BCFD526CB6DA343E50A06AD /* IOSDetailCarouselLayoutTests.swift in Sources */,
 				F92D55F4D99A0DD084A48278 /* LocalHLSServerTests.swift in Sources */,
 				C951A655C1854BE8EECFFD2A /* MP4AudioSampleEntryTests.swift in Sources */,
 				379240D7D7697F6400FB6A25 /* MediaSourceDTOURLResolutionTests.swift in Sources */,
@@ -2653,6 +2668,7 @@
 				5514C6BBDE1344EA42A3402C /* NativeBridgeLiveURLTests.swift in Sources */,
 				324111F1B3FB97740E7B1EA6 /* PlaybackAssetSelectionOptimizationTests.swift in Sources */,
 				AFAE2CDF70B2A246C14C2231 /* PlaybackDecisionEngineTests.swift in Sources */,
+				FDEA909C88B7ED2E8259F713 /* PlaybackLoggingTests.swift in Sources */,
 				D85E857F7DF5EDF60B73B239 /* PlaybackPolicyTests.swift in Sources */,
 				238E7207DD91405543B1E142 /* PlaybackResumeSeekPlannerTests.swift in Sources */,
 				2EE7B36204562C0791714842 /* PlaybackSessionControllerTrackReloadTests.swift in Sources */,
@@ -2879,6 +2895,7 @@
 				795981A2198A3564E096ED5B /* GRDBMetadataRepositoryTests.swift in Sources */,
 				E748DCB46C22D5DFBC346FB4 /* HomeRowIdentityTests.swift in Sources */,
 				B80047705D3E653E5C496A05 /* JellyfinDTODecodingTests.swift in Sources */,
+				2A04EFDA004ACEAE6C4186EA /* JellyfinImageURLTests.swift in Sources */,
 				40DE6A4426C9963EF685542C /* JellyfinPlaybackReportingTests.swift in Sources */,
 				0AACCFCC8D21F88C26C37B45 /* MediaDetailRepositoryTests.swift in Sources */,
 				67D06B0DE1ADF851EC9067AB /* SeriesLookupCacheTests.swift in Sources */,
@@ -3308,11 +3325,11 @@
 				INFOPLIST_KEY_CFBundleDisplayName = ReelFin;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
-				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/ReelFin/privacy.html";
+				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
 				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
-				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/ReelFin/support.html";
-				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/ReelFin/terms.html";
+				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
+				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -3600,11 +3617,11 @@
 				INFOPLIST_KEY_CFBundleDisplayName = ReelFin;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
-				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/ReelFin/privacy.html";
+				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
 				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
-				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/ReelFin/support.html";
-				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/ReelFin/terms.html";
+				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
+				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -3704,11 +3721,11 @@
 				INFOPLIST_KEY_CFBundleDisplayName = ReelFin;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
-				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/ReelFin/privacy.html";
+				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
 				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
-				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/ReelFin/support.html";
-				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/ReelFin/terms.html";
+				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
+				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -4180,11 +4197,11 @@
 				INFOPLIST_KEY_CFBundleDisplayName = ReelFin;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
-				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/ReelFin/privacy.html";
+				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
 				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
-				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/ReelFin/support.html";
-				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/ReelFin/terms.html";
+				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
+				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

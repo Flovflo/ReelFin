@@ -20,7 +20,7 @@ final class RootViewModel {
     }
 
     func bootstrap() async {
-        let session = await dependencies.apiClient.currentSession() ?? dependencies.settingsStore.lastSession
+        let session = await dependencies.apiClient.currentSession()
         let serverConfig = await dependencies.apiClient.currentConfiguration() ?? dependencies.settingsStore.serverConfiguration
 
         if session != nil && serverConfig != nil {

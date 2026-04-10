@@ -13,9 +13,9 @@
 - [ ] Create or update the iOS app record for bundle ID `com.reelfin.app`
 - [ ] Set category to Entertainment
 - [ ] Set age rating to 13+ or stricter if the review server exposes mature content
-- [ ] Set Marketing URL to `https://flovflo.github.io/ReelFin/`
-- [ ] Set Support URL to `https://flovflo.github.io/ReelFin/support.html`
-- [ ] Set Privacy Policy URL to `https://flovflo.github.io/ReelFin/privacy.html`
+- [ ] Set Marketing URL to `https://flovflo.github.io/reelfin-site/`
+- [ ] Set Support URL to `https://flovflo.github.io/reelfin-site/support.html`
+- [ ] Set Privacy Policy URL to `https://flovflo.github.io/reelfin-site/privacy.html`
 - [ ] Add Terms of Service link to the description or EULA field
 - [ ] Confirm the App Privacy questionnaire answers match the current build
 
@@ -31,8 +31,8 @@
 
 ## Beta App Review
 
-- [ ] Paste the template from [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md)
-- [ ] Provide a working review server URL, username, and password
+- [ ] Copy the structure from [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) into App Store Connect and replace every field with live review data
+- [ ] Provide a working review server URL, username, and password outside the repo
 - [ ] Make sure the review server stays online during review
 - [ ] Make sure the review account can access at least one movie and one series
 

@@ -91,7 +91,7 @@ struct RemotePosterArtworkView: View {
         case .bundled:
             return "bundle"
         case let .remote(url, _):
-            return url.absoluteString
+            return url.reelfinCacheKey
         }
     }
 

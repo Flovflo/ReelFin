@@ -116,8 +116,8 @@ If you are working on the repo with an AI agent or joining the project as a new 
 - App Store submission notes: `Docs/AppStore-Submission.md`
 - TestFlight checklist: `Docs/TestFlight-Launch-Checklist.md`
 - App Review notes template: `Docs/AppReview-Notes.md`
-- Public support site source: `Site/`
-- GitHub Pages workflow: `.github/workflows/deploy-site.yml`
+- Public support site: [flovflo.github.io/reelfin-site](https://flovflo.github.io/reelfin-site/)
+- Website source repo: [Flovflo/reelfin-site](https://github.com/Flovflo/reelfin-site)
 - Release preflight script: `scripts/preflight_testflight_release.sh`
 
 ## Keywords

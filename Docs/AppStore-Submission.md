@@ -6,10 +6,10 @@
 - Bundle ID: `com.reelfin.app`
 - Category: Entertainment
 - Support email: `floriantaffin@gmail.com`
-- Marketing URL: `https://flovflo.github.io/ReelFin/`
-- Support URL: `https://flovflo.github.io/ReelFin/support.html`
-- Privacy Policy URL: `https://flovflo.github.io/ReelFin/privacy.html`
-- Terms of Service URL: `https://flovflo.github.io/ReelFin/terms.html`
+- Marketing URL: `https://flovflo.github.io/reelfin-site/`
+- Support URL: `https://flovflo.github.io/reelfin-site/support.html`
+- Privacy Policy URL: `https://flovflo.github.io/reelfin-site/privacy.html`
+- Terms of Service URL: `https://flovflo.github.io/reelfin-site/terms.html`
 
 ## App description
 
@@ -21,12 +21,12 @@ Why ReelFin:
 - Fast home feed with continue watching, next up, and recently added rails
 - Detailed title pages with cast, seasons, episodes, and similar content
 - Quality and playback controls for direct play, H.264 fallback, and diagnostics
-- Secure session handling with token storage in the iOS Keychain
+- Secure session handling with authentication tokens stored only in the iOS Keychain
 
 ReelFin is designed for users who want a cleaner, more deterministic Jellyfin experience on iOS and iPadOS, with playback behavior that stays close to the platform instead of relying on a generic embedded player.
 
-Terms of Service: https://flovflo.github.io/ReelFin/terms.html
-Privacy Policy: https://flovflo.github.io/ReelFin/privacy.html
+Terms of Service: https://flovflo.github.io/reelfin-site/terms.html
+Privacy Policy: https://flovflo.github.io/reelfin-site/privacy.html
 
 ## TestFlight beta information
 
@@ -37,13 +37,13 @@ Privacy Policy: https://flovflo.github.io/ReelFin/privacy.html
 - What to Test:
   Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and iPad.
 - Beta review notes:
-  Use [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) as the copy-ready template.
+  Use [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) as a worksheet, then paste live review credentials and notes into App Store Connect.
 
 ## App privacy answers
 
 - Data linked to the user:
   - Contact info: support email only if the user chooses to contact support
-  - User content: server URL and Jellyfin account session used to sign in
+  - User content: server URL, on-device account identity, and Jellyfin account session used to sign in
   - Diagnostics: crash reports if Sentry is configured at build time
 - Data is not used for tracking
 - Kids category: not targeted to children
@@ -66,4 +66,4 @@ Privacy Policy: https://flovflo.github.io/ReelFin/privacy.html
 - App Store Connect app record creation or update
 - App Privacy questionnaire answers in App Store Connect
 - Beta App Review credentials for a working Jellyfin review server
-- GitHub Pages deployment of the public support site before using the public URLs above
+- GitHub Pages deployment of the external site repo before using the updated public policy text above

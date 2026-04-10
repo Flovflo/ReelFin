@@ -4,8 +4,8 @@ import Shared
 import XCTest
 
 final class SessionPersistenceTests: XCTestCase {
-    func testCurrentSessionRestoresFromSettingsStore() async {
-        let savedSession = UserSession(userID: "u1", username: "Flo", token: "token-from-settings")
+    func testCurrentSessionDoesNotRestoreFromSettingsStoreWithoutKeychainToken() async {
+        let savedSession = UserSession(userID: "u1", username: "Flo", token: "")
         let settings = MockSettingsStore(
             serverConfiguration: ServerConfiguration(serverURL: URL(string: "https://example.com")!),
             lastSession: savedSession
@@ -15,13 +15,11 @@ final class SessionPersistenceTests: XCTestCase {
         let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings)
         let restored = await client.currentSession()
 
-        XCTAssertEqual(restored?.userID, "u1")
-        XCTAssertEqual(restored?.username, "Flo")
-        XCTAssertEqual(restored?.token, "token-from-settings")
+        XCTAssertNil(restored)
     }
 
     func testCurrentSessionUsesKeychainTokenWhenAvailable() async {
-        let savedSession = UserSession(userID: "u1", username: "Flo", token: "old-token")
+        let savedSession = UserSession(userID: "u1", username: "Flo", token: "")
         let settings = MockSettingsStore(
             serverConfiguration: ServerConfiguration(serverURL: URL(string: "https://example.com")!),
             lastSession: savedSession
@@ -31,8 +29,9 @@ final class SessionPersistenceTests: XCTestCase {
         let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings)
         let restored = await client.currentSession()
 
+        XCTAssertEqual(restored?.userID, "u1")
+        XCTAssertEqual(restored?.username, "Flo")
         XCTAssertEqual(restored?.token, "token-from-keychain")
-        XCTAssertEqual(settings.lastSession?.token, "token-from-keychain")
     }
 }
 

@@ -1,6 +1,7 @@
 # ReelFin App Review Notes
 
-Use this template for both TestFlight beta review and App Store review.
+Use this worksheet to prepare both TestFlight beta review and App Store review notes.
+Do not paste this file verbatim into App Store Connect. Replace every field with live review information before submission.
 
 ## Contact
 
@@ -8,9 +9,9 @@ Use this template for both TestFlight beta review and App Store review.
 
 ## Review account
 
-- Server URL: `<replace-with-review-server-url>`
-- Username: `<replace-with-review-username>`
-- Password: `<replace-with-review-password>`
+- Server URL: provide the live Jellyfin review server URL in App Store Connect
+- Username: provide the dedicated review username in App Store Connect
+- Password: provide the dedicated review password in App Store Connect
 
 ## Review flow
 

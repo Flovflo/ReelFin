@@ -140,15 +140,6 @@ public struct HeroCarouselView: View {
                 )
 
             VStack(alignment: .center, spacing: 12) {
-                if let badgeText = promoBadge(for: item) {
-                    Text(badgeText)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .glassPanelStyle(cornerRadius: 8)
-                }
-
                 Text(item.name)
                     .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 32 : 44, weight: .heavy, design: .rounded))
                     .textCase(.uppercase)
@@ -655,7 +646,7 @@ public struct HeroCarouselView: View {
         return 880
         #else
         if horizontalSizeClass == .compact {
-            return dynamicTypeSize.isAccessibilitySize ? 620 : 540
+            return dynamicTypeSize.isAccessibilitySize ? 560 : 470
         }
         return dynamicTypeSize.isAccessibilitySize ? 720 : 660
         #endif
