@@ -46,8 +46,12 @@ struct TVAuthFlowView: View {
         if let debugScreen = TVAuthDebugOptions.screen {
             return debugScreen
         }
-        _ = settingsStore
-        return .login
+
+        if settingsStore.completedOnboardingVersion >= ReelFinOnboardingVersion.current {
+            return .login
+        }
+
+        return .onboarding
     }
 }
 

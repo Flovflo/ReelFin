@@ -3,6 +3,7 @@ import Shared
 import SwiftUI
 
 public struct TVLoginView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var loginVM: LoginViewModel
     @StateObject private var quickConnectVM: QuickConnectViewModel
     @FocusState private var focus: TVLoginFocus?
@@ -54,6 +55,7 @@ public struct TVLoginView: View {
                 }
             }
             .opacity(contentVisible ? 1 : 0)
+            .offset(y: contentVisible ? 0 : 12)
         }
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
@@ -61,6 +63,18 @@ public struct TVLoginView: View {
         .onChange(of: loginVM.serverURLText) { _, _ in
             loginVM.serverURLDidChange()
         }
+    }
+
+    private var stageAnimation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.16) : .smooth(duration: 0.36, extraBounce: 0.02)
+    }
+
+    private var entranceAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.14) : .smooth(duration: 0.28, extraBounce: 0)
+    }
+
+    private var stageTransition: AnyTransition {
+        .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.985))
     }
 
     @ViewBuilder
@@ -79,6 +93,7 @@ public struct TVLoginView: View {
                 },
                 focus: $focus
             )
+            .transition(stageTransition)
         case .server:
             TVServerStageView(
                 serverURLText: $loginVM.serverURLText,
@@ -92,6 +107,7 @@ public struct TVLoginView: View {
                 onTogglePath: toggleSignInPath,
                 focus: $focus
             )
+            .transition(stageTransition)
         case .credentials:
             TVCredentialsStageView(
                 username: $loginVM.username,
@@ -107,8 +123,10 @@ public struct TVLoginView: View {
                 onQuickConnect: beginQuickConnectFlow,
                 focus: $focus
             )
+            .transition(stageTransition)
         case .submitting:
             TVSubmittingStageView(serverHost: serverHost)
+                .transition(stageTransition)
         case .quickConnect:
             TVQuickConnectStageView(
                 state: quickConnectVM.state,
@@ -119,6 +137,7 @@ public struct TVLoginView: View {
                 },
                 focus: $focus
             )
+            .transition(stageTransition)
         case .success:
             TVSuccessStageView(animateIn: $successVisible)
                 .onAppear {
@@ -126,6 +145,7 @@ public struct TVLoginView: View {
                         successVisible = true
                     }
                 }
+                .transition(stageTransition)
         }
     }
 
@@ -172,7 +192,7 @@ public struct TVLoginView: View {
 
         guard !contentVisible else { return }
 
-        withAnimation(.easeOut(duration: 0.35)) {
+        withAnimation(entranceAnimation) {
             contentVisible = true
         }
 
@@ -202,7 +222,7 @@ public struct TVLoginView: View {
     }
 
     private func go(_ newPhase: TVLoginPhase) {
-        withAnimation(.smooth(duration: 0.36, extraBounce: 0.02)) {
+        withAnimation(stageAnimation) {
             phase = newPhase
         }
 

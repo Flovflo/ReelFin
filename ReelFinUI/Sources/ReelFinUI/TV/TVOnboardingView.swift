@@ -37,7 +37,7 @@ struct TVOnboardingView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
                 VStack(spacing: 12) {
-                    TVOnboardingCopyBlock(item: currentItem, currentIndex: currentIndex)
+                    TVOnboardingCopyBlock(items: TVOnboardingContent.items, currentIndex: currentIndex)
                     TVOnboardingIndicator(count: TVOnboardingContent.items.count, currentIndex: currentIndex)
                     TVOnboardingControls(
                         isFirstPage: currentIndex == 0,
@@ -123,23 +123,38 @@ private enum TVOnboardingControl: Hashable {
 }
 
 private struct TVOnboardingCopyBlock: View {
-    let item: TVOnboardingItem
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let items: [TVOnboardingItem]
     let currentIndex: Int
 
     var body: some View {
-        VStack(spacing: 8) {
-            Text(item.title)
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("tv_onboarding_title_\(currentIndex)")
+        ZStack {
+            ForEach(items) { item in
+                let isActive = item.id == currentIndex
 
-            Text(item.subtitle)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(.white.opacity(0.78))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 8) {
+                    Text(item.title)
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("tv_onboarding_title_\(item.id)")
+
+                    Text(item.subtitle)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .opacity(isActive ? 1 : 0)
+                .blur(radius: isActive ? 0 : (reduceMotion ? 0 : 24))
+                .scaleEffect(isActive ? 1 : (reduceMotion ? 1 : 0.985))
+                .offset(y: isActive ? 0 : (reduceMotion ? 0 : 10))
+                .accessibilityHidden(!isActive)
+            }
         }
+        .frame(maxWidth: .infinity, minHeight: 126, alignment: .top)
     }
 }
 
