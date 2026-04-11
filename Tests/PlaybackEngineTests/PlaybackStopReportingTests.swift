@@ -26,10 +26,44 @@ final class PlaybackStopReportingTests: XCTestCase {
 
         await fulfillment(of: [progressExpectation, stoppedExpectation], timeout: 1.0)
 
-        XCTAssertEqual(apiClient.progressUpdates.count, 1)
-        XCTAssertEqual(apiClient.stoppedUpdates.count, 1)
-        XCTAssertEqual(apiClient.progressUpdates.first?.itemID, "episode-1")
-        XCTAssertEqual(apiClient.stoppedUpdates.first?.itemID, "episode-1")
+        let progressUpdates = await apiClient.progressUpdates
+        let stoppedUpdates = await apiClient.stoppedUpdates
+
+        XCTAssertEqual(progressUpdates.count, 1)
+        XCTAssertEqual(stoppedUpdates.count, 1)
+        XCTAssertEqual(progressUpdates.first?.itemID, "episode-1")
+        XCTAssertEqual(stoppedUpdates.first?.itemID, "episode-1")
+    }
+
+    func testFinishPlaybackMarksEpisodeSeriesAsFollowed() async {
+        let apiClient = FinishPlaybackAPIClient()
+        let repository = StopReportingRepository()
+        let tracker = PlaybackFinishTracker()
+        let controller = PlaybackSessionController(
+            apiClient: apiClient,
+            repository: repository,
+            episodeReleaseTracker: tracker
+        )
+
+        controller.currentItemID = "episode-1"
+        controller.currentMediaItem = MediaItem(
+            id: "episode-1",
+            name: "Pilot",
+            mediaType: .episode,
+            parentID: "series-1",
+            seriesName: "For All Mankind",
+            indexNumber: 1,
+            parentIndexNumber: 5
+        )
+        controller.player.replaceCurrentItem(with: AVPlayerItem(url: URL(string: "https://example.com/video.mp4")!))
+
+        await controller.finishCurrentPlayback()
+
+        let followedEpisodes = await tracker.followedEpisodes
+        let reportedItemIDs = await apiClient.reportedItemIDs
+
+        XCTAssertEqual(followedEpisodes.map(\.id), ["episode-1"])
+        XCTAssertEqual(reportedItemIDs, ["episode-1"])
     }
 }
 
@@ -48,10 +82,9 @@ private actor StopReportingRepository: MetadataRepositoryProtocol {
     func setLastSyncDate(_ date: Date) async throws {}
 }
 
-private final class StopReportingAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
+private actor StopReportingAPIClient: JellyfinAPIClientProtocol {
     let stoppedExpectation: XCTestExpectation
     let progressExpectation: XCTestExpectation
-    private let lock = NSLock()
 
     private(set) var progressUpdates: [PlaybackProgressUpdate] = []
     private(set) var stoppedUpdates: [PlaybackProgressUpdate] = []
@@ -84,20 +117,64 @@ private final class StopReportingAPIClient: JellyfinAPIClientProtocol, @unchecke
     func prefetchImages(for items: [MediaItem]) async {}
 
     func reportPlayback(progress: PlaybackProgressUpdate) async throws {
-        lock.lock()
         progressUpdates.append(progress)
-        lock.unlock()
         progressExpectation.fulfill()
     }
 
     func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws {
-        lock.lock()
         stoppedUpdates.append(progress)
-        lock.unlock()
         stoppedExpectation.fulfill()
     }
 
     func reportPlayed(itemID: String) async throws {}
+    func setPlayedState(itemID: String, isPlayed: Bool) async throws {}
+    func setFavorite(itemID: String, isFavorite: Bool) async throws {}
+}
+
+private actor PlaybackFinishTracker: EpisodeReleaseTrackingProtocol {
+    private(set) var followedEpisodes: [MediaItem] = []
+
+    func markSeriesFollowed(from episode: MediaItem) async {
+        followedEpisodes.append(episode)
+    }
+
+    func reconcileAfterSync(feed: HomeFeed) async -> [EpisodeReleaseAlert] {
+        _ = feed
+        return []
+    }
+}
+
+private actor FinishPlaybackAPIClient: JellyfinAPIClientProtocol {
+    private(set) var reportedItemIDs: [String] = []
+
+    func currentConfiguration() async -> ServerConfiguration? { nil }
+    func currentSession() async -> UserSession? { nil }
+    func configure(server: ServerConfiguration) async throws {}
+    func testConnection(serverURL: URL) async throws {}
+    func authenticate(credentials: UserCredentials) async throws -> UserSession { throw AppError.unknown }
+    func signOut() async {}
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
+    func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
+    func fetchUserViews() async throws -> [LibraryView] { [] }
+    func fetchHomeFeed(since: Date?) async throws -> HomeFeed { .empty }
+    func fetchItem(id: String) async throws -> MediaItem { throw AppError.unknown }
+    func fetchItemDetail(id: String) async throws -> MediaDetail { throw AppError.unknown }
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
+    func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { [] }
+    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] { [] }
+    func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] { [] }
+    func fetchMediaSegments(itemID: String) async throws -> [MediaSegment] { [] }
+    func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? { nil }
+    func prefetchImages(for items: [MediaItem]) async {}
+    func reportPlayback(progress: PlaybackProgressUpdate) async throws {}
+    func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws {}
+
+    func reportPlayed(itemID: String) async throws {
+        reportedItemIDs.append(itemID)
+    }
+
     func setPlayedState(itemID: String, isPlayed: Bool) async throws {}
     func setFavorite(itemID: String, isFavorite: Bool) async throws {}
 }

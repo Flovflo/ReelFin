@@ -473,7 +473,7 @@ private struct TVHomeItemFocusModifier: ViewModifier {
 #endif
 
 #if os(iOS)
-private struct ContinueWatchingRowCard: View {
+private struct ImmersiveHomeRowCard: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     let item: MediaItem
@@ -501,7 +501,7 @@ private struct ContinueWatchingRowCard: View {
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 0) {
-                ContinueWatchingArtworkTitleView(
+                ImmersiveRowArtworkTitleView(
                     itemID: imageItemID,
                     fallbackTitle: primaryTitle,
                     apiClient: apiClient,
@@ -520,7 +520,7 @@ private struct ContinueWatchingRowCard: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white.opacity(0.94))
 
-                    ContinueWatchingProgressTrack(
+                    ImmersiveRowProgressTrack(
                         progress: resolvedProgress,
                         width: progressTrackWidth
                     )
@@ -645,7 +645,7 @@ private struct ContinueWatchingRowCard: View {
     }
 }
 
-private struct ContinueWatchingArtworkTitleView: View {
+private struct ImmersiveRowArtworkTitleView: View {
     let itemID: String
     let fallbackTitle: String
     let apiClient: any JellyfinAPIClientProtocol
@@ -747,31 +747,21 @@ private struct ContinueWatchingArtworkTitleView: View {
     }
 }
 
-private struct ContinueWatchingProgressTrack: View {
+private struct ImmersiveRowProgressTrack: View {
     let progress: Double
     let width: CGFloat
 
     var body: some View {
-        GeometryReader { proxy in
-            let trackWidth = proxy.size.width
-            let trackHeight = proxy.size.height
-            let knobSize = trackHeight
-            let knobOffset = max(
-                0,
-                min(trackWidth - knobSize, (trackWidth - knobSize) * progress)
-            )
+        let clampedProgress = min(max(progress, 0), 1)
 
-            ZStack(alignment: .leading) {
+        Capsule()
+            .fill(Color.white.opacity(0.28))
+            .overlay(alignment: .leading) {
                 Capsule()
-                    .fill(Color.white.opacity(0.16))
-
-                Circle()
                     .fill(Color.white.opacity(0.96))
-                    .frame(width: knobSize, height: knobSize)
-                    .offset(x: knobOffset)
+                    .frame(width: clampedProgress > 0 ? max(width * clampedProgress, 10) : 0)
             }
-        }
-        .frame(width: width, height: 7)
+            .frame(width: width, height: 6)
         .accessibilityHidden(true)
     }
 }
@@ -859,8 +849,8 @@ public struct SectionRow: View {
                         Button {
                             onSelect(item)
                         } label: {
-                            if usesImmersiveContinueWatchingCard {
-                                ContinueWatchingRowCard(
+                            if usesImmersiveLandscapeRowStyle {
+                                ImmersiveHomeRowCard(
                                     item: item,
                                     progress: progress(for: item),
                                     apiClient: apiClient,
@@ -881,8 +871,8 @@ public struct SectionRow: View {
                                     ranking: isTop10 ? (index + 1) : nil,
                                     progress: progress(for: item),
                                     optimizationStatus: optimizationStatus,
-                                    showsArtworkProgress: !usesInlineContinueWatchingProgress,
-                                    showsInlineProgress: usesInlineContinueWatchingProgress
+                                    showsArtworkProgress: true,
+                                    showsInlineProgress: false
                                 )
                                 .scrollTransition(axis: .horizontal) { content, phase in
                                     content
@@ -908,7 +898,7 @@ public struct SectionRow: View {
 #if os(tvOS)
         return ReelFinTheme.tvRailSpacing
 #else
-        if usesImmersiveContinueWatchingCard {
+        if usesImmersiveLandscapeRowStyle {
             return 18
         }
         return 16
@@ -923,12 +913,8 @@ public struct SectionRow: View {
         kind == .continueWatching || kind == .nextUp
     }
 
-    private var usesImmersiveContinueWatchingCard: Bool {
-        kind == .continueWatching && isLandscapeRail
-    }
-
-    private var usesInlineContinueWatchingProgress: Bool {
-        kind == .continueWatching && isLandscapeRail
+    private var usesImmersiveLandscapeRowStyle: Bool {
+        isLandscapeRail
     }
 
     private func progress(for item: MediaItem) -> Double? {
@@ -950,7 +936,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHeaderSpacing
         #else
-        return usesImmersiveContinueWatchingCard ? 12 : 14
+        return usesImmersiveLandscapeRowStyle ? 12 : 14
         #endif
     }
 
@@ -958,7 +944,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvRailVerticalPadding
         #else
-        return usesImmersiveContinueWatchingCard ? 10 : 14
+        return usesImmersiveLandscapeRowStyle ? 10 : 14
         #endif
     }
 
@@ -966,7 +952,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return .system(size: 24, weight: .bold, design: .rounded)
         #else
-        if usesImmersiveContinueWatchingCard {
+        if usesImmersiveLandscapeRowStyle {
             return .system(size: 30, weight: .heavy)
         }
         return .system(size: 24, weight: .bold, design: .rounded)
@@ -977,7 +963,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return .body.weight(.semibold)
         #else
-        return usesImmersiveContinueWatchingCard
+        return usesImmersiveLandscapeRowStyle
             ? .system(size: 28, weight: .bold)
             : .headline.weight(.semibold)
         #endif
@@ -987,7 +973,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return .white.opacity(0.4)
         #else
-        return usesImmersiveContinueWatchingCard ? .white.opacity(0.7) : .white.opacity(0.4)
+        return usesImmersiveLandscapeRowStyle ? .white.opacity(0.7) : .white.opacity(0.4)
         #endif
     }
 }
@@ -1121,7 +1107,6 @@ struct HomeView: View {
         }
 #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
-        .ignoresSafeArea(edges: .top) // Let hero stretch to status bar
 #endif
     }
 
@@ -1147,9 +1132,7 @@ struct HomeView: View {
                 leadingScrimOpacity: tvHomeLeadingScrimOpacity,
                 edgeVignetteOpacity: tvHomeEdgeVignetteOpacity
             )
-            .overlay {
-                Color.black.opacity(0.18).ignoresSafeArea()
-            }
+            .ignoresSafeArea(edges: .top)
 
             homeScrollContent(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
         }
@@ -1160,85 +1143,29 @@ struct HomeView: View {
         visibleRows: [HomeRow],
         rowIDByItemID: [String: String]
     ) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: sectionSpacing) {
-                    if viewModel.isInitialLoading && visibleRows.isEmpty {
-                        loadingSkeleton
-                            .padding(.top, 48)
-                    } else if visibleRows.isEmpty && viewModel.feed.featured.isEmpty {
-                        emptyState
-                            .padding(.top, 48)
-                    } else {
-                        featuredSection
-
-                        ForEach(visibleRows) { row in
-                            SectionRow(
-                                title: row.title,
-                                items: row.items,
-                                kind: row.kind,
-                                apiClient: dependencies.apiClient,
-                                imagePipeline: dependencies.imagePipeline,
-                                namespaceProvider: { itemID in
-                                    rowIDByItemID[itemID] == row.id ? posterNamespace : nil
-                                },
-                                focusedItemID: homeFocusedItemBinding,
-                                optimizationStatusProvider: { item in
-                                    appleOptimizationStatuses[item.id]
-                                },
-                                onFocus: { item, neighbors in
-                                    handleFocusedItem(item, neighbors: neighbors)
-                                },
-                                onSelect: { item in
-                                    selectedDetailNamespace = rowIDByItemID[item.id] == row.id ? posterNamespace : nil
-                                    selectedDetailTransitionSourceID = rowIDByItemID[item.id] == row.id ? item.id : nil
-                                    selectedDetailContextItems = row.items
-                                    selectedDetailContextTitle = row.title
-#if os(tvOS)
-                                    lastSelectedHomeRowID = row.id
-                                    lastSelectedHomeItemID = item.id
-                                    homeReturnTarget = .row(rowID: row.id, itemID: item.id)
-#endif
 #if os(iOS)
-                                    ambientItem = item
-                                    scheduleWarmup(
-                                        for: item,
-                                        neighbors: row.items,
-                                        settleDelayNanoseconds: 0
-                                    )
-#endif
-                                    let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
-                                    Task {
-                                        await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
-                                    }
-                                    viewModel.select(item: item)
-                                }
-                            )
-                            .id(row.id)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+        StickyBlurHeader(
+            maxBlurRadius: 12,
+            fadeExtension: 84,
+            tintOpacityTop: 0.18,
+            tintOpacityMiddle: 0.06,
+            statusBarBlurOpacity: 0.52,
+            contentTopInset: 0,
+            visibility: .revealOnScroll(distance: 124, minimumEffectOpacity: 0.02),
+            refreshAction: {
+                await viewModel.manualRefresh()
             }
-            #if os(tvOS)
-            .onChange(of: homeReturnRequest) { _, _ in
-                restoreHomeSelection(using: proxy)
-            }
-            #endif
+        ) { progress in
+            homeStickyChrome
+                .opacity(homeHeaderOpacity(for: progress))
+                .offset(y: (1 - homeHeaderOpacity(for: progress)) * -8)
+                .padding(.top, stickyHeaderTopPadding)
+                .padding(.bottom, 12)
+                .accessibilityIdentifier("home_sticky_blur_header")
+        } content: {
+            homeScrollSections(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
-#if os(tvOS)
-        .contentMargins(.zero, for: .scrollContent)
-#endif
-#if os(iOS)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear
-                .frame(height: 116)
-        }
-        .refreshable {
-            await viewModel.manualRefresh()
-        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 2)
                 .onChanged { _ in
@@ -1251,7 +1178,93 @@ struct HomeView: View {
                     scrollInterval = nil
                 }
         )
+#else
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                homeScrollSections(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            #if os(tvOS)
+            .onChange(of: homeReturnRequest) { _, _ in
+                restoreHomeSelection(using: proxy)
+            }
+            #endif
+        }
+        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
+#if os(tvOS)
+        .contentMargins(.zero, for: .scrollContent)
 #endif
+#endif
+    }
+
+    @ViewBuilder
+    private func homeScrollSections(
+        visibleRows: [HomeRow],
+        rowIDByItemID: [String: String]
+    ) -> some View {
+        LazyVStack(alignment: .leading, spacing: sectionSpacing) {
+            if viewModel.isInitialLoading && visibleRows.isEmpty {
+                loadingSkeleton
+                    .padding(.top, 48)
+            } else if visibleRows.isEmpty && viewModel.feed.featured.isEmpty {
+                emptyState
+                    .padding(.top, 48)
+            } else {
+                featuredSection
+
+                ForEach(visibleRows) { row in
+                    SectionRow(
+                        title: row.title,
+                        items: row.items,
+                        kind: row.kind,
+                        apiClient: dependencies.apiClient,
+                        imagePipeline: dependencies.imagePipeline,
+                        namespaceProvider: { itemID in
+                            rowIDByItemID[itemID] == row.id ? posterNamespace : nil
+                        },
+                        focusedItemID: homeFocusedItemBinding,
+                        optimizationStatusProvider: { item in
+                            appleOptimizationStatuses[item.id]
+                        },
+                        onFocus: { item, neighbors in
+                            handleFocusedItem(item, neighbors: neighbors)
+                        },
+                        onSelect: { item in
+                            selectedDetailNamespace = rowIDByItemID[item.id] == row.id ? posterNamespace : nil
+                            selectedDetailTransitionSourceID = rowIDByItemID[item.id] == row.id ? item.id : nil
+                            selectedDetailContextItems = row.items
+                            selectedDetailContextTitle = row.title
+#if os(tvOS)
+                            lastSelectedHomeRowID = row.id
+                            lastSelectedHomeItemID = item.id
+                            homeReturnTarget = .row(rowID: row.id, itemID: item.id)
+#endif
+#if os(iOS)
+                            ambientItem = item
+                            scheduleWarmup(
+                                for: item,
+                                neighbors: row.items,
+                                settleDelayNanoseconds: 0
+                            )
+#endif
+                            let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                            Task {
+                                await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                            }
+                            viewModel.select(item: item)
+                        }
+                    )
+                    .id(row.id)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+
+#if os(iOS)
+            Color.clear
+                .frame(height: 116)
+                .accessibilityHidden(true)
+#endif
+        }
     }
 
     @ViewBuilder
@@ -1278,29 +1291,14 @@ struct HomeView: View {
             )
             .id(featuredScrollAnchorID)
             #else
-            ZStack(alignment: .top) {
-                HeroCarouselView(
-                    items: Array(viewModel.feed.featured.prefix(10)),
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline,
-                    onTap: { item in
-#if os(iOS)
-                        ambientItem = item
-#endif
-                        selectedDetailNamespace = nil
-                        selectedDetailContextItems = Array(viewModel.feed.featured.prefix(10))
-                        selectedDetailContextTitle = "Featured"
-                        viewModel.select(item: item)
-                    }
-                )
-
-                topChrome
-            }
-            #endif
-        } else {
-            #if os(iOS)
-            topChrome
-                .padding(.top, 60) // Add top padding to account for missing hero
+            HeroCarouselView(
+                items: Array(viewModel.feed.featured.prefix(10)),
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                onPlay: handleFeaturedPlay,
+                onToggleWatchlist: viewModel.toggleFeaturedWatchlist,
+                onTap: handleFeaturedSelection
+            )
             #endif
         }
     }
@@ -1334,8 +1332,29 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, horizontalPadding)
-        .padding(.top, topChromePadding)
         .shadow(color: .black.opacity(0.3), radius: 6)
+    }
+
+    private var homeStickyChrome: some View {
+        HStack(spacing: 12) {
+            Spacer()
+
+            if viewModel.isRefreshing || viewModel.isInitialLoading {
+                ProgressView()
+                    .tint(.white)
+                    .padding(.trailing, 4)
+            }
+
+            Button {
+                isCustomizationPresented = true
+            } label: {
+                topIcon(symbol: "slider.horizontal.3", accessibilityLabel: "Customize Home")
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.horizontal, horizontalPadding)
+        .shadow(color: .black.opacity(0.24), radius: 5)
     }
 
     private var sectionSpacing: CGFloat {
@@ -1344,6 +1363,15 @@ struct HomeView: View {
         #else
         return 24
         #endif
+    }
+
+    private var stickyHeaderTopPadding: CGFloat {
+        horizontalSizeClass == .compact ? 8 : 12
+    }
+
+    private func homeHeaderOpacity(for progress: CGFloat) -> CGFloat {
+        let easedProgress = max(0, min((progress - 0.82) / 0.14, 1))
+        return easedProgress * easedProgress
     }
 
     private func topIcon(symbol: String, accessibilityLabel: String) -> some View {
@@ -1478,14 +1506,6 @@ struct HomeView: View {
 
     private var rowCardHeight: CGFloat {
         rowCardWidth * 1.55
-    }
-
-    private var topChromePadding: CGFloat {
-        #if os(tvOS)
-        return 42
-        #else
-        return 64
-        #endif
     }
 
     private func handleFocusedItem(_ item: MediaItem, neighbors: [MediaItem]) {
@@ -1889,6 +1909,10 @@ private struct HomeCustomizationSheet: View {
         switch kind {
         case .continueWatching:
             return "play.circle"
+        case .recentlyReleasedMovies:
+            return "sparkles"
+        case .recentlyReleasedSeries:
+            return "sparkles"
         case .nextUp:
             return "forward.end.circle"
         case .recentlyAddedMovies:

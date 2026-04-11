@@ -14,6 +14,7 @@ public struct HeroCarouselView: View {
     private let imagePipeline: ImagePipelineProtocol
     private let onTap: (MediaItem) -> Void
     private let onPlay: ((MediaItem) -> Void)?
+    private let onToggleWatchlist: ((MediaItem) -> Void)?
     private let onVisibleItemChange: ((MediaItem) -> Void)?
     private let selectedItemID: Binding<String?>?
 
@@ -29,6 +30,7 @@ public struct HeroCarouselView: View {
         selectedItemID: Binding<String?>? = nil,
         onVisibleItemChange: ((MediaItem) -> Void)? = nil,
         onPlay: ((MediaItem) -> Void)? = nil,
+        onToggleWatchlist: ((MediaItem) -> Void)? = nil,
         onTap: @escaping (MediaItem) -> Void
     ) {
         self.items = items
@@ -37,6 +39,7 @@ public struct HeroCarouselView: View {
         self.selectedItemID = selectedItemID
         self.onVisibleItemChange = onVisibleItemChange
         self.onPlay = onPlay
+        self.onToggleWatchlist = onToggleWatchlist
         self.onTap = onTap
     }
 
@@ -65,19 +68,10 @@ public struct HeroCarouselView: View {
                     set: { currentIndex = $0 }
                 )) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        Button {
-                            onTap(item)
-                        } label: {
-                            iosHeroContent(for: item, size: proxy.size)
-                                .frame(width: proxy.size.width, height: heroHeight)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .tag(index)
-                        .accessibilityLabel(item.name)
-                        .accessibilityAddTraits(.isButton)
-                        .clipped()
-                        .containerRelativeFrame(.horizontal)
+                        iosHeroCard(for: item, size: proxy.size)
+                            .tag(index)
+                            .clipped()
+                            .containerRelativeFrame(.horizontal)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
@@ -119,7 +113,31 @@ public struct HeroCarouselView: View {
         }
     }
 
-    private func iosHeroContent(for item: MediaItem, size: CGSize) -> some View {
+    private func iosHeroCard(for item: MediaItem, size: CGSize) -> some View {
+        ZStack(alignment: .bottom) {
+            Button {
+                onTap(item)
+            } label: {
+                iosHeroBackdrop(for: item, size: size)
+                    .frame(width: proxySafeWidth(size.width), height: heroHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(item.name)
+            .accessibilityAddTraits(.isButton)
+
+            iosHeroTextOverlay(for: item, size: size)
+                .allowsHitTesting(false)
+
+            heroActionButtons(for: item, immersive: false)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.bottom, 60)
+        }
+        .frame(width: size.width, height: heroHeight)
+        .clipped()
+    }
+
+    private func iosHeroBackdrop(for item: MediaItem, size: CGSize) -> some View {
         ZStack(alignment: .bottom) {
             Color.black
 
@@ -138,33 +156,30 @@ public struct HeroCarouselView: View {
                         endPoint: .bottom
                     )
                 )
-
-            VStack(alignment: .center, spacing: 12) {
-                Text(item.name)
-                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 32 : 44, weight: .heavy, design: .rounded))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.6)
-                    .shadow(color: .black.opacity(0.5), radius: 4)
-                    .accessibilityAddTraits(.isHeader)
-
-                Text(heroMetadataText(for: item))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(1)
-
-                heroActionButtons(for: item, immersive: false)
-                    .padding(.top, 12)
-            }
-            .padding(.horizontal, horizontalPadding)
-            .padding(.bottom, 60)
-            .frame(width: max(size.width - (horizontalPadding * 2), 0), alignment: .center)
         }
-        .frame(width: size.width, height: heroHeight)
-        .clipped()
+    }
+
+    private func iosHeroTextOverlay(for item: MediaItem, size: CGSize) -> some View {
+        VStack(alignment: .center, spacing: 12) {
+            Text(item.name)
+                .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 32 : 44, weight: .heavy, design: .rounded))
+                .textCase(.uppercase)
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.6)
+                .shadow(color: .black.opacity(0.5), radius: 4)
+                .accessibilityAddTraits(.isHeader)
+
+            Text(heroMetadataText(for: item))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.8))
+                .multilineTextAlignment(.center)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.bottom, 146)
+        .frame(width: max(size.width - (horizontalPadding * 2), 0), alignment: .center)
     }
     #endif
 
@@ -525,7 +540,7 @@ public struct HeroCarouselView: View {
     private func heroActionButtons(for item: MediaItem, immersive: Bool) -> some View {
         HStack(spacing: 12) {
             Button {
-                onTap(item)
+                (onPlay ?? onTap)(item)
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "play.fill")
@@ -541,26 +556,44 @@ public struct HeroCarouselView: View {
             .buttonStyle(.plain)
             .sensoryFeedback(.impact(weight: .light), trigger: currentIndex)
 
-            heroCircleButton(symbol: "plus") {
-                onTap(item)
+            if let onToggleWatchlist {
+                heroCircleButton(
+                    symbol: item.isFavorite ? "heart.fill" : "heart",
+                    accessibilityLabel: item.isFavorite ? "Unlike" : "Like",
+                    accessibilityIdentifier: "home_featured_watchlist_button_\(item.id)",
+                    accessibilityValue: item.isFavorite ? "liked" : "not_liked",
+                    isActive: item.isFavorite
+                ) {
+                    onToggleWatchlist(item)
+                }
             }
         }
     }
 
-    private func heroCircleButton(symbol: String, action: @escaping () -> Void) -> some View {
+    private func heroCircleButton(
+        symbol: String,
+        accessibilityLabel: String,
+        accessibilityIdentifier: String,
+        accessibilityValue: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 24, weight: .bold))
                 .frame(width: 62, height: 62)
                 .foregroundStyle(.white)
-                .background(Color.white.opacity(0.12), in: Circle())
+                .background((isActive ? Color.white.opacity(0.18) : Color.white.opacity(0.12)), in: Circle())
                 .overlay {
                     Circle()
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        .stroke(Color.white.opacity(isActive ? 0.18 : 0.1), lineWidth: 1)
                 }
                 .shadow(color: .black.opacity(0.16), radius: 12, x: 0, y: 6)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityValue(accessibilityValue)
     }
     #endif
 
@@ -663,6 +696,10 @@ public struct HeroCarouselView: View {
     private func backdropImageWidth(for size: CGSize) -> Int {
         let requestedWidth = Int((size.width * displayScale).rounded(.up))
         return min(max(requestedWidth, 720), 2200)
+    }
+
+    private func proxySafeWidth(_ width: CGFloat) -> CGFloat {
+        max(width, 0)
     }
 }
 

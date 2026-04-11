@@ -247,6 +247,7 @@ public final class PlaybackSessionController {
 
     let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let repository: MetadataRepositoryProtocol
+    private let episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)?
     private let coordinator: PlaybackCoordinator
     private let warmupManager: (any PlaybackWarmupManaging)?
     private let playbackDiagnostics = PlaybackDiagnostics()
@@ -411,11 +412,13 @@ public final class PlaybackSessionController {
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
         repository: MetadataRepositoryProtocol,
+        episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)? = nil,
         warmupManager: (any PlaybackWarmupManaging)? = nil,
         decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
     ) {
         self.apiClient = apiClient
         self.repository = repository
+        self.episodeReleaseTracker = episodeReleaseTracker
         self.coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
         self.warmupManager = warmupManager
         self.preferredProfilesByItemID = Self.loadStoredPreferredProfiles()
@@ -3713,6 +3716,9 @@ public final class PlaybackSessionController {
         }
         if let currentItemID {
             try? await apiClient.reportPlayed(itemID: currentItemID)
+        }
+        if let currentMediaItem, currentMediaItem.mediaType == .episode {
+            await episodeReleaseTracker?.markSeriesFollowed(from: currentMediaItem)
         }
     }
 

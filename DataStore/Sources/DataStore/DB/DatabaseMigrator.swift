@@ -110,6 +110,18 @@ enum DatabaseMigratorFactory {
             try db.execute(sql: "ALTER TABLE media_items ADD COLUMN playback_position_ticks INTEGER")
         }
 
+        migrator.registerMigration("v4_episode_release_state") { db in
+            try db.create(table: "episode_release_state") { t in
+                t.column("series_id", .text).primaryKey()
+                t.column("series_name", .text).notNull()
+                t.column("last_known_next_up_episode_id", .text)
+                t.column("last_known_next_up_season_number", .integer)
+                t.column("last_known_next_up_episode_number", .integer)
+                t.column("last_notified_episode_id", .text)
+                t.column("updated_at", .datetime).notNull()
+            }
+        }
+
         return migrator
     }
 

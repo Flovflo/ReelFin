@@ -19,24 +19,27 @@ final class HomeViewModel: ObservableObject {
 
     private let dependencies: ReelFinDependencies
     private var feedEnrichmentTask: Task<Void, Never>?
-    private static let sectionPreferencesKey = "home.sectionPreferences.v1"
+    private static let sectionPreferencesKey = "home.sectionPreferences.v3"
+    private static let supportedSectionKinds: [HomeSectionKind] = [
+        .continueWatching,
+        .recentlyReleasedMovies,
+        .recentlyReleasedSeries,
+        .recentlyAddedMovies,
+        .recentlyAddedSeries
+    ]
     private static let defaultSectionOrder: [HomeSectionKind] = [
         .continueWatching,
-        .nextUp,
+        .recentlyReleasedMovies,
+        .recentlyReleasedSeries,
         .recentlyAddedMovies,
-        .recentlyAddedSeries,
-        .popular,
-        .trending,
-        .movies,
-        .shows,
-        .latest
+        .recentlyAddedSeries
     ]
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
         let stored = Self.loadSectionPreferences()
-        self.orderedSectionKinds = stored.orderedKinds.isEmpty ? Self.defaultSectionOrder : stored.orderedKinds
-        self.hiddenSectionKinds = Set(stored.hiddenKinds)
+        self.orderedSectionKinds = Self.sanitizedSectionOrder(from: stored.orderedKinds)
+        self.hiddenSectionKinds = []
     }
 
     func load() async {
@@ -101,9 +104,32 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    func toggleFeaturedWatchlist(for item: MediaItem) {
+        let targetValue = !(resolvedItemState(for: item.id)?.isFavorite ?? item.isFavorite)
+        let previousFeed = feed
+        let previousSelectedItem = selectedItem
+        let previousSelectedEpisode = selectedEpisode
+
+        errorMessage = nil
+        applyFavoriteState(targetValue, to: item.id)
+
+        Task {
+            do {
+                try await dependencies.apiClient.setFavorite(itemID: item.id, isFavorite: targetValue)
+            } catch {
+                await MainActor.run {
+                    self.feed = previousFeed
+                    self.selectedItem = previousSelectedItem
+                    self.selectedEpisode = previousSelectedEpisode
+                    self.rebuildVisibleRowsCache()
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
     var sectionCustomizationKinds: [HomeSectionKind] {
-        let dynamicKinds = feed.rows.map(\.kind)
-        return uniqueKinds(orderedSectionKinds + dynamicKinds + Self.defaultSectionOrder)
+        Self.supportedSectionKinds
     }
 
     func sectionTitle(for kind: HomeSectionKind) -> String {
@@ -114,12 +140,16 @@ final class HomeViewModel: ObservableObject {
         switch kind {
         case .continueWatching:
             return "Continue Watching"
+        case .recentlyReleasedMovies:
+            return "Recently Released Movies"
+        case .recentlyReleasedSeries:
+            return "Recently Released TV Shows"
         case .nextUp:
             return "Next Up"
         case .recentlyAddedMovies:
             return "Recently Added Movies"
         case .recentlyAddedSeries:
-            return "Recently Added Series"
+            return "Recently Added TV"
         case .popular:
             return "Popular"
         case .trending:
@@ -267,22 +297,12 @@ final class HomeViewModel: ObservableObject {
         let knownKinds = Set(orderedSectionKinds)
         let missing = rows
             .map(\.kind)
-            .filter { !knownKinds.contains($0) }
+            .filter { Self.supportedSectionKinds.contains($0) && !knownKinds.contains($0) }
         if !missing.isEmpty {
             orderedSectionKinds.append(contentsOf: missing)
             rebuildVisibleRowsCache()
             persistSectionPreferences()
         }
-    }
-
-    private func uniqueKinds(_ kinds: [HomeSectionKind]) -> [HomeSectionKind] {
-        var seen = Set<HomeSectionKind>()
-        var result: [HomeSectionKind] = []
-        for kind in kinds where !seen.contains(kind) {
-            seen.insert(kind)
-            result.append(kind)
-        }
-        return result
     }
 
     private func rebuildVisibleRowsCache() {
@@ -325,9 +345,55 @@ final class HomeViewModel: ObservableObject {
         return merged
     }
 
+    private func resolvedItemState(for itemID: String) -> MediaItem? {
+        if let featured = feed.featured.first(where: { $0.id == itemID }) {
+            return featured
+        }
+
+        for row in feed.rows {
+            if let item = row.items.first(where: { $0.id == itemID }) {
+                return item
+            }
+        }
+
+        return selectedItem?.id == itemID ? selectedItem : selectedEpisode?.id == itemID ? selectedEpisode : nil
+    }
+
+    private func applyFavoriteState(_ isFavorite: Bool, to itemID: String) {
+        feed.featured = feed.featured.map { item in
+            var updated = item
+            if updated.id == itemID {
+                updated.isFavorite = isFavorite
+            }
+            return updated
+        }
+
+        feed.rows = feed.rows.map { row in
+            var updatedRow = row
+            updatedRow.items = row.items.map { item in
+                var updated = item
+                if updated.id == itemID {
+                    updated.isFavorite = isFavorite
+                }
+                return updated
+            }
+            return updatedRow
+        }
+
+        if selectedItem?.id == itemID {
+            selectedItem?.isFavorite = isFavorite
+        }
+
+        if selectedEpisode?.id == itemID {
+            selectedEpisode?.isFavorite = isFavorite
+        }
+
+        rebuildVisibleRowsCache()
+    }
+
     private func persistSectionPreferences() {
         let preferences = HomeSectionPreferences(
-            orderedKinds: uniqueKinds(orderedSectionKinds),
+            orderedKinds: Self.sanitizedSectionOrder(from: orderedSectionKinds),
             hiddenKinds: Array(hiddenSectionKinds)
         )
         guard let data = try? JSONEncoder().encode(preferences) else { return }
@@ -342,6 +408,18 @@ final class HomeViewModel: ObservableObject {
             return HomeSectionPreferences(orderedKinds: defaultSectionOrder, hiddenKinds: [])
         }
         return prefs
+    }
+
+    private static func sanitizedSectionOrder(from kinds: [HomeSectionKind]) -> [HomeSectionKind] {
+        var seen = Set<HomeSectionKind>()
+        let supported = Set(supportedSectionKinds)
+
+        let preserved = kinds.filter { kind in
+            supported.contains(kind) && seen.insert(kind).inserted
+        }
+
+        let missing = supportedSectionKinds.filter { !seen.contains($0) }
+        return preserved + missing
     }
 
     private static func deriveVisibleRows(
@@ -369,18 +447,7 @@ final class HomeViewModel: ObservableObject {
         }
 
         let filteredRows = normalizedRows.filter { row in
-#if os(tvOS)
-            switch row.kind {
-            case .popular, .trending:
-                return false
-            case .recentlyAddedMovies, .recentlyAddedSeries:
-                return true
-            default:
-                break
-            }
-#endif
-
-            return !hiddenSectionKinds.contains(row.kind)
+            Self.supportedSectionKinds.contains(row.kind) && !hiddenSectionKinds.contains(row.kind)
         }
         guard !filteredRows.isEmpty else {
             return ([], [:])
@@ -481,6 +548,8 @@ private enum HomeFeedProcessor {
 
     private static func fallbackFeatured(from rows: [HomeRow]) -> [MediaItem] {
         let priority: [HomeSectionKind] = [
+            .recentlyReleasedMovies,
+            .recentlyReleasedSeries,
             .recentlyAddedMovies,
             .recentlyAddedSeries,
             .popular,

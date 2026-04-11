@@ -9,6 +9,7 @@ public struct ReelFinDependencies {
     public let imagePipeline: ImagePipelineProtocol
     public let syncEngine: SyncEngineProtocol
     public let settingsStore: SettingsStoreProtocol
+    public let episodeReleaseNotificationManager: EpisodeReleaseNotificationManaging
     public let seriesCache: SeriesLookupCache
     public let playbackWarmupManager: PlaybackWarmupManaging
     public let tvFocusWarmupCoordinator: TVFocusWarmupCoordinator?
@@ -21,6 +22,7 @@ public struct ReelFinDependencies {
         imagePipeline: ImagePipelineProtocol,
         syncEngine: SyncEngineProtocol,
         settingsStore: SettingsStoreProtocol,
+        episodeReleaseNotificationManager: EpisodeReleaseNotificationManaging,
         seriesCache: SeriesLookupCache,
         playbackWarmupManager: PlaybackWarmupManaging,
         tvFocusWarmupCoordinator: TVFocusWarmupCoordinator? = nil,
@@ -32,6 +34,7 @@ public struct ReelFinDependencies {
         self.imagePipeline = imagePipeline
         self.syncEngine = syncEngine
         self.settingsStore = settingsStore
+        self.episodeReleaseNotificationManager = episodeReleaseNotificationManager
         self.seriesCache = seriesCache
         self.playbackWarmupManager = playbackWarmupManager
         self.tvFocusWarmupCoordinator = tvFocusWarmupCoordinator

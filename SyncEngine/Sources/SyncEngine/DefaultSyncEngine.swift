@@ -5,6 +5,8 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let repository: any MetadataRepositoryProtocol & Sendable
     private let imagePipeline: any ImagePipelineProtocol & Sendable
+    private let episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)?
+    private let episodeReleaseNotificationManager: (any EpisodeReleaseNotificationManaging)?
 
     private var isSyncing = false
     private var lastForegroundLikeSyncAt: Date?
@@ -13,11 +15,15 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
         repository: any MetadataRepositoryProtocol & Sendable,
-        imagePipeline: any ImagePipelineProtocol & Sendable
+        imagePipeline: any ImagePipelineProtocol & Sendable,
+        episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)? = nil,
+        episodeReleaseNotificationManager: (any EpisodeReleaseNotificationManaging)? = nil
     ) {
         self.apiClient = apiClient
         self.repository = repository
         self.imagePipeline = imagePipeline
+        self.episodeReleaseTracker = episodeReleaseTracker
+        self.episodeReleaseNotificationManager = episodeReleaseNotificationManager
     }
 
     public func sync(reason: SyncReason) async {
@@ -61,6 +67,14 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
             }
 
             try await repository.saveHomeFeed(feed)
+
+            if let episodeReleaseTracker {
+                let alerts = await episodeReleaseTracker.reconcileAfterSync(feed: feed)
+                if let episodeReleaseNotificationManager, !alerts.isEmpty {
+                    await episodeReleaseNotificationManager.deliver(alerts: alerts, reason: reason)
+                }
+            }
+
             try await repository.setLastSyncDate(Date())
             markForegroundLikeSyncIfNeeded(reason: reason)
 
@@ -124,6 +138,8 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
         }
 
         let contentKinds: Set<HomeSectionKind> = [
+            .recentlyReleasedMovies,
+            .recentlyReleasedSeries,
             .recentlyAddedMovies,
             .recentlyAddedSeries,
             .popular,

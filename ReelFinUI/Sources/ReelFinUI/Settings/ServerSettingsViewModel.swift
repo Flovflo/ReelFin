@@ -22,6 +22,7 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var preferAudioTranscodeOnly = true
     @Published var maxStreamingBitrateText = ""
     @Published var forceH264FallbackWhenNotDirectPlay = true
+    @Published var episodeReleaseNotificationsEnabled = false
     @Published var nerdOverlayEnabled = false
     @Published var infoMessage: String?
     @Published var errorMessage: String?
@@ -53,6 +54,7 @@ final class ServerSettingsViewModel: ObservableObject {
         }
 
         nerdOverlayEnabled = UserDefaults.standard.bool(forKey: Self.nerdOverlayKey)
+        episodeReleaseNotificationsEnabled = dependencies.settingsStore.episodeReleaseNotificationsEnabled
 
         if let session = dependencies.settingsStore.lastSession {
             username = session.username
@@ -175,6 +177,43 @@ final class ServerSettingsViewModel: ObservableObject {
             infoMessage = "Connection OK"
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshEpisodeReleaseNotificationsState() async {
+        let enabled = await dependencies.episodeReleaseNotificationManager.notificationsEnabled()
+        episodeReleaseNotificationsEnabled = enabled
+    }
+
+    func setEpisodeReleaseNotificationsEnabled(_ enabled: Bool) async {
+        errorMessage = nil
+        infoMessage = nil
+
+        await dependencies.episodeReleaseNotificationManager.setNotificationsEnabled(enabled)
+        let resolvedEnabled = await dependencies.episodeReleaseNotificationManager.notificationsEnabled()
+        let authorization = await dependencies.episodeReleaseNotificationManager.authorizationStatus()
+
+        episodeReleaseNotificationsEnabled = resolvedEnabled
+
+        if resolvedEnabled {
+            infoMessage = "Episode alerts enabled"
+            return
+        }
+
+        guard enabled else {
+            infoMessage = "Episode alerts disabled"
+            return
+        }
+
+        switch authorization {
+        case .denied:
+            errorMessage = "Notifications are disabled for ReelFin in iOS Settings."
+        case .notDetermined:
+            errorMessage = "Notification permission is still pending."
+        case .authorized:
+            errorMessage = "Episode alerts could not be enabled."
+        case .unsupported:
+            errorMessage = "Episode alerts are not available on this device."
         }
     }
 

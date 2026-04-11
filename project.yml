@@ -24,6 +24,9 @@ packages:
   Sentry:
     url: https://github.com/getsentry/sentry-cocoa.git
     from: 8.55.1
+  VariableBlur:
+    url: https://github.com/nikstar/VariableBlur.git
+    branch: main
 targets:
   # ──────────────────────────────────────────────
   # iOS Application
@@ -33,6 +36,7 @@ targets:
     platform: iOS
     sources:
       - path: ReelFinApp/App
+      - path: ReelFinApp/App/SystemEpisodeReleaseNotificationManager.swift
       - path: ReelFinApp/Resources
         buildPhase: resources
     dependencies:
@@ -66,6 +70,8 @@ targets:
         INFOPLIST_KEY_REELFIN_SUPPORT_URL: https://flovflo.github.io/reelfin-site/support.html
         INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL: floriantaffin@gmail.com
         INFOPLIST_KEY_REELFIN_SENTRY_DSN: $(REELFIN_SENTRY_DSN)
+        INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers[0]: com.reelfin.app.refresh
+        INFOPLIST_KEY_UIBackgroundModes[0]: fetch
         REELFIN_SENTRY_DSN: ""
 
   # ──────────────────────────────────────────────
@@ -117,6 +123,7 @@ targets:
     platform: iOS
     sources:
       - path: SyncEngine/Sources/SyncEngine
+      - path: SyncEngine/Sources/SyncEngine/DefaultEpisodeReleaseTracker.swift
     dependencies:
       - target: Shared
       - target: JellyfinAPI
@@ -151,6 +158,8 @@ targets:
       - target: ImageCache
       - target: SyncEngine
       - target: PlaybackEngine
+      - package: VariableBlur
+        product: VariableBlur
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.ui
@@ -254,6 +263,7 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: SyncEngine/Sources/SyncEngine
+      - path: SyncEngine/Sources/SyncEngine/DefaultEpisodeReleaseTracker.swift
     dependencies:
       - target: SharedTV
       - target: JellyfinAPITV
@@ -320,6 +330,7 @@ targets:
       - target: PlaybackEngine
       - target: JellyfinAPI
       - target: ReelFinUI
+      - target: SyncEngine
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback.tests

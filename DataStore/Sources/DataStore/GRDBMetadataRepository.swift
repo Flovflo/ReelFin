@@ -285,6 +285,83 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
         }
     }
 
+    public func upsertEpisodeReleaseState(_ state: EpisodeReleaseState) async throws {
+        try await write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO episode_release_state (
+                    series_id,
+                    series_name,
+                    last_known_next_up_episode_id,
+                    last_known_next_up_season_number,
+                    last_known_next_up_episode_number,
+                    last_notified_episode_id,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(series_id) DO UPDATE SET
+                    series_name = excluded.series_name,
+                    last_known_next_up_episode_id = excluded.last_known_next_up_episode_id,
+                    last_known_next_up_season_number = excluded.last_known_next_up_season_number,
+                    last_known_next_up_episode_number = excluded.last_known_next_up_episode_number,
+                    last_notified_episode_id = excluded.last_notified_episode_id,
+                    updated_at = excluded.updated_at
+                """,
+                arguments: [
+                    state.seriesID,
+                    state.seriesName,
+                    state.lastKnownNextUpEpisodeID,
+                    state.lastKnownNextUpSeasonNumber,
+                    state.lastKnownNextUpEpisodeNumber,
+                    state.lastNotifiedEpisodeID,
+                    state.updatedAt
+                ]
+            )
+        }
+    }
+
+    public func fetchEpisodeReleaseState(seriesID: String) async throws -> EpisodeReleaseState? {
+        try await read { db in
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT
+                    series_id,
+                    series_name,
+                    last_known_next_up_episode_id,
+                    last_known_next_up_season_number,
+                    last_known_next_up_episode_number,
+                    last_notified_episode_id,
+                    updated_at
+                FROM episode_release_state
+                WHERE series_id = ?
+                """,
+                arguments: [seriesID]
+            )
+            return row.flatMap(episodeReleaseState(from:))
+        }
+    }
+
+    public func fetchEpisodeReleaseStates() async throws -> [EpisodeReleaseState] {
+        try await read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT
+                    series_id,
+                    series_name,
+                    last_known_next_up_episode_id,
+                    last_known_next_up_season_number,
+                    last_known_next_up_episode_number,
+                    last_notified_episode_id,
+                    updated_at
+                FROM episode_release_state
+                ORDER BY updated_at DESC
+                """
+            )
+            return rows.compactMap(episodeReleaseState(from:))
+        }
+    }
+
     private func upsert(items: [MediaItem], db: Database) throws {
         for item in items {
             try db.execute(
@@ -418,6 +495,26 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
             isFavorite: (row["is_favorite"] as Bool?) ?? false,
             isPlayed: isPlayed,
             playbackPositionTicks: effectivePlaybackPositionTicks
+        )
+    }
+
+    private func episodeReleaseState(from row: Row) -> EpisodeReleaseState? {
+        let seriesID: String? = row["series_id"]
+        let seriesName: String? = row["series_name"]
+
+        guard let seriesID, let seriesName else {
+            return nil
+        }
+
+        let updatedAt: Date = row["updated_at"]
+        return EpisodeReleaseState(
+            seriesID: seriesID,
+            seriesName: seriesName,
+            lastKnownNextUpEpisodeID: row["last_known_next_up_episode_id"],
+            lastKnownNextUpSeasonNumber: row["last_known_next_up_season_number"],
+            lastKnownNextUpEpisodeNumber: row["last_known_next_up_episode_number"],
+            lastNotifiedEpisodeID: row["last_notified_episode_id"],
+            updatedAt: updatedAt
         )
     }
 

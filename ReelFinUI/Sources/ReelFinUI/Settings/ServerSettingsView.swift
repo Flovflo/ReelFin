@@ -168,27 +168,40 @@ struct ServerSettingsView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
+            StickyBlurHeader(
+                maxBlurRadius: 12,
+                fadeExtension: 84,
+                tintOpacityTop: 0.48,
+                tintOpacityMiddle: 0.18
+            ) { _ in
+                headerBlock
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.top, stickyHeaderTopPadding)
+                    .padding(.bottom, 14)
+                    .accessibilityIdentifier("settings_sticky_blur_header")
+            } content: {
                 VStack(alignment: .leading, spacing: 24) {
-                    headerBlock
-
                     if viewModel.errorMessage != nil || viewModel.infoMessage != nil {
                         statusBanner
                     }
 
                     accountCard
                     playbackCard
+                    notificationsCard
                     serverCard
                     aboutCard
                     signOutButton
                 }
                 .frame(maxWidth: 760, alignment: .leading)
                 .padding(.horizontal, horizontalPadding)
-                .padding(.top, 24)
                 .padding(.bottom, 120)
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .task {
+            await viewModel.refreshEpisodeReleaseNotificationsState()
+        }
     }
 
     private var headerBlock: some View {
@@ -201,6 +214,10 @@ struct ServerSettingsView: View {
                 .font(.system(size: 15, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.62))
         }
+    }
+
+    private var stickyHeaderTopPadding: CGFloat {
+        horizontalSizeClass == .compact ? 8 : 12
     }
 
     @ViewBuilder
@@ -379,6 +396,27 @@ struct ServerSettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var notificationsCard: some View {
+        SettingsSectionCard(
+            title: "Notifications",
+            subtitle: "Only notify for shows you already started watching."
+        ) {
+            SettingsToggleRow(
+                title: "New Episode Alerts",
+                subtitle: "Get a notification when Jellyfin exposes a newly available next episode for a series you follow.",
+                isOn: Binding(
+                    get: { viewModel.episodeReleaseNotificationsEnabled },
+                    set: { newValue in
+                        viewModel.episodeReleaseNotificationsEnabled = newValue
+                        Task {
+                            await viewModel.setEpisodeReleaseNotificationsEnabled(newValue)
+                        }
+                    }
+                )
+            )
         }
     }
 

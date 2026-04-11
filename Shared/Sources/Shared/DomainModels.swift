@@ -10,6 +10,8 @@ public enum MediaType: String, Codable, CaseIterable, Sendable {
 
 public enum HomeSectionKind: String, Codable, CaseIterable, Sendable {
     case continueWatching
+    case recentlyReleasedMovies
+    case recentlyReleasedSeries
     case nextUp
     case recentlyAddedMovies
     case recentlyAddedSeries

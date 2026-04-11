@@ -92,74 +92,97 @@ struct LibraryView: View {
     }
 
     private func libraryContent(topRowItemIDs: Set<String>) -> some View {
+#if os(tvOS)
         VStack(spacing: 14) {
             topBar
 
-            ScrollView(showsIndicators: false) {
-                LazyVGrid(columns: columns, spacing: gridSpacing) {
-                    ForEach(viewModel.items) { item in
-#if os(tvOS)
-                        TVLibraryPosterCard(
-                            item: item,
-                            dependencies: dependencies,
-                            onFocus: { focusedItem in
-                                handleFocusedItem(focusedItem)
-                            },
-                            onMoveUp: topRowItemIDs.contains(item.id) ? focusPreferredControlBar : nil,
-                            onSelect: { selectedItem in
-                                let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
-                                Task {
-                                    await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
-                                }
-                                viewModel.select(item: selectedItem)
-                            }
-                        )
-                        .onAppear {
-                            handleVisibleItem(item)
-                        }
+            libraryScrollContent(topRowItemIDs: topRowItemIDs)
+            .focusSection()
+        }
 #else
-                        VStack(alignment: .leading, spacing: 10) {
-                            Button {
-                                let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
-                                Task {
-                                    await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
-                                }
-                                viewModel.select(item: item)
-                            } label: {
-                                PosterCardArtworkView(
-                                    item: item,
-                                    apiClient: dependencies.apiClient,
-                                    imagePipeline: dependencies.imagePipeline,
-                                    layoutStyle: .grid
-                                )
-                            }
-                            .accessibilityIdentifier("media_card_button_\(item.id)")
-                            .buttonStyle(.plain)
+        StickyBlurHeader(
+            maxBlurRadius: 12,
+            fadeExtension: 88,
+            tintOpacityTop: 0.48,
+            tintOpacityMiddle: 0.18
+        ) { _ in
+            iosTopBar
+                .padding(.top, stickyHeaderTopPadding)
+                .padding(.bottom, 14)
+                .accessibilityIdentifier("library_sticky_blur_header")
+        } content: {
+            libraryGridContent(topRowItemIDs: topRowItemIDs)
+        }
+#endif
+    }
 
-                            PosterCardMetadataView(
+    private func libraryScrollContent(topRowItemIDs: Set<String>) -> some View {
+        ScrollView(showsIndicators: false) {
+            libraryGridContent(topRowItemIDs: topRowItemIDs)
+        }
+    }
+
+    private func libraryGridContent(topRowItemIDs: Set<String>) -> some View {
+        VStack(spacing: 0) {
+            LazyVGrid(columns: columns, spacing: gridSpacing) {
+                ForEach(viewModel.items) { item in
+#if os(tvOS)
+                    TVLibraryPosterCard(
+                        item: item,
+                        dependencies: dependencies,
+                        onFocus: { focusedItem in
+                            handleFocusedItem(focusedItem)
+                        },
+                        onMoveUp: topRowItemIDs.contains(item.id) ? focusPreferredControlBar : nil,
+                        onSelect: { selectedItem in
+                            let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
+                            Task {
+                                await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                            }
+                            viewModel.select(item: selectedItem)
+                        }
+                    )
+                    .onAppear {
+                        handleVisibleItem(item)
+                    }
+#else
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button {
+                            let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+                            Task {
+                                await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+                            }
+                            viewModel.select(item: item)
+                        } label: {
+                            PosterCardArtworkView(
                                 item: item,
+                                apiClient: dependencies.apiClient,
+                                imagePipeline: dependencies.imagePipeline,
                                 layoutStyle: .grid
                             )
                         }
-                        .onAppear {
-                            handleVisibleItem(item)
-                        }
-#endif
-                    }
-                }
-                .padding(.top, 52)
-                .padding(.horizontal, horizontalPadding)
-                .padding(.bottom, 24)
+                        .accessibilityIdentifier("media_card_button_\(item.id)")
+                        .buttonStyle(.plain)
 
-                if viewModel.isLoadingPage {
-                    ProgressView()
-                        .tint(.white)
-                        .padding(.bottom, 16)
+                        PosterCardMetadataView(
+                            item: item,
+                            layoutStyle: .grid
+                        )
+                    }
+                    .onAppear {
+                        handleVisibleItem(item)
+                    }
+#endif
                 }
             }
-#if os(tvOS)
-            .focusSection()
-#endif
+            .padding(.horizontal, horizontalPadding)
+            .padding(.bottom, 24)
+
+            if viewModel.isLoadingPage {
+                ProgressView()
+                    .tint(.white)
+                    .padding(.bottom, 16)
+            }
         }
     }
 
@@ -287,6 +310,10 @@ struct LibraryView: View {
         } else {
             content()
         }
+    }
+
+    private var stickyHeaderTopPadding: CGFloat {
+        horizontalSizeClass == .compact ? 8 : 12
     }
 
     private var columns: [GridItem] {

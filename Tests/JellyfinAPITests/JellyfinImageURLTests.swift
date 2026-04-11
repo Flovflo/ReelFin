@@ -26,6 +26,7 @@ final class JellyfinImageURLTests: XCTestCase {
 private final class TestSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
+    var episodeReleaseNotificationsEnabled = false
     var hasCompletedOnboarding = false
     var completedOnboardingVersion = 0
 

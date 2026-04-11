@@ -253,27 +253,29 @@ struct DetailView: View {
                 endPoint: .bottom
             )
 
-                IOSDetailHeroContent(
-                    item: viewModel.detail.item,
-                    playbackItem: viewModel.itemToPlay,
-                    preferredSource: viewModel.preferredPlaybackSource,
+            IOSDetailHeroContent(
+                item: viewModel.detail.item,
+                playbackItem: viewModel.itemToPlay,
+                preferredSource: viewModel.preferredPlaybackSource,
                 optimizationStatus: viewModel.playbackOptimizationStatus,
                 playButtonLabel: viewModel.playButtonLabel,
                 playbackStatusText: viewModel.playbackStatusText,
                 progress: resolvedHeroProgress,
                 isLoadingPlayback: isLoadingPlayback || viewModel.isWarmingPlayback,
+                isInWatchlist: viewModel.isInWatchlist,
                 isWatched: viewModel.isWatched || viewModel.itemToPlay.isPlayed,
                 contentWidth: resolvedMetadataWidth(for: viewportSize),
                 horizontalPadding: horizontalPadding,
                 safeAreaTop: safeAreaTop,
-                    bottomPadding: heroBottomPadding + 10 - stageMetrics.bottomPaddingCompression,
-                    collapseProgress: stageMetrics.topInsetProgress,
-                    animateIn: hasAnimatedIn,
-                    prefersNativeZoomTransition: prefersNativeZoomTransition,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline,
-                    onBack: { dismiss() },
-                    onPlay: { startPlayback() },
+                bottomPadding: heroBottomPadding + 10 - stageMetrics.bottomPaddingCompression,
+                collapseProgress: stageMetrics.topInsetProgress,
+                animateIn: hasAnimatedIn,
+                prefersNativeZoomTransition: prefersNativeZoomTransition,
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline,
+                onBack: { dismiss() },
+                onPlay: { startPlayback() },
+                onToggleWatchlist: viewModel.toggleWatchlist,
                 onToggleWatched: viewModel.toggleWatched
             )
             .opacity(stageMetrics.heroContentOpacity)
@@ -1457,61 +1459,6 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
     }
 }
 
-private struct TransparentBlurView: UIViewRepresentable {
-    let style: UIBlurEffect.Style
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeUIView(context: Context) -> UIVisualEffectView {
-        let view = UIVisualEffectView(effect: UIBlurEffect(style: style))
-        view.clipsToBounds = true
-        view.backgroundColor = .clear
-        view.layer.backgroundColor = UIColor.clear.cgColor
-
-        DispatchQueue.main.async {
-            stripTint(from: view, coordinator: context.coordinator)
-        }
-
-        return view
-    }
-
-    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
-        uiView.effect = UIBlurEffect(style: style)
-        uiView.backgroundColor = .clear
-        uiView.layer.backgroundColor = UIColor.clear.cgColor
-
-        if !context.coordinator.didStripTint {
-            DispatchQueue.main.async {
-                stripTint(from: uiView, coordinator: context.coordinator)
-            }
-        }
-    }
-
-    private func stripTint(from view: UIVisualEffectView, coordinator: Coordinator) {
-        guard !coordinator.didStripTint else { return }
-        coordinator.didStripTint = true
-
-        view.layer.filters = []
-
-        for subview in view.subviews {
-            subview.backgroundColor = .clear
-            subview.layer.backgroundColor = UIColor.clear.cgColor
-            stripLayer(subview.layer)
-        }
-    }
-
-    private func stripLayer(_ layer: CALayer) {
-        layer.backgroundColor = UIColor.clear.cgColor
-        layer.filters = []
-        layer.sublayers?.forEach(stripLayer)
-    }
-
-    final class Coordinator {
-        var didStripTint = false
-    }
-}
 #endif
 
 private enum HeroMetadataLayout {
@@ -1529,6 +1476,7 @@ private struct IOSDetailHeroContent: View {
     let playbackStatusText: String?
     let progress: Double?
     let isLoadingPlayback: Bool
+    let isInWatchlist: Bool
     let isWatched: Bool
     let contentWidth: CGFloat
     let horizontalPadding: CGFloat
@@ -1541,6 +1489,7 @@ private struct IOSDetailHeroContent: View {
     let imagePipeline: any ImagePipelineProtocol
     let onBack: () -> Void
     let onPlay: () -> Void
+    let onToggleWatchlist: () -> Void
     let onToggleWatched: () -> Void
 
     @State private var isSynopsisExpanded = false
@@ -1650,14 +1599,26 @@ private struct IOSDetailHeroContent: View {
                 .frame(maxWidth: isCompactHeroLayout ? 248 : 272)
 
                 IOSDetailHeroRoundActionButton(
-                    systemImage: "checkmark",
-                    accessibilityLabel: isWatched ? "Marked Watched" : "Mark Watched",
+                    systemImage: isWatched ? "eye.fill" : "eye",
+                    accessibilityLabel: isWatched ? "Mark Unwatched" : "Mark Watched",
+                    accessibilityIdentifier: "detail_watched_button",
+                    accessibilityValue: isWatched ? "watched" : "not_watched",
                     isActive: isWatched,
                     size: isCompactHeroLayout ? 52 : 56,
                     action: onToggleWatched
                 )
+
+                IOSDetailHeroRoundActionButton(
+                    systemImage: isInWatchlist ? "heart.fill" : "heart",
+                    accessibilityLabel: isInWatchlist ? "Unlike" : "Like",
+                    accessibilityIdentifier: "detail_favorite_button",
+                    accessibilityValue: isInWatchlist ? "liked" : "not_liked",
+                    isActive: isInWatchlist,
+                    size: isCompactHeroLayout ? 52 : 56,
+                    action: onToggleWatchlist
+                )
             }
-            .frame(maxWidth: min(contentWidth, isCompactHeroLayout ? 312 : 336))
+            .frame(maxWidth: min(contentWidth, isCompactHeroLayout ? 388 : 424))
         }
     }
 
@@ -2058,6 +2019,8 @@ private struct IOSDetailHeroRoundActionButton: View {
 
     let systemImage: String
     let accessibilityLabel: String
+    let accessibilityIdentifier: String
+    let accessibilityValue: String
     let isActive: Bool
     let size: CGFloat
     let action: () -> Void
@@ -2075,9 +2038,14 @@ private struct IOSDetailHeroRoundActionButton: View {
                 }
                 .shadow(color: .black.opacity(isFocused ? 0.24 : 0.14), radius: isFocused ? 16 : 10, x: 0, y: isFocused ? 8 : 5)
                 .scaleEffect(isFocused ? 1.03 : 1)
+                .accessibilityHidden(true)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
+        .contentShape(Circle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(accessibilityLabel))
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityValue(Text(accessibilityValue))
         .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 

@@ -9,6 +9,7 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
     private enum Keys {
         static let serverConfiguration = "settings.serverConfiguration"
         static let lastSession = "settings.lastSession"
+        static let episodeReleaseNotificationsEnabled = "settings.episodeReleaseNotificationsEnabled"
         static let hasCompletedOnboarding = "settings.hasCompletedOnboarding"
         static let completedOnboardingVersion = "settings.completedOnboardingVersion"
     }
@@ -43,6 +44,11 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
                 defaults.removeObject(forKey: Keys.lastSession)
             }
         }
+    }
+
+    public var episodeReleaseNotificationsEnabled: Bool {
+        get { defaults.bool(forKey: Keys.episodeReleaseNotificationsEnabled) }
+        set { defaults.set(newValue, forKey: Keys.episodeReleaseNotificationsEnabled) }
     }
 
     public var hasCompletedOnboarding: Bool {

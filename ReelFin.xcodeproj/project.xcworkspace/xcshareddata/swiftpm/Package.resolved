@@ -1,5 +1,5 @@
 {
-  "originHash" : "c9e9705def54a5c266537f93b2a579f3cd2510bc5f7601d33c20c6cdd916adac",
+  "originHash" : "02be516eb9823184dd4e63dc95334ad33d0fdf55297017434436283ef969b55d",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "16cd512711375fa73f25ae5e373f596bdf4251ae",
         "version" : "8.58.0"
+      }
+    },
+    {
+      "identity" : "variableblur",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/nikstar/VariableBlur.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "5073a0d9080e488a2d317e04859c001a57fbb3e8"
       }
     }
   ],

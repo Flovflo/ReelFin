@@ -12,6 +12,15 @@
 
 ReelFin is a native Jellyfin app focused on deterministic playback, modern SwiftUI interfaces, and Apple-first media pipelines. The project avoids VLC-style embedded stacks and instead leans on `AVFoundation`, `AVKit`, and `VideoToolbox` to keep playback debuggable, efficient, and App Store friendly across iPhone, iPad, and Apple TV.
 
+## License
+
+ReelFin is a proprietary, all-rights-reserved codebase.
+Copyright (c) 2026 Florian Taffin. All rights reserved.
+
+No permission is granted to use, copy, modify, distribute, sublicense, or create
+derivative works from this repository without prior written authorization.
+See `LICENSE` and `COPYRIGHT.md` for the full notice and permission contact.
+
 ## Why ReelFin
 
 - Native Jellyfin playback path across iPhone, iPad, and Apple TV

@@ -83,7 +83,25 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         return eps.first
     }
 
+    func fetchNextUpEpisodes(limit: Int) async throws -> [MediaItem] {
+        Array(Self.continueWatchingEpisodes().prefix(limit))
+    }
+
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed {
+        let releasedMovies = Self.sampleItems(prefix: 8).enumerated().map { index, item -> MediaItem in
+            var copy = item
+            copy.mediaType = .movie
+            copy.year = 2026 - (index % 3)
+            return copy
+        }
+        let releasedSeries = Self.sampleItems(prefix: 8).enumerated().map { index, item -> MediaItem in
+            var copy = item
+            copy.id = "released-series-\(index)"
+            copy.name = "Released Series \(index + 1)"
+            copy.mediaType = .series
+            copy.year = 2026 - (index % 2)
+            return copy
+        }
         let recentMovies = Self.sampleItems(prefix: 8).map { item -> MediaItem in
             var copy = item
             copy.mediaType = .movie
@@ -94,28 +112,12 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
             copy.mediaType = .series
             return copy
         }
-        let nextUp = Self.sampleItems(prefix: 8).enumerated().map { index, item -> MediaItem in
-            var copy = item
-            copy.mediaType = .episode
-            copy.indexNumber = index + 1
-            copy.parentIndexNumber = 1
-            copy.seriesName = "Sample Series \(index + 1)"
-            return copy
-        }
-
         return HomeFeed(featured: Self.sampleItems(prefix: 5), rows: [
             HomeRow(kind: .continueWatching, title: "Continue Watching", items: Self.continueWatchingItems()),
-            HomeRow(kind: .nextUp, title: "Next Up", items: nextUp),
+            HomeRow(kind: .recentlyReleasedMovies, title: "Recently Released Movies", items: releasedMovies),
+            HomeRow(kind: .recentlyReleasedSeries, title: "Recently Released TV Shows", items: releasedSeries),
             HomeRow(kind: .recentlyAddedMovies, title: "Recently Added Movies", items: recentMovies),
-            HomeRow(kind: .recentlyAddedSeries, title: "Recently Added Series", items: recentSeries),
-            HomeRow(kind: .popular, title: "Popular", items: Self.sampleItems(prefix: 8)),
-            HomeRow(kind: .trending, title: "Trending", items: Self.sampleItems(prefix: 8)),
-            HomeRow(kind: .movies, title: "Movies", items: Self.sampleItems(prefix: 8)),
-            HomeRow(kind: .shows, title: "Shows", items: Self.sampleItems(prefix: 8).map { item in
-                var copy = item
-                copy.mediaType = .series
-                return copy
-            })
+            HomeRow(kind: .recentlyAddedSeries, title: "Recently Added TV", items: recentSeries)
         ])
     }
 
@@ -283,6 +285,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
 final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
+    var episodeReleaseNotificationsEnabled = false
     var hasCompletedOnboarding: Bool
     var completedOnboardingVersion: Int
 
@@ -424,6 +427,7 @@ public enum ReelFinPreviewFactory {
         let images = MockImagePipeline()
         let sync = MockSyncEngine()
         let settings = MockSettingsStore(authenticated: authenticated)
+        let notifications = NoopEpisodeReleaseNotificationManager()
         let seriesCache = SeriesLookupCache(apiClient: api)
         let warmupManager = PlaybackWarmupManager(apiClient: api, ttl: 60)
         let tvFocusWarmupCoordinator = TVFocusWarmupCoordinator(
@@ -438,6 +442,7 @@ public enum ReelFinPreviewFactory {
             imagePipeline: images,
             syncEngine: sync,
             settingsStore: settings,
+            episodeReleaseNotificationManager: notifications,
             seriesCache: seriesCache,
             playbackWarmupManager: warmupManager,
             tvFocusWarmupCoordinator: tvFocusWarmupCoordinator,

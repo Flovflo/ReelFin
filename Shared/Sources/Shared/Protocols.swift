@@ -54,6 +54,7 @@ public protocol TokenStoreProtocol: AnyObject, Sendable {
 public protocol SettingsStoreProtocol: AnyObject, Sendable {
     var serverConfiguration: ServerConfiguration? { get set }
     var lastSession: UserSession? { get set }
+    var episodeReleaseNotificationsEnabled: Bool { get set }
     var hasCompletedOnboarding: Bool { get set }
     var completedOnboardingVersion: Int { get set }
 }
@@ -75,6 +76,7 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
 
     func fetchUserViews() async throws -> [LibraryView]
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed
+    func fetchNextUpEpisodes(limit: Int) async throws -> [MediaItem]
     func fetchItem(id: String) async throws -> MediaItem
     func fetchItemDetail(id: String) async throws -> MediaDetail
     func fetchSeasons(seriesID: String) async throws -> [MediaItem]
@@ -112,6 +114,10 @@ public protocol MetadataRepositoryProtocol: AnyObject, Sendable {
 
     func fetchLastSyncDate() async throws -> Date?
     func setLastSyncDate(_ date: Date) async throws
+
+    func upsertEpisodeReleaseState(_ state: EpisodeReleaseState) async throws
+    func fetchEpisodeReleaseState(seriesID: String) async throws -> EpisodeReleaseState?
+    func fetchEpisodeReleaseStates() async throws -> [EpisodeReleaseState]
 }
 
 public protocol MediaDetailRepositoryProtocol: AnyObject, Sendable {
@@ -139,6 +145,10 @@ public protocol SyncEngineProtocol: AnyObject, Sendable {
 }
 
 public extension JellyfinAPIClientProtocol {
+    func fetchNextUpEpisodes(limit _: Int) async throws -> [MediaItem] {
+        []
+    }
+
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
         _ = options
         return try await fetchPlaybackSources(itemID: itemID)
@@ -172,5 +182,19 @@ public extension ImagePipelineProtocol {
     func cancel(url: URL, consumer consumerID: ImageRequestConsumerID) {
         _ = consumerID
         cancel(url: url)
+    }
+}
+
+public extension MetadataRepositoryProtocol {
+    func upsertEpisodeReleaseState(_ state: EpisodeReleaseState) async throws {
+        _ = state
+    }
+
+    func fetchEpisodeReleaseState(seriesID _: String) async throws -> EpisodeReleaseState? {
+        nil
+    }
+
+    func fetchEpisodeReleaseStates() async throws -> [EpisodeReleaseState] {
+        []
     }
 }

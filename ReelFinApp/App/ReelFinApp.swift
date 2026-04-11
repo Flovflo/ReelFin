@@ -28,6 +28,9 @@ struct ReelFinApp: App {
         WindowGroup {
             ReelFinRootView(dependencies: dependencies)
                 .preferredColorScheme(.dark)
+                .onAppear {
+                    appDelegate.configure(dependencies: dependencies)
+                }
                 .onChange(of: scenePhase) { _, newValue in
                     if newValue == .active {
                         Task {

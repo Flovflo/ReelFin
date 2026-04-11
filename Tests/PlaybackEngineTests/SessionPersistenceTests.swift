@@ -38,6 +38,7 @@ final class SessionPersistenceTests: XCTestCase {
 private final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var serverConfiguration: ServerConfiguration?
     var lastSession: UserSession?
+    var episodeReleaseNotificationsEnabled = false
     var hasCompletedOnboarding = false
     var completedOnboardingVersion = 0
 

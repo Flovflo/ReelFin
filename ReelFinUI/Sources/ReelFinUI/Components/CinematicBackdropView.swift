@@ -149,7 +149,7 @@ struct CinematicBackdropView: View {
 
             LinearGradient(
                 stops: [
-                    .init(color: Color.black.opacity(0.24), location: 0.0),
+                    .init(color: Color.black.opacity(0.08), location: 0.0),
                     .init(color: .clear, location: 0.16),
                     .init(color: .clear, location: bottomFadeStart),
                     .init(color: Color.black.opacity(0.92), location: 0.92),

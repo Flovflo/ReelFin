@@ -29,6 +29,7 @@ final class TVAppContainer {
     let detailRepository: any MediaDetailRepositoryProtocol & Sendable
     let imagePipeline: DefaultImagePipeline
     let syncEngine: DefaultSyncEngine
+    let episodeReleaseNotificationManager: any EpisodeReleaseNotificationManaging
     let seriesCache: SeriesLookupCache
     let playbackWarmupManager: PlaybackWarmupManager
     let tvFocusWarmupCoordinator: TVFocusWarmupCoordinator
@@ -54,6 +55,7 @@ final class TVAppContainer {
         }
 
         imagePipeline = DefaultImagePipeline()
+        episodeReleaseNotificationManager = NoopEpisodeReleaseNotificationManager()
         detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
             repository: repository
@@ -77,6 +79,7 @@ final class TVAppContainer {
             imagePipeline: imagePipeline,
             syncEngine: syncEngine,
             settingsStore: settingsStore,
+            episodeReleaseNotificationManager: episodeReleaseNotificationManager,
             seriesCache: seriesCache,
             playbackWarmupManager: playbackWarmupManager,
             tvFocusWarmupCoordinator: tvFocusWarmupCoordinator,

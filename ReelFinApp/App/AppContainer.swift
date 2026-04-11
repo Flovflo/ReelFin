@@ -15,9 +15,11 @@ final class AppContainer {
     let detailRepository: any MediaDetailRepositoryProtocol & Sendable
     let imagePipeline: DefaultImagePipeline
     let syncEngine: DefaultSyncEngine
+    let episodeReleaseNotificationManager: any EpisodeReleaseNotificationManaging
     let seriesCache: SeriesLookupCache
     let playbackWarmupManager: PlaybackWarmupManager
     let tvFocusWarmupCoordinator: TVFocusWarmupCoordinator
+    private let episodeReleaseTracker: DefaultEpisodeReleaseTracker
     private var sharedPlaybackSessionController: PlaybackSessionController?
 
     init() {
@@ -45,6 +47,11 @@ final class AppContainer {
         }
 
         imagePipeline = DefaultImagePipeline()
+        episodeReleaseNotificationManager = SystemEpisodeReleaseNotificationManager(settingsStore: settingsStore)
+        episodeReleaseTracker = DefaultEpisodeReleaseTracker(
+            apiClient: apiClient,
+            repository: repository
+        )
         detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
             repository: repository
@@ -52,7 +59,9 @@ final class AppContainer {
         syncEngine = DefaultSyncEngine(
             apiClient: apiClient,
             repository: repository,
-            imagePipeline: imagePipeline
+            imagePipeline: imagePipeline,
+            episodeReleaseTracker: episodeReleaseTracker,
+            episodeReleaseNotificationManager: episodeReleaseNotificationManager
         )
         seriesCache = SeriesLookupCache(apiClient: apiClient)
         playbackWarmupManager = PlaybackWarmupManager(apiClient: apiClient)
@@ -82,6 +91,7 @@ final class AppContainer {
             imagePipeline: imagePipeline,
             syncEngine: syncEngine,
             settingsStore: settingsStore,
+            episodeReleaseNotificationManager: episodeReleaseNotificationManager,
             seriesCache: seriesCache,
             playbackWarmupManager: playbackWarmupManager,
             tvFocusWarmupCoordinator: tvFocusWarmupCoordinator,
@@ -100,6 +110,7 @@ final class AppContainer {
         let controller = PlaybackSessionController(
             apiClient: apiClient,
             repository: repository,
+            episodeReleaseTracker: episodeReleaseTracker,
             warmupManager: playbackWarmupManager
         )
         sharedPlaybackSessionController = controller

@@ -127,6 +127,28 @@ final class GRDBMetadataRepositoryTests: XCTestCase {
         XCTAssertNil(cachedItem?.playbackPositionDisplayText)
     }
 
+    func testEpisodeReleaseStateRoundTrips() async throws {
+        let repository = try makeRepository()
+        let updatedAt = Date(timeIntervalSince1970: 123_456)
+        let state = EpisodeReleaseState(
+            seriesID: "series-1",
+            seriesName: "For All Mankind",
+            lastKnownNextUpEpisodeID: "episode-2",
+            lastKnownNextUpSeasonNumber: 5,
+            lastKnownNextUpEpisodeNumber: 2,
+            lastNotifiedEpisodeID: "episode-2",
+            updatedAt: updatedAt
+        )
+
+        try await repository.upsertEpisodeReleaseState(state)
+
+        let restored = try await repository.fetchEpisodeReleaseState(seriesID: "series-1")
+        let allStates = try await repository.fetchEpisodeReleaseStates()
+
+        XCTAssertEqual(restored, state)
+        XCTAssertEqual(allStates, [state])
+    }
+
     private func makeRepository() throws -> GRDBMetadataRepository {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

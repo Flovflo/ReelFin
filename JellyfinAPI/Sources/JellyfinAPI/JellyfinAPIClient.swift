@@ -232,31 +232,6 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             libraryID: nil
         )
 
-        async let popularItems = fetchItems(
-            userID: userID,
-            path: "Users/\(userID)/Items",
-            query: [
-                URLQueryItem(name: "Recursive", value: "true"),
-                URLQueryItem(name: "Limit", value: "20"),
-                URLQueryItem(name: "SortBy", value: "CommunityRating,SortName"),
-                URLQueryItem(name: "SortOrder", value: "Descending")
-            ] + incrementalQuery(since: since),
-            libraryID: nil
-        )
-
-        async let nextUpEpisodes = fetchItems(
-            userID: userID,
-            path: "Shows/NextUp",
-            query: [
-                URLQueryItem(name: "UserId", value: userID),
-                URLQueryItem(name: "Limit", value: "20"),
-                URLQueryItem(name: "Fields", value: "Overview,MediaStreams,AirDays,UserData"),
-                URLQueryItem(name: "EnableResumable", value: "true"),
-                URLQueryItem(name: "EnableRewatching", value: "false")
-            ],
-            libraryID: nil
-        )
-
         async let recentlyAddedMovies = fetchItems(
             userID: userID,
             path: "Users/\(userID)/Items",
@@ -265,6 +240,19 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 URLQueryItem(name: "IncludeItemTypes", value: "Movie"),
                 URLQueryItem(name: "Limit", value: "20"),
                 URLQueryItem(name: "SortBy", value: "DateCreated"),
+                URLQueryItem(name: "SortOrder", value: "Descending")
+            ] + incrementalQuery(since: since),
+            libraryID: nil
+        )
+
+        async let recentlyReleasedMovies = fetchItems(
+            userID: userID,
+            path: "Users/\(userID)/Items",
+            query: [
+                URLQueryItem(name: "Recursive", value: "true"),
+                URLQueryItem(name: "IncludeItemTypes", value: "Movie"),
+                URLQueryItem(name: "Limit", value: "20"),
+                URLQueryItem(name: "SortBy", value: "PremiereDate"),
                 URLQueryItem(name: "SortOrder", value: "Descending")
             ] + incrementalQuery(since: since),
             libraryID: nil
@@ -283,61 +271,32 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             libraryID: nil
         )
 
-        async let trendingItems = fetchItems(
-            userID: userID,
-            path: "Users/\(userID)/Items",
-            query: [
-                URLQueryItem(name: "Recursive", value: "true"),
-                URLQueryItem(name: "Limit", value: "20"),
-                URLQueryItem(name: "SortBy", value: "DateCreated,SortName"),
-                URLQueryItem(name: "SortOrder", value: "Descending")
-            ] + incrementalQuery(since: since),
-            libraryID: nil
-        )
-
-        async let movies = fetchItems(
-            userID: userID,
-            path: "Users/\(userID)/Items",
-            query: [
-                URLQueryItem(name: "Recursive", value: "true"),
-                URLQueryItem(name: "IncludeItemTypes", value: "Movie"),
-                URLQueryItem(name: "Limit", value: "20"),
-                URLQueryItem(name: "SortBy", value: "DateCreated")
-            ] + incrementalQuery(since: since),
-            libraryID: nil
-        )
-
-        async let shows = fetchItems(
+        async let recentlyReleasedSeries = fetchItems(
             userID: userID,
             path: "Users/\(userID)/Items",
             query: [
                 URLQueryItem(name: "Recursive", value: "true"),
                 URLQueryItem(name: "IncludeItemTypes", value: "Series"),
                 URLQueryItem(name: "Limit", value: "20"),
-                URLQueryItem(name: "SortBy", value: "PremiereDate")
+                URLQueryItem(name: "SortBy", value: "PremiereDate"),
+                URLQueryItem(name: "SortOrder", value: "Descending")
             ] + incrementalQuery(since: since),
             libraryID: nil
         )
 
         let resume = (try? await resumeItems) ?? []
-        let nextUp = (try? await nextUpEpisodes) ?? []
+        let releasedMovieItems = (try? await recentlyReleasedMovies) ?? []
         let recentMovieItems = (try? await recentlyAddedMovies) ?? []
         let recentSeriesItems = (try? await recentlyAddedSeries) ?? []
-        let popular = (try? await popularItems) ?? []
-        let trending = (try? await trendingItems) ?? []
-        let movieItems = (try? await movies) ?? []
-        let showItems = (try? await shows) ?? []
+        let releasedSeriesItems = (try? await recentlyReleasedSeries) ?? []
 
-        let featured = Array((recentMovieItems + recentSeriesItems + popular).prefix(8))
+        let featured = Array((releasedMovieItems + releasedSeriesItems + recentMovieItems + recentSeriesItems).prefix(8))
         let rows = [
             HomeRow(kind: .continueWatching, title: "Continue Watching", items: resume),
-            HomeRow(kind: .nextUp, title: "Next Up", items: nextUp),
+            HomeRow(kind: .recentlyReleasedMovies, title: "Recently Released Movies", items: releasedMovieItems),
+            HomeRow(kind: .recentlyReleasedSeries, title: "Recently Released TV Shows", items: releasedSeriesItems),
             HomeRow(kind: .recentlyAddedMovies, title: "Recently Added Movies", items: recentMovieItems),
-            HomeRow(kind: .recentlyAddedSeries, title: "Recently Added Series", items: recentSeriesItems),
-            HomeRow(kind: .popular, title: "Popular", items: popular),
-            HomeRow(kind: .trending, title: "Trending", items: trending),
-            HomeRow(kind: .movies, title: "Movies", items: movieItems),
-            HomeRow(kind: .shows, title: "Shows", items: showItems)
+            HomeRow(kind: .recentlyAddedSeries, title: "Recently Added TV", items: recentSeriesItems)
         ]
 
         return HomeFeed(featured: featured, rows: rows)
@@ -399,6 +358,21 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 URLQueryItem(name: "UserId", value: userID),
                 URLQueryItem(name: "SeasonId", value: seasonID),
                 fieldsQueryItem(ItemFields.episodes)
+            ]
+        )
+        return response.items.map { $0.toDomain() }
+    }
+
+    public func fetchNextUpEpisodes(limit: Int) async throws -> [MediaItem] {
+        let userID = try requireUserID()
+        let response: ItemsResponseDTO = try await request(
+            path: "Shows/NextUp",
+            query: [
+                URLQueryItem(name: "UserId", value: userID),
+                URLQueryItem(name: "Limit", value: String(max(1, limit))),
+                fieldsQueryItem(ItemFields.episodes),
+                URLQueryItem(name: "EnableResumable", value: "true"),
+                URLQueryItem(name: "EnableRewatching", value: "false")
             ]
         )
         return response.items.map { $0.toDomain() }

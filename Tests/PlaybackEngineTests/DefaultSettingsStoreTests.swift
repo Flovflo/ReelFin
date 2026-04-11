@@ -42,4 +42,19 @@ final class DefaultSettingsStoreTests: XCTestCase {
         XCTAssertEqual(restored.username, "Legacy")
         XCTAssertEqual(restored.token, "")
     }
+
+    func testEpisodeReleaseNotificationsEnabledPersists() throws {
+        let suiteName = "DefaultSettingsStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = DefaultSettingsStore(defaults: defaults)
+        XCTAssertFalse(store.episodeReleaseNotificationsEnabled)
+
+        store.episodeReleaseNotificationsEnabled = true
+
+        let restored = DefaultSettingsStore(defaults: defaults)
+        XCTAssertTrue(restored.episodeReleaseNotificationsEnabled)
+    }
 }

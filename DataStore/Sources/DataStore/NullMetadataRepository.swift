@@ -41,4 +41,14 @@ public actor NullMetadataRepository: MetadataRepositoryProtocol {
     }
 
     public func setLastSyncDate(_ date: Date) async throws {}
+
+    public func upsertEpisodeReleaseState(_ state: EpisodeReleaseState) async throws {}
+
+    public func fetchEpisodeReleaseState(seriesID: String) async throws -> EpisodeReleaseState? {
+        nil
+    }
+
+    public func fetchEpisodeReleaseStates() async throws -> [EpisodeReleaseState] {
+        []
+    }
 }
