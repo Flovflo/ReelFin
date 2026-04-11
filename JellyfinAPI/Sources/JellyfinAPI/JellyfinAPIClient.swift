@@ -406,24 +406,75 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
     public func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
         let userID = try requireUserID()
+        let viewIDs = query.resolvedViewIDs
+
+        guard viewIDs.count > 1 else {
+            return try await fetchLibraryItemsPage(
+                userID: userID,
+                page: query.page,
+                pageSize: query.pageSize,
+                searchQuery: query.query,
+                mediaType: query.mediaType,
+                viewID: viewIDs.first
+            )
+        }
+
+        let requestedWindowSize = max(query.pageSize, (query.page + 1) * query.pageSize)
+        var itemsByViewID: [String: [MediaItem]] = [:]
+
+        try await withThrowingTaskGroup(of: (String, [MediaItem]).self) { group in
+            for viewID in viewIDs {
+                group.addTask {
+                    let items = try await self.fetchLibraryItemsPage(
+                        userID: userID,
+                        page: 0,
+                        pageSize: requestedWindowSize,
+                        searchQuery: query.query,
+                        mediaType: query.mediaType,
+                        viewID: viewID
+                    )
+                    return (viewID, items)
+                }
+            }
+
+            for try await (viewID, items) in group {
+                itemsByViewID[viewID] = items
+            }
+        }
+
+        let merged = viewIDs.flatMap { itemsByViewID[$0] ?? [] }
+        let deduped = dedupedLibraryItems(merged)
+        let startIndex = min(query.page * query.pageSize, deduped.count)
+        let endIndex = min(startIndex + query.pageSize, deduped.count)
+        return Array(deduped[startIndex ..< endIndex])
+    }
+
+    private func fetchLibraryItemsPage(
+        userID: String,
+        page: Int,
+        pageSize: Int,
+        searchQuery: String?,
+        mediaType: MediaType?,
+        viewID: String?
+    ) async throws -> [MediaItem] {
         var queryItems = [
             URLQueryItem(name: "UserId", value: userID),
-            URLQueryItem(name: "StartIndex", value: String(query.page * query.pageSize)),
-            URLQueryItem(name: "Limit", value: String(query.pageSize)),
+            URLQueryItem(name: "StartIndex", value: String(page * pageSize)),
+            URLQueryItem(name: "Limit", value: String(pageSize)),
             URLQueryItem(name: "Recursive", value: "true"),
             URLQueryItem(name: "SortBy", value: "DateCreated,SortName"),
             URLQueryItem(name: "SortOrder", value: "Descending")
         ]
 
-        if let viewID = query.viewID {
+        if let viewID {
             queryItems.append(URLQueryItem(name: "ParentId", value: viewID))
         }
 
-        if let search = query.query, !search.isEmpty {
-            queryItems.append(URLQueryItem(name: "SearchTerm", value: search))
+        if let searchQuery, !searchQuery.isEmpty {
+            queryItems.append(URLQueryItem(name: "SearchTerm", value: searchQuery))
         }
 
-        if let mediaType = query.mediaType {
+        if let mediaType {
             switch mediaType {
             case .movie:
                 queryItems.append(URLQueryItem(name: "IncludeItemTypes", value: "Movie"))
@@ -441,7 +492,18 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         queryItems = mergedQueryItems(queryItems, fields: ItemFields.detail)
 
         let response: ItemsResponseDTO = try await request(path: "Users/\(userID)/Items", query: queryItems)
-        return response.items.map { $0.toDomain(libraryID: query.viewID) }
+        return response.items.map { $0.toDomain(libraryID: viewID) }
+    }
+
+    private func dedupedLibraryItems(_ items: [MediaItem]) -> [MediaItem] {
+        var seen = Set<String>()
+        var deduped: [MediaItem] = []
+
+        for item in items where seen.insert(item.id).inserted {
+            deduped.append(item)
+        }
+
+        return deduped
     }
 
     public func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {

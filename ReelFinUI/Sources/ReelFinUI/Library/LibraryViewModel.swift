@@ -42,15 +42,8 @@ final class LibraryViewModel: ObservableObject {
 
         do {
             items = try await dependencies.repository.searchItems(query: searchQuery, limit: 100)
-            let remote = try await dependencies.apiClient.fetchLibraryItems(
-                query: LibraryQuery(
-                    viewID: nil,
-                    page: 0,
-                    pageSize: pageSize,
-                    query: searchQuery,
-                    mediaType: selectedFilter
-                )
-            )
+            let query = try await makeLibraryQuery(page: 0, pageSize: pageSize)
+            let remote = try await dependencies.apiClient.fetchLibraryItems(query: query)
             try await dependencies.repository.upsertItems(remote)
             items = sorted(items + remote)
         } catch {
@@ -82,14 +75,12 @@ final class LibraryViewModel: ObservableObject {
 
     private func loadFromCache(reset: Bool) async {
         do {
+            let query = try await makeLibraryQuery(
+                page: 0,
+                pageSize: max(pageSize, 120)
+            )
             let local = try await dependencies.repository.fetchLibraryItems(
-                query: LibraryQuery(
-                    viewID: nil,
-                    page: 0,
-                    pageSize: max(pageSize, 120),
-                    query: searchQuery.isEmpty ? nil : searchQuery,
-                    mediaType: selectedFilter
-                )
+                query: query
             )
             items = sorted(local)
             if reset {
@@ -108,15 +99,8 @@ final class LibraryViewModel: ObservableObject {
 
         do {
             let page = reset ? 0 : currentPage
-            let remoteItems = try await dependencies.apiClient.fetchLibraryItems(
-                query: LibraryQuery(
-                    viewID: nil,
-                    page: page,
-                    pageSize: pageSize,
-                    query: searchQuery.isEmpty ? nil : searchQuery,
-                    mediaType: selectedFilter
-                )
-            )
+            let query = try await makeLibraryQuery(page: page, pageSize: pageSize)
+            let remoteItems = try await dependencies.apiClient.fetchLibraryItems(query: query)
 
             if remoteItems.count < pageSize {
                 isLastPage = true
@@ -135,6 +119,50 @@ final class LibraryViewModel: ObservableObject {
         } catch {
             AppLog.ui.error("Remote library load failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func makeLibraryQuery(page: Int, pageSize: Int) async throws -> LibraryQuery {
+        let search = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scopedViewIDs = try await resolvedLibraryViewIDs()
+
+        if scopedViewIDs.isEmpty {
+            return LibraryQuery(
+                viewID: nil,
+                page: page,
+                pageSize: pageSize,
+                query: search.isEmpty ? nil : search,
+                mediaType: selectedFilter
+            )
+        }
+
+        return LibraryQuery(
+            viewIDs: scopedViewIDs,
+            page: page,
+            pageSize: pageSize,
+            query: search.isEmpty ? nil : search,
+            mediaType: selectedFilter
+        )
+    }
+
+    private func resolvedLibraryViewIDs() async throws -> [String] {
+        let cachedViews = try await dependencies.repository.fetchLibraryViews()
+        let cachedMatches = matchingLibraryViewIDs(in: cachedViews)
+        if !cachedMatches.isEmpty {
+            return cachedMatches
+        }
+
+        let remoteViews = try await dependencies.apiClient.fetchUserViews()
+        if !remoteViews.isEmpty {
+            try await dependencies.repository.saveLibraryViews(remoteViews)
+        }
+
+        return matchingLibraryViewIDs(in: remoteViews)
+    }
+
+    private func matchingLibraryViewIDs(in views: [Shared.LibraryView]) -> [String] {
+        views
+            .filter { $0.supports(mediaType: selectedFilter) }
+            .map(\.id)
     }
 
     private func sorted(_ values: [MediaItem]) -> [MediaItem] {

@@ -5,6 +5,44 @@ import XCTest
 final class GRDBMetadataRepositoryTests: XCTestCase {
     private let ticksPerMinute: Int64 = 60 * 10_000_000
 
+    func testFetchLibraryItemsAggregatesMultipleViewIDs() async throws {
+        let repository = try makeRepository()
+        let movieA = MediaItem(id: "movie-a", name: "Movie A", mediaType: .movie, libraryID: "movies-a")
+        let movieB = MediaItem(id: "movie-b", name: "Movie B", mediaType: .movie, libraryID: "movies-b")
+        let series = MediaItem(id: "series-a", name: "Series A", mediaType: .series, libraryID: "shows-a")
+
+        try await repository.upsertItems([movieA, movieB, series])
+
+        let items = try await repository.fetchLibraryItems(
+            query: LibraryQuery(
+                viewIDs: ["movies-a", "movies-b"],
+                page: 0,
+                pageSize: 10,
+                query: nil,
+                mediaType: .movie
+            )
+        )
+
+        XCTAssertEqual(Set(items.map(\.id)), ["movie-a", "movie-b"])
+        XCTAssertEqual(Set(items.compactMap(\.libraryID)), ["movies-a", "movies-b"])
+    }
+
+    func testUpsertItemsPreservesExistingLibraryIDWhenIncomingItemScopeIsMissing() async throws {
+        let repository = try makeRepository()
+
+        try await repository.upsertItems([
+            MediaItem(id: "movie-a", name: "Scoped", mediaType: .movie, libraryID: "movies-a")
+        ])
+        try await repository.upsertItems([
+            MediaItem(id: "movie-a", name: "Scoped Updated", mediaType: .movie, libraryID: nil)
+        ])
+
+        let restored = try await repository.fetchItem(id: "movie-a")
+
+        XCTAssertEqual(restored?.name, "Scoped Updated")
+        XCTAssertEqual(restored?.libraryID, "movies-a")
+    }
+
     func testSaveHomeFeedPreservesWatchStateAndMetadata() async throws {
         let repository = try makeRepository()
 

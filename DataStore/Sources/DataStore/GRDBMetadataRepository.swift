@@ -160,9 +160,13 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
             var conditions = ["1 = 1"]
             var arguments = StatementArguments()
 
-            if let viewID = query.viewID {
-                conditions.append("m.library_id = ?")
-                arguments += [viewID]
+            let viewIDs = query.resolvedViewIDs
+            if !viewIDs.isEmpty {
+                let placeholders = Array(repeating: "?", count: viewIDs.count).joined(separator: ", ")
+                conditions.append("m.library_id IN (\(placeholders))")
+                for viewID in viewIDs {
+                    arguments += [viewID]
+                }
             }
 
             if let mediaType = query.mediaType {
@@ -383,7 +387,7 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
                     community_rating = excluded.community_rating,
                     poster_tag = excluded.poster_tag,
                     backdrop_tag = excluded.backdrop_tag,
-                    library_id = excluded.library_id,
+                    library_id = COALESCE(excluded.library_id, media_items.library_id),
                     parent_id = excluded.parent_id,
                     series_name = COALESCE(excluded.series_name, media_items.series_name),
                     series_poster_tag = COALESCE(excluded.series_poster_tag, media_items.series_poster_tag),

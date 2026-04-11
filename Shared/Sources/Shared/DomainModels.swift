@@ -181,6 +181,27 @@ public struct LibraryView: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+public extension LibraryView {
+    var normalizedCollectionType: String? {
+        collectionType?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    func supports(mediaType: MediaType) -> Bool {
+        guard let normalizedCollectionType else { return false }
+
+        switch mediaType {
+        case .movie:
+            return ["movie", "movies"].contains(normalizedCollectionType)
+        case .series:
+            return ["series", "show", "shows", "tvshow", "tvshows"].contains(normalizedCollectionType)
+        case .episode, .season, .unknown:
+            return false
+        }
+    }
+}
+
 public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var name: String
@@ -728,6 +749,7 @@ public struct PlaybackProgress: Codable, Hashable, Sendable {
 
 public struct LibraryQuery: Hashable, Sendable {
     public var viewID: String?
+    public var viewIDs: [String]?
     public var page: Int
     public var pageSize: Int
     public var query: String?
@@ -735,10 +757,49 @@ public struct LibraryQuery: Hashable, Sendable {
 
     public init(viewID: String?, page: Int, pageSize: Int, query: String?, mediaType: MediaType?) {
         self.viewID = viewID
+        viewIDs = nil
         self.page = page
         self.pageSize = pageSize
         self.query = query
         self.mediaType = mediaType
+    }
+
+    public init(viewIDs: [String], page: Int, pageSize: Int, query: String?, mediaType: MediaType?) {
+        let normalizedIDs = Self.normalizedViewIDs(from: viewIDs)
+        viewID = normalizedIDs.count == 1 ? normalizedIDs.first : nil
+        self.viewIDs = normalizedIDs.isEmpty ? nil : normalizedIDs
+        self.page = page
+        self.pageSize = pageSize
+        self.query = query
+        self.mediaType = mediaType
+    }
+
+    public var resolvedViewIDs: [String] {
+        if let viewIDs, !viewIDs.isEmpty {
+            return Self.normalizedViewIDs(from: viewIDs)
+        }
+
+        guard
+            let viewID,
+            !viewID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return []
+        }
+
+        return [viewID]
+    }
+
+    private static func normalizedViewIDs(from viewIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+
+        for candidate in viewIDs {
+            let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty, seen.insert(normalized).inserted else { continue }
+            ordered.append(normalized)
+        }
+
+        return ordered
     }
 }
 
