@@ -217,87 +217,141 @@ struct LibraryView: View {
                     .reelFinTitleStyle()
                 Spacer()
 
-                glassGroup(spacing: 10) {
-                    Menu {
-                        Picker("Sort", selection: $viewModel.sortMode) {
-                            ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue).tag(mode)
-                            }
+                Menu {
+                    Picker("Sort", selection: $viewModel.sortMode) {
+                        ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
                         }
-                    } label: {
-                        Image(systemName: "arrow.up.arrow.down")
-                            .font(.system(size: 15, weight: .semibold))
-                            .padding(10)
-                            .foregroundStyle(.white.opacity(0.96))
-                            .background {
-                                Color.clear.reelFinGlassCircle(
-                                    interactive: true,
-                                    tint: Color.white.opacity(0.10),
-                                    stroke: Color.white.opacity(0.12),
-                                    shadowOpacity: 0.10,
-                                    shadowRadius: 10,
-                                    shadowYOffset: 4
-                                )
-                            }
                     }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(.white.opacity(0.98))
+                        .background {
+                            libraryCircleBackground()
+                        }
                 }
             }
 
-            glassGroup(spacing: 10) {
-                HStack(spacing: 10) {
-                    filterChip(title: "All", isActive: viewModel.selectedFilter == nil) {
-                        viewModel.selectedFilter = nil
-                    }
-                    filterChip(title: "Movies", isActive: viewModel.selectedFilter == .movie) {
-                        viewModel.selectedFilter = .movie
-                    }
-                    filterChip(title: "Shows", isActive: viewModel.selectedFilter == .series) {
-                        viewModel.selectedFilter = .series
-                    }
-                    Spacer()
-                }
+            HStack(spacing: 10) {
+                filterChip(title: "Movies", filter: .movie)
+                filterChip(title: "Shows", filter: .series)
+                Spacer()
             }
 
-            TextField("Search your library", text: $viewModel.searchQuery)
+            TextField(
+                "",
+                text: $viewModel.searchQuery,
+                prompt: Text("Search your library")
+                    .font(.system(size: 17, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+            )
 #if os(iOS)
                 .textInputAutocapitalization(.never)
 #endif
                 .autocorrectionDisabled(true)
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .foregroundStyle(.white)
-                .reelFinGlassRoundedRect(
-                    cornerRadius: 12,
-                    interactive: true,
-                    tint: Color.white.opacity(0.08),
-                    stroke: Color.white.opacity(0.10),
-                    shadowOpacity: 0.10,
-                    shadowRadius: 10,
-                    shadowYOffset: 4
-                )
+                .font(.system(size: 17, weight: .medium, design: .rounded))
+                .padding(.horizontal, 16)
+                .frame(height: 52)
+                .foregroundStyle(.white.opacity(0.98))
+                .background {
+                    librarySearchBackground()
+                }
         }
         .padding(.horizontal, horizontalPadding)
     }
 
-    private func filterChip(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func filterChip(title: String, filter: MediaType) -> some View {
+        let isActive = viewModel.selectedFilter == filter
+
+        return Button {
+            viewModel.selectedFilter = filter
+        } label: {
             Text(title)
-                .font(.system(size: chipFontSize, weight: .semibold, design: .rounded))
+                .font(.system(size: chipFontSize, weight: .bold, design: .rounded))
+                .frame(minWidth: 82)
                 .padding(.horizontal, chipHPad)
                 .padding(.vertical, chipVPad)
-                .foregroundStyle(isActive ? Color.black.opacity(0.92) : Color.white.opacity(0.94))
+                .foregroundStyle(isActive ? Color.black.opacity(0.92) : Color.white.opacity(0.98))
+                .shadow(color: .black.opacity(isActive ? 0.10 : 0.24), radius: isActive ? 1 : 2, y: 1)
                 .background {
-                    Color.clear.reelFinGlassCapsule(
-                        interactive: true,
-                        tint: isActive ? Color.white.opacity(0.24) : Color.white.opacity(0.08),
-                        stroke: Color.white.opacity(isActive ? 0.18 : 0.10),
-                        shadowOpacity: isActive ? 0.14 : 0.08,
-                        shadowRadius: isActive ? 14 : 8,
-                        shadowYOffset: isActive ? 6 : 4
-                    )
+                    libraryFilterBackground(isActive: isActive)
                 }
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func libraryCircleBackground() -> some View {
+        if #available(iOS 26.0, tvOS 26.0, *) {
+            Circle()
+                .fill(Color.white.opacity(0.10))
+                .overlay {
+                    Circle().stroke(Color.white.opacity(0.18), lineWidth: 1)
+                }
+                .glassEffect(.clear.interactive(), in: .circle)
+                .shadow(color: .black.opacity(0.14), radius: 12, x: 0, y: 5)
+        } else {
+            Color.clear.reelFinGlassCircle(
+                interactive: true,
+                tint: Color.black.opacity(0.22),
+                stroke: Color.white.opacity(0.14),
+                shadowOpacity: 0.14,
+                shadowRadius: 12,
+                shadowYOffset: 5
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func librarySearchBackground() -> some View {
+        if #available(iOS 26.0, tvOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                }
+                .glassEffect(.clear.interactive(), in: .rect(cornerRadius: 18))
+                .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 6)
+        } else {
+            Color.clear.reelFinGlassRoundedRect(
+                cornerRadius: 18,
+                interactive: true,
+                tint: Color.black.opacity(0.22),
+                stroke: Color.white.opacity(0.14),
+                shadowOpacity: 0.14,
+                shadowRadius: 14,
+                shadowYOffset: 6
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func libraryFilterBackground(isActive: Bool) -> some View {
+        if #available(iOS 26.0, tvOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(isActive ? Color.white.opacity(0.90) : Color.white.opacity(0.10))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(
+                            isActive ? Color.white.opacity(0.28) : Color.white.opacity(0.16),
+                            lineWidth: 1
+                        )
+                }
+                .glassEffect(.clear.interactive(), in: .capsule)
+                .shadow(color: .black.opacity(isActive ? 0.08 : 0.10), radius: isActive ? 10 : 8, x: 0, y: 4)
+        } else {
+            Color.clear.reelFinGlassCapsule(
+                interactive: true,
+                tint: isActive ? Color.white.opacity(0.22) : Color.black.opacity(0.22),
+                stroke: Color.white.opacity(isActive ? 0.20 : 0.14),
+                shadowOpacity: isActive ? 0.15 : 0.10,
+                shadowRadius: isActive ? 12 : 8,
+                shadowYOffset: 4
+            )
+        }
     }
 
     @ViewBuilder
@@ -347,7 +401,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 18
 #else
-        return 13
+        return 15
 #endif
     }
 
@@ -355,7 +409,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 20
 #else
-        return 12
+        return 14
 #endif
     }
 
@@ -363,7 +417,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 12
 #else
-        return 8
+        return 9
 #endif
     }
 
@@ -435,7 +489,7 @@ struct LibraryView: View {
     }
 
 #if os(tvOS)
-    private func setTVFilter(_ filter: MediaType?) {
+    private func setTVFilter(_ filter: MediaType) {
         viewModel.selectedFilter = filter
     }
 

@@ -9,11 +9,11 @@ enum TVLibraryControlFocus: Hashable {
 }
 
 struct TVLibraryControlBar: View {
-    let selectedFilter: MediaType?
+    let selectedFilter: MediaType
     let sortMode: LibraryViewModel.SortMode
     let focusedControl: FocusState<TVLibraryControlFocus?>.Binding
     let allowsTopNavigationRedirect: Bool
-    let onFilterChange: (MediaType?) -> Void
+    let onFilterChange: (MediaType) -> Void
     let onSortToggle: () -> Void
 
     var body: some View {
