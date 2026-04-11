@@ -298,10 +298,11 @@ struct DetailView: View {
         let heroContentWidth = stageMetrics.heroContentWidth(for: resolvedMetadataWidth(for: viewportSize))
         let heroCornerRadius = stageMetrics.heroCornerRadius
         let heroHeightValue = stageMetrics.heroHeight(for: heroHeight)
-        let revealScaleX = 0.94 + (tvHeroRevealProgress * 0.06)
-        let revealScaleY = 0.965 + (tvHeroRevealProgress * 0.035)
-        let revealOpacity = 0.76 + (tvHeroRevealProgress * 0.24)
-        let revealLift = (1 - tvHeroRevealProgress) * 34
+        let revealProgress = prefersNativeZoomTransition ? 1 : tvHeroRevealProgress
+        let revealScaleX = 0.94 + (revealProgress * 0.06)
+        let revealScaleY = 0.965 + (revealProgress * 0.035)
+        let revealOpacity = 0.76 + (revealProgress * 0.24)
+        let revealLift = (1 - revealProgress) * 34
 
         return HStack(spacing: stageMetrics.heroSpacing) {
             if let previous = neighbors.previous {
@@ -385,6 +386,7 @@ struct DetailView: View {
                         horizontalPadding: 0,
                         contentWidth: max(heroContentWidth, 420),
                         animateIn: hasAnimatedIn,
+                        prefersNativeZoomTransition: prefersNativeZoomTransition,
                         focusedAction: $focusedHeroAction,
                         onPlay: { startPlayback() },
                         onToggleWatchlist: viewModel.toggleWatchlist,
@@ -433,7 +435,7 @@ struct DetailView: View {
         .frame(height: heroHeightValue)
         .focusSection()
         .animation(.smooth(duration: 0.26, extraBounce: 0.02), value: stageMetrics.collapseProgress)
-        .animation(.smooth(duration: 0.52, extraBounce: 0.04), value: tvHeroRevealProgress)
+        .animation(.smooth(duration: 0.52, extraBounce: 0.04), value: revealProgress)
         .onChange(of: stageMetrics.previewInteractionEnabled) { _, isEnabled in
             guard !isEnabled, focusedHeroAction == .previous || focusedHeroAction == .next else { return }
             focusedHeroAction = .play
@@ -681,6 +683,11 @@ struct DetailView: View {
         }
 
 #if os(tvOS)
+        guard !prefersNativeZoomTransition else {
+            tvHeroRevealProgress = 1
+            return
+        }
+
         guard tvHeroRevealProgress < 1 else { return }
         withAnimation(.smooth(duration: 0.52, extraBounce: 0.04)) {
             tvHeroRevealProgress = 1
@@ -689,11 +696,9 @@ struct DetailView: View {
     }
 
     private var prefersNativeZoomTransition: Bool {
-#if os(iOS)
-        if #available(iOS 18.0, *) {
+        if #available(iOS 18.0, tvOS 18.0, *) {
             return transitionNamespace != nil && transitionSourceID == currentReturnSourceItem.id
         }
-#endif
         return false
     }
 
@@ -710,6 +715,11 @@ struct DetailView: View {
 #if os(tvOS)
     @MainActor
     private func completeTVHeroRevealIfNeeded() {
+        guard !prefersNativeZoomTransition else {
+            tvHeroRevealProgress = 1
+            return
+        }
+
         guard tvHeroRevealProgress < 1 else { return }
 
         withAnimation(.smooth(duration: 0.18, extraBounce: 0.02)) {
@@ -2403,6 +2413,7 @@ private struct HeroMetadataColumn: View {
     let horizontalPadding: CGFloat
     let contentWidth: CGFloat
     let animateIn: Bool
+    let prefersNativeZoomTransition: Bool
     let focusedAction: FocusState<DetailHeroAction?>.Binding
     let onPlay: () -> Void
     let onToggleWatchlist: () -> Void
@@ -2477,8 +2488,18 @@ private struct HeroMetadataColumn: View {
         .frame(maxWidth: contentWidth, alignment: frameAlignment)
         .padding(.horizontal, horizontalPadding)
         .opacity(animateIn ? 1 : 0)
-        .offset(y: animateIn ? 0 : 22)
-        .animation(.easeOut(duration: 0.45), value: animateIn)
+        .offset(y: animateIn ? 0 : entryOffset)
+        .animation(entryAnimation, value: animateIn)
+    }
+
+    private var entryAnimation: Animation {
+        prefersNativeZoomTransition
+            ? .easeOut(duration: 0.24)
+            : .easeOut(duration: 0.45)
+    }
+
+    private var entryOffset: CGFloat {
+        prefersNativeZoomTransition ? 0 : 22
     }
 
     private var metadataEyebrow: some View {

@@ -10,8 +10,8 @@ import UIKit
 #if os(tvOS)
 /// A focusable card for Apple TV Siri Remote navigation.
 /// Uses .focusable(interactions: .activate) on the VStack directly — no Button wrapper.
-/// This prevents tvOS 26 Liquid Glass from applying its glass container, which it does
-/// automatically around any focused Button regardless of focusEffectDisabled.
+/// This avoids the default tvOS focused Button glass so we can control a stronger custom
+/// focus treatment that matches the rest of the home shelf motion.
 private struct TVCardButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
@@ -32,6 +32,8 @@ private struct TVCardButton: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
+        let transitionNamespace = namespaceProvider(item.id)
+
         TVHomeShelfCard(
             item: item,
             kind: kind,
@@ -39,11 +41,12 @@ private struct TVCardButton: View {
             layoutStyle: layoutStyle,
             progress: progress,
             optimizationStatus: optimizationStatus,
-            namespace: namespaceProvider(item.id),
+            namespace: transitionNamespace,
             apiClient: apiClient,
             imagePipeline: imagePipeline,
             isFocused: isFocused,
-            isActivating: isActivating
+            isActivating: isActivating,
+            usesNativeZoomTransition: usesNativeZoomTransition(namespace: transitionNamespace)
         )
         // focusable on the VStack itself — no Button = no Liquid Glass container.
         // onTapGesture fires when the Siri Remote touchpad is clicked on the focused element.
@@ -74,6 +77,12 @@ private struct TVCardButton: View {
 
     private func handleActivation() {
         guard !isActivating else { return }
+
+        if usesNativeZoomTransition(namespace: namespaceProvider(item.id)) {
+            onSelect(item)
+            return
+        }
+
         withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
             isActivating = true
         }
@@ -83,6 +92,14 @@ private struct TVCardButton: View {
             onSelect(item)
             isActivating = false
         }
+    }
+
+    private func usesNativeZoomTransition(namespace: Namespace.ID?) -> Bool {
+        guard namespace != nil else { return false }
+        if #available(tvOS 18.0, *) {
+            return true
+        }
+        return false
     }
 }
 
@@ -98,8 +115,11 @@ private struct TVHomeShelfCard: View {
     let imagePipeline: any ImagePipelineProtocol
     let isFocused: Bool
     let isActivating: Bool
+    let usesNativeZoomTransition: Bool
 
     var body: some View {
+        let activationPhase = isActivating && !usesNativeZoomTransition
+
         ZStack(alignment: .bottomLeading) {
             PosterCardArtworkView(
                 item: item,
@@ -136,13 +156,7 @@ private struct TVHomeShelfCard: View {
         .clipShape(cardShape)
         .contentShape(cardShape)
         .tvMotionFocus(.posterCard, isFocused: isFocused)
-        .scaleEffect(isActivating ? 1.075 : 1, anchor: .center)
-        .shadow(
-            color: .black.opacity(isActivating ? 0.54 : (isFocused ? 0.30 : 0.18)),
-            radius: isActivating ? 42 : (isFocused ? 24 : 14),
-            x: 0,
-            y: isActivating ? 22 : (isFocused ? 14 : 8)
-        )
+        .scaleEffect(activationPhase ? 1.075 : 1, anchor: .center)
         .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
         .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityElement(children: .combine)
@@ -1769,6 +1783,8 @@ struct HomeView: View {
     private func handleDisplayedDetailSourceItemChange(_ item: MediaItem) {
 #if os(tvOS)
         if featuredItems.contains(where: { $0.id == item.id }) {
+            selectedDetailNamespace = nil
+            selectedDetailTransitionSourceID = nil
             featuredHeroItemID = item.id
             homeReturnTarget = .featured(itemID: item.id)
             lastSelectedHomeRowID = nil
@@ -1776,7 +1792,14 @@ struct HomeView: View {
             return
         }
 
-        guard let rowID = viewModel.rowIDByItemID[item.id] else { return }
+        guard let rowID = viewModel.rowIDByItemID[item.id] else {
+            selectedDetailNamespace = nil
+            selectedDetailTransitionSourceID = nil
+            return
+        }
+
+        selectedDetailNamespace = posterNamespace
+        selectedDetailTransitionSourceID = item.id
         lastSelectedHomeRowID = rowID
         lastSelectedHomeItemID = item.id
         homeReturnTarget = .row(rowID: rowID, itemID: item.id)
