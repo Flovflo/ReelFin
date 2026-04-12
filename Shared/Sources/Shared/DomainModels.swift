@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public enum MediaType: String, Codable, CaseIterable, Sendable {
@@ -691,6 +692,126 @@ public struct MediaDetail: Codable, Hashable, Sendable {
         self.item = item
         self.similar = similar
         self.cast = cast
+    }
+}
+
+public struct TrickplayManifest: Codable, Hashable, Sendable {
+    public var itemID: String
+    public var sourceID: String?
+    public var variants: [TrickplayVariant]
+
+    public init(itemID: String, sourceID: String?, variants: [TrickplayVariant]) {
+        self.itemID = itemID
+        self.sourceID = sourceID
+        self.variants = variants.sorted { lhs, rhs in
+            if lhs.width == rhs.width {
+                return lhs.bandwidth ?? 0 < rhs.bandwidth ?? 0
+            }
+            return lhs.width < rhs.width
+        }
+    }
+
+    public func preferredVariant(forThumbnailWidth preferredWidth: Int) -> TrickplayVariant? {
+        guard !variants.isEmpty else { return nil }
+        let minimumWidth = max(1, preferredWidth)
+        return variants.first(where: { $0.width >= minimumWidth }) ?? variants.last
+    }
+}
+
+public struct TrickplayVariant: Codable, Hashable, Identifiable, Sendable {
+    public var id: Int { width }
+    public var width: Int
+    public var height: Int
+    public var tileWidth: Int
+    public var tileHeight: Int
+    public var thumbnailCount: Int
+    public var intervalMilliseconds: Int
+    public var bandwidth: Int?
+
+    public init(
+        width: Int,
+        height: Int,
+        tileWidth: Int,
+        tileHeight: Int,
+        thumbnailCount: Int,
+        intervalMilliseconds: Int,
+        bandwidth: Int? = nil
+    ) {
+        self.width = width
+        self.height = height
+        self.tileWidth = tileWidth
+        self.tileHeight = tileHeight
+        self.thumbnailCount = thumbnailCount
+        self.intervalMilliseconds = intervalMilliseconds
+        self.bandwidth = bandwidth
+    }
+
+    public var thumbnailsPerTileImage: Int {
+        max(1, tileWidth * tileHeight)
+    }
+
+    public func frame(for seconds: Double) -> TrickplayFrame? {
+        guard
+            width > 0,
+            height > 0,
+            tileWidth > 0,
+            tileHeight > 0,
+            thumbnailCount > 0,
+            intervalMilliseconds > 0
+        else {
+            return nil
+        }
+
+        let clampedSeconds = max(0, seconds)
+        let rawIndex = Int((clampedSeconds * 1_000).rounded(.down)) / intervalMilliseconds
+        let thumbnailIndex = min(rawIndex, thumbnailCount - 1)
+        let tileImageIndex = thumbnailIndex / thumbnailsPerTileImage
+        let tileSlotIndex = thumbnailIndex % thumbnailsPerTileImage
+        let column = tileSlotIndex % tileWidth
+        let row = tileSlotIndex / tileWidth
+
+        return TrickplayFrame(
+            thumbnailIndex: thumbnailIndex,
+            tileImageIndex: tileImageIndex,
+            column: column,
+            row: row,
+            width: width,
+            height: height
+        )
+    }
+}
+
+public struct TrickplayFrame: Codable, Hashable, Sendable {
+    public var thumbnailIndex: Int
+    public var tileImageIndex: Int
+    public var column: Int
+    public var row: Int
+    public var width: Int
+    public var height: Int
+
+    public init(
+        thumbnailIndex: Int,
+        tileImageIndex: Int,
+        column: Int,
+        row: Int,
+        width: Int,
+        height: Int
+    ) {
+        self.thumbnailIndex = thumbnailIndex
+        self.tileImageIndex = tileImageIndex
+        self.column = column
+        self.row = row
+        self.width = width
+        self.height = height
+    }
+
+    public var cropRect: CGRect {
+        CGRect(
+            x: CGFloat(column * width),
+            y: CGFloat(row * height),
+            width: CGFloat(width),
+            height: CGFloat(height)
+        )
     }
 }
 

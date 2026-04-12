@@ -56,9 +56,9 @@ export const SLIDES: SlideSpec[] = [
     order: 1,
     fileName: "Home-ios.PNG",
     layout: "hero",
-    eyebrow: "HOME",
+    eyebrow: "HOME FEED",
     title: ["Your Jellyfin,", "refined."],
-    body: "Continue watching, fresh releases, and the next thing to play.",
+    body: "A calmer way to keep watching on iPhone.",
     palette: {
       background: "#f3eadf",
       backgroundSoft: "#e6d9c8",

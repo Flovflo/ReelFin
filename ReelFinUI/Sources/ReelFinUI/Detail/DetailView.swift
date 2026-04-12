@@ -188,7 +188,12 @@ struct DetailView: View {
         }
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession {
-                PlayerView(session: playerSession, item: viewModel.itemToPlay)
+                PlayerView(
+                    session: playerSession,
+                    item: viewModel.itemToPlay,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline
+                )
             }
         }
         .modifier(DetailZoomTransitionModifier(namespace: transitionNamespace, sourceID: transitionSourceID))

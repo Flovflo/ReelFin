@@ -8,22 +8,30 @@ enum ServerSettingsSaveResult {
     case failed
 }
 
+enum HomeSectionMoveDirection {
+    case up
+    case down
+}
+
 @MainActor
 final class ServerSettingsViewModel: ObservableObject {
     @Published var serverURLText = ""
     @Published var username = ""
-    @Published var allowCellularStreaming = true
     @Published var preferredQuality: QualityPreference = .auto
-    @Published var preferredAudioLanguage = ""
-    @Published var preferredSubtitleLanguage = ""
     @Published var playbackStrategy: PlaybackStrategy = .bestQualityFastest
     @Published var playbackPolicy: PlaybackPolicy = .auto
     @Published var allowSDRFallback = true
     @Published var preferAudioTranscodeOnly = true
-    @Published var maxStreamingBitrateText = ""
+    @Published var customBitrateMbpsText = ""
+    @Published var preferredAudioLanguage = ""
+    @Published var preferredSubtitleLanguage = ""
     @Published var forceH264FallbackWhenNotDirectPlay = true
     @Published var episodeReleaseNotificationsEnabled = false
-    @Published var nerdOverlayEnabled = false
+    @Published var homeOrderedSectionKinds: [HomeSectionKind] = HomeViewModel.defaultSectionOrder
+    @Published var homeHiddenSectionKinds: Set<HomeSectionKind> = []
+    @Published var localPlaybackBridgeEnabled = true
+    @Published var fasterVideoOnlyStartupEnabled = false
+    @Published var dolbyVisionPackagingMode: DolbyVisionPackagingMode = .dvProfile81Compatible
     @Published var infoMessage: String?
     @Published var errorMessage: String?
     @Published var isRunningDiagnostics = false
@@ -32,28 +40,43 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var diagnosticsReport: String?
 
     private let dependencies: ReelFinDependencies
-    private static let nerdOverlayKey = "reelfin.playback.debugOverlay.enabled"
+    private let defaults: UserDefaults
 
-    init(dependencies: ReelFinDependencies) {
+    private enum Keys {
+        static let localPlaybackBridgeEnabled = "reelfin.playback.localhls.enabled"
+        static let fasterVideoOnlyStartupEnabled = "reelfin.playback.localhls.videoOnlyStartup"
+        static let dolbyVisionPackagingMode = "reelfin.playback.dv.packagingMode"
+    }
+
+    init(
+        dependencies: ReelFinDependencies,
+        defaults: UserDefaults = .standard
+    ) {
         self.dependencies = dependencies
+        self.defaults = defaults
 
         if let config = dependencies.settingsStore.serverConfiguration {
             serverURLText = config.serverURL.absoluteString
-            allowCellularStreaming = config.allowCellularStreaming
             preferredQuality = config.preferredQuality
-            preferredAudioLanguage = config.preferredAudioLanguage ?? ""
-            preferredSubtitleLanguage = config.preferredSubtitleLanguage ?? ""
             playbackStrategy = config.playbackStrategy
             playbackPolicy = config.playbackPolicy
             allowSDRFallback = config.allowSDRFallback
             preferAudioTranscodeOnly = config.preferAudioTranscodeOnly
             forceH264FallbackWhenNotDirectPlay = config.forceH264FallbackWhenNotDirectPlay
-            if let customBitrate = config.maxStreamingBitrateOverride {
-                maxStreamingBitrateText = String(customBitrate)
-            }
+            preferredAudioLanguage = config.preferredAudioLanguage ?? ""
+            preferredSubtitleLanguage = config.preferredSubtitleLanguage ?? ""
+            customBitrateMbpsText = Self.formatBitrateInput(from: config.maxStreamingBitrateOverride)
         }
 
-        nerdOverlayEnabled = UserDefaults.standard.bool(forKey: Self.nerdOverlayKey)
+        let storedHomePreferences = HomeSectionPreferencesStore.load(defaults: defaults)
+        homeOrderedSectionKinds = HomeViewModel.sanitizedSectionOrder(from: storedHomePreferences.orderedKinds)
+        homeHiddenSectionKinds = Set(
+            storedHomePreferences.hiddenKinds.filter { HomeViewModel.supportedSectionKinds.contains($0) }
+        )
+
+        localPlaybackBridgeEnabled = defaults.object(forKey: Keys.localPlaybackBridgeEnabled) as? Bool ?? true
+        fasterVideoOnlyStartupEnabled = defaults.object(forKey: Keys.fasterVideoOnlyStartupEnabled) as? Bool ?? false
+        dolbyVisionPackagingMode = Self.readDolbyVisionPackagingMode(from: defaults)
         episodeReleaseNotificationsEnabled = dependencies.settingsStore.episodeReleaseNotificationsEnabled
 
         if let session = dependencies.settingsStore.lastSession {
@@ -61,9 +84,20 @@ final class ServerSettingsViewModel: ObservableObject {
         }
     }
 
+    var isSignedIn: Bool {
+        dependencies.settingsStore.lastSession != nil
+    }
+
     var displayUsername: String {
         let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Signed in" : trimmed
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return isSignedIn ? "Signed In" : "Not Signed In"
+    }
+
+    var connectionStatusLabel: String {
+        isSignedIn ? "Connected" : "Signed out"
     }
 
     var displayServerHost: String {
@@ -78,24 +112,80 @@ final class ServerSettingsViewModel: ObservableObject {
         return "No server configured"
     }
 
+    var availableHomeSections: [HomeSectionKind] {
+        HomeViewModel.supportedSectionKinds
+    }
+
+    var visibleHomeSectionCount: Int {
+        availableHomeSections.filter { !homeHiddenSectionKinds.contains($0) }.count
+    }
+
+    var homeCustomizationSummary: String {
+        let visibleCount = visibleHomeSectionCount
+        let orderedVisibleTitles = homeOrderedSectionKinds
+            .filter { !homeHiddenSectionKinds.contains($0) }
+            .prefix(2)
+            .map(Self.homeSectionTitle(for:))
+        let lead = orderedVisibleTitles.isEmpty ? "Default order" : orderedVisibleTitles.joined(separator: " / ")
+        let pluralizedSection = visibleCount == 1 ? "section" : "sections"
+        return "\(visibleCount) \(pluralizedSection) visible | \(lead)"
+    }
+
+    var advancedPlaybackSummary: String {
+        let bridge = localPlaybackBridgeEnabled ? "Local bridge on" : "Server-only playback"
+        let startup = fasterVideoOnlyStartupEnabled ? "fast startup" : "full startup"
+        return "\(bridge) | \(startup) | \(Self.dolbyVisionLabel(for: dolbyVisionPackagingMode))"
+    }
+
     var canSave: Bool {
-        !serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard (try? normalizedServerURL(from: serverURLText)) != nil else {
+            return false
+        }
+        return isCustomBitrateInputValid
     }
 
     var hasPendingServerChange: Bool {
-        guard let savedURL = dependencies.settingsStore.serverConfiguration?.serverURL else {
-            return !serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let trimmed = serverURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedURL = dependencies.settingsStore.serverConfiguration?.serverURL.absoluteString ?? ""
+
+        guard !trimmed.isEmpty else {
+            return !savedURL.isEmpty
         }
 
-        guard let editedURL = try? normalizedServerURL(from: serverURLText) else {
-            return serverURLText.trimmingCharacters(in: .whitespacesAndNewlines) != savedURL.absoluteString
+        if let normalized = try? normalizedServerURL(from: serverURLText) {
+            return normalized.absoluteString != savedURL
         }
 
-        return editedURL.absoluteString != savedURL.absoluteString
+        return trimmed != savedURL
+    }
+
+    var hasPendingChanges: Bool {
+        let saved = dependencies.settingsStore.serverConfiguration
+
+        return hasPendingServerChange
+            || preferredQuality != (saved?.preferredQuality ?? .auto)
+            || playbackStrategy != (saved?.playbackStrategy ?? .bestQualityFastest)
+            || playbackPolicy != (saved?.playbackPolicy ?? .auto)
+            || effectiveAllowSDRFallback != (saved?.allowSDRFallback ?? true)
+            || preferAudioTranscodeOnly != (saved?.preferAudioTranscodeOnly ?? true)
+            || forceH264FallbackWhenNotDirectPlay != (saved?.forceH264FallbackWhenNotDirectPlay ?? false)
+            || normalizedLanguageCode(from: preferredAudioLanguage) != saved?.preferredAudioLanguage
+            || normalizedLanguageCode(from: preferredSubtitleLanguage) != saved?.preferredSubtitleLanguage
+            || parsedCustomBitrateOverride() != saved?.maxStreamingBitrateOverride
     }
 
     var saveButtonTitle: String {
-        hasPendingServerChange ? "Save & Reconnect" : "Save Changes"
+        if hasPendingServerChange {
+            return "Save & Reconnect"
+        }
+        return hasPendingChanges ? "Save Changes" : "Saved"
+    }
+
+    var bandwidthCapSummary: String {
+        if let bitrate = parsedCustomBitrateOverride() {
+            return Self.bitrateLabel(for: bitrate)
+        }
+        return "Use quality preset"
     }
 
     var effectivePreferredAudioLanguage: String? {
@@ -106,39 +196,54 @@ final class ServerSettingsViewModel: ObservableObject {
         normalizedLanguageCode(from: preferredSubtitleLanguage)
     }
 
+    var customBitrateFieldHint: String {
+        isCustomBitrateInputValid ? "Leave blank to follow the selected quality preset." : "Enter a positive Mbps value."
+    }
+
+    var hasInvalidCustomBitrateInput: Bool {
+        let trimmed = customBitrateMbpsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !isCustomBitrateInputValid
+    }
+
     func serverURLDidChange() {
-        errorMessage = nil
-        infoMessage = nil
+        clearMessages()
     }
 
     func save() async -> ServerSettingsSaveResult {
-        errorMessage = nil
-        infoMessage = nil
+        clearMessages()
+
+        guard isCustomBitrateInputValid else {
+            errorMessage = "Enter a valid custom bitrate cap in Mbps or leave it blank."
+            return .failed
+        }
 
         do {
             let url = try normalizedServerURL(from: serverURLText)
             let previousURL = dependencies.settingsStore.serverConfiguration?.serverURL
+            let savedAllowCellularStreaming = dependencies.settingsStore.serverConfiguration?.allowCellularStreaming ?? true
 
-            let config = ServerConfiguration(
+            let configuration = ServerConfiguration(
                 serverURL: url,
-                allowCellularStreaming: allowCellularStreaming,
+                allowCellularStreaming: savedAllowCellularStreaming,
                 preferredQuality: preferredQuality,
                 playbackStrategy: playbackStrategy,
                 playbackPolicy: playbackPolicy,
-                allowSDRFallback: playbackPolicy == .originalLockHDRDV ? false : allowSDRFallback,
+                allowSDRFallback: effectiveAllowSDRFallback,
                 preferAudioTranscodeOnly: preferAudioTranscodeOnly,
-                maxStreamingBitrateOverride: parseMaxStreamingBitrateOverride(),
+                maxStreamingBitrateOverride: parsedCustomBitrateOverride(),
                 forceH264FallbackWhenNotDirectPlay: forceH264FallbackWhenNotDirectPlay,
                 preferredAudioLanguage: effectivePreferredAudioLanguage,
                 preferredSubtitleLanguage: effectivePreferredSubtitleLanguage
             )
-            try await dependencies.apiClient.configure(server: config)
-            dependencies.settingsStore.serverConfiguration = config
-            UserDefaults.standard.set(nerdOverlayEnabled, forKey: Self.nerdOverlayKey)
-            if previousURL?.absoluteString != config.serverURL.absoluteString {
+
+            try await dependencies.apiClient.configure(server: configuration)
+            dependencies.settingsStore.serverConfiguration = configuration
+
+            if previousURL?.absoluteString != configuration.serverURL.absoluteString {
                 return .requiresReauthentication
             }
-            infoMessage = "Settings saved"
+
+            infoMessage = "Playback and server settings saved."
             return .saved
         } catch {
             errorMessage = error.localizedDescription
@@ -146,30 +251,8 @@ final class ServerSettingsViewModel: ObservableObject {
         }
     }
 
-    private func parseMaxStreamingBitrateOverride() -> Int? {
-        let trimmed = maxStreamingBitrateText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard let value = Int(trimmed), value > 0 else { return nil }
-        return value
-    }
-
-    private func normalizedServerURL(from rawValue: String) throws -> URL {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw AppError.invalidServerURL
-        }
-
-        let prefixed = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
-        guard let url = URL(string: prefixed), url.host != nil else {
-            throw AppError.invalidServerURL
-        }
-
-        return url
-    }
-
     func testConnection() async {
-        errorMessage = nil
-        infoMessage = nil
+        clearMessages()
 
         do {
             let url = try normalizedServerURL(from: serverURLText)
@@ -186,8 +269,7 @@ final class ServerSettingsViewModel: ObservableObject {
     }
 
     func setEpisodeReleaseNotificationsEnabled(_ enabled: Bool) async {
-        errorMessage = nil
-        infoMessage = nil
+        clearMessages()
 
         await dependencies.episodeReleaseNotificationManager.setNotificationsEnabled(enabled)
         let resolvedEnabled = await dependencies.episodeReleaseNotificationManager.notificationsEnabled()
@@ -217,14 +299,81 @@ final class ServerSettingsViewModel: ObservableObject {
         }
     }
 
-    private func normalizedLanguageCode(from rawValue: String) -> String? {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return trimmed.isEmpty ? nil : trimmed
+    func setHomeSectionVisibility(_ kind: HomeSectionKind, isVisible: Bool) {
+        if isVisible {
+            homeHiddenSectionKinds.remove(kind)
+        } else {
+            homeHiddenSectionKinds.insert(kind)
+        }
+        persistHomeSectionPreferences()
+    }
+
+    func isHomeSectionVisible(_ kind: HomeSectionKind) -> Bool {
+        !homeHiddenSectionKinds.contains(kind)
+    }
+
+    func canMoveHomeSection(_ kind: HomeSectionKind, direction: HomeSectionMoveDirection) -> Bool {
+        guard let index = homeOrderedSectionKinds.firstIndex(of: kind) else {
+            return false
+        }
+
+        switch direction {
+        case .up:
+            return index > 0
+        case .down:
+            return index < homeOrderedSectionKinds.index(before: homeOrderedSectionKinds.endIndex)
+        }
+    }
+
+    func moveHomeSection(_ kind: HomeSectionKind, direction: HomeSectionMoveDirection) {
+        guard let currentIndex = homeOrderedSectionKinds.firstIndex(of: kind) else {
+            return
+        }
+
+        let destinationIndex: Int
+        switch direction {
+        case .up:
+            guard currentIndex > 0 else { return }
+            destinationIndex = currentIndex - 1
+        case .down:
+            guard currentIndex < homeOrderedSectionKinds.index(before: homeOrderedSectionKinds.endIndex) else { return }
+            destinationIndex = currentIndex + 1
+        }
+
+        homeOrderedSectionKinds.swapAt(currentIndex, destinationIndex)
+        persistHomeSectionPreferences()
+    }
+
+    func resetHomeSectionCustomization() {
+        homeOrderedSectionKinds = HomeViewModel.defaultSectionOrder
+        homeHiddenSectionKinds = []
+        persistHomeSectionPreferences()
+    }
+
+    func setLocalPlaybackBridgeEnabled(_ enabled: Bool) {
+        localPlaybackBridgeEnabled = enabled
+        defaults.set(enabled, forKey: Keys.localPlaybackBridgeEnabled)
+    }
+
+    func setFasterVideoOnlyStartupEnabled(_ enabled: Bool) {
+        fasterVideoOnlyStartupEnabled = enabled
+        defaults.set(enabled, forKey: Keys.fasterVideoOnlyStartupEnabled)
+    }
+
+    func setDolbyVisionPackagingMode(_ mode: DolbyVisionPackagingMode) {
+        dolbyVisionPackagingMode = mode
+        defaults.set(mode.rawValue, forKey: Keys.dolbyVisionPackagingMode)
+    }
+
+    func resetAdvancedPlaybackDefaults() {
+        setLocalPlaybackBridgeEnabled(true)
+        setFasterVideoOnlyStartupEnabled(false)
+        setDolbyVisionPackagingMode(.dvProfile81Compatible)
+        infoMessage = "Advanced playback settings reset."
     }
 
     func runPlaybackDiagnostics() async {
-        errorMessage = nil
-        infoMessage = nil
+        clearMessages()
         diagnosticsReport = nil
         isRunningDiagnostics = true
         defer { isRunningDiagnostics = false }
@@ -274,6 +423,59 @@ final class ServerSettingsViewModel: ObservableObject {
             diagnosticsReport = reportLines.joined(separator: "\n")
             errorMessage = "Diagnostics failed: \(error.localizedDescription)"
         }
+    }
+
+    private var effectiveAllowSDRFallback: Bool {
+        playbackPolicy == .originalLockHDRDV ? false : allowSDRFallback
+    }
+
+    private var isCustomBitrateInputValid: Bool {
+        let trimmed = customBitrateMbpsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || parsedCustomBitrateOverride() != nil
+    }
+
+    private func parsedCustomBitrateOverride() -> Int? {
+        let trimmed = customBitrateMbpsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized), value > 0 else {
+            return nil
+        }
+
+        return Int((value * 1_000_000).rounded())
+    }
+
+    private func persistHomeSectionPreferences() {
+        let preferences = HomeSectionPreferences(
+            orderedKinds: HomeViewModel.sanitizedSectionOrder(from: homeOrderedSectionKinds),
+            hiddenKinds: Array(homeHiddenSectionKinds)
+        )
+        HomeSectionPreferencesStore.save(preferences, defaults: defaults)
+    }
+
+    private func clearMessages() {
+        errorMessage = nil
+        infoMessage = nil
+    }
+
+    private func normalizedServerURL(from rawValue: String) throws -> URL {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw AppError.invalidServerURL
+        }
+
+        let prefixed = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard let url = URL(string: prefixed), url.host != nil else {
+            throw AppError.invalidServerURL
+        }
+
+        return url
+    }
+
+    private func normalizedLanguageCode(from rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func collectCandidates(from feed: HomeFeed, maxItems: Int) -> [MediaItem] {
@@ -432,5 +634,67 @@ final class ServerSettingsViewModel: ObservableObject {
         }
 
         return segmentComponents.url ?? resolved
+    }
+
+    private static func readDolbyVisionPackagingMode(from defaults: UserDefaults) -> DolbyVisionPackagingMode {
+        guard let rawValue = defaults.string(forKey: Keys.dolbyVisionPackagingMode) else {
+            return .dvProfile81Compatible
+        }
+        return DolbyVisionPackagingMode(rawValue: rawValue) ?? .dvProfile81Compatible
+    }
+
+    private static func formatBitrateInput(from bitrate: Int?) -> String {
+        guard let bitrate else { return "" }
+        let mbps = Double(bitrate) / 1_000_000
+        if mbps.rounded(.towardZero) == mbps {
+            return String(Int(mbps))
+        }
+        return String(format: "%.1f", mbps)
+    }
+
+    private static func bitrateLabel(for bitrate: Int) -> String {
+        let mbps = Double(bitrate) / 1_000_000
+        if mbps >= 10, mbps.rounded(.towardZero) == mbps {
+            return "\(Int(mbps)) Mbps"
+        }
+        return String(format: "%.1f Mbps", mbps)
+    }
+
+    private static func homeSectionTitle(for kind: HomeSectionKind) -> String {
+        switch kind {
+        case .continueWatching:
+            return "Continue Watching"
+        case .recentlyReleasedMovies:
+            return "Recently Released Movies"
+        case .recentlyReleasedSeries:
+            return "Recently Released TV Shows"
+        case .nextUp:
+            return "Next Up"
+        case .recentlyAddedMovies:
+            return "Recently Added Movies"
+        case .recentlyAddedSeries:
+            return "Recently Added TV"
+        case .popular:
+            return "Popular"
+        case .trending:
+            return "Trending"
+        case .movies:
+            return "Movies"
+        case .shows:
+            return "Shows"
+        case .latest:
+            return "Latest"
+        }
+    }
+
+    private static func dolbyVisionLabel(for mode: DolbyVisionPackagingMode) -> String {
+        switch mode {
+        case .dvProfile81Compatible:
+            return "Compatible"
+        case .hdr10OnlyFallback:
+            return "HDR10 Fallback"
+        case .primaryDolbyVisionExperimental:
+            return "Experimental DV-First"
+        }
     }
 }

@@ -9,6 +9,8 @@ import UIKit
 struct NativePlayerViewController: UIViewControllerRepresentable {
     let player: AVPlayer
     var transportState: PlaybackTransportState = .empty
+    let apiClient: JellyfinAPIClientProtocol
+    let imagePipeline: ImagePipelineProtocol
     var onSelectAudio: ((String) -> Void)?
     var onSelectSubtitle: ((String?) -> Void)?
     var onSkipSuggestion: (() -> Void)?
@@ -28,9 +30,16 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = false
         context.coordinator.installSkipOverlayIfNeeded(in: controller)
+        context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
         context.coordinator.updateSkipOverlay(
             suggestion: transportState.activeSkipSuggestion,
             onSkipSuggestion: onSkipSuggestion
+        )
+        context.coordinator.updateTrickplayOverlay(
+            manifest: transportState.trickplayManifest,
+            timeOffsetSeconds: transportState.playbackTimeOffsetSeconds,
+            apiClient: apiClient,
+            imagePipeline: imagePipeline
         )
 #endif
         // Let AVPlayer auto-select audio and subtitle tracks according to the
@@ -70,9 +79,16 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         }
 #if os(iOS)
         context.coordinator.installSkipOverlayIfNeeded(in: controller)
+        context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
         context.coordinator.updateSkipOverlay(
             suggestion: transportState.activeSkipSuggestion,
             onSkipSuggestion: onSkipSuggestion
+        )
+        context.coordinator.updateTrickplayOverlay(
+            manifest: transportState.trickplayManifest,
+            timeOffsetSeconds: transportState.playbackTimeOffsetSeconds,
+            apiClient: apiClient,
+            imagePipeline: imagePipeline
         )
 #endif
 #if os(tvOS)
@@ -106,17 +122,27 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         private var itemObservation: NSKeyValueObservation?
         private var statusObservation: NSKeyValueObservation?
         private weak var controller: AVPlayerViewController?
+        private weak var observedPlayer: AVPlayer?
 #if os(iOS)
+        private var timeJumpObserver: NSObjectProtocol?
         private var didReattachForCurrentItem = false
         private var observedItemIdentifier: ObjectIdentifier?
         private var reattachGeneration: UInt = 0
         private var reattachWorkItem: DispatchWorkItem?
+        private var previewTimeObserver: Any?
         private let skipOverlayView = PlaybackSkipOverlayView()
+        private let trickplayPreviewView = PlaybackTrickplayPreviewView()
 #endif
 
         deinit {
 #if os(iOS)
             reattachWorkItem?.cancel()
+            if let timeJumpObserver {
+                NotificationCenter.default.removeObserver(timeJumpObserver)
+            }
+            if let previewTimeObserver, let observedPlayer {
+                observedPlayer.removeTimeObserver(previewTimeObserver)
+            }
 #endif
         }
 
@@ -210,6 +236,15 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             didReattachForCurrentItem = false
             observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
             statusObservation = nil
+            if let timeJumpObserver {
+                NotificationCenter.default.removeObserver(timeJumpObserver)
+                self.timeJumpObserver = nil
+            }
+            if let previewTimeObserver, let observedPlayer {
+                observedPlayer.removeTimeObserver(previewTimeObserver)
+                self.previewTimeObserver = nil
+            }
+            self.observedPlayer = player
 
             itemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] player, _ in
                 Task { @MainActor in
@@ -217,18 +252,64 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                     self.reattachWorkItem?.cancel()
                     self.didReattachForCurrentItem = false
                     self.observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
+                    self.observeTimeJumps(player: player)
                     self.observeItemStatus(player: player)
                 }
             }
 
             // If there's already a current item, observe it immediately.
             if player.currentItem != nil {
+                observeTimeJumps(player: player)
                 observeItemStatus(player: player)
+            }
+
+            previewTimeObserver = player.addPeriodicTimeObserver(
+                forInterval: CMTime(seconds: 0.15, preferredTimescale: 600),
+                queue: .main
+            ) { [weak self, weak player] time in
+                guard let self, let player else { return }
+                let durationSeconds = Self.normalizedDurationSeconds(for: player.currentItem)
+                Task { @MainActor in
+                    self.trickplayPreviewView.handleObservedTimeChange(
+                        seconds: max(0, time.seconds),
+                        isPlaying: player.timeControlStatus == .playing,
+                        durationSeconds: durationSeconds
+                    )
+                }
             }
             #endif
         }
 
 #if os(iOS)
+        private static func normalizedDurationSeconds(for item: AVPlayerItem?) -> Double {
+            guard let seconds = item?.duration.seconds, seconds.isFinite, seconds > 0 else {
+                return 0
+            }
+            return seconds
+        }
+
+        private func observeTimeJumps(player: AVPlayer) {
+            if let timeJumpObserver {
+                NotificationCenter.default.removeObserver(timeJumpObserver)
+                self.timeJumpObserver = nil
+            }
+
+            guard let item = player.currentItem else { return }
+            timeJumpObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemTimeJumped,
+                object: item,
+                queue: .main
+            ) { [weak self, weak player] _ in
+                guard let self, let player else { return }
+                let durationSeconds = Self.normalizedDurationSeconds(for: player.currentItem)
+                self.trickplayPreviewView.handleTimeJump(
+                    seconds: max(0, player.currentTime().seconds),
+                    isPlaying: player.timeControlStatus == .playing,
+                    durationSeconds: durationSeconds
+                )
+            }
+        }
+
         private func observeItemStatus(player: AVPlayer) {
             statusObservation = nil
             guard let item = player.currentItem else {
@@ -295,6 +376,16 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             ])
         }
 
+        func installTrickplayOverlayIfNeeded(in controller: AVPlayerViewController) {
+            guard trickplayPreviewView.superview == nil else { return }
+            let overlayView = controller.contentOverlayView ?? controller.view!
+            overlayView.addSubview(trickplayPreviewView)
+            NSLayoutConstraint.activate([
+                trickplayPreviewView.centerXAnchor.constraint(equalTo: overlayView.centerXAnchor),
+                trickplayPreviewView.bottomAnchor.constraint(equalTo: overlayView.safeAreaLayoutGuide.bottomAnchor, constant: -110)
+            ])
+        }
+
         func updateSkipOverlay(
             suggestion: PlaybackSkipSuggestion?,
             onSkipSuggestion: (() -> Void)?
@@ -302,6 +393,20 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             skipOverlayView.update(
                 suggestion: suggestion,
                 onSkipSuggestion: onSkipSuggestion
+            )
+        }
+
+        func updateTrickplayOverlay(
+            manifest: TrickplayManifest?,
+            timeOffsetSeconds: Double,
+            apiClient: JellyfinAPIClientProtocol,
+            imagePipeline: ImagePipelineProtocol
+        ) {
+            trickplayPreviewView.update(
+                manifest: manifest,
+                timeOffsetSeconds: timeOffsetSeconds,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline
             )
         }
 #endif

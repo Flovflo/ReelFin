@@ -191,6 +191,8 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: WZ4CHJH7TA
         # Share the app bundle ID with iOS for a single App Store Connect record.
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.app
         PRODUCT_NAME: ReelFin

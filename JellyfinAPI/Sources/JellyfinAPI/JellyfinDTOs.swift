@@ -116,6 +116,7 @@ struct ItemDTO: Decodable {
     let mediaStreams: [MediaStreamDTO]?
     let airDays: [String]?
     let userData: UserDataDTO?
+    let trickplay: [String: [Int: TrickplayInfoDTO]]?
 
     enum CodingKeys: String, CodingKey {
         case id = "Id"
@@ -138,6 +139,53 @@ struct ItemDTO: Decodable {
         case mediaStreams = "MediaStreams"
         case airDays = "AirDays"
         case userData = "UserData"
+        case trickplay = "Trickplay"
+    }
+
+    init(
+        id: String,
+        name: String,
+        overview: String? = nil,
+        type: String? = nil,
+        productionYear: Int? = nil,
+        runTimeTicks: Int64? = nil,
+        genres: [String]? = nil,
+        communityRating: Double? = nil,
+        imageTags: [String: String]? = nil,
+        backdropImageTags: [String]? = nil,
+        parentID: String? = nil,
+        seriesID: String? = nil,
+        seriesName: String? = nil,
+        seriesPrimaryImageTag: String? = nil,
+        indexNumber: Int? = nil,
+        parentIndexNumber: Int? = nil,
+        people: [PersonDTO]? = nil,
+        mediaStreams: [MediaStreamDTO]? = nil,
+        airDays: [String]? = nil,
+        userData: UserDataDTO? = nil,
+        trickplay: [String: [Int: TrickplayInfoDTO]]? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.overview = overview
+        self.type = type
+        self.productionYear = productionYear
+        self.runTimeTicks = runTimeTicks
+        self.genres = genres
+        self.communityRating = communityRating
+        self.imageTags = imageTags
+        self.backdropImageTags = backdropImageTags
+        self.parentID = parentID
+        self.seriesID = seriesID
+        self.seriesName = seriesName
+        self.seriesPrimaryImageTag = seriesPrimaryImageTag
+        self.indexNumber = indexNumber
+        self.parentIndexNumber = parentIndexNumber
+        self.people = people
+        self.mediaStreams = mediaStreams
+        self.airDays = airDays
+        self.userData = userData
+        self.trickplay = trickplay
     }
 
     func toDomain(libraryID: String? = nil) -> MediaItem {
@@ -210,6 +258,72 @@ struct ItemDTO: Decodable {
             isFavorite: userData?.isFavorite ?? false,
             isPlayed: userData?.played ?? false,
             playbackPositionTicks: userData?.playbackPositionTicks
+        )
+    }
+
+    func toTrickplayManifest(
+        preferredSourceID: String?,
+        fallbackItemID: String
+    ) -> TrickplayManifest? {
+        guard let trickplay, !trickplay.isEmpty else { return nil }
+
+        let selectedEntry =
+            preferredSourceID.flatMap { sourceID in trickplay[sourceID].map { (sourceID, $0) } }
+            ?? trickplay[fallbackItemID].map { (fallbackItemID, $0) }
+            ?? trickplay.first
+
+        guard let (selectedSourceID, selectedVariants) = selectedEntry else { return nil }
+
+        let variants = selectedVariants.values.compactMap(\.toDomain)
+        guard !variants.isEmpty else { return nil }
+
+        return TrickplayManifest(
+            itemID: fallbackItemID,
+            sourceID: selectedSourceID == fallbackItemID ? nil : selectedSourceID,
+            variants: variants
+        )
+    }
+}
+
+struct TrickplayInfoDTO: Decodable {
+    let width: Int
+    let height: Int
+    let tileWidth: Int
+    let tileHeight: Int
+    let thumbnailCount: Int
+    let interval: Int
+    let bandwidth: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case width = "Width"
+        case height = "Height"
+        case tileWidth = "TileWidth"
+        case tileHeight = "TileHeight"
+        case thumbnailCount = "ThumbnailCount"
+        case interval = "Interval"
+        case bandwidth = "Bandwidth"
+    }
+
+    var toDomain: TrickplayVariant? {
+        guard
+            width > 0,
+            height > 0,
+            tileWidth > 0,
+            tileHeight > 0,
+            thumbnailCount > 0,
+            interval > 0
+        else {
+            return nil
+        }
+
+        return TrickplayVariant(
+            width: width,
+            height: height,
+            tileWidth: tileWidth,
+            tileHeight: tileHeight,
+            thumbnailCount: thumbnailCount,
+            intervalMilliseconds: interval,
+            bandwidth: bandwidth
         )
     }
 }

@@ -19,15 +19,14 @@ final class HomeViewModel: ObservableObject {
 
     private let dependencies: ReelFinDependencies
     private var feedEnrichmentTask: Task<Void, Never>?
-    private static let sectionPreferencesKey = "home.sectionPreferences.v3"
-    private static let supportedSectionKinds: [HomeSectionKind] = [
+    nonisolated static let supportedSectionKinds: [HomeSectionKind] = [
         .continueWatching,
         .recentlyReleasedMovies,
         .recentlyReleasedSeries,
         .recentlyAddedMovies,
         .recentlyAddedSeries
     ]
-    private static let defaultSectionOrder: [HomeSectionKind] = [
+    nonisolated static let defaultSectionOrder: [HomeSectionKind] = [
         .continueWatching,
         .recentlyReleasedMovies,
         .recentlyReleasedSeries,
@@ -37,9 +36,9 @@ final class HomeViewModel: ObservableObject {
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
-        let stored = Self.loadSectionPreferences()
+        let stored = HomeSectionPreferencesStore.load()
         self.orderedSectionKinds = Self.sanitizedSectionOrder(from: stored.orderedKinds)
-        self.hiddenSectionKinds = []
+        self.hiddenSectionKinds = Set(stored.hiddenKinds.filter { Self.supportedSectionKinds.contains($0) })
     }
 
     func load() async {
@@ -208,14 +207,15 @@ final class HomeViewModel: ObservableObject {
     private func loadFromCache() async {
         do {
             let cached = try await dependencies.repository.fetchHomeFeed()
-            guard !cached.rows.isEmpty || !cached.featured.isEmpty else { return }
+            let normalized = await normalizedFeed(cached)
+            guard !normalized.rows.isEmpty || !normalized.featured.isEmpty else { return }
 
-            ensureKnownSectionKinds(from: cached.rows)
-            if feed != cached {
-                feed = cached
+            ensureKnownSectionKinds(from: normalized.rows)
+            if feed != normalized {
+                feed = normalized
                 rebuildVisibleRowsCache()
             }
-            scheduleFeedEnrichment(for: cached)
+            scheduleFeedEnrichment(for: normalized)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -234,11 +234,8 @@ final class HomeViewModel: ObservableObject {
 
             let visibleProcessed = await HomeFeedProcessor.process(visibleFeed, seriesCache: seriesCache)
             guard !Task.isCancelled else { return }
-
-            await MainActor.run {
-                guard let self else { return }
-                self.applyEnrichedFeed(visibleProcessed)
-            }
+            guard let self else { return }
+            await self.applyEnrichedFeed(visibleProcessed)
 
             guard feed.rows.count > visibleRowLimit else { return }
 
@@ -252,16 +249,12 @@ final class HomeViewModel: ObservableObject {
 
             let processed = await HomeFeedProcessor.process(feed, seriesCache: seriesCache)
             guard !Task.isCancelled else { return }
-
-            await MainActor.run {
-                guard let self else { return }
-                self.applyEnrichedFeed(processed)
-            }
+            await self.applyEnrichedFeed(processed)
         }
     }
 
-    private func applyEnrichedFeed(_ processed: HomeFeed) {
-        let merged = mergeEnrichedFeed(current: feed, processed: processed)
+    private func applyEnrichedFeed(_ processed: HomeFeed) async {
+        let merged = await normalizedFeed(mergeEnrichedFeed(current: feed, processed: processed))
         guard feed != merged else { return }
         ensureKnownSectionKinds(from: merged.rows)
         feed = merged
@@ -396,21 +389,10 @@ final class HomeViewModel: ObservableObject {
             orderedKinds: Self.sanitizedSectionOrder(from: orderedSectionKinds),
             hiddenKinds: Array(hiddenSectionKinds)
         )
-        guard let data = try? JSONEncoder().encode(preferences) else { return }
-        UserDefaults.standard.set(data, forKey: Self.sectionPreferencesKey)
+        HomeSectionPreferencesStore.save(preferences)
     }
 
-    private static func loadSectionPreferences() -> HomeSectionPreferences {
-        guard
-            let data = UserDefaults.standard.data(forKey: sectionPreferencesKey),
-            let prefs = try? JSONDecoder().decode(HomeSectionPreferences.self, from: data)
-        else {
-            return HomeSectionPreferences(orderedKinds: defaultSectionOrder, hiddenKinds: [])
-        }
-        return prefs
-    }
-
-    private static func sanitizedSectionOrder(from kinds: [HomeSectionKind]) -> [HomeSectionKind] {
+    nonisolated static func sanitizedSectionOrder(from kinds: [HomeSectionKind]) -> [HomeSectionKind] {
         var seen = Set<HomeSectionKind>()
         let supported = Set(supportedSectionKinds)
 
@@ -420,6 +402,134 @@ final class HomeViewModel: ObservableObject {
 
         let missing = supportedSectionKinds.filter { !seen.contains($0) }
         return preserved + missing
+    }
+
+    private func normalizedFeed(_ feed: HomeFeed) async -> HomeFeed {
+        var normalizedRows: [HomeRow] = []
+        normalizedRows.reserveCapacity(feed.rows.count)
+
+        for row in feed.rows {
+            var normalizedRow = row
+            normalizedRow.items = await deduplicatedItems(row.items)
+            normalizedRows.append(normalizedRow)
+        }
+
+        return HomeFeed(
+            featured: await deduplicatedItems(feed.featured),
+            rows: normalizedRows
+        )
+    }
+
+    private func deduplicatedItems(_ items: [MediaItem]) async -> [MediaItem] {
+        let uniqueByID = Self.deduplicatedItemsByID(items)
+        var grouped: [String: MediaItem] = [:]
+        var orderedKeys: [String] = []
+
+        for item in uniqueByID {
+            let key = Self.canonicalKey(for: item)
+            if let existing = grouped[key] {
+                grouped[key] = await preferredDuplicate(between: existing, and: item)
+            } else {
+                grouped[key] = item
+                orderedKeys.append(key)
+            }
+        }
+
+        return orderedKeys.compactMap { grouped[$0] }
+    }
+
+    private static func deduplicatedItemsByID(_ items: [MediaItem]) -> [MediaItem] {
+        var seen = Set<String>()
+        return items.filter { seen.insert($0.id).inserted }
+    }
+
+    private func preferredDuplicate(between lhs: MediaItem, and rhs: MediaItem) async -> MediaItem {
+        let lhsOptimization = await optimizationPreferenceScore(for: lhs)
+        let rhsOptimization = await optimizationPreferenceScore(for: rhs)
+        if lhsOptimization != rhsOptimization {
+            return lhsOptimization > rhsOptimization ? lhs : rhs
+        }
+
+        let lhsQuality = Self.qualityScore(for: lhs)
+        let rhsQuality = Self.qualityScore(for: rhs)
+        if lhsQuality == rhsQuality {
+            return lhs.id <= rhs.id ? lhs : rhs
+        }
+
+        return lhsQuality > rhsQuality ? lhs : rhs
+    }
+
+    private func optimizationPreferenceScore(for item: MediaItem) async -> Int {
+        guard let playbackItem = await optimizationPlaybackItem(for: item) else {
+            return 0
+        }
+
+        await dependencies.playbackWarmupManager.warm(itemID: playbackItem.id)
+        let selection = await dependencies.playbackWarmupManager.selection(for: playbackItem.id)
+
+        switch ApplePlaybackOptimizationStatus(selection: selection) {
+        case .optimized?:
+            return 2
+        case .needsServerPrep?:
+            return 1
+        case nil:
+            return 0
+        }
+    }
+
+    private func optimizationPlaybackItem(for item: MediaItem) async -> MediaItem? {
+        guard item.mediaType == .series else {
+            return item
+        }
+
+        do {
+            return try await dependencies.detailRepository.loadNextUpEpisode(seriesID: item.id)
+        } catch {
+            return nil
+        }
+    }
+
+    private static func canonicalKey(for item: MediaItem) -> String {
+        switch item.mediaType {
+        case .episode:
+            return [
+                "episode",
+                item.parentID ?? normalizedTitle(item.seriesName ?? item.name),
+                String(item.parentIndexNumber ?? -1),
+                String(item.indexNumber ?? -1)
+            ].joined(separator: "|")
+        default:
+            let runtimeBucket = item.runtimeTicks.map { String($0 / 600_000_000) } ?? "_"
+            return [
+                item.mediaType.rawValue,
+                normalizedTitle(item.name),
+                String(item.year ?? 0),
+                runtimeBucket
+            ].joined(separator: "|")
+        }
+    }
+
+    private static func normalizedTitle(_ value: String) -> String {
+        let folded = value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        let filtered = folded.unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0) || CharacterSet.whitespaces.contains($0)
+        }
+        return String(String.UnicodeScalarView(filtered))
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func qualityScore(for item: MediaItem) -> Int {
+        var score = 0
+        score += item.overview?.isEmpty == false ? 5 : 0
+        score += item.posterTag == nil ? 0 : 4
+        score += item.backdropTag == nil ? 0 : 3
+        score += item.communityRating == nil ? 0 : 2
+        score += item.playbackPositionTicks == nil ? 0 : 2
+        score += item.isFavorite ? 1 : 0
+        score += item.isPlayed ? 1 : 0
+        score += min(item.genres.count, 3)
+        return score
     }
 
     private static func deriveVisibleRows(
@@ -484,9 +594,36 @@ final class HomeViewModel: ObservableObject {
     }
 }
 
-private struct HomeSectionPreferences: Codable {
+struct HomeSectionPreferences: Codable {
     var orderedKinds: [HomeSectionKind]
     var hiddenKinds: [HomeSectionKind]
+}
+
+enum HomeSectionPreferencesStore {
+    static let storageKey = "home.sectionPreferences.v3"
+
+    static func load(defaults: UserDefaults = .standard) -> HomeSectionPreferences {
+        guard
+            let data = defaults.data(forKey: storageKey),
+            let preferences = try? JSONDecoder().decode(HomeSectionPreferences.self, from: data)
+        else {
+            return HomeSectionPreferences(
+                orderedKinds: HomeViewModel.defaultSectionOrder,
+                hiddenKinds: []
+            )
+        }
+
+        return preferences
+    }
+
+    static func save(_ preferences: HomeSectionPreferences, defaults: UserDefaults = .standard) {
+        guard let data = try? JSONEncoder().encode(preferences) else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+
+    static func reset(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: storageKey)
+    }
 }
 
 private enum HomeFeedProcessor {

@@ -10,6 +10,7 @@ private struct HTTPStatusError: Error {
 
 public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     private enum ItemFields {
+        static let trickplay = ["Trickplay"]
         static let home = [
             "Genres",
             "Overview",
@@ -404,6 +405,33 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         return response.items.compactMap { $0.toDomain(defaultItemID: itemID) }
     }
 
+    public func fetchTrickplayManifest(itemID: String, mediaSourceID: String?) async throws -> TrickplayManifest? {
+        let userID = try requireUserID()
+        let item: ItemDTO = try await request(
+            path: "Users/\(userID)/Items/\(itemID)",
+            query: [
+                fieldsQueryItem(ItemFields.trickplay)
+            ],
+            dedupe: true
+        )
+        return item.toTrickplayManifest(preferredSourceID: mediaSourceID, fallbackItemID: itemID)
+    }
+
+    public func trickplayTileBaseURL(itemID: String, mediaSourceID: String?, width: Int) async -> URL? {
+        guard let configuration, width > 0 else { return nil }
+
+        var queryItems: [URLQueryItem] = []
+        if let mediaSourceID, !mediaSourceID.isEmpty {
+            queryItems.append(URLQueryItem(name: "mediaSourceId", value: mediaSourceID))
+        }
+
+        return try? buildURL(
+            baseURL: configuration.serverURL,
+            path: "Videos/\(itemID)/Trickplay/\(width)",
+            query: queryItems
+        )
+    }
+
     public func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
         let userID = try requireUserID()
         let viewIDs = query.resolvedViewIDs
@@ -511,7 +539,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             throw AppError.invalidServerURL
         }
 
-        let options = PlaybackInfoOptions.balanced(maxStreamingBitrate: configuration.preferredQuality.maxStreamingBitrate)
+        let options = PlaybackInfoOptions.balanced(maxStreamingBitrate: configuration.effectiveMaxStreamingBitrate)
         return try await fetchPlaybackSources(itemID: itemID, options: options)
     }
 
@@ -519,7 +547,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         // OpenAPI source:
         // /Users/florian/Downloads/jellyfin-openapi-stable.json
         // $.paths["/Items/{itemId}/PlaybackInfo"].post
-        let maxBitrate = options.maxStreamingBitrate ?? configuration?.preferredQuality.maxStreamingBitrate ?? 8_000_000
+        let maxBitrate = options.maxStreamingBitrate ?? configuration?.effectiveMaxStreamingBitrate ?? 8_000_000
         let profile: DeviceProfileRequestDTO?
         switch options.deviceProfile ?? .automatic {
         case .automatic:

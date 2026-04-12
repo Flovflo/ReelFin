@@ -8,6 +8,8 @@ import UIKit
 struct PlayerView: View {
     var session: PlaybackSessionController
     let item: MediaItem
+    let apiClient: JellyfinAPIClientProtocol
+    let imagePipeline: ImagePipelineProtocol
 
     var body: some View {
         ZStack {
@@ -16,6 +18,8 @@ struct PlayerView: View {
             NativePlayerViewController(
                 player: session.player,
                 transportState: session.transportState,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
                 onSelectAudio: { id in session.selectAudioTrack(id: id) },
                 onSelectSubtitle: { id in session.selectSubtitleTrack(id: id) },
                 onSkipSuggestion: { session.skipCurrentSegment() }

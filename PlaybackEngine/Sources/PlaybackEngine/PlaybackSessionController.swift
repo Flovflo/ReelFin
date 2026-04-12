@@ -24,19 +24,25 @@ public struct PlaybackTransportState: Sendable, Equatable {
     public var selectedAudioTrackID: String?
     public var selectedSubtitleTrackID: String?
     public var activeSkipSuggestion: PlaybackSkipSuggestion?
+    public var trickplayManifest: TrickplayManifest?
+    public var playbackTimeOffsetSeconds: Double
 
     public init(
         availableAudioTracks: [MediaTrack] = [],
         availableSubtitleTracks: [MediaTrack] = [],
         selectedAudioTrackID: String? = nil,
         selectedSubtitleTrackID: String? = nil,
-        activeSkipSuggestion: PlaybackSkipSuggestion? = nil
+        activeSkipSuggestion: PlaybackSkipSuggestion? = nil,
+        trickplayManifest: TrickplayManifest? = nil,
+        playbackTimeOffsetSeconds: Double = 0
     ) {
         self.availableAudioTracks = availableAudioTracks
         self.availableSubtitleTracks = availableSubtitleTracks
         self.selectedAudioTrackID = selectedAudioTrackID
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
         self.activeSkipSuggestion = activeSkipSuggestion
+        self.trickplayManifest = trickplayManifest
+        self.playbackTimeOffsetSeconds = playbackTimeOffsetSeconds
     }
 
     public static let empty = PlaybackTransportState()
@@ -240,6 +246,12 @@ public final class PlaybackSessionController {
     public internal(set) var activeSkipSuggestion: PlaybackSkipSuggestion? {
         didSet { scheduleTransportStateSnapshotUpdate() }
     }
+    public internal(set) var activeTrickplayManifest: TrickplayManifest? {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
+    public internal(set) var playbackTimeOffsetSeconds: Double = 0 {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
     public private(set) var playbackProof = PlaybackProofSnapshot()
     public private(set) var transportState = PlaybackTransportState.empty
 
@@ -313,6 +325,7 @@ public final class PlaybackSessionController {
     private var preferredProfilesByItemID: [String: TranscodeURLProfile] = [:]
     private var lastPreparedSelection: PlaybackAssetSelection?
     var markerRefreshTask: Task<Void, Never>?
+    private var trickplayRefreshTask: Task<Void, Never>?
     @ObservationIgnored private let transportStateCommitter = PlaybackTransportStateCommitter()
     private var transportStateSnapshotUpdatesSuspended = false
 
@@ -444,7 +457,9 @@ public final class PlaybackSessionController {
             availableSubtitleTracks: availableSubtitleTracks,
             selectedAudioTrackID: selectedAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
-            activeSkipSuggestion: activeSkipSuggestion
+            activeSkipSuggestion: activeSkipSuggestion,
+            trickplayManifest: activeTrickplayManifest,
+            playbackTimeOffsetSeconds: playbackTimeOffsetSeconds
         )
     }
 
@@ -479,6 +494,7 @@ public final class PlaybackSessionController {
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
         markerRefreshTask?.cancel()
+        trickplayRefreshTask?.cancel()
         localHLSServer?.stop(reason: "controller_deinit")
     }
 
@@ -498,6 +514,7 @@ public final class PlaybackSessionController {
         markerRefreshTask = Task { @MainActor [weak self] in
             await self?.refreshPlaybackMarkers(for: item)
         }
+        trickplayRefreshTask?.cancel()
         currentItemHasDolbyVision = item.hasDolbyVision
         loadStartDate = Date()
         startDate = loadStartDate
@@ -505,6 +522,7 @@ public final class PlaybackSessionController {
         hasDecodedVideoFrame = false
         pendingResumeSeconds = nil
         transcodeStartOffset = 0
+        playbackTimeOffsetSeconds = 0
         currentForwardBufferDuration = 0
         tvosHealthyAccessLogSamples = 0
         recoveryAttemptCount = 0
@@ -561,6 +579,7 @@ public final class PlaybackSessionController {
         transportState = .empty
         beginTransportStateSnapshotBatch()
         activeSkipSuggestion = nil
+        activeTrickplayManifest = nil
 
         // Start the overall TTFF pipeline signpost
         ttffPipelineInterval = SignpostInterval(signposter: Signpost.ttffPipeline, name: "ttff_total")
@@ -1051,6 +1070,7 @@ public final class PlaybackSessionController {
     }
 
     private func prepareAndLoadSelection(_ selection: PlaybackAssetSelection, resumeSeconds: Double?) {
+        trickplayRefreshTask?.cancel()
         lastPreparedSelection = selection
         startupWatchdogTask?.cancel()
         decodedFrameWatchdogTask?.cancel()
@@ -1121,6 +1141,8 @@ public final class PlaybackSessionController {
 
         availableAudioTracks = selection.source.audioTracks
         availableSubtitleTracks = selection.source.subtitleTracks
+        playbackTimeOffsetSeconds = transcodeStartOffset
+        activeTrickplayManifest = nil
         let audioSelection = audioSelector.selectPreferredAudioTrack(
             from: availableAudioTracks,
             fallbackCodec: selection.source.normalizedAudioCodec,
@@ -1157,6 +1179,7 @@ public final class PlaybackSessionController {
             )
         }
         endTransportStateSnapshotBatch(commitNow: true)
+        refreshTrickplayManifest(for: selection)
 
         routeDescription = routeLabel(for: selection.decision.route)
 
@@ -1269,6 +1292,37 @@ public final class PlaybackSessionController {
         pendingResumeSeconds = resumeSeconds.flatMap { $0 > 0 ? $0 : nil }
     }
 
+    private func refreshTrickplayManifest(for selection: PlaybackAssetSelection) {
+        let itemID = selection.source.itemID
+        let sourceID = selection.source.id
+
+        trickplayRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            let manifest = try? await self.apiClient.fetchTrickplayManifest(
+                itemID: itemID,
+                mediaSourceID: sourceID
+            )
+            guard !Task.isCancelled else { return }
+
+            if let manifest {
+                let widths = manifest.variants.map(\.width).map(String.init).joined(separator: ",")
+                AppLog.playback.info(
+                    "playback.trickplay.loaded — \(self.playbackLogScope(), privacy: .public) source=\(manifest.sourceID ?? "item", privacy: .public) widths=[\(widths, privacy: .public)]"
+                )
+            } else {
+                AppLog.playback.info(
+                    "playback.trickplay.unavailable — \(self.playbackLogScope(), privacy: .public) requestedSource=\(sourceID, privacy: .public)"
+                )
+            }
+
+            await MainActor.run {
+                guard self.currentItemID == itemID else { return }
+                guard self.currentSource?.id == sourceID else { return }
+                self.activeTrickplayManifest = manifest
+            }
+        }
+    }
+
     private func makeVideoOutput() -> AVPlayerItemVideoOutput {
         AVPlayerItemVideoOutput(
             pixelBufferAttributes: [
@@ -1308,6 +1362,8 @@ public final class PlaybackSessionController {
         nextEpisodeQueue = []
         mediaSegments = []
         activeSkipSuggestion = nil
+        activeTrickplayManifest = nil
+        playbackTimeOffsetSeconds = 0
         endTransportStateSnapshotBatch(commitNow: true)
 
         currentItemID = nil
@@ -1315,6 +1371,7 @@ public final class PlaybackSessionController {
         currentSource = nil
         pendingResumeSeconds = nil
         transcodeStartOffset = 0
+        trickplayRefreshTask?.cancel()
         currentForwardBufferDuration = 0
         tvosHealthyAccessLogSamples = 0
         didResumeAfterForeground = false

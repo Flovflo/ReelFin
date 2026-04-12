@@ -87,6 +87,8 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource]
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource]
     func fetchMediaSegments(itemID: String) async throws -> [MediaSegment]
+    func fetchTrickplayManifest(itemID: String, mediaSourceID: String?) async throws -> TrickplayManifest?
+    func trickplayTileBaseURL(itemID: String, mediaSourceID: String?, width: Int) async -> URL?
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
     func prefetchImages(for items: [MediaItem]) async
@@ -159,6 +161,14 @@ public extension JellyfinAPIClientProtocol {
 
     func fetchMediaSegments(itemID _: String) async throws -> [MediaSegment] {
         []
+    }
+
+    func fetchTrickplayManifest(itemID _: String, mediaSourceID _: String?) async throws -> TrickplayManifest? {
+        nil
+    }
+
+    func trickplayTileBaseURL(itemID _: String, mediaSourceID _: String?, width _: Int) async -> URL? {
+        nil
     }
 
     func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws {

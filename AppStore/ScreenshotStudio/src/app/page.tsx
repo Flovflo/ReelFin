@@ -91,7 +91,7 @@ function StudioPage() {
     await preloadCanvasImages();
 
     const options = {
-      backgroundColor: "#04050a",
+      backgroundColor: requestedSlide.palette.background,
       cacheBust: true,
       canvasWidth: requestedSize.width,
       canvasHeight: requestedSize.height,

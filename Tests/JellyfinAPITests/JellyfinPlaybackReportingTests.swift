@@ -4,6 +4,11 @@ import Shared
 import XCTest
 
 final class JellyfinPlaybackReportingTests: XCTestCase {
+    override func tearDown() {
+        URLProtocolStub.requestHandler = nil
+        super.tearDown()
+    }
+
     func testReportPlaybackStoppedPostsStoppedEndpoint() async throws {
         let recorder = RequestRecorder()
         let configuration = URLSessionConfiguration.ephemeral
@@ -44,6 +49,49 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         let request = await recorder.lastRequest
         XCTAssertEqual(request?.url?.path, "/Sessions/Playing/Stopped")
         XCTAssertEqual(request?.httpMethod, "POST")
+    }
+
+    func testFetchPlaybackSourcesUsesCustomBitrateOverrideByDefault() async throws {
+        let recorder = RequestRecorder()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        URLProtocolStub.requestHandler = { request in
+            await recorder.record(request)
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!,
+                Data(#"{"MediaSources":[]}"#.utf8)
+            )
+        }
+
+        let session = URLSession(configuration: configuration)
+        let settings = PlaybackReportingSettingsStore(
+            serverConfiguration: ServerConfiguration(
+                serverURL: URL(string: "https://example.com")!,
+                preferredQuality: .p480,
+                maxStreamingBitrateOverride: 42_000_000
+            ),
+            lastSession: UserSession(userID: "user-1", username: "Flo", token: "token-1")
+        )
+        let tokenStore = PlaybackReportingTokenStore(storedToken: "token-1")
+        let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
+
+        _ = try await client.fetchPlaybackSources(itemID: "movie-1")
+
+        let recordedRequest = await recorder.lastRequest
+        let request = try XCTUnwrap(recordedRequest)
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+
+        XCTAssertEqual(request.url?.path, "/Items/movie-1/PlaybackInfo")
+        XCTAssertEqual(json["MaxStreamingBitrate"] as? Int, 42_000_000)
+
+        let deviceProfile = try XCTUnwrap(json["DeviceProfile"] as? [String: Any])
+        XCTAssertEqual(deviceProfile["MaxStreamingBitrate"] as? Int, 42_000_000)
     }
 }
 

@@ -1092,7 +1092,12 @@ struct HomeView: View {
         }
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession, let playerItem {
-                PlayerView(session: playerSession, item: playerItem)
+                PlayerView(
+                    session: playerSession,
+                    item: playerItem,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline
+                )
             }
         }
         .alert(

@@ -4,7 +4,7 @@ import Shared
 import SwiftUI
 
 enum ReelFinOnboardingVersion {
-    static let current = 3
+    static let current = 4
 }
 
 @MainActor

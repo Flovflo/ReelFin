@@ -39,13 +39,21 @@ export function MarketingCanvas({ canvasRef, size, slide }: MarketingCanvasProps
           <p className="poster-body">{slide.body}</p>
         </section>
 
-        <figure className="screen-stage">
-          <div className="screen-aura">
-            <img className="screen-aura-shot" src={screenshotPath} alt="" draggable={false} />
+        <figure className="device-stage">
+          <div className="device-backdrop">
+            <img className="device-backdrop-shot" src={screenshotPath} alt="" draggable={false} />
           </div>
-          <div className="screen-shadow" />
-          <div className="screen-panel">
-            <img className="screen-shot" src={screenshotPath} alt={`ReelFin ${slide.id} screen`} draggable={false} />
+          <div className="device-shadow" />
+          <div className="iphone-shell">
+            <span className="iphone-button iphone-button-volume-up" />
+            <span className="iphone-button iphone-button-volume-down" />
+            <span className="iphone-button iphone-button-action" />
+            <span className="iphone-button iphone-button-side" />
+
+            <div className="iphone-screen">
+              <div className="iphone-island" />
+              <img className="device-shot" src={screenshotPath} alt={`ReelFin ${slide.id} screen`} draggable={false} />
+            </div>
           </div>
         </figure>
       </div>
