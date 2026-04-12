@@ -1,82 +1,82 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg" alt="Jellyfin logo" width="120" height="120">
+  <img src="ReelFinApp/Resources/ReelFinIcon.icon/Assets/reelfinlogo.png" alt="ReelFin icon" width="112" height="112">
   <h1>ReelFin</h1>
-  <p><strong>Native Jellyfin client for iPhone, iPad, and Apple TV</strong></p>
+  <p><strong>Native Jellyfin for iPhone, iPad, and Apple TV.</strong></p>
+  <p>Browse faster, land on richer detail pages, and keep playback on the Apple stack from end to end.</p>
   <p>
-    <img src="https://img.shields.io/badge/Platform-iOS%20%26%20tvOS%2026%2B-blue.svg" alt="Platform">
-    <img src="https://img.shields.io/badge/Swift-5.9%2B-orange.svg" alt="Swift">
-    <img src="https://img.shields.io/badge/UI-SwiftUI-informational.svg" alt="SwiftUI">
-    <img src="https://img.shields.io/badge/Status-Beta-success.svg" alt="Status">
+    <img src="https://img.shields.io/badge/Platforms-iPhone%20%7C%20iPad%20%7C%20Apple%20TV-0f172a" alt="Platforms">
+    <img src="https://img.shields.io/badge/Playback-AVFoundation%20%2B%20AVKit-0b57d0" alt="Playback">
+    <img src="https://img.shields.io/badge/UI-SwiftUI-111827" alt="SwiftUI">
+    <img src="https://img.shields.io/badge/Status-Active%20Beta-15803d" alt="Status">
   </p>
 </div>
 
-ReelFin is a native Jellyfin app focused on deterministic playback, modern SwiftUI interfaces, and Apple-first media pipelines. The project avoids VLC-style embedded stacks and instead leans on `AVFoundation`, `AVKit`, and `VideoToolbox` to keep playback debuggable, efficient, and App Store friendly across iPhone, iPad, and Apple TV.
+ReelFin is a native Jellyfin client built to feel at home on Apple platforms instead of wrapping a server UI in a generic web shell. The app focuses on a clean home feed, fluid library browsing, richer detail pages, and a deterministic playback path based on `AVFoundation`, `AVKit`, and Apple media capabilities.
 
-## License
+<p align="center">
+  <img src="AppStore/Screenshots/ipad-pro-13-inch-m5/01-home.png" alt="ReelFin home feed on iPad" width="88%">
+</p>
 
-ReelFin is a proprietary, all-rights-reserved codebase.
-Copyright (c) 2026 Florian Taffin. All rights reserved.
+<p align="center"><em>Current iPad capture from the repo's screenshot pipeline.</em></p>
 
-No permission is granted to use, copy, modify, distribute, sublicense, or create
-derivative works from this repository without prior written authorization.
-See `LICENSE` and `COPYRIGHT.md` for the full notice and permission contact.
+## In Motion
+
+<p align="center">
+  <img src="Docs/Media/reelfin-transition.gif" alt="ReelFin transition from home to detail" width="320">
+</p>
+
+ReelFin already ships with a mock mode and screenshot flow, so the media in this README comes from the current app UI, not from hand-made mockups.
 
 ## Why ReelFin
 
-- Native Jellyfin playback path across iPhone, iPad, and Apple TV
-- Direct-play-first decision engine for Apple-compatible streams
-- On-device remux path for MKV to fragmented MP4 when needed
-- Deterministic fallback profiles instead of opaque playback heuristics
-- Modular Swift codebase with separate UI, API, cache, sync, data, and playback layers
-- Built-in diagnostics for playback planning and runtime troubleshooting
+- Native home rails for Continue Watching, Next Up, recently released, and recently added content
+- Fast movie and show browsing with dedicated library filters and search
+- Detail pages with cast, actions, file details, playback metadata, and watch state controls
+- Apple-native playback through `AVPlayer`, direct play first planning, and predictable fallback behavior
+- Shared codebase across iPhone, iPad, and Apple TV with platform-specific presentation where it matters
+- Local metadata, image caching, sync orchestration, and playback diagnostics built into the app architecture
 
-## Feature Highlights
+## Real Screens
 
-- Apple-native playback through `AVPlayer`
-- HEVC, HDR10, and Dolby Vision aware playback planning
-- Jellyfin home feed, library browsing, detail pages, search, and settings
-- tvOS-first focus navigation, cinematic shelves, and Apple TV optimized layouts
-- Local metadata persistence with GRDB
-- Image pipeline with memory and disk cache
-- Test coverage around playback planning, HLS generation, subtitles, and image cache behavior
+<p align="center">
+  <img src="AppStore/Screenshots/iphone-17-pro-max/02-library.png" alt="Library screen on iPhone" width="23%">
+  <img src="AppStore/Screenshots/iphone-17-pro-max/03-detail.png" alt="Detail screen on iPhone" width="23%">
+  <img src="AppStore/Screenshots/iphone-17-pro-max/04-settings.png" alt="Settings screen on iPhone" width="23%">
+  <img src="AppStore/Screenshots/ipad-pro-13-inch-m5/03-detail.png" alt="Detail screen on iPad" width="23%">
+</p>
 
-## Architecture
+## Apple-First Playback
 
-### Core modules
+ReelFin keeps the playback path Apple-native on purpose. Instead of embedding VLC-like stacks, the app resolves the best route for the current media source, prefers direct play when possible, and falls back through explicit compatibility lanes when it has to. That keeps behavior easier to debug, more predictable across devices, and much closer to what the App Store expects from a platform-native media app.
 
-- `ReelFinApp`: iOS and tvOS app bootstrap and dependency container
-- `ReelFinUI`: shared SwiftUI screens, theming, tvOS shells, and view models
-- `PlaybackEngine`: playback planning, native bridge, local HLS server, subtitle strategy
-- `JellyfinAPI`: async/await network client and DTO decoding
-- `DataStore`: GRDB-backed metadata repository
-- `ImageCache`: memory and disk image pipeline
-- `SyncEngine`: sync orchestration
-- `Shared`: domain models, protocols, settings, logging, app metadata
+The playback stack lives mainly in:
 
-### Playback flow
+- `PlaybackEngine` for planning, startup, route selection, local HLS, subtitles, and diagnostics
+- `ReelFinUI` for the SwiftUI surfaces, player presentation, and platform-specific UI
+- `JellyfinAPI` for networking and DTO decoding
+- `DataStore`, `ImageCache`, and `SyncEngine` for persistence, artwork, and background coordination
 
-1. `JellyfinAPI` resolves media sources and metadata.
-2. `PlaybackEngine` evaluates Apple compatibility and builds a playback plan.
-3. ReelFin attempts direct play first.
-4. If needed, ReelFin falls back to local remux or server transcode profiles.
-5. `PlaybackSessionController` manages `AVPlayer`, diagnostics, watchdogs, and recovery.
+For the implementation-level playback walkthrough, see [Docs/Playback-Architecture-Current.md](Docs/Playback-Architecture-Current.md).
 
-For the detailed playback contract, see `Docs/Playback-Architecture-Current.md`.
+## Project Map
 
-## Repository Guide
+- `ReelFinApp/`: app entry points and bootstrap wiring
+- `ReelFinUI/`: SwiftUI screens, theming, onboarding, and view models
+- `PlaybackEngine/`: playback planning, local HLS, native bridge, subtitles
+- `JellyfinAPI/`: Jellyfin networking client and decoding
+- `DataStore/`: GRDB-backed metadata persistence
+- `ImageCache/`: memory and disk image pipeline
+- `SyncEngine/`: sync orchestration and background tasks
+- `Shared/`: domain models, protocols, settings, logging
+- `Tests/`: unit and UI coverage
+- `Docs/`: release, support, playback, and legal docs
 
-- `project.yml` is the source of truth for targets, dependencies, and schemes.
-- `ReelFin.xcodeproj` is generated output and should stay aligned with `project.yml`.
-- `AppStore/Screenshots` contains curated release screenshots.
-- `build/`, `.artifacts/`, `.claude/`, logs, and user state are local artifacts and should not be versioned.
-- `AGENTS.md` and `llms.txt` are included to help coding agents and LLM tooling navigate the repo quickly.
-
-## Development
+## Run Locally
 
 ### Requirements
 
-- Xcode with iOS 26 and tvOS 26 simulators installed
-- XcodeGen available in your local environment
+- Xcode with iOS 26 simulators installed
+- XcodeGen available locally
 
 ### Generate the project
 
@@ -88,47 +88,39 @@ xcodegen generate
 
 ```bash
 xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3'
 
 xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
-  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation)'
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.1'
 ```
 
 ### Test
 
 ```bash
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3'
 ```
 
-### Focused playback tests
+### Refresh storefront screenshots
 
 ```bash
-xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2' \
-  -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests \
-  -only-testing:PlaybackEngineTests/Planning/CapabilityEngineTests
+./scripts/capture_app_store_screenshots.sh
 ```
 
-## LLM And Contributor Context
+## Documentation
 
-If you are working on the repo with an AI agent or joining the project as a new contributor:
+- [Docs/README.md](Docs/README.md) for the documentation index
+- [Docs/Playback-Architecture-Current.md](Docs/Playback-Architecture-Current.md) for the current playback stack
+- [Docs/AppStore-Submission.md](Docs/AppStore-Submission.md) for App Store and TestFlight metadata
+- [Docs/TestFlight-Launch-Checklist.md](Docs/TestFlight-Launch-Checklist.md) for the release checklist
+- [Docs/AppReview-Notes.md](Docs/AppReview-Notes.md) for review account and review flow notes
+- [flovflo.github.io/reelfin-site](https://flovflo.github.io/reelfin-site/) for the public support and policy pages
+- [Flovflo/reelfin-site](https://github.com/Flovflo/reelfin-site) for the website source repo
 
-- read `AGENTS.md` for repo conventions
-- read `Docs/Playback-Architecture-Current.md` before touching playback logic
-- keep the playback path Apple-native
-- prefer targeted module changes over broad rewrites
-- keep docs aligned with `project.yml`
+## License
 
-## App Store And Support
+ReelFin is a proprietary, all-rights-reserved codebase.
 
-- App Store submission notes: `Docs/AppStore-Submission.md`
-- TestFlight checklist: `Docs/TestFlight-Launch-Checklist.md`
-- App Review notes template: `Docs/AppReview-Notes.md`
-- Public support site: [flovflo.github.io/reelfin-site](https://flovflo.github.io/reelfin-site/)
-- Website source repo: [Flovflo/reelfin-site](https://github.com/Flovflo/reelfin-site)
-- Release preflight script: `scripts/preflight_testflight_release.sh`
+Copyright (c) 2026 Florian Taffin. All rights reserved.
 
-## Keywords
-
-Jellyfin iOS client, native Jellyfin app, SwiftUI media app, AVFoundation player, Apple-native video playback, iPhone Jellyfin app, iPad Jellyfin client.
+No permission is granted to use, copy, modify, distribute, sublicense, or create derivative works from this repository without prior written authorization. See `LICENSE` and `COPYRIGHT.md` for the full notice and permission contact.

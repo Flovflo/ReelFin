@@ -6,7 +6,8 @@
 - [ ] Run `xcodegen generate` after any `project.yml` change
 - [ ] Build the `ReelFin` scheme for iOS simulator
 - [ ] Run the unit and UI tests you intend to rely on for the beta
-- [ ] Regenerate App Store screenshots if the UI changed
+- [ ] Regenerate App Store screenshots with `./scripts/capture_app_store_screenshots.sh` if the UI changed
+- [ ] Refresh `README.md` media if the storefront UI changed materially
 
 ## App Store Connect
 
@@ -29,6 +30,12 @@
   `Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and iPad.`
 - [ ] Upload the current screenshots if you want them visible in TestFlight
 
+## Media sanity check
+
+- [ ] Confirm `AppStore/Screenshots/` matches the current UI
+- [ ] Confirm `Docs/Media/reelfin-transition.gif` still reflects the app flow shown in `README.md`
+- [ ] Confirm screenshot and README media use fictional or licensed library data only
+
 ## Beta App Review
 
 - [ ] Copy the structure from [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) into App Store Connect and replace every field with live review data
@@ -40,5 +47,4 @@
 
 - [ ] Confirm export compliance answers for a build that uses standard Apple encryption only
 - [ ] Confirm the support site is deployed and reachable over HTTPS
-- [ ] Confirm screenshots use fictional or licensed library data
 - [ ] Confirm there is no placeholder text in metadata, review notes, or TestFlight fields

@@ -13,17 +13,17 @@
 
 ## App description
 
-ReelFin is a native iPhone and iPad client for Jellyfin built around Apple playback frameworks. Browse your library, pick up where you left off, and switch quickly between home recommendations, search, and detailed playback controls without a server-specific web wrapper.
+ReelFin is a native iPhone and iPad client for Jellyfin built around Apple playback frameworks. It gives self-hosted Jellyfin users a cleaner Apple-native experience for browsing, detail pages, watch state, and playback.
 
 Why ReelFin:
 
 - Native playback path tuned for Apple devices
-- Fast home feed with continue watching, next up, and recently added rails
-- Detailed title pages with cast, seasons, episodes, and similar content
-- Quality and playback controls for direct play, H.264 fallback, and diagnostics
+- Fast home feed with Continue Watching, Next Up, and recently added or released rails
+- Movie and show browsing with search and library filters
+- Detailed title pages with cast, actions, file details, and playback metadata
 - Secure session handling with authentication tokens stored only in the iOS Keychain
 
-ReelFin is designed for users who want a cleaner, more deterministic Jellyfin experience on iOS and iPadOS, with playback behavior that stays close to the platform instead of relying on a generic embedded player.
+ReelFin is designed for users who want a more polished, deterministic Jellyfin experience on iOS and iPadOS, with playback behavior that stays close to the platform instead of relying on a generic embedded player.
 
 Terms of Service: https://flovflo.github.io/reelfin-site/terms.html
 Privacy Policy: https://flovflo.github.io/reelfin-site/privacy.html
@@ -38,6 +38,13 @@ Privacy Policy: https://flovflo.github.io/reelfin-site/privacy.html
   Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and iPad.
 - Beta review notes:
   Use [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) as a worksheet, then paste live review credentials and notes into App Store Connect.
+
+## Visual assets
+
+- Current storefront screenshots live in `AppStore/Screenshots/`
+- Refresh them with `./scripts/capture_app_store_screenshots.sh`
+- The README animation asset lives at `Docs/Media/reelfin-transition.gif`
+- Keep README and App Store media aligned whenever the UI changes materially
 
 ## App privacy answers
 

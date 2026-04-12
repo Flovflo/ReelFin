@@ -18,8 +18,9 @@ Do not paste this file verbatim into App Store Connect. Replace every field with
 1. Launch ReelFin.
 2. Enter the review server URL, then continue.
 3. Sign in with the review username and password.
-4. From Home, open any item in Continue Watching, Next Up, Movies, or Shows.
-5. Validate playback, subtitle selection, and resume behavior.
+4. From Home or Library, open any movie or show detail page.
+5. Start playback and validate resume state, subtitles, and general playback stability.
+6. Optionally open Settings to review playback preferences and account state.
 
 ## Notes for App Review
 
