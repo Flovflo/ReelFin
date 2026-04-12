@@ -16,7 +16,8 @@ final class JellyfinLibraryAggregationTests: XCTestCase {
         JellyfinLibraryURLProtocolStub.requestHandler = { request in
             await recorder.record(request)
 
-            let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
+            let requestURL = try XCTUnwrap(request.url)
+            let components = try XCTUnwrap(URLComponents(url: requestURL, resolvingAgainstBaseURL: false))
             let parentID = components.queryItems?.first(where: { $0.name == "ParentId" })?.value
 
             let payload: String
@@ -46,7 +47,7 @@ final class JellyfinLibraryAggregationTests: XCTestCase {
 
             return (
                 HTTPURLResponse(
-                    url: XCTUnwrap(request.url),
+                    url: requestURL,
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: ["Content-Type": "application/json"]

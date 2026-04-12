@@ -4,14 +4,16 @@ import PlaybackEngine
 import Shared
 import XCTest
 
+private typealias SharedLibraryView = Shared.LibraryView
+
 @MainActor
 final class LibraryViewModelTests: XCTestCase {
     func testLoadInitialAggregatesMovieLibrariesDiscoveredFromJellyfinViews() async throws {
         let apiClient = LibraryViewModelAPIClientStub(
             views: [
-                LibraryView(id: "movies-a", name: "Movies A", collectionType: "movies"),
-                LibraryView(id: "movies-b", name: "Movies B", collectionType: "movies"),
-                LibraryView(id: "shows-a", name: "Shows A", collectionType: "tvshows")
+                SharedLibraryView(id: "movies-a", name: "Movies A", collectionType: "movies"),
+                SharedLibraryView(id: "movies-b", name: "Movies B", collectionType: "movies"),
+                SharedLibraryView(id: "shows-a", name: "Shows A", collectionType: "tvshows")
             ],
             itemsByViewID: [
                 "movies-a": [
@@ -30,19 +32,20 @@ final class LibraryViewModelTests: XCTestCase {
 
         let viewModel = LibraryViewModel(dependencies: dependencies)
         await viewModel.loadInitial()
+        let resolvedViewIDs = await apiClient.recordedQueries().last?.resolvedViewIDs
 
         XCTAssertEqual(viewModel.items.map(\.id), ["movie-a-1", "movie-b-1"])
         XCTAssertEqual(repository.savedViews.map(\.id), ["movies-a", "movies-b", "shows-a"])
-        XCTAssertEqual(await apiClient.recordedQueries().last?.resolvedViewIDs, ["movies-a", "movies-b"])
+        XCTAssertEqual(resolvedViewIDs, ["movies-a", "movies-b"])
     }
 }
 
 private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
-    private let views: [LibraryView]
+    private let views: [SharedLibraryView]
     private let itemsByViewID: [String: [MediaItem]]
     private var queries: [LibraryQuery] = []
 
-    init(views: [LibraryView], itemsByViewID: [String: [MediaItem]]) {
+    init(views: [SharedLibraryView], itemsByViewID: [String: [MediaItem]]) {
         self.views = views
         self.itemsByViewID = itemsByViewID
     }
@@ -62,7 +65,7 @@ private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
     func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { _ = serverURL; throw AppError.unknown }
     func pollQuickConnect(secret: String) async throws -> UserSession? { _ = secret; return nil }
 
-    func fetchUserViews() async throws -> [LibraryView] {
+    func fetchUserViews() async throws -> [SharedLibraryView] {
         views
     }
 
@@ -145,16 +148,16 @@ private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
 }
 
 private final class LibraryViewModelRepositoryStub: MetadataRepositoryProtocol, @unchecked Sendable {
-    var savedViews: [LibraryView] = []
-    private var views: [LibraryView] = []
+    var savedViews: [SharedLibraryView] = []
+    private var views: [SharedLibraryView] = []
     private var itemsByID: [String: MediaItem] = [:]
 
-    func saveLibraryViews(_ views: [LibraryView]) async throws {
+    func saveLibraryViews(_ views: [SharedLibraryView]) async throws {
         self.views = views
         savedViews = views
     }
 
-    func fetchLibraryViews() async throws -> [LibraryView] {
+    func fetchLibraryViews() async throws -> [SharedLibraryView] {
         views
     }
 
