@@ -38,6 +38,58 @@ final class LibraryViewModelTests: XCTestCase {
         XCTAssertEqual(repository.savedViews.map(\.id), ["movies-a", "movies-b", "shows-a"])
         XCTAssertEqual(resolvedViewIDs, ["movies-a", "movies-b"])
     }
+
+    func testLoadInitialPrefersAppleOptimizedDuplicateAcrossLibraries() async throws {
+        let serverPrepared = MediaItem(
+            id: "captain-america-a-server-prep",
+            name: "Captain America",
+            mediaType: .movie,
+            year: 2011,
+            runtimeTicks: Int64(124 * 60 * 10_000_000),
+            libraryID: "movies-a"
+        )
+        let appleOptimized = MediaItem(
+            id: "captain-america-z-apple",
+            name: "Captain America",
+            mediaType: .movie,
+            year: 2011,
+            runtimeTicks: Int64(124 * 60 * 10_000_000),
+            libraryID: "movies-b"
+        )
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: [
+                SharedLibraryView(id: "movies-a", name: "Movies A", collectionType: "movies"),
+                SharedLibraryView(id: "movies-b", name: "Movies B", collectionType: "movies")
+            ],
+            itemsByViewID: [
+                "movies-a": [serverPrepared],
+                "movies-b": [appleOptimized]
+            ]
+        )
+        let repository = LibraryViewModelRepositoryStub()
+        let warmupManager = LibraryViewWarmupManagerStub(
+            selectionsByItemID: [
+                serverPrepared.id: makeSelection(
+                    itemID: serverPrepared.id,
+                    route: .transcode(URL(string: "https://example.com/captain-america-server-prep.m3u8")!)
+                ),
+                appleOptimized.id: makeSelection(
+                    itemID: appleOptimized.id,
+                    route: .directPlay(URL(string: "https://example.com/captain-america-apple.mp4")!)
+                )
+            ]
+        )
+        let dependencies = makeDependencies(
+            apiClient: apiClient,
+            repository: repository,
+            warmupManager: warmupManager
+        )
+
+        let viewModel = LibraryViewModel(dependencies: dependencies)
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(viewModel.items.map(\.id), [appleOptimized.id])
+    }
 }
 
 private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
@@ -200,7 +252,8 @@ private final class LibraryViewModelRepositoryStub: MetadataRepositoryProtocol, 
 @MainActor
 private func makeDependencies(
     apiClient: LibraryViewModelAPIClientStub,
-    repository: LibraryViewModelRepositoryStub
+    repository: LibraryViewModelRepositoryStub,
+    warmupManager: PlaybackWarmupManaging? = nil
 ) -> ReelFinDependencies {
     let detailRepository = DefaultMediaDetailRepository(
         apiClient: apiClient,
@@ -209,7 +262,7 @@ private func makeDependencies(
         detailTTL: 60,
         collectionTTL: 60
     )
-    let warmupManager = PlaybackWarmupManager(apiClient: apiClient, ttl: 60)
+    let resolvedWarmupManager = warmupManager ?? PlaybackWarmupManager(apiClient: apiClient, ttl: 60)
 
     return ReelFinDependencies(
         apiClient: apiClient,
@@ -220,14 +273,74 @@ private func makeDependencies(
         settingsStore: MockSettingsStore(),
         episodeReleaseNotificationManager: NoopEpisodeReleaseNotificationManager(),
         seriesCache: SeriesLookupCache(apiClient: apiClient),
-        playbackWarmupManager: warmupManager,
+        playbackWarmupManager: resolvedWarmupManager,
         tvFocusWarmupCoordinator: nil,
         makePlaybackSession: {
             PlaybackSessionController(
                 apiClient: apiClient,
                 repository: repository,
-                warmupManager: warmupManager
+                warmupManager: resolvedWarmupManager
             )
         }
+    )
+}
+
+private actor LibraryViewWarmupManagerStub: PlaybackWarmupManaging {
+    private let selectionsByItemID: [String: PlaybackAssetSelection]
+
+    init(selectionsByItemID: [String: PlaybackAssetSelection]) {
+        self.selectionsByItemID = selectionsByItemID
+    }
+
+    func warm(itemID: String) async {
+        _ = itemID
+    }
+
+    func selection(for itemID: String) async -> PlaybackAssetSelection? {
+        selectionsByItemID[itemID]
+    }
+
+    func cancel(itemID: String) async {
+        _ = itemID
+    }
+
+    func trim(keeping itemIDs: [String]) async {
+        _ = itemIDs
+    }
+
+    func invalidate(itemID: String) async {
+        _ = itemID
+    }
+}
+
+private func makeSelection(itemID: String, route: PlaybackRoute) -> PlaybackAssetSelection {
+    let source = MediaSource(
+        id: "source-\(itemID)",
+        itemID: itemID,
+        name: "Example",
+        container: "mp4",
+        videoCodec: "hevc",
+        audioCodec: "eac3",
+        supportsDirectPlay: true,
+        supportsDirectStream: true,
+        directStreamURL: URL(string: "https://example.com/\(itemID)/stream.m3u8"),
+        directPlayURL: URL(string: "https://example.com/\(itemID)/direct.mp4"),
+        transcodeURL: URL(string: "https://example.com/\(itemID)/transcode.m3u8")
+    )
+
+    return PlaybackAssetSelection(
+        source: source,
+        decision: PlaybackDecision(sourceID: source.id, route: route),
+        assetURL: URL(string: "https://example.com/\(itemID)/asset")!,
+        headers: [:],
+        debugInfo: PlaybackDebugInfo(
+            container: "mp4",
+            videoCodec: "hevc",
+            videoBitDepth: 10,
+            hdrMode: .dolbyVision,
+            audioMode: "EAC3",
+            bitrate: 18_000_000,
+            playMethod: "DirectPlay"
+        )
     )
 }
