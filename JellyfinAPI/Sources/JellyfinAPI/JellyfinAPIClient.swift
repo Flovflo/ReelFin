@@ -8,6 +8,14 @@ private struct HTTPStatusError: Error {
     let message: String
 }
 
+private struct ReleasedSeriesCandidate {
+    let seriesID: String
+    var item: MediaItem
+    let sortKey: String
+    let sourcePriority: Int
+    let rank: Int
+}
+
 public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     private enum ItemFields {
         static let trickplay = ["Trickplay"]
@@ -272,18 +280,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             libraryID: nil
         )
 
-        async let recentlyReleasedSeries = fetchItems(
-            userID: userID,
-            path: "Users/\(userID)/Items",
-            query: [
-                URLQueryItem(name: "Recursive", value: "true"),
-                URLQueryItem(name: "IncludeItemTypes", value: "Series"),
-                URLQueryItem(name: "Limit", value: "20"),
-                URLQueryItem(name: "SortBy", value: "PremiereDate"),
-                URLQueryItem(name: "SortOrder", value: "Descending")
-            ] + incrementalQuery(since: since),
-            libraryID: nil
-        )
+        async let recentlyReleasedSeries = fetchRecentlyReleasedSeries(userID: userID, since: since)
 
         let resume = (try? await resumeItems) ?? []
         let releasedMovieItems = (try? await recentlyReleasedMovies) ?? []
@@ -735,6 +732,162 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             query: mergedQueryItems(query, fields: ItemFields.home)
         )
         return response.items.map { $0.toDomain(libraryID: libraryID) }
+    }
+
+    private func fetchRecentlyReleasedSeries(userID: String, since: Date?) async throws -> [MediaItem] {
+        let seriesQuery = [
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Series"),
+            URLQueryItem(name: "Limit", value: "20"),
+            URLQueryItem(name: "SortBy", value: "PremiereDate"),
+            URLQueryItem(name: "SortOrder", value: "Descending")
+        ] + incrementalQuery(since: since)
+        let episodesQuery = [
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Episode"),
+            URLQueryItem(name: "Limit", value: "60"),
+            URLQueryItem(name: "SortBy", value: "PremiereDate"),
+            URLQueryItem(name: "SortOrder", value: "Descending")
+        ] + incrementalQuery(since: since)
+
+        async let releasedSeriesResponse: ItemsResponseDTO = request(
+            path: "Users/\(userID)/Items",
+            query: mergedQueryItems(seriesQuery, fields: ItemFields.home)
+        )
+        async let releasedEpisodesResponse: ItemsResponseDTO = request(
+            path: "Users/\(userID)/Items",
+            query: mergedQueryItems(episodesQuery, fields: ItemFields.home)
+        )
+
+        let (seriesResponse, episodesResponse) = try await (releasedSeriesResponse, releasedEpisodesResponse)
+        return mergeRecentlyReleasedSeries(
+            seriesItems: seriesResponse.items,
+            episodeItems: episodesResponse.items,
+            limit: 20
+        )
+    }
+
+    private func mergeRecentlyReleasedSeries(
+        seriesItems: [ItemDTO],
+        episodeItems: [ItemDTO],
+        limit: Int
+    ) -> [MediaItem] {
+        let candidates =
+            seriesItems.enumerated().map { releasedSeriesCandidate(from: $0.element, rank: $0.offset) }
+            + episodeItems.enumerated().compactMap { releasedSeriesCandidate(fromEpisode: $0.element, rank: $0.offset) }
+
+        let orderedCandidates = candidates.sorted {
+            if $0.sortKey != $1.sortKey {
+                return $0.sortKey > $1.sortKey
+            }
+            if $0.sourcePriority != $1.sourcePriority {
+                return $0.sourcePriority < $1.sourcePriority
+            }
+            return $0.rank < $1.rank
+        }
+
+        var candidatesBySeriesID: [String: ReleasedSeriesCandidate] = [:]
+        var orderedSeriesIDs: [String] = []
+        orderedSeriesIDs.reserveCapacity(min(limit, orderedCandidates.count))
+
+        for candidate in orderedCandidates {
+            if var existing = candidatesBySeriesID[candidate.seriesID] {
+                existing.item = mergeReleasedSeriesItem(primary: existing.item, fallback: candidate.item)
+                candidatesBySeriesID[candidate.seriesID] = existing
+                continue
+            }
+
+            candidatesBySeriesID[candidate.seriesID] = candidate
+            orderedSeriesIDs.append(candidate.seriesID)
+        }
+
+        return orderedSeriesIDs.prefix(limit).compactMap { candidatesBySeriesID[$0]?.item }
+    }
+
+    private func releasedSeriesCandidate(from item: ItemDTO, rank: Int) -> ReleasedSeriesCandidate {
+        ReleasedSeriesCandidate(
+            seriesID: item.id,
+            item: item.toDomain(),
+            sortKey: releaseSortKey(for: item),
+            sourcePriority: 0,
+            rank: rank
+        )
+    }
+
+    private func releasedSeriesCandidate(fromEpisode item: ItemDTO, rank: Int) -> ReleasedSeriesCandidate? {
+        let episode = item.toDomain()
+        guard let seriesID = item.seriesID ?? episode.parentID else { return nil }
+
+        let seriesShell = MediaItem(
+            id: seriesID,
+            name: episode.seriesName ?? episode.name,
+            overview: episode.overview,
+            mediaType: .series,
+            year: episode.year,
+            genres: episode.genres,
+            communityRating: episode.communityRating,
+            posterTag: episode.seriesPosterTag ?? episode.posterTag,
+            backdropTag: episode.backdropTag,
+            libraryID: episode.libraryID,
+            has4K: episode.has4K,
+            hasDolbyVision: episode.hasDolbyVision,
+            hasClosedCaptions: episode.hasClosedCaptions,
+            airDays: episode.airDays,
+            isFavorite: episode.isFavorite
+        )
+
+        return ReleasedSeriesCandidate(
+            seriesID: seriesID,
+            item: seriesShell,
+            sortKey: releaseSortKey(for: item),
+            sourcePriority: 1,
+            rank: rank
+        )
+    }
+
+    private func releaseSortKey(for item: ItemDTO) -> String {
+        item.premiereDate ?? item.dateCreated ?? ""
+    }
+
+    private func mergeReleasedSeriesItem(primary: MediaItem, fallback: MediaItem) -> MediaItem {
+        var merged = primary
+        if merged.overview == nil {
+            merged.overview = fallback.overview
+        }
+        if merged.year == nil {
+            merged.year = fallback.year
+        }
+        if merged.genres.isEmpty {
+            merged.genres = fallback.genres
+        }
+        if merged.communityRating == nil {
+            merged.communityRating = fallback.communityRating
+        }
+        if merged.posterTag == nil {
+            merged.posterTag = fallback.posterTag
+        }
+        if merged.backdropTag == nil {
+            merged.backdropTag = fallback.backdropTag
+        }
+        if merged.libraryID == nil {
+            merged.libraryID = fallback.libraryID
+        }
+        if !merged.has4K {
+            merged.has4K = fallback.has4K
+        }
+        if !merged.hasDolbyVision {
+            merged.hasDolbyVision = fallback.hasDolbyVision
+        }
+        if !merged.hasClosedCaptions {
+            merged.hasClosedCaptions = fallback.hasClosedCaptions
+        }
+        if merged.airDays == nil {
+            merged.airDays = fallback.airDays
+        }
+        if !merged.isFavorite {
+            merged.isFavorite = fallback.isFavorite
+        }
+        return merged
     }
 
     private func fieldsQueryItem(_ fields: [String]) -> URLQueryItem {
