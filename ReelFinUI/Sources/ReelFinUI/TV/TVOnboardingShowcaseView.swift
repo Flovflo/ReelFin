@@ -212,16 +212,18 @@ private struct TVOnboardingScreenOverlay: View {
     @ViewBuilder
     private var overlayLeading: some View {
         switch item.highlight {
-        case .home:
-            TVOnboardingGlassBadge(icon: "bolt.fill", text: "Fast Resume")
-        case .library:
+        case .speed:
+            TVOnboardingGlassBadge(icon: "bolt.fill", text: "Apple-First Speed")
+        case .discovery:
             TVOnboardingGlassNote(
-                eyebrow: "Remote First",
-                title: "Less scrolling, bigger art",
+                eyebrow: "Discovery",
+                title: "Hero, rails, and detail now feel connected",
                 icon: "sparkles"
             )
-        case .detail:
-            EmptyView()
+        case .playback:
+            TVOnboardingGlassBadge(icon: "bolt.fill", text: "Playback Ready")
+        case .fallback:
+            TVOnboardingGlassBadge(icon: "play.fill", text: "Play Stays First")
         case .connect:
             TVOnboardingGlassBadge(icon: "tv.badge.wifi", text: "Apple TV Login")
         }
@@ -230,15 +232,21 @@ private struct TVOnboardingScreenOverlay: View {
     @ViewBuilder
     private var overlayTrailing: some View {
         switch item.highlight {
-        case .home:
-            TVOnboardingGlassBadge(icon: "play.fill", text: "Continue Watching")
-        case .library:
-            TVOnboardingGlassBadge(icon: "rectangle.stack.fill", text: "Fluid Rails")
-        case .detail:
+        case .speed:
+            TVOnboardingGlassBadge(icon: "play.fill", text: "Hero Play")
+        case .discovery:
+            TVOnboardingGlassBadge(icon: "rectangle.stack.fill", text: "Stable Focus")
+        case .playback:
             HStack(spacing: 10) {
                 TVOnboardingGlassBadge(icon: "bolt.fill", text: "Direct Play")
                 TVOnboardingGlassMini(text: "4K")
                 TVOnboardingGlassMini(text: "SDH")
+            }
+        case .fallback:
+            HStack(spacing: 10) {
+                TVOnboardingGlassMini(text: "Seasons")
+                TVOnboardingGlassMini(text: "Episodes")
+                TVOnboardingGlassMini(text: "Context")
             }
         case .connect:
             TVOnboardingGlassBadge(icon: "iphone.and.arrow.forward", text: "Approve on Phone")
@@ -248,23 +256,29 @@ private struct TVOnboardingScreenOverlay: View {
     @ViewBuilder
     private var overlayBottomLeading: some View {
         switch item.highlight {
-        case .home:
+        case .speed:
             TVOnboardingGlassNote(
-                eyebrow: "Native Jellyfin",
-                title: "Jump back in instantly",
+                eyebrow: "Hero Resume",
+                title: "Land on the hero Play button when Home opens",
                 icon: "play.tv.fill"
             )
-        case .library:
+        case .discovery:
             TVOnboardingGlassNote(
                 eyebrow: "Focus Navigation",
-                title: "Browse faster on the couch",
+                title: "Move between top nav, hero, and rails without getting stuck",
                 icon: "hand.tap.fill"
             )
-        case .detail:
+        case .playback:
             TVOnboardingGlassNote(
                 eyebrow: "Playback Clarity",
                 title: "See the lightning badge before you press play",
                 icon: "bolt.fill"
+            )
+        case .fallback:
+            TVOnboardingGlassNote(
+                eyebrow: "Series Ready",
+                title: "Season controls stay available without stealing the first action",
+                icon: "rectangle.stack.badge.play"
             )
         case .connect:
             TVOnboardingGlassNote(
@@ -278,14 +292,16 @@ private struct TVOnboardingScreenOverlay: View {
     @ViewBuilder
     private var overlayBottomTrailing: some View {
         switch item.highlight {
-        case .home, .library:
+        case .speed, .discovery:
             EmptyView()
-        case .detail:
+        case .playback:
             HStack(spacing: 10) {
                 TVOnboardingGlassMini(text: "Resume")
                 TVOnboardingGlassMini(text: "Cast")
                 TVOnboardingGlassMini(text: "More")
             }
+        case .fallback:
+            TVOnboardingGlassMini(text: "Clean Return")
         case .connect:
             TVOnboardingGlassMini(text: "Quick Connect")
         }

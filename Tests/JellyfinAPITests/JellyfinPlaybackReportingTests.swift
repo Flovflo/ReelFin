@@ -84,14 +84,12 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
 
         let recordedRequest = await recorder.lastRequest
         let request = try XCTUnwrap(recordedRequest)
-        let body = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(requestBodyData(from: request))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
 
         XCTAssertEqual(request.url?.path, "/Items/movie-1/PlaybackInfo")
         XCTAssertEqual(json["MaxStreamingBitrate"] as? Int, 42_000_000)
-
-        let deviceProfile = try XCTUnwrap(json["DeviceProfile"] as? [String: Any])
-        XCTAssertEqual(deviceProfile["MaxStreamingBitrate"] as? Int, 42_000_000)
+        XCTAssertNil(json["DeviceProfile"])
     }
 }
 
@@ -133,6 +131,37 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+}
+
+private func requestBodyData(from request: URLRequest) throws -> Data? {
+    if let body = request.httpBody {
+        return body
+    }
+
+    guard let stream = request.httpBodyStream else {
+        return nil
+    }
+
+    stream.open()
+    defer { stream.close() }
+
+    var data = Data()
+    let bufferSize = 1024
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+    defer { buffer.deallocate() }
+
+    while stream.hasBytesAvailable {
+        let read = stream.read(buffer, maxLength: bufferSize)
+        if read < 0 {
+            throw try XCTUnwrap(stream.streamError)
+        }
+        if read == 0 {
+            break
+        }
+        data.append(buffer, count: read)
+    }
+
+    return data
 }
 
 private final class PlaybackReportingSettingsStore: SettingsStoreProtocol, @unchecked Sendable {

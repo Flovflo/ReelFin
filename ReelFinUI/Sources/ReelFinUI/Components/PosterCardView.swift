@@ -89,8 +89,8 @@ public struct PosterCardView: View {
                 subtitleLineLimit: subtitleLineLimit
             )
             #if os(tvOS)
-            .padding(.horizontal, 6)
-            .padding(.bottom, 4)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 2)
             #endif
         }
         .frame(width: PosterCardMetrics.posterWidth(for: layoutStyle, compact: isCompact), alignment: .leading)
@@ -334,7 +334,7 @@ public struct PosterCardMetadataView: View {
 
     private var titleFontSize: CGFloat {
         #if os(tvOS)
-        return layoutStyle == .landscape ? 24 : 22
+        return layoutStyle == .landscape ? 22 : 20
         #else
         return 15
         #endif
@@ -342,7 +342,7 @@ public struct PosterCardMetadataView: View {
 
     private var subtitleFontSize: CGFloat {
         #if os(tvOS)
-        return layoutStyle == .landscape ? 18 : 17
+        return layoutStyle == .landscape ? 16 : 15
         #else
         return 13
         #endif
@@ -350,7 +350,7 @@ public struct PosterCardMetadataView: View {
 
     private var badgeFontSize: CGFloat {
         #if os(tvOS)
-        return 15
+        return 14
         #else
         return 11
         #endif
@@ -358,7 +358,7 @@ public struct PosterCardMetadataView: View {
 
     private var metadataSpacing: CGFloat {
         #if os(tvOS)
-        return 8
+        return 6
         #else
         return 2
         #endif
@@ -497,7 +497,7 @@ public struct PosterCardMetadataView: View {
 
     private var inlineProgressWidth: CGFloat {
         #if os(tvOS)
-        return 56
+        return 50
         #else
         return 34
         #endif
@@ -521,7 +521,7 @@ private struct PosterCardInlineProgressTrack: View {
     }
 }
 
-private struct PosterCardMetrics {
+struct PosterCardMetrics {
     let layoutStyle: PosterCardLayoutStyle
     let compact: Bool
 
@@ -533,20 +533,20 @@ private struct PosterCardMetrics {
         #if os(tvOS)
         switch layoutStyle {
         case .row:
-            return 220
+            return 198
         case .grid:
-            return 240
+            return 214
         case .landscape:
-            return 400
+            return 356
         }
         #else
         switch layoutStyle {
         case .row:
-            return compact ? 134 : 160
+            return compact ? 122 : 148
         case .grid:
-            return compact ? 158 : 206
+            return compact ? 146 : 188
         case .landscape:
-            return compact ? 240 : 300
+            return compact ? 220 : 272
         }
         #endif
     }

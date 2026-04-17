@@ -141,6 +141,7 @@ struct TVLoginActionButton: View {
     let style: Style
     let isLoading: Bool
     let isEnabled: Bool
+    let accessibilityIdentifier: String?
     let action: () -> Void
 
     @Environment(\.isFocused) private var isFocused
@@ -151,6 +152,7 @@ struct TVLoginActionButton: View {
         style: Style = .primary,
         isLoading: Bool = false,
         isEnabled: Bool = true,
+        accessibilityIdentifier: String? = nil,
         action: @escaping () -> Void
     ) {
         self.title = title
@@ -158,6 +160,7 @@ struct TVLoginActionButton: View {
         self.style = style
         self.isLoading = isLoading
         self.isEnabled = isEnabled
+        self.accessibilityIdentifier = accessibilityIdentifier
         self.action = action
     }
 
@@ -232,6 +235,7 @@ struct TVLoginActionButton: View {
         .disabled(!isEnabled || isLoading)
         .scaleEffect(isFocused ? 1.02 : 1)
         .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
+        .accessibilityIdentifier(accessibilityIdentifier ?? "")
     }
 }
 

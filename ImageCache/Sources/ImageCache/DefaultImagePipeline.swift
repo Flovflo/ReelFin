@@ -208,12 +208,21 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     }
 
     private func decodeImage(data: Data, for url: URL) async -> UIImage? {
-        let maxPixelSize = max(requestedPixelSize(for: url), 320)
         return await Task.detached(priority: .utility) {
             guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
                 return UIImage(data: data)
             }
 
+            if Self.isTrickplaySheetURL(url),
+               let cgImage = CGImageSourceCreateImageAtIndex(
+                   source,
+                   0,
+                   [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+               ) {
+                return UIImage(cgImage: cgImage)
+            }
+
+            let maxPixelSize = max(self.requestedPixelSize(for: url), 320)
             let options: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
@@ -227,6 +236,10 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
             return UIImage(data: data)
         }.value
+    }
+
+    private static func isTrickplaySheetURL(_ url: URL) -> Bool {
+        url.pathComponents.contains("Trickplay")
     }
 
     private func requestedPixelSize(for url: URL) -> Int {

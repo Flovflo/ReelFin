@@ -21,17 +21,35 @@ export type SlideSpec = {
   id: SlideKey;
   order: number;
   fileName: string;
-  layout: "hero" | "offset" | "center";
   eyebrow: string;
   title: [string, string];
   body: string;
   palette: {
     background: string;
     backgroundSoft: string;
-    accentStart: string;
-    accentEnd: string;
+    ink: string;
+    muted: string;
+    accent: string;
+    accentSoft: string;
     glowPrimary: string;
     glowSecondary: string;
+  };
+  composition: {
+    copy: {
+      top: number;
+      left: number;
+      width: number;
+    };
+    device: {
+      top: number;
+      right: number;
+      height: number;
+      rotation: number;
+    };
+  };
+  support: {
+    variant: "home" | "detail" | "library";
+    items: string[];
   };
 };
 
@@ -55,51 +73,78 @@ export const SLIDES: SlideSpec[] = [
     id: "home",
     order: 1,
     fileName: "Home-ios.PNG",
-    layout: "hero",
     eyebrow: "HOME FEED",
-    title: ["Your Jellyfin,", "refined."],
-    body: "A calmer way to keep watching on iPhone.",
+    title: ["Pick up where", "you left off"],
+    body: "A cinematic home feed for everything waiting in your library.",
     palette: {
-      background: "#f3eadf",
-      backgroundSoft: "#e6d9c8",
-      accentStart: "#af6f42",
-      accentEnd: "#d6a176",
-      glowPrimary: "rgba(38, 48, 67, 0.10)",
-      glowSecondary: "rgba(195, 136, 90, 0.18)"
+      background: "#05070c",
+      backgroundSoft: "#0a0e15",
+      ink: "#fbf7ef",
+      muted: "rgba(229, 223, 214, 0.80)",
+      accent: "#e3be82",
+      accentSoft: "#9a6936",
+      glowPrimary: "rgba(252, 111, 44, 0.34)",
+      glowSecondary: "rgba(85, 118, 225, 0.24)"
+    },
+    composition: {
+      copy: { top: 10.6, left: 8.8, width: 36 },
+      device: { top: 33, right: 4.9, height: 61, rotation: -1.4 }
+    },
+    support: {
+      variant: "home",
+      items: ["Continue Watching", "Recently Released"]
     }
   },
   {
     id: "detail",
     order: 2,
     fileName: "Detail_ios.PNG",
-    layout: "center",
-    eyebrow: "PLAYBACK",
-    title: ["Made for", "playback."],
-    body: "Rich detail, native controls, and the right context before you press play.",
+    eyebrow: "DETAIL & PLAYBACK",
+    title: ["Press play", "with context"],
+    body: "Formats, subtitles, and rich detail before you commit.",
     palette: {
-      background: "#04050a",
-      backgroundSoft: "#100d12",
-      accentStart: "#fbfbff",
-      accentEnd: "#d9b26b",
-      glowPrimary: "rgba(73, 131, 194, 0.14)",
-      glowSecondary: "rgba(212, 150, 70, 0.20)"
+      background: "#040507",
+      backgroundSoft: "#0a0d12",
+      ink: "#fbf8f2",
+      muted: "rgba(228, 231, 236, 0.78)",
+      accent: "#ead29d",
+      accentSoft: "#8f7248",
+      glowPrimary: "rgba(225, 175, 87, 0.30)",
+      glowSecondary: "rgba(65, 140, 160, 0.20)"
+    },
+    composition: {
+      copy: { top: 10.2, left: 8.8, width: 34 },
+      device: { top: 28.6, right: 4.7, height: 62.4, rotation: 0.8 }
+    },
+    support: {
+      variant: "detail",
+      items: ["4K", "Dolby Atmos", "Subtitles"]
     }
   },
   {
     id: "library",
     order: 3,
     fileName: "Library_ios.PNG",
-    layout: "offset",
     eyebrow: "LIBRARY",
-    title: ["Large libraries,", "clear."],
-    body: "Search quickly, filter cleanly, and keep every cover readable.",
+    title: ["Browse your", "whole library"],
+    body: "Fast filters, clear artwork, and search that stays readable.",
     palette: {
-      background: "#04050a",
-      backgroundSoft: "#0b1117",
-      accentStart: "#f4f7fc",
-      accentEnd: "#78c6ff",
-      glowPrimary: "rgba(92, 185, 255, 0.18)",
-      glowSecondary: "rgba(214, 98, 76, 0.16)"
+      background: "#040509",
+      backgroundSoft: "#090d14",
+      ink: "#fbf8f3",
+      muted: "rgba(229, 234, 242, 0.78)",
+      accent: "#d9b272",
+      accentSoft: "#7e6340",
+      glowPrimary: "rgba(214, 78, 58, 0.28)",
+      glowSecondary: "rgba(90, 156, 221, 0.20)"
+    },
+    composition: {
+      copy: { top: 10.4, left: 8.8, width: 35 },
+      device: { top: 31.5, right: 4.2, height: 60.2, rotation: 1.1 }
+    },
+    support: {
+      variant: "library",
+      items: ["Movies", "Shows", "Search your library"]
     }
   }
 ];

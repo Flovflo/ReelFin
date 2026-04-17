@@ -130,8 +130,8 @@ final class JellyfinLibraryAggregationTests: XCTestCase {
                 payload = """
                 {
                   "Items": [
-                    { "Id": "episode-the-boys-1", "Name": "The Insider", "Type": "Episode", "ProductionYear": 2026, "PremiereDate": "2026-04-15T00:00:00Z", "SeriesId": "series-the-boys", "SeriesName": "The Boys", "SeriesPrimaryImageTag": "boys-poster" },
-                    { "Id": "episode-malcolm-1", "Name": "Le Retour", "Type": "Episode", "ProductionYear": 2026, "PremiereDate": "2026-01-05T00:00:00Z", "SeriesId": "series-malcolm", "SeriesName": "Malcolm : Rien n'a changé", "SeriesPrimaryImageTag": "malcolm-poster" }
+                    { "Id": "episode-the-boys-1", "Name": "The Insider", "Type": "Episode", "ProductionYear": 2026, "PremiereDate": "2026-04-15T00:00:00Z", "SeriesId": "series-the-boys", "SeriesName": "The Boys", "SeriesPrimaryImageTag": "boys-poster", "IndexNumber": 1, "ParentIndexNumber": 5 },
+                    { "Id": "episode-malcolm-1", "Name": "Le Retour", "Type": "Episode", "ProductionYear": 2026, "PremiereDate": "2026-01-05T00:00:00Z", "SeriesId": "series-malcolm", "SeriesName": "Malcolm : Rien n'a changé", "SeriesPrimaryImageTag": "malcolm-poster", "IndexNumber": 1, "ParentIndexNumber": 1 }
                   ]
                 }
                 """
@@ -166,6 +166,10 @@ final class JellyfinLibraryAggregationTests: XCTestCase {
         XCTAssertEqual(releasedSeriesRow.items.map(\.name), ["The Boys", "Malcolm : Rien n'a changé"])
         XCTAssertTrue(releasedSeriesRow.items.allSatisfy { $0.mediaType == .series })
         XCTAssertTrue(feed.featured.contains(where: { $0.id == "series-the-boys" }))
+        XCTAssertEqual(releasedSeriesRow.items.first?.preferredEpisodeID, "episode-the-boys-1")
+        XCTAssertEqual(releasedSeriesRow.items.first?.preferredEpisodeName, "The Insider")
+        XCTAssertEqual(releasedSeriesRow.items.first?.preferredEpisodeSeasonNumber, 5)
+        XCTAssertEqual(releasedSeriesRow.items.first?.preferredEpisodeIndexNumber, 1)
 
         let requests = await recorder.requests
         XCTAssertTrue(

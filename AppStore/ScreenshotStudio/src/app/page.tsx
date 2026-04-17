@@ -2,7 +2,7 @@
 
 import { toPng } from "html-to-image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, useTransition, type CSSProperties } from "react";
 import { MarketingCanvas } from "./MarketingCanvas";
 import { DEFAULT_SLIDE, SLIDES, getDevice, getSize, getSlide } from "./studio";
 
@@ -15,6 +15,7 @@ function StudioPage() {
   const requestedSize = getSize(requestedDevice, searchParams.get("size"));
   const canvasRef = useRef<HTMLDivElement>(null);
   const [previewScale, setPreviewScale] = useState(1);
+  const [exportUrl, setExportUrl] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -56,12 +57,7 @@ function StudioPage() {
     router.replace(`/?${next.toString()}`, { scroll: false });
   };
 
-  const preloadCanvasImages = async () => {
-    const node = canvasRef.current;
-    if (!node) {
-      throw new Error("Canvas not ready");
-    }
-
+  const preloadCanvasImages = async (node: HTMLDivElement) => {
     await document.fonts.ready;
 
     const images = Array.from(node.querySelectorAll("img"));
@@ -88,7 +84,7 @@ function StudioPage() {
       throw new Error("Canvas not ready");
     }
 
-    await preloadCanvasImages();
+    await preloadCanvasImages(node);
 
     const options = {
       backgroundColor: requestedSlide.palette.background,
@@ -98,7 +94,6 @@ function StudioPage() {
       pixelRatio: 1
     };
 
-    await toPng(node, options);
     return toPng(node, options);
   };
 
@@ -110,11 +105,18 @@ function StudioPage() {
 
     let cancelled = false;
     document.body.dataset.ready = "false";
+    setExportUrl(null);
 
     const markReady = async () => {
+      const node = canvasRef.current;
+      if (!node) {
+        return;
+      }
+
       try {
-        await preloadCanvasImages();
+        const url = await renderPng();
         if (!cancelled) {
+          setExportUrl(url);
           document.body.dataset.ready = "true";
         }
       } catch (error) {
@@ -127,6 +129,7 @@ function StudioPage() {
     return () => {
       cancelled = true;
       document.body.dataset.ready = "false";
+      setExportUrl(null);
     };
   }, [exportMode, requestedSize.height, requestedSize.width, requestedSlide.id]);
 
@@ -143,7 +146,20 @@ function StudioPage() {
   if (exportMode) {
     return (
       <main className="export-shell">
-        <MarketingCanvas canvasRef={canvasRef} size={requestedSize} slide={requestedSlide} />
+        <div
+          className="export-preview"
+          style={
+            {
+              "--canvas-width": `${requestedSize.width}px`,
+              "--canvas-height": `${requestedSize.height}px`
+            } as CSSProperties
+          }
+        >
+          {exportUrl ? <img className="export-render" src={exportUrl} alt="" draggable={false} /> : null}
+          <div className="export-source">
+            <MarketingCanvas canvasRef={canvasRef} size={requestedSize} slide={requestedSlide} />
+          </div>
+        </div>
       </main>
     );
   }
@@ -152,9 +168,10 @@ function StudioPage() {
     <main className="studio-shell">
       <section className="studio-intro">
         <p className="intro-eyebrow">ParthJadhav / app-store-screenshots flow</p>
-        <h1>Docs iOS captures, rebuilt in a warmer editorial App Store vibe.</h1>
+        <h1>Product-native App Store screens, rebuilt from ReelFin&apos;s own cinematic UI language.</h1>
         <p>
-          This studio only uses the three iPhone screenshots in <code>Docs/Media</code> and exports a cleaner iOS-only set.
+          This studio only uses the three iPhone screenshots in <code>Docs/Media</code> and turns them into a darker, cleaner,
+          more conversion-focused iOS campaign.
         </p>
       </section>
 

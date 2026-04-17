@@ -42,31 +42,19 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "723DB54D68CE019BA1AA628D"
-               BuildableName = "PlaybackEngineTests.xctest"
-               BlueprintName = "PlaybackEngineTests"
+               BlueprintIdentifier = "4463183AC41446631264A0E8"
+               BuildableName = "ReelFinTVTests.xctest"
+               BlueprintName = "ReelFinTVTests"
                ReferencedContainer = "container:ReelFin.xcodeproj">
             </BuildableReference>
          </TestableReference>
          <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
+            skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "10779A4A42EE1BBBF2CAC397"
-               BuildableName = "ImageCacheTests.xctest"
-               BlueprintName = "ImageCacheTests"
-               ReferencedContainer = "container:ReelFin.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "533575B0D765DD2DA6B80EA5"
-               BuildableName = "JellyfinAPITests.xctest"
-               BlueprintName = "JellyfinAPITests"
+               BlueprintIdentifier = "14228532C64BFD86474339EC"
+               BuildableName = "ReelFinTVUITests.xctest"
+               BlueprintName = "ReelFinTVUITests"
                ReferencedContainer = "container:ReelFin.xcodeproj">
             </BuildableReference>
          </TestableReference>

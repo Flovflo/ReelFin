@@ -13,7 +13,8 @@ mkdir -p "$OUTPUT_DIR"
 
 cd "$STUDIO_DIR"
 bun install >/dev/null
-bun run dev >"$SERVER_LOG" 2>&1 &
+bun run build >/dev/null
+bun run start -- --hostname "$HOST" --port "$PORT" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 cleanup() {
@@ -48,7 +49,7 @@ capture() {
     --hide-scrollbars \
     --force-device-scale-factor=1 \
     --run-all-compositor-stages-before-draw \
-    --virtual-time-budget=12000 \
+    --virtual-time-budget=16000 \
     --window-size="${width},${height}" \
     --screenshot="$output_file" \
     "http://$HOST:$PORT/?size=${size_id}&slide=${slide_id}&export=1" \

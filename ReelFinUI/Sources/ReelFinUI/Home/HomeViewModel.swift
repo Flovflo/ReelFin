@@ -55,9 +55,12 @@ final class HomeViewModel: ObservableObject {
     }
 
     func select(item: MediaItem) {
-        if item.mediaType == .episode, let seriesId = item.parentID {
-            let immediateSeriesShell = MediaItem(
-                id: seriesId,
+        let selectedSeries: MediaItem
+        let preferredEpisode: MediaItem?
+
+        if item.mediaType == .episode, let seriesID = item.parentID {
+            selectedSeries = MediaItem(
+                id: seriesID,
                 name: item.seriesName ?? item.name,
                 overview: item.overview,
                 mediaType: .series,
@@ -69,29 +72,34 @@ final class HomeViewModel: ObservableObject {
                 backdropTag: item.backdropTag,
                 libraryID: item.libraryID
             )
-
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-                selectedEpisode = item
-                selectedItem = immediateSeriesShell
-            }
-
-            Task {
-                do {
-                    let series = try await dependencies.seriesCache.getSeries(id: seriesId)
-                    await MainActor.run {
-                        guard self.selectedItem?.id == seriesId else { return }
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
-                            selectedItem = mergedSeriesShell(current: immediateSeriesShell, incoming: series)
-                        }
-                    }
-                } catch {
-                    AppLog.ui.error("Series shell enrichment failed: \(error.localizedDescription, privacy: .public)")
-                }
-            }
+            preferredEpisode = item
+        } else if item.mediaType == .series {
+            selectedSeries = item
+            preferredEpisode = item.preferredEpisode
         } else {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                 selectedEpisode = nil
                 selectedItem = item
+            }
+            return
+        }
+
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+            selectedEpisode = preferredEpisode
+            selectedItem = selectedSeries
+        }
+
+        Task {
+            do {
+                let series = try await dependencies.seriesCache.getSeries(id: selectedSeries.id)
+                await MainActor.run {
+                    guard self.selectedItem?.id == selectedSeries.id else { return }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                        selectedItem = mergedSeriesShell(current: selectedSeries, incoming: series)
+                    }
+                }
+            } catch {
+                AppLog.ui.error("Series shell enrichment failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -334,6 +342,21 @@ final class HomeViewModel: ObservableObject {
         }
         if merged.genres.isEmpty {
             merged.genres = current.genres
+        }
+        if merged.preferredEpisodeID == nil {
+            merged.preferredEpisodeID = current.preferredEpisodeID
+        }
+        if merged.preferredEpisodeName == nil {
+            merged.preferredEpisodeName = current.preferredEpisodeName
+        }
+        if merged.preferredEpisodeOverview == nil {
+            merged.preferredEpisodeOverview = current.preferredEpisodeOverview
+        }
+        if merged.preferredEpisodeIndexNumber == nil {
+            merged.preferredEpisodeIndexNumber = current.preferredEpisodeIndexNumber
+        }
+        if merged.preferredEpisodeSeasonNumber == nil {
+            merged.preferredEpisodeSeasonNumber = current.preferredEpisodeSeasonNumber
         }
         return merged
     }

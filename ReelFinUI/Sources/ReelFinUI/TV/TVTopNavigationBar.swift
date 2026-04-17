@@ -1,3 +1,4 @@
+#if os(tvOS)
 import SwiftUI
 
 struct TVTopNavigationBar: View {
@@ -9,6 +10,8 @@ struct TVTopNavigationBar: View {
     @Binding var selectedDestination: TVRootDestination
     let focusedDestination: FocusState<TVRootDestination?>.Binding
     let appearance: TVTopNavigationAppearance
+    let isFocusable: Bool
+    let onMoveDownFromNavigation: (TVRootDestination) -> Void
 
     var body: some View {
         barContent
@@ -44,6 +47,10 @@ struct TVTopNavigationBar: View {
                     appearance: appearance,
                     highlightNamespace: highlightNamespace,
                     focusedDestination: focusedDestination,
+                    isFocusable: isFocusable,
+                    onMoveDown: {
+                        onMoveDownFromNavigation(destination)
+                    },
                     action: {
                         withAnimation(highlightAnimation) {
                             selectedDestination = destination
@@ -101,3 +108,4 @@ struct TVTopNavigationBar: View {
         }
     }
 }
+#endif

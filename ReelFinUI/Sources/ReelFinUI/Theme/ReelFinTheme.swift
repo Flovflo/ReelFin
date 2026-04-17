@@ -77,16 +77,16 @@ public enum ReelFinTheme {
     public static let tvBrightText = Color.white.opacity(0.96)
     public static let tvMutedText = Color.white.opacity(0.62)
     public static let tvSoftText = Color.white.opacity(0.48)
-    public static let tvSectionSpacing: CGFloat = 36
-    public static let tvRailSpacing: CGFloat = 28
-    public static let tvSectionHeaderSpacing: CGFloat = 18
-    public static let tvRailVerticalPadding: CGFloat = 20
-    public static let tvCardMetadataSpacing: CGFloat = 16
-    public static let tvSectionHorizontalPadding: CGFloat = 56
-    public static let tvTopNavigationBarMaxWidth: CGFloat = 760
-    public static let tvTopNavigationBarHeight: CGFloat = 64
-    public static let tvTopNavigationItemHeight: CGFloat = 52
-    public static let tvTopNavigationHorizontalPadding: CGFloat = 14
+    public static let tvSectionSpacing: CGFloat = 30
+    public static let tvRailSpacing: CGFloat = 22
+    public static let tvSectionHeaderSpacing: CGFloat = 14
+    public static let tvRailVerticalPadding: CGFloat = 14
+    public static let tvCardMetadataSpacing: CGFloat = 12
+    public static let tvSectionHorizontalPadding: CGFloat = 44
+    public static let tvTopNavigationBarMaxWidth: CGFloat = 700
+    public static let tvTopNavigationBarHeight: CGFloat = 58
+    public static let tvTopNavigationItemHeight: CGFloat = 46
+    public static let tvTopNavigationHorizontalPadding: CGFloat = 12
 
     // tvOS Focus & State Design Tokens
     public static let tvFocusScale: CGFloat = 1.06

@@ -65,7 +65,7 @@ final class DetailViewModelActionTests: XCTestCase {
     }
 
     private func makeDependencies(
-        apiClient: DetailActionSpyAPIClient,
+        apiClient: any JellyfinAPIClientProtocol,
         repository: MockMetadataRepository
     ) -> ReelFinDependencies {
         let detailRepository = DefaultMediaDetailRepository(

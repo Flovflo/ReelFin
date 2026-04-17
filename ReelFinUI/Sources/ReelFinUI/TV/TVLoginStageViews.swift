@@ -82,6 +82,7 @@ struct TVServerStageView: View {
                 .foregroundStyle(isServerFieldFocused ? Color.black.opacity(0.82) : Color.white.opacity(0.96))
                 .focused(focus, equals: .textA)
                 .tvLoginFieldSurface(focused: isServerFieldFocused)
+                .accessibilityIdentifier("login_server_field")
 
             TVServerStatusView(
                 isLoading: isTestingConnection,
@@ -98,6 +99,7 @@ struct TVServerStageView: View {
                     icon: signInPath.primaryActionSymbol,
                     isLoading: isTestingConnection,
                     isEnabled: canContinue,
+                    accessibilityIdentifier: "login_server_continue",
                     action: onContinue
                 )
                 .focused(focus, equals: .primary)
@@ -146,6 +148,7 @@ struct TVCredentialsStageView: View {
                     .foregroundStyle(isUsernameFocused ? Color.black.opacity(0.82) : Color.white.opacity(0.96))
                     .focused(focus, equals: .textA)
                     .tvLoginFieldSurface(focused: isUsernameFocused)
+                    .accessibilityIdentifier("login_username_field")
 
                 SecureField(
                     "",
@@ -157,6 +160,7 @@ struct TVCredentialsStageView: View {
                     .foregroundStyle(isPasswordFocused ? Color.black.opacity(0.82) : Color.white.opacity(0.96))
                     .focused(focus, equals: .textB)
                     .tvLoginFieldSurface(focused: isPasswordFocused)
+                    .accessibilityIdentifier("login_password_field")
             }
 
             TVServerStatusView(isLoading: false, message: nil, error: authErrorMessage)
@@ -165,13 +169,20 @@ struct TVCredentialsStageView: View {
                 TVLoginActionButton(title: "Back", icon: "chevron.left", style: .tertiary, action: onBack)
                     .focused(focus, equals: .tertiary)
 
-                TVLoginActionButton(title: "Sign In", icon: "arrow.right", isEnabled: canSubmit, action: onSubmit)
+                TVLoginActionButton(
+                    title: "Sign In",
+                    icon: "arrow.right",
+                    isEnabled: canSubmit,
+                    accessibilityIdentifier: "login_sign_in",
+                    action: onSubmit
+                )
                     .focused(focus, equals: .primary)
 
                 TVLoginActionButton(title: "Quick Connect", icon: "qrcode", style: .secondary, action: onQuickConnect)
                     .focused(focus, equals: .secondary)
             }
         }
+        .accessibilityIdentifier("login_credentials_sheet")
     }
 }
 

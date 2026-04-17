@@ -83,6 +83,25 @@ final class DefaultImagePipelineTests: XCTestCase {
         XCTAssertEqual(AuthenticatedImageURLProtocol.lastTokenHeader, "header-token")
     }
 
+    func testTrickplaySpriteSheetsKeepFullResolutionForCropping() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = try LRUDiskCache(directoryURL: cacheDir)
+        let session = makeBlockingSession()
+        let pipeline = DefaultImagePipeline(diskCache: cache, urlSession: session)
+        let url = URL(string: "mock-image:///Videos/item-1/Trickplay/320/0.jpg")!
+
+        let loadTask = Task { try await pipeline.image(for: url) }
+        try await waitUntil(timeout: 2.0) {
+            BlockingImageURLProtocol.requestCount == 1
+        }
+        BlockingImageURLProtocol.resumePendingRequests(with: Self.sampleTrickplaySheetPNGData)
+
+        let image = try await loadTask.value
+
+        XCTAssertEqual(image.cgImage?.width, 1_600)
+        XCTAssertEqual(image.cgImage?.height, 720)
+    }
+
     private func makeBlockingSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BlockingImageURLProtocol.self]
@@ -108,10 +127,32 @@ final class DefaultImagePipelineTests: XCTestCase {
     }
 
     fileprivate static let samplePNGData: Data = {
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1), format: format)
         let image = renderer.image { context in
             UIColor.white.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return image.pngData()!
+    }()
+
+    fileprivate static let sampleTrickplaySheetPNGData: Data = {
+        let size = CGSize(width: 1_600, height: 720)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = renderer.image { context in
+            UIColor.black.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+
+            for row in 0 ..< 4 {
+                for column in 0 ..< 5 {
+                    let hue = CGFloat((row * 5) + column) / 20
+                    UIColor(hue: hue, saturation: 0.7, brightness: 0.9, alpha: 1).setFill()
+                    context.fill(CGRect(x: column * 320, y: row * 180, width: 320, height: 180).insetBy(dx: 8, dy: 8))
+                }
+            }
         }
         return image.pngData()!
     }()

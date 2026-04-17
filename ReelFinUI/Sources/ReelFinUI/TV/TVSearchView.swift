@@ -76,18 +76,23 @@ final class TVSearchViewModel: ObservableObject {
 }
 
 struct TVSearchView: View {
+    @Environment(\.tvContentFocusReadyAction) private var notifyContentFocusReady
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isSearchBarFocused: Bool
     @StateObject private var viewModel: TVSearchViewModel
     @State private var searchActivationToken = 0
     @State private var isSearchEditing = false
+    @State private var lastHandledContentFocusSequence = 0
     private let dependencies: ReelFinDependencies
-
-    private let columns = [GridItem(.adaptive(minimum: 220, maximum: 260), spacing: 30)]
-    private let contentHorizontalPadding: CGFloat = 72
+    private let contentFocusRequest: TVContentFocusRequest?
 
     init(dependencies: ReelFinDependencies) {
+        self.init(dependencies: dependencies, contentFocusRequest: nil)
+    }
+
+    init(dependencies: ReelFinDependencies, contentFocusRequest: TVContentFocusRequest?) {
         self.dependencies = dependencies
+        self.contentFocusRequest = contentFocusRequest
         _viewModel = StateObject(wrappedValue: TVSearchViewModel(dependencies: dependencies))
     }
 
@@ -96,17 +101,17 @@ struct TVSearchView: View {
             let topRowItemIDs = TVAdaptiveGridFocusLayout(
                 containerWidth: proxy.size.width,
                 horizontalPadding: contentHorizontalPadding,
-                minimumItemWidth: 220,
-                interItemSpacing: 30
+                minimumItemWidth: gridItemWidth,
+                interItemSpacing: 22
             )
             .firstRowItemIDs(in: viewModel.results)
 
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 22) {
                 searchHeader(containerWidth: proxy.size.width)
                 searchContent(topRowItemIDs: topRowItemIDs)
             }
             .padding(.horizontal, contentHorizontalPadding)
-            .padding(.top, 18)
+            .padding(.top, 14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(searchScreenBackground.ignoresSafeArea())
             .overlay(alignment: .topLeading) {
@@ -115,6 +120,12 @@ struct TVSearchView: View {
         }
         .onChange(of: viewModel.query) { _, _ in
             viewModel.search()
+        }
+        .onAppear {
+            applyContentFocusRequestIfNeeded()
+        }
+        .onChange(of: contentFocusRequest?.sequence) { _, _ in
+            applyContentFocusRequestIfNeeded()
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(
@@ -130,19 +141,19 @@ struct TVSearchView: View {
     }
 
     private func searchHeader(containerWidth: CGFloat) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 24, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(isSearchChromeHighlighted ? .white.opacity(0.92) : .white.opacity(0.68))
 
             Text(searchDisplayText)
-                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
                 .foregroundStyle(searchDisplayColor)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 24)
-        .frame(width: searchFieldWidth(for: containerWidth), height: 72, alignment: .leading)
+        .padding(.horizontal, 20)
+        .frame(width: searchFieldWidth(for: containerWidth), height: 64, alignment: .leading)
         .background { searchFieldBackground }
         .overlay { searchFieldStroke }
         .shadow(
@@ -151,8 +162,9 @@ struct TVSearchView: View {
             x: 0,
             y: isSearchChromeHighlighted ? 10 : 7
         )
+        .accessibilityIdentifier("tv_search_bar")
         .frame(maxWidth: .infinity, alignment: .center)
-        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .focusable(true, interactions: .activate)
         .focused($isSearchBarFocused)
         .focusEffectDisabled(true)
@@ -188,7 +200,7 @@ struct TVSearchView: View {
             )
         } else {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 34) {
+                LazyVGrid(columns: columns, spacing: 26) {
                     ForEach(viewModel.results) { item in
                         TVSearchCardButton(
                             item: item,
@@ -251,6 +263,18 @@ private struct TVSearchCardButton: View {
 }
 
 private extension TVSearchView {
+    var gridItemWidth: CGFloat {
+        PosterCardMetrics.posterWidth(for: .grid, compact: false)
+    }
+
+    var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: gridItemWidth, maximum: gridItemWidth + 18), spacing: 22)]
+    }
+
+    var contentHorizontalPadding: CGFloat {
+        54
+    }
+
     var hiddenSearchInput: some View {
         TVSearchKeyboardField(
             text: $viewModel.query,
@@ -279,12 +303,12 @@ private extension TVSearchView {
     }
 
     var searchFieldBackground: some View {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
             .fill(Color.white.opacity(isSearchChromeHighlighted ? 0.065 : 0.040))
     }
 
     var searchFieldStroke: some View {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
             .stroke(
                 LinearGradient(
                     colors: [
@@ -299,7 +323,7 @@ private extension TVSearchView {
     }
 
     func searchFieldWidth(for containerWidth: CGFloat) -> CGFloat {
-        min(max(containerWidth * 0.48, 620), 860)
+        min(max(containerWidth * 0.44, 560), 800)
     }
 
     var searchDisplayText: String {
@@ -320,6 +344,20 @@ private extension TVSearchView {
     func activateSearch() {
         isSearchBarFocused = true
         searchActivationToken += 1
+    }
+
+    func applyContentFocusRequestIfNeeded() {
+        guard let contentFocusRequest else { return }
+        guard contentFocusRequest.destination == .search else { return }
+        guard contentFocusRequest.sequence != lastHandledContentFocusSequence else { return }
+
+        lastHandledContentFocusSequence = contentFocusRequest.sequence
+        isSearchBarFocused = true
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            notifyContentFocusReady?(.search, contentFocusRequest.sequence)
+        }
     }
 }
 

@@ -171,6 +171,44 @@ struct ServerSettingsView: View {
     }
     #endif
 
+    #if os(tvOS)
+    private var settingsBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.03, green: 0.05, blue: 0.09),
+                    Color(red: 0.02, green: 0.03, blue: 0.05),
+                    Color.black
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [
+                    Color(red: 0.16, green: 0.46, blue: 0.78).opacity(0.25),
+                    .clear
+                ],
+                center: .topLeading,
+                startRadius: 40,
+                endRadius: 420
+            )
+            .offset(x: -100, y: -80)
+
+            RadialGradient(
+                colors: [
+                    Color(red: 0.18, green: 0.74, blue: 0.68).opacity(0.16),
+                    .clear
+                ],
+                center: .topTrailing,
+                startRadius: 20,
+                endRadius: 360
+            )
+            .offset(x: 120, y: -120)
+        }
+    }
+    #endif
+
     #if !os(tvOS)
     private var iosBody: some View {
         ZStack {
@@ -1215,6 +1253,7 @@ private struct SettingsInputField: View {
     }
 }
 
+#if !os(tvOS)
 private struct SettingsStepperRow: View {
     let title: String
     let subtitle: String
@@ -1269,6 +1308,7 @@ private struct DiagnosticsReportView: View {
         }
     }
 }
+#endif
 
 private struct SettingsInfoRow: View {
     let title: String

@@ -358,6 +358,32 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.ui.tests
         TEST_TARGET_NAME: ReelFinApp
+  ReelFinTVTests:
+    type: bundle.unit-test
+    platform: tvOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Tests/ReelFinTVTests
+    dependencies:
+      - target: ReelFinUITV
+      - target: SharedTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.tv.tests
+        PRODUCT_NAME: ReelFinTVTests
+  ReelFinTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Tests/ReelFinTVUITests
+    dependencies:
+      - target: ReelFinTVApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.tv.ui.tests
+        PRODUCT_NAME: ReelFinTVUITests
+        TEST_TARGET_NAME: ReelFinTVApp
 schemes:
   ReelFin:
     build:
@@ -375,6 +401,5 @@ schemes:
         ReelFinTVApp: all
     test:
       targets:
-        - PlaybackEngineTests
-        - ImageCacheTests
-        - JellyfinAPITests
+        - ReelFinTVTests
+        - ReelFinTVUITests

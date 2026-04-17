@@ -829,6 +829,11 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             posterTag: episode.seriesPosterTag ?? episode.posterTag,
             backdropTag: episode.backdropTag,
             libraryID: episode.libraryID,
+            preferredEpisodeID: episode.id,
+            preferredEpisodeName: episode.name,
+            preferredEpisodeOverview: episode.overview,
+            preferredEpisodeIndexNumber: episode.indexNumber,
+            preferredEpisodeSeasonNumber: episode.parentIndexNumber,
             has4K: episode.has4K,
             hasDolbyVision: episode.hasDolbyVision,
             hasClosedCaptions: episode.hasClosedCaptions,
@@ -871,6 +876,21 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         }
         if merged.libraryID == nil {
             merged.libraryID = fallback.libraryID
+        }
+        if merged.preferredEpisodeID == nil {
+            merged.preferredEpisodeID = fallback.preferredEpisodeID
+        }
+        if merged.preferredEpisodeName == nil {
+            merged.preferredEpisodeName = fallback.preferredEpisodeName
+        }
+        if merged.preferredEpisodeOverview == nil {
+            merged.preferredEpisodeOverview = fallback.preferredEpisodeOverview
+        }
+        if merged.preferredEpisodeIndexNumber == nil {
+            merged.preferredEpisodeIndexNumber = fallback.preferredEpisodeIndexNumber
+        }
+        if merged.preferredEpisodeSeasonNumber == nil {
+            merged.preferredEpisodeSeasonNumber = fallback.preferredEpisodeSeasonNumber
         }
         if !merged.has4K {
             merged.has4K = fallback.has4K

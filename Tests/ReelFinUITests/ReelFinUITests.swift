@@ -261,7 +261,7 @@ final class AppStoreScreenshotTests: XCTestCase {
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
 
-        let firstPoster = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")).firstMatch
+        let firstPoster = stableMockDetailCard(in: app)
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
 
         firstPoster.tap()
@@ -282,9 +282,7 @@ final class AppStoreScreenshotTests: XCTestCase {
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
 
-        let firstPoster = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
-        ).firstMatch
+        let firstPoster = stableMockDetailCard(in: app)
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
 
         firstPoster.tap()
@@ -292,8 +290,11 @@ final class AppStoreScreenshotTests: XCTestCase {
         let carousel = app.scrollViews["detail_ios_top_carousel"].firstMatch
         XCTAssertTrue(carousel.waitForExistence(timeout: 8))
 
-        let blurHeader = app.otherElements["detail_ios_blur_header"].firstMatch
-        XCTAssertTrue(blurHeader.exists)
+        let backButton = app.buttons["Back"].firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 3))
+
+        let shareButton = app.buttons["Share"].firstMatch
+        XCTAssertTrue(shareButton.waitForExistence(timeout: 3))
     }
 
     func testMockDetailOpensCarouselOnSelectedContextItem() throws {
@@ -363,6 +364,11 @@ final class AppStoreScreenshotTests: XCTestCase {
     }
 
     private func playbackActionButton(in app: XCUIApplication) -> XCUIElement {
+        let identifiedButton = app.buttons["detail_play_button"].firstMatch
+        if identifiedButton.waitForExistence(timeout: 8) {
+            return identifiedButton
+        }
+
         for prefix in ["Resume", "Play", "Play Again"] {
             let predicate = NSPredicate(format: "label BEGINSWITH[c] %@", prefix)
             let button = app.buttons.matching(predicate).firstMatch
@@ -373,6 +379,22 @@ final class AppStoreScreenshotTests: XCTestCase {
 
         XCTFail("Expected a playback action button on the detail screen.")
         return app.buttons.firstMatch
+    }
+
+    private func stableMockDetailCard(in app: XCUIApplication) -> XCUIElement {
+        let preferredIdentifiers = [
+            "media_card_button_continueWatching_cw-movie-1",
+            "media_card_button_continueWatching_cw-episode-2"
+        ]
+
+        for identifier in preferredIdentifiers {
+            let button = app.buttons[identifier].firstMatch
+            if button.exists {
+                return button
+            }
+        }
+
+        return app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")).firstMatch
     }
 
     private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {

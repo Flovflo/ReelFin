@@ -16,7 +16,12 @@ public struct HeroCarouselView: View {
     private let onPlay: ((MediaItem) -> Void)?
     private let onToggleWatchlist: ((MediaItem) -> Void)?
     private let onVisibleItemChange: ((MediaItem) -> Void)?
+    private let namespace: Namespace.ID?
     private let selectedItemID: Binding<String?>?
+    private let focusedItemID: FocusState<String?>.Binding?
+    private let preferredFocusID: String?
+    private let defaultFocusNamespace: Namespace.ID?
+    private let focusID: String?
 
     @State private var currentIndex = 0
     #if os(iOS)
@@ -27,7 +32,12 @@ public struct HeroCarouselView: View {
         items: [MediaItem],
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
+        namespace: Namespace.ID? = nil,
         selectedItemID: Binding<String?>? = nil,
+        focusedItemID: FocusState<String?>.Binding? = nil,
+        preferredFocusID: String? = nil,
+        defaultFocusNamespace: Namespace.ID? = nil,
+        focusID: String? = nil,
         onVisibleItemChange: ((MediaItem) -> Void)? = nil,
         onPlay: ((MediaItem) -> Void)? = nil,
         onToggleWatchlist: ((MediaItem) -> Void)? = nil,
@@ -36,7 +46,12 @@ public struct HeroCarouselView: View {
         self.items = items
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
+        self.namespace = namespace
         self.selectedItemID = selectedItemID
+        self.focusedItemID = focusedItemID
+        self.preferredFocusID = preferredFocusID
+        self.defaultFocusNamespace = defaultFocusNamespace
+        self.focusID = focusID
         self.onVisibleItemChange = onVisibleItemChange
         self.onPlay = onPlay
         self.onToggleWatchlist = onToggleWatchlist
@@ -190,6 +205,8 @@ public struct HeroCarouselView: View {
     #if os(tvOS)
     private var tvBody: some View {
         GeometryReader { proxy in
+            let item = items[safe: currentIndex] ?? items[0]
+
             ZStack(alignment: .bottom) {
                 // Full-bleed backdrop – crossfade between items
                 tvBackdrop(size: proxy.size)
@@ -207,6 +224,7 @@ public struct HeroCarouselView: View {
                 }
             }
             .frame(width: proxy.size.width, height: heroHeight)
+            .modifier(TVHeroMatchedTransitionSourceModifier(itemID: item.id, namespace: namespace))
         }
         .frame(height: heroHeight)
         .ignoresSafeArea(edges: .top)
@@ -446,6 +464,10 @@ public struct HeroCarouselView: View {
         TVHeroCapsuleButton(
             title: primaryActionTitle(for: item),
             systemImage: "play.fill",
+            focusedItemID: focusedItemID,
+            preferredFocusID: preferredFocusID,
+            defaultFocusNamespace: defaultFocusNamespace,
+            focusID: focusID,
             onMoveCommand: handleMoveCommand,
             action: { (onPlay ?? onTap)(item) }
         )
@@ -704,16 +726,83 @@ public struct HeroCarouselView: View {
 }
 
 #if os(tvOS)
+private struct TVHeroMatchedTransitionSourceModifier: ViewModifier {
+    let itemID: String
+    let namespace: Namespace.ID?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let namespace {
+            if #available(tvOS 18.0, *) {
+                content.matchedTransitionSource(id: "poster-\(itemID)", in: namespace)
+            } else {
+                content.matchedGeometryEffect(id: "poster-\(itemID)", in: namespace)
+            }
+        } else {
+            content
+        }
+    }
+}
+
 private struct TVHeroCapsuleButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
-    @FocusState private var isFocused: Bool
+    @Environment(\.isFocused) private var isFocused
 
     let title: String
     let systemImage: String
+    let focusedItemID: FocusState<String?>.Binding?
+    let preferredFocusID: String?
+    let defaultFocusNamespace: Namespace.ID?
+    let focusID: String?
     let onMoveCommand: (MoveCommandDirection) -> Void
     let action: () -> Void
 
     var body: some View {
+        buttonBody
+            .modifier(
+                TVHeroFocusedModifier(
+                    focusedItemID: focusedItemID,
+                    preferredFocusID: preferredFocusID,
+                    defaultFocusNamespace: defaultFocusNamespace,
+                    focusID: focusID
+                )
+            )
+    }
+
+    @ViewBuilder
+    private var backgroundView: some View {
+        if isFocused {
+            Capsule(style: .continuous)
+                .fill(Color.white)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(0.54), lineWidth: 1.1)
+                }
+                .shadow(color: .black.opacity(0.28), radius: 22, x: 0, y: 12)
+        } else if #available(tvOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(.clear)
+                .glassEffect(
+                    Glass.regular
+                        .tint(Color.white.opacity(0.10))
+                        .interactive(),
+                    in: .capsule
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                }
+        } else {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.10))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                }
+        }
+    }
+
+    private var buttonBody: some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
                 .font(.system(size: 20, weight: .bold))
@@ -723,44 +812,20 @@ private struct TVHeroCapsuleButton: View {
                 .minimumScaleFactor(0.86)
         }
         .font(.system(size: 22, weight: .semibold, design: .rounded))
-        .foregroundStyle(isFocused ? Color.black.opacity(0.92) : .white)
+        .foregroundStyle(isFocused ? Color.black : .white)
         .padding(.horizontal, 28)
         .padding(.vertical, 16)
         .background { backgroundView }
         .contentShape(Capsule(style: .continuous))
         .tvMotionFocus(.heroButton, isFocused: isFocused)
         .focusable(true, interactions: .activate)
-        .focused($isFocused)
         .focusEffectDisabled(true)
         .onMoveCommand(perform: handleMoveCommand)
         .onTapGesture(perform: action)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Swipe left or right to browse featured titles.")
-    }
-
-    @ViewBuilder
-    private var backgroundView: some View {
-        if #available(tvOS 26.0, *) {
-            Capsule(style: .continuous)
-                .fill(isFocused ? Color.white.opacity(0.08) : .clear)
-                .glassEffect(
-                    Glass.regular
-                        .tint(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.10))
-                        .interactive(),
-                    in: .capsule
-                )
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
-                }
-        } else {
-            Capsule(style: .continuous)
-                .fill(isFocused ? .white : Color.white.opacity(0.10))
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
-                }
-        }
+        .accessibilityIdentifier("home_featured_play_button")
+        .accessibilityValue(isFocused ? "focused" : "unfocused")
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
@@ -771,6 +836,28 @@ private struct TVHeroCapsuleButton: View {
             onMoveCommand(direction)
         default:
             break
+        }
+    }
+}
+
+private struct TVHeroFocusedModifier: ViewModifier {
+    let focusedItemID: FocusState<String?>.Binding?
+    let preferredFocusID: String?
+    let defaultFocusNamespace: Namespace.ID?
+    let focusID: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let focusedItemID, let focusID {
+            if let defaultFocusNamespace {
+                content
+                    .focused(focusedItemID, equals: focusID)
+                    .prefersDefaultFocus(preferredFocusID == focusID, in: defaultFocusNamespace)
+            } else {
+                content.focused(focusedItemID, equals: focusID)
+            }
+        } else {
+            content
         }
     }
 }

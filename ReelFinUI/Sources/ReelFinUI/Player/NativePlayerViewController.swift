@@ -2,7 +2,7 @@ import AVKit
 import PlaybackEngine
 import Shared
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 import UIKit
 #endif
 
@@ -30,16 +30,20 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = false
         context.coordinator.installSkipOverlayIfNeeded(in: controller)
+#endif
+#if os(iOS) || os(tvOS)
         context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
-        context.coordinator.updateSkipOverlay(
-            suggestion: transportState.activeSkipSuggestion,
-            onSkipSuggestion: onSkipSuggestion
-        )
         context.coordinator.updateTrickplayOverlay(
             manifest: transportState.trickplayManifest,
             timeOffsetSeconds: transportState.playbackTimeOffsetSeconds,
             apiClient: apiClient,
             imagePipeline: imagePipeline
+        )
+#endif
+#if os(iOS)
+        context.coordinator.updateSkipOverlay(
+            suggestion: transportState.activeSkipSuggestion,
+            onSkipSuggestion: onSkipSuggestion
         )
 #endif
         // Let AVPlayer auto-select audio and subtitle tracks according to the
@@ -79,11 +83,13 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         }
 #if os(iOS)
         context.coordinator.installSkipOverlayIfNeeded(in: controller)
-        context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
         context.coordinator.updateSkipOverlay(
             suggestion: transportState.activeSkipSuggestion,
             onSkipSuggestion: onSkipSuggestion
         )
+#endif
+#if os(iOS) || os(tvOS)
+        context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
         context.coordinator.updateTrickplayOverlay(
             manifest: transportState.trickplayManifest,
             timeOffsetSeconds: transportState.playbackTimeOffsetSeconds,
@@ -123,20 +129,24 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         private var statusObservation: NSKeyValueObservation?
         private weak var controller: AVPlayerViewController?
         private weak var observedPlayer: AVPlayer?
-#if os(iOS)
+#if os(iOS) || os(tvOS)
         private var timeJumpObserver: NSObjectProtocol?
+        private var previewTimeObserver: Any?
+        private let trickplayPreviewView = PlaybackTrickplayPreviewView()
+#endif
+#if os(iOS)
         private var didReattachForCurrentItem = false
         private var observedItemIdentifier: ObjectIdentifier?
         private var reattachGeneration: UInt = 0
         private var reattachWorkItem: DispatchWorkItem?
-        private var previewTimeObserver: Any?
         private let skipOverlayView = PlaybackSkipOverlayView()
-        private let trickplayPreviewView = PlaybackTrickplayPreviewView()
 #endif
 
         deinit {
 #if os(iOS)
             reattachWorkItem?.cancel()
+#endif
+#if os(iOS) || os(tvOS)
             if let timeJumpObserver {
                 NotificationCenter.default.removeObserver(timeJumpObserver)
             }
@@ -231,11 +241,13 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
         func startObserving(player: AVPlayer, controller: AVPlayerViewController) {
             self.controller = controller
-            #if os(iOS)
+#if os(iOS)
             reattachWorkItem?.cancel()
             didReattachForCurrentItem = false
             observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
             statusObservation = nil
+#endif
+#if os(iOS) || os(tvOS)
             if let timeJumpObserver {
                 NotificationCenter.default.removeObserver(timeJumpObserver)
                 self.timeJumpObserver = nil
@@ -249,18 +261,21 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             itemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] player, _ in
                 Task { @MainActor in
                     guard let self else { return }
+#if os(iOS)
                     self.reattachWorkItem?.cancel()
                     self.didReattachForCurrentItem = false
                     self.observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
-                    self.observeTimeJumps(player: player)
                     self.observeItemStatus(player: player)
+#endif
+                    self.observeTimeJumps(player: player)
                 }
             }
 
-            // If there's already a current item, observe it immediately.
             if player.currentItem != nil {
                 observeTimeJumps(player: player)
+#if os(iOS)
                 observeItemStatus(player: player)
+#endif
             }
 
             previewTimeObserver = player.addPeriodicTimeObserver(
@@ -277,10 +292,10 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                     )
                 }
             }
-            #endif
+#endif
         }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
         private static func normalizedDurationSeconds(for item: AVPlayerItem?) -> Double {
             guard let seconds = item?.duration.seconds, seconds.isFinite, seconds > 0 else {
                 return 0
@@ -309,7 +324,9 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 )
             }
         }
+#endif
 
+#if os(iOS)
         private func observeItemStatus(player: AVPlayer) {
             statusObservation = nil
             guard let item = player.currentItem else {
@@ -376,16 +393,6 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             ])
         }
 
-        func installTrickplayOverlayIfNeeded(in controller: AVPlayerViewController) {
-            guard trickplayPreviewView.superview == nil else { return }
-            let overlayView = controller.contentOverlayView ?? controller.view!
-            overlayView.addSubview(trickplayPreviewView)
-            NSLayoutConstraint.activate([
-                trickplayPreviewView.centerXAnchor.constraint(equalTo: overlayView.centerXAnchor),
-                trickplayPreviewView.bottomAnchor.constraint(equalTo: overlayView.safeAreaLayoutGuide.bottomAnchor, constant: -110)
-            ])
-        }
-
         func updateSkipOverlay(
             suggestion: PlaybackSkipSuggestion?,
             onSkipSuggestion: (() -> Void)?
@@ -394,6 +401,18 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 suggestion: suggestion,
                 onSkipSuggestion: onSkipSuggestion
             )
+        }
+#endif
+
+#if os(iOS) || os(tvOS)
+        func installTrickplayOverlayIfNeeded(in controller: AVPlayerViewController) {
+            guard trickplayPreviewView.superview == nil else { return }
+            let overlayView = controller.contentOverlayView ?? controller.view!
+            overlayView.addSubview(trickplayPreviewView)
+            NSLayoutConstraint.activate([
+                trickplayPreviewView.centerXAnchor.constraint(equalTo: overlayView.centerXAnchor),
+                trickplayPreviewView.centerYAnchor.constraint(equalTo: overlayView.safeAreaLayoutGuide.centerYAnchor, constant: -28)
+            ])
         }
 
         func updateTrickplayOverlay(
