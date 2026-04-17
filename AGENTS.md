@@ -28,8 +28,27 @@ ReelFin is a native iPhone and iPad Jellyfin client built with SwiftUI and Apple
 
 ```bash
 xcodegen generate
-xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
-xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+xcodebuild -showdestinations -project ReelFin.xcodeproj -scheme ReelFin
+xcodebuild -showdestinations -project ReelFin.xcodeproj -scheme ReelFinTV
+```
+
+## Lint, Format, Typecheck
+
+```bash
+# No repo-native SwiftLint, SwiftFormat, or standalone typecheck command is configured today.
+# Treat a successful xcodebuild build/test pass as the effective syntax and typecheck gate.
+```
+
+## Profiling And Performance Probes
+
+```bash
+scripts/run_player_ui_probe.sh
+scripts/run_playback_qa_loop.sh
+python3 scripts/test_tvos_profile.py
 ```
 
 ## Guardrails
@@ -39,3 +58,22 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platfor
 - Preserve async/await and actor isolation patterns in API and playback code.
 - Treat `build/`, `.artifacts/`, `.claude/`, logs, and user-state files as local-only artifacts.
 - Keep docs aligned with `project.yml`, especially supported platforms, package versions, and test commands.
+- Preserve the current dirty worktree unless a user explicitly asks to revert it.
+- Treat launch, focus, playback startup, and cache regressions as release blockers.
+- Do not move hot-path behavior behind silent fallbacks that hide correctness failures.
+
+## Do-Not-Break Rules
+
+- Logged-out launch must reach auth/onboarding without a root spinner.
+- Authenticated launch must be able to paint cached Home content before network sync completes.
+- tvOS focus handoff must not depend on fixed sleeps as the primary success path.
+- Playback warmup and observer work must remain cancelable and scoped to the active item/session.
+- Speculative artwork prefetch must not bypass authenticated image loading or poison cache keys.
+
+## Performance Definition Of Done
+
+- `xcodegen generate` succeeds after source changes.
+- `ReelFin` and `ReelFinTV` build on the current local simulator runtimes.
+- Targeted tests covering launch/auth state, Home loading, Library loading, playback, and tvOS focus still pass.
+- New hot-path async work is latest-wins, cancelable, and does not broaden `MainActor` usage.
+- Launch, sync, focus, playback, and artwork prefetch changes are recorded in `PLANS.md` and `OPTIMIZATION_AUDIT.md`.
