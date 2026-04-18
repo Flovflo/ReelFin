@@ -1,8 +1,7 @@
-#if os(tvOS)
 import SwiftUI
 
 struct TVTopNavigationItem: View {
-    @Environment(\.isFocused) private var isFocused
+    @FocusState private var isFocused: Bool
 
     let destination: TVRootDestination
     let isHighlighted: Bool
@@ -10,17 +9,15 @@ struct TVTopNavigationItem: View {
     let appearance: TVTopNavigationAppearance
     let highlightNamespace: Namespace.ID
     let focusedDestination: FocusState<TVRootDestination?>.Binding
-    let isFocusable: Bool
-    let onMoveDown: () -> Void
     let action: () -> Void
 
     var body: some View {
         Label(destination.title, systemImage: destination.systemImage)
             .labelStyle(.titleAndIcon)
             .symbolRenderingMode(.monochrome)
-            .font(.system(size: 20, weight: .semibold, design: .rounded))
+            .font(.system(size: 22, weight: .semibold, design: .rounded))
             .foregroundStyle(labelColor)
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 24)
             .frame(height: ReelFinTheme.tvTopNavigationItemHeight)
             .frame(minWidth: minimumWidth)
             .background { highlightBackground }
@@ -28,41 +25,35 @@ struct TVTopNavigationItem: View {
             .scaleEffect(isFocused ? 1.02 : (isHighlighted ? 1.01 : 1))
             .offset(y: isHighlighted ? -1 : 0)
             .tvMotionFocus(.navItem, isFocused: isFocused, isSelected: isSelected)
-            .focusable(isFocusable, interactions: .activate)
+            .focusable(true, interactions: .activate)
             .focused(focusedDestination, equals: destination)
+            .focused($isFocused)
             .focusEffectDisabled(true)
-            .onMoveCommand(perform: handleMoveCommand)
             .onTapGesture(perform: action)
             .animation(ReelFinTheme.tvFocusSpring, value: isHighlighted)
             .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
-            .accessibilityIdentifier("tv_top_navigation_\(destination.rawValue)")
-            .accessibilityValue(isFocused ? "focused" : "unfocused")
-            .accessibilityRepresentation {
-                Button(destination.title, action: action)
-                    .accessibilityIdentifier("tv_top_navigation_\(destination.rawValue)")
-                    .accessibilityValue(isFocused ? "focused" : "unfocused")
-            }
+            .accessibilityRepresentation { Button(destination.title, action: action) }
     }
 
     private var labelColor: Color {
-        isFocused ? appearance.highlightLabelColor : Color.white.opacity(isSelected ? 0.98 : 0.94)
+        isHighlighted ? appearance.highlightLabelColor : Color.white.opacity(isSelected ? 0.98 : 0.94)
     }
 
     private var minimumWidth: CGFloat {
         switch destination {
         case .watchNow:
-            return 184
+            return 210
         case .search:
-            return 150
+            return 170
         case .library:
-            return 184
+            return 210
         }
     }
 
     @ViewBuilder
     private var highlightBackground: some View {
-        if isSelected || isFocused {
+        if isHighlighted {
             selectedCapsule
         }
     }
@@ -70,31 +61,27 @@ struct TVTopNavigationItem: View {
     @ViewBuilder
     private var selectedCapsule: some View {
         Capsule(style: .continuous)
-            .fill(backgroundTint)
+            .fill(Color.white.opacity(isSelected ? 0.94 : 0.82))
             .overlay {
                 Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(isFocused ? 0.42 : 0.16), lineWidth: isFocused ? 1 : 0.9)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.20), .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(isFocused ? 0.42 : 0.20), lineWidth: 1)
             }
             .shadow(
-                color: .black.opacity(isFocused ? 0.24 : 0.10),
-                radius: isFocused ? 14 : 6,
+                color: .black.opacity(isFocused ? 0.24 : 0.18),
+                radius: isFocused ? 14 : 10,
                 x: 0,
-                y: isFocused ? 8 : 3
+                y: isFocused ? 8 : 6
             )
             .matchedGeometryEffect(id: "tv-top-nav-highlight", in: highlightNamespace)
     }
-
-    private var backgroundTint: some ShapeStyle {
-        if isFocused {
-            Color.white.opacity(0.96)
-        } else {
-            appearance.railTint.color(opacity: isSelected ? 0.20 : 0.12)
-        }
-    }
-
-    private func handleMoveCommand(_ direction: MoveCommandDirection) {
-        guard direction == .down else { return }
-        onMoveDown()
-    }
 }
-#endif

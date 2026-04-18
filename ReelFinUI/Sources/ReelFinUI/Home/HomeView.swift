@@ -13,7 +13,7 @@ import UIKit
 /// This avoids the default tvOS focused Button glass so we can control a stronger custom
 /// focus treatment that matches the rest of the home shelf motion.
 private struct TVCardButton: View {
-    @Environment(\.isFocused) private var isFocused
+    @FocusState private var isFocused: Bool
     @State private var isActivating = false
 
     let item: MediaItem
@@ -24,12 +24,11 @@ private struct TVCardButton: View {
     let imagePipeline: any ImagePipelineProtocol
     let namespaceProvider: (String) -> Namespace.ID?
     let focusedItemID: FocusState<String?>.Binding?
-    let preferredFocusID: String?
-    let defaultFocusNamespace: Namespace.ID?
     let isLandscapeRail: Bool
     let progress: Double?
     let optimizationStatus: ApplePlaybackOptimizationStatus?
     let onFocus: ((MediaItem) -> Void)?
+    let onMoveCommand: ((Int, MoveCommandDirection) -> Void)?
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
@@ -52,21 +51,15 @@ private struct TVCardButton: View {
         // focusable on the VStack itself — no Button = no Liquid Glass container.
         // onTapGesture fires when the Siri Remote touchpad is clicked on the focused element.
         .focusable(true, interactions: .activate)
+        .onMoveCommand(perform: handleMoveCommand)
         .onTapGesture(perform: handleActivation)
         .focusEffectDisabled(true)
-        .modifier(
-            TVHomeItemFocusModifier(
-                itemID: item.id,
-                focusedItemID: focusedItemID,
-                preferredFocusID: preferredFocusID,
-                defaultFocusNamespace: defaultFocusNamespace
-            )
-        )
+        .focused($isFocused)
+        .modifier(TVHomeItemFocusModifier(itemID: item.id, focusedItemID: focusedItemID))
         .id(item.id)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
-        .accessibilityValue(isFocused ? "focused" : "unfocused")
         .onChange(of: isFocused) { _, focused in
             guard focused else { return }
             onFocus?(item)
@@ -75,6 +68,11 @@ private struct TVCardButton: View {
 
     private var layoutStyle: PosterCardLayoutStyle {
         isLandscapeRail ? .landscape : .row
+    }
+
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        guard direction == .up || direction == .down else { return }
+        onMoveCommand?(index, direction)
     }
 
     private func handleActivation() {
@@ -119,6 +117,10 @@ private struct TVHomeShelfCard: View {
     let isActivating: Bool
     let usesNativeZoomTransition: Bool
 
+    private var metrics: TVHomeShelfCardMetrics {
+        TVHomeShelfCardMetrics(layoutStyle: layoutStyle)
+    }
+
     var body: some View {
         let activationPhase = isActivating && !usesNativeZoomTransition
 
@@ -133,7 +135,8 @@ private struct TVHomeShelfCard: View {
                 progress: usesTVContinueWatchingStyle ? nil : progress,
                 optimizationStatus: optimizationStatus,
                 showsProgressOverlay: !usesTVContinueWatchingStyle,
-                showsTopTrailingBadges: false
+                showsTopTrailingBadges: false,
+                cornerRadius: metrics.cornerRadius
             )
             .modifier(TVMatchedTransitionSource(itemID: item.id, namespace: namespace))
 
@@ -146,7 +149,7 @@ private struct TVHomeShelfCard: View {
 
             defaultOverlay
         }
-        .frame(width: cardWidth, height: cardHeight)
+        .frame(width: metrics.surfaceWidth, height: metrics.surfaceHeight)
         .background(Color.white.opacity(0.03), in: cardShape)
         .overlay {
             cardShape
@@ -336,44 +339,31 @@ private struct TVHomeShelfCard: View {
     }
 
     private var cardShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: layoutStyle == .landscape ? 30 : 26, style: .continuous)
-    }
-
-    private var cardWidth: CGFloat {
-        PosterCardMetrics.posterWidth(for: layoutStyle, compact: false)
-    }
-
-    private var cardHeight: CGFloat {
-        switch layoutStyle {
-        case .landscape:
-            return cardWidth * (9.0 / 16.0)
-        default:
-            return cardWidth * 1.55
-        }
+        RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous)
     }
 
     private var contentPadding: CGFloat {
-        layoutStyle == .landscape ? 18 : 15
+        layoutStyle == .landscape ? 22 : 18
     }
 
     private var contentSpacing: CGFloat {
-        layoutStyle == .landscape ? 10 : 6
+        layoutStyle == .landscape ? 12 : 8
     }
 
     private var eyebrowFontSize: CGFloat {
-        layoutStyle == .landscape ? 12 : 11
+        layoutStyle == .landscape ? 14 : 12
     }
 
     private var titleFontSize: CGFloat {
-        layoutStyle == .landscape ? 24 : 20
+        layoutStyle == .landscape ? 28 : 22
     }
 
     private var secondaryFontSize: CGFloat {
-        layoutStyle == .landscape ? 16 : 14
+        layoutStyle == .landscape ? 18 : 15
     }
 
     private var footerFontSize: CGFloat {
-        layoutStyle == .landscape ? 13 : 12
+        layoutStyle == .landscape ? 14 : 13
     }
 
     private var gradientStops: [Gradient.Stop] {
@@ -394,6 +384,26 @@ private struct TVHomeShelfCard: View {
             .init(color: .black.opacity(0.88), location: 0.92),
             .init(color: .black.opacity(0.96), location: 1)
         ]
+    }
+}
+
+struct TVHomeShelfCardMetrics {
+    let layoutStyle: PosterCardLayoutStyle
+
+    private var artworkMetrics: PosterCardMetrics {
+        PosterCardMetrics(layoutStyle: layoutStyle, compact: false)
+    }
+
+    var surfaceWidth: CGFloat {
+        artworkMetrics.posterWidth
+    }
+
+    var surfaceHeight: CGFloat {
+        artworkMetrics.posterHeight
+    }
+
+    var cornerRadius: CGFloat {
+        layoutStyle == .landscape ? 30 : 26
     }
 }
 
@@ -443,6 +453,11 @@ private enum TVHomeWarmupScope {
     static let focus = "home.focus"
 }
 
+enum TVHomeReturnTarget: Equatable {
+    case featured(itemID: String)
+    case row(rowID: String, itemID: String)
+}
+
 private struct TVMatchedTransitionSource: ViewModifier {
     let itemID: String
     let namespace: Namespace.ID?
@@ -464,23 +479,11 @@ private struct TVMatchedTransitionSource: ViewModifier {
 private struct TVHomeItemFocusModifier: ViewModifier {
     let itemID: String
     let focusedItemID: FocusState<String?>.Binding?
-    let preferredFocusID: String?
-    let defaultFocusNamespace: Namespace.ID?
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if let focusedItemID {
-#if os(tvOS)
-            if let defaultFocusNamespace {
-                content
-                    .focused(focusedItemID, equals: itemID)
-                    .prefersDefaultFocus(preferredFocusID == itemID, in: defaultFocusNamespace)
-            } else {
-                content.focused(focusedItemID, equals: itemID)
-            }
-#else
             content.focused(focusedItemID, equals: itemID)
-#endif
         } else {
             content
         }
@@ -621,7 +624,7 @@ private struct ImmersiveHomeRowCard: View {
     }
 
     private var cardWidth: CGFloat {
-        horizontalSizeClass == .compact ? 272 : 380
+        horizontalSizeClass == .compact ? 296 : 420
     }
 
     private var cardHeight: CGFloat {
@@ -629,35 +632,35 @@ private struct ImmersiveHomeRowCard: View {
     }
 
     private var titleFontSize: CGFloat {
-        horizontalSizeClass == .compact ? 20 : 26
+        horizontalSizeClass == .compact ? 22 : 28
     }
 
     private var metadataFontSize: CGFloat {
-        horizontalSizeClass == .compact ? 14 : 16
+        horizontalSizeClass == .compact ? 15 : 18
     }
 
     private var progressTrackWidth: CGFloat {
-        horizontalSizeClass == .compact ? 34 : 40
+        horizontalSizeClass == .compact ? 38 : 46
     }
 
     private var contentHorizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 14 : 18
-    }
-
-    private var contentBottomPadding: CGFloat {
-        horizontalSizeClass == .compact ? 12 : 16
-    }
-
-    private var titleTopPadding: CGFloat {
         horizontalSizeClass == .compact ? 16 : 20
     }
 
+    private var contentBottomPadding: CGFloat {
+        horizontalSizeClass == .compact ? 14 : 18
+    }
+
+    private var titleTopPadding: CGFloat {
+        horizontalSizeClass == .compact ? 18 : 24
+    }
+
     private var titleMaxWidth: CGFloat {
-        horizontalSizeClass == .compact ? 176 : 228
+        horizontalSizeClass == .compact ? 190 : 250
     }
 
     private var titleMaxHeight: CGFloat {
-        horizontalSizeClass == .compact ? 40 : 52
+        horizontalSizeClass == .compact ? 44 : 58
     }
 }
 
@@ -793,8 +796,7 @@ public struct SectionRow: View {
     private let imagePipeline: ImagePipelineProtocol
     private let namespaceProvider: (String) -> Namespace.ID?
     private let focusedItemID: FocusState<String?>.Binding?
-    private let preferredFocusID: String?
-    private let defaultFocusNamespace: Namespace.ID?
+    private let onMoveCommand: ((Int, MoveCommandDirection) -> Void)?
     private let optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)?
     private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
     private let onSelect: (MediaItem) -> Void
@@ -807,8 +809,7 @@ public struct SectionRow: View {
         imagePipeline: ImagePipelineProtocol,
         namespaceProvider: @escaping (String) -> Namespace.ID?,
         focusedItemID: FocusState<String?>.Binding? = nil,
-        preferredFocusID: String? = nil,
-        defaultFocusNamespace: Namespace.ID? = nil,
+        onMoveCommand: ((Int, MoveCommandDirection) -> Void)? = nil,
         optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)? = nil,
         onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
         onSelect: @escaping (MediaItem) -> Void
@@ -820,8 +821,7 @@ public struct SectionRow: View {
         self.imagePipeline = imagePipeline
         self.namespaceProvider = namespaceProvider
         self.focusedItemID = focusedItemID
-        self.preferredFocusID = preferredFocusID
-        self.defaultFocusNamespace = defaultFocusNamespace
+        self.onMoveCommand = onMoveCommand
         self.optimizationStatusProvider = optimizationStatusProvider
         self.onFocus = onFocus
         self.onSelect = onSelect
@@ -859,14 +859,13 @@ public struct SectionRow: View {
                             imagePipeline: imagePipeline,
                             namespaceProvider: namespaceProvider,
                             focusedItemID: focusedItemID,
-                            preferredFocusID: preferredFocusID,
-                            defaultFocusNamespace: defaultFocusNamespace,
                             isLandscapeRail: isLandscapeRail,
                             progress: progress(for: item),
                             optimizationStatus: optimizationStatus,
                             onFocus: { focusedItem in
                                 onFocus?(focusedItem, items)
                             },
+                            onMoveCommand: onMoveCommand,
                             onSelect: onSelect
                         )
 #else
@@ -914,9 +913,9 @@ public struct SectionRow: View {
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, railVerticalPadding)
             }
-#if os(tvOS)
+            #if os(tvOS)
             .focusSection()
-#endif
+            #endif
             .scrollTargetBehavior(.viewAligned)
         }
     }
@@ -926,9 +925,9 @@ public struct SectionRow: View {
         return ReelFinTheme.tvRailSpacing
 #else
         if usesImmersiveLandscapeRowStyle {
-            return 14
+            return 18
         }
-        return 12
+        return 16
 #endif
     }
 
@@ -955,7 +954,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHorizontalPadding
         #else
-        return horizontalSizeClass == .compact ? 20 : 28
+        return horizontalSizeClass == .compact ? 24 : 40
         #endif
     }
 
@@ -963,7 +962,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHeaderSpacing
         #else
-        return usesImmersiveLandscapeRowStyle ? 10 : 12
+        return usesImmersiveLandscapeRowStyle ? 12 : 14
         #endif
     }
 
@@ -971,7 +970,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvRailVerticalPadding
         #else
-        return usesImmersiveLandscapeRowStyle ? 8 : 10
+        return usesImmersiveLandscapeRowStyle ? 10 : 14
         #endif
     }
 
@@ -980,9 +979,9 @@ public struct SectionRow: View {
         return .system(size: 24, weight: .bold, design: .rounded)
         #else
         if usesImmersiveLandscapeRowStyle {
-            return .system(size: 26, weight: .heavy)
+            return .system(size: 30, weight: .heavy)
         }
-        return .system(size: 22, weight: .bold, design: .rounded)
+        return .system(size: 24, weight: .bold, design: .rounded)
         #endif
     }
 
@@ -991,7 +990,7 @@ public struct SectionRow: View {
         return .body.weight(.semibold)
         #else
         return usesImmersiveLandscapeRowStyle
-            ? .system(size: 24, weight: .bold)
+            ? .system(size: 28, weight: .bold)
             : .headline.weight(.semibold)
         #endif
     }
@@ -1007,22 +1006,14 @@ public struct SectionRow: View {
 
 struct HomeView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-#if os(tvOS)
-    @Environment(\.tvContentFocusReadyAction) private var notifyContentFocusReady
-    @Environment(\.resetFocus) private var resetFocus
-#endif
     @StateObject private var viewModel: HomeViewModel
     @Namespace private var posterNamespace
 #if os(tvOS)
-    @Namespace private var tvHomeFocusScope
     @FocusState private var focusedHomeItemID: String?
-    @State private var lastHandledContentFocusSequence = 0
-    @State private var preferredHomeFocusID: String?
     @State private var homeFocusRequestToken = 0
 #endif
 
     private let dependencies: ReelFinDependencies
-    private let contentFocusRequest: TVContentFocusRequest?
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
@@ -1051,10 +1042,6 @@ struct HomeView: View {
 #endif
 
     init(dependencies: ReelFinDependencies) {
-        self.init(dependencies: dependencies, contentFocusRequest: nil)
-    }
-
-    init(dependencies: ReelFinDependencies, contentFocusRequest: TVContentFocusRequest?) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
 #if os(tvOS)
         _tvScreenState = StateObject(
@@ -1065,7 +1052,6 @@ struct HomeView: View {
         )
 #endif
         self.dependencies = dependencies
-        self.contentFocusRequest = contentFocusRequest
     }
 
     var body: some View {
@@ -1073,13 +1059,6 @@ struct HomeView: View {
         let rowIDByItemID = viewModel.rowIDByItemID
 
         mainContent(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
-        #if os(tvOS)
-        .onChange(of: focusedHomeItemID) { _, newValue in
-            guard let preferredHomeFocusID else { return }
-            guard newValue != preferredHomeFocusID else { return }
-            self.preferredHomeFocusID = nil
-        }
-        #endif
         .onDisappear {
             handleHomeDisappear()
         }
@@ -1117,9 +1096,6 @@ struct HomeView: View {
             await viewModel.load()
             await preloadOptimizationStatuses()
 #if os(tvOS)
-            if contentFocusRequest == nil, homeReturnTarget == nil, focusedHomeItemID == nil {
-                homeReturnRequest += 1
-            }
             if let item = viewModel.feed.featured.first {
                 tvScreenState.scheduleNavigationAppearance(for: item)
             } else {
@@ -1249,16 +1225,17 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             #if os(tvOS)
-            .focusScope(tvHomeFocusScope)
-            .onChange(of: homeReturnRequest) { _, _ in
-                focusHomeEntry(using: proxy, animated: true)
-            }
             .onAppear {
-                applyContentFocusRequestIfNeeded(using: proxy)
                 focusDefaultHomeEntryIfNeeded(using: proxy)
             }
-            .onChange(of: contentFocusRequest?.sequence) { _, _ in
-                applyContentFocusRequestIfNeeded(using: proxy)
+            .onChange(of: homeReturnRequest) { _, _ in
+                restoreHomeSelection(using: proxy)
+            }
+            .onChange(of: featuredItems.map(\.id)) { _, _ in
+                focusDefaultHomeEntryIfNeeded(using: proxy)
+            }
+            .onChange(of: visibleRows.map(\.id)) { _, _ in
+                focusDefaultHomeEntryIfNeeded(using: proxy)
             }
             #endif
         }
@@ -1296,8 +1273,16 @@ struct HomeView: View {
                             rowIDByItemID[itemID] == row.id ? posterNamespace : nil
                         },
                         focusedItemID: homeFocusedItemBinding,
-                        preferredFocusID: homePreferredFocusID,
-                        defaultFocusNamespace: homeDefaultFocusNamespace,
+                        onMoveCommand: { itemIndex, direction in
+#if os(tvOS)
+                            handleRowMove(
+                                rowID: row.id,
+                                itemIndex: itemIndex,
+                                direction: direction,
+                                using: scrollProxy
+                            )
+#endif
+                        },
                         optimizationStatusProvider: { item in
                             appleOptimizationStatuses[item.id]
                         },
@@ -1350,11 +1335,8 @@ struct HomeView: View {
                 items: featuredItems,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
-                namespace: posterNamespace,
                 selectedItemID: $featuredHeroItemID,
                 focusedItemID: homeFocusedItemBinding,
-                preferredFocusID: homePreferredFocusID,
-                defaultFocusNamespace: homeDefaultFocusNamespace,
                 focusID: TVHomeFocusPolicy.heroPlayFocusID,
                 onVisibleItemChange: { item in
                     scheduleWarmup(
@@ -1441,7 +1423,7 @@ struct HomeView: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionSpacing
         #else
-        return 20
+        return 24
         #endif
     }
 
@@ -1456,8 +1438,8 @@ struct HomeView: View {
 
     private func topIcon(symbol: String, accessibilityLabel: String) -> some View {
         Image(systemName: symbol)
-            .font(.subheadline.weight(.semibold))
-            .frame(width: 40, height: 40)
+            .font(.headline.weight(.semibold))
+            .frame(width: 44, height: 44)
             .foregroundStyle(.white)
             .glassPanelStyle(cornerRadius: 22)
             .accessibilityLabel(accessibilityLabel)
@@ -1480,22 +1462,6 @@ struct HomeView: View {
     private var homeFocusedItemBinding: FocusState<String?>.Binding? {
 #if os(tvOS)
         $focusedHomeItemID
-#else
-        nil
-#endif
-    }
-
-    private var homeDefaultFocusNamespace: Namespace.ID? {
-#if os(tvOS)
-        tvHomeFocusScope
-#else
-        nil
-#endif
-    }
-
-    private var homePreferredFocusID: String? {
-#if os(tvOS)
-        preferredHomeFocusID
 #else
         nil
 #endif
@@ -1594,7 +1560,7 @@ struct HomeView: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHorizontalPadding
         #else
-        return isCompact ? 20 : 28
+        return isCompact ? 24 : 40
         #endif
     }
 
@@ -1607,7 +1573,7 @@ struct HomeView: View {
     }
 
     private var rowCardWidth: CGFloat {
-        PosterCardMetrics.posterWidth(for: .row, compact: isCompact)
+        isCompact ? 134 : 160
     }
 
     private var rowCardHeight: CGFloat {
@@ -1644,8 +1610,8 @@ struct HomeView: View {
             settleDelayNanoseconds: 0
         )
 #endif
-        selectedDetailNamespace = posterNamespace
-        selectedDetailTransitionSourceID = item.id
+        selectedDetailNamespace = nil
+        selectedDetailTransitionSourceID = nil
         selectedDetailContextItems = featuredItems
         selectedDetailContextTitle = "Featured"
 #if os(tvOS)
@@ -1853,53 +1819,68 @@ struct HomeView: View {
     }
 
 #if os(tvOS)
+    private func focusDefaultHomeEntryIfNeeded(using proxy: ScrollViewProxy) {
+        guard viewModel.selectedItem == nil else { return }
+        guard !showPlayer else { return }
+        guard focusedHomeItemID == nil else { return }
+
+        let targetFocusID = tvHomeFocusPolicy.entryFocusID(
+            returnTarget: homeReturnTarget,
+            hasFeaturedContent: hasFeaturedContent
+        )
+        focusHomeTarget(targetFocusID, using: proxy, animated: false)
+    }
+
+    private func handleRowMove(
+        rowID: String,
+        itemIndex: Int,
+        direction: MoveCommandDirection,
+        using proxy: ScrollViewProxy?
+    ) {
+        let focusDirection: TVHomeFocusDirection
+        switch direction {
+        case .up:
+            focusDirection = .up
+        case .down:
+            focusDirection = .down
+        default:
+            return
+        }
+
+        let targetFocusID = tvHomeFocusPolicy.targetFocusID(
+            from: TVHomeRowFocusContext(rowID: rowID, itemIndex: itemIndex),
+            direction: focusDirection,
+            hasFeaturedContent: hasFeaturedContent
+        )
+        focusHomeTarget(targetFocusID, using: proxy, animated: true)
+    }
+
     private func focusHeroPlay(
         using proxy: ScrollViewProxy?,
-        featuredItemID: String?,
-        animated: Bool,
-        requestSequence: Int? = nil
+        animated: Bool
     ) {
-        if let featuredItemID {
-            featuredHeroItemID = featuredItemID
-        } else if featuredHeroItemID == nil {
+        if featuredHeroItemID == nil {
             featuredHeroItemID = featuredItems.first?.id
         }
+
         requestProgrammaticHomeFocus(
             TVHomeFocusPolicy.heroPlayFocusID,
             scrollTargetID: featuredScrollAnchorID,
             using: proxy,
             animated: animated,
-            requestSequence: requestSequence
+            anchor: .top
         )
     }
 
     private func focusHomeTarget(
         _ targetFocusID: String?,
         using proxy: ScrollViewProxy?,
-        animated: Bool,
-        requestSequence: Int? = nil
+        animated: Bool
     ) {
-        guard let targetFocusID else {
-            if let requestSequence {
-                notifyContentFocusReady?(.watchNow, requestSequence)
-            }
-            return
-        }
+        guard let targetFocusID else { return }
 
         if targetFocusID == TVHomeFocusPolicy.heroPlayFocusID {
-            let featuredItemID: String?
-            switch homeReturnTarget {
-            case let .featured(itemID):
-                featuredItemID = itemID
-            default:
-                featuredItemID = featuredHeroItemID ?? featuredItems.first?.id
-            }
-            focusHeroPlay(
-                using: proxy,
-                featuredItemID: featuredItemID,
-                animated: animated,
-                requestSequence: requestSequence
-            )
+            focusHeroPlay(using: proxy, animated: animated)
             return
         }
 
@@ -1907,49 +1888,8 @@ struct HomeView: View {
             targetFocusID,
             scrollTargetID: viewModel.rowIDByItemID[targetFocusID],
             using: proxy,
-            animated: animated,
-            requestSequence: requestSequence
+            animated: animated
         )
-    }
-
-    private func focusHomeEntry(
-        using proxy: ScrollViewProxy,
-        animated: Bool,
-        requestSequence: Int? = nil
-    ) {
-        let targetFocusID = tvHomeFocusPolicy.entryFocusID(
-            returnTarget: homeReturnTarget,
-            hasFeaturedContent: hasFeaturedContent
-        )
-
-        focusHomeTarget(
-            targetFocusID,
-            using: proxy,
-            animated: animated,
-            requestSequence: requestSequence
-        )
-    }
-
-    private func applyContentFocusRequestIfNeeded(using proxy: ScrollViewProxy) {
-        guard let contentFocusRequest else { return }
-        guard contentFocusRequest.destination == .watchNow else { return }
-        guard contentFocusRequest.sequence != lastHandledContentFocusSequence else { return }
-
-        lastHandledContentFocusSequence = contentFocusRequest.sequence
-        focusHomeEntry(
-            using: proxy,
-            animated: true,
-            requestSequence: contentFocusRequest.sequence
-        )
-    }
-
-    private func focusDefaultHomeEntryIfNeeded(using proxy: ScrollViewProxy) {
-        guard contentFocusRequest == nil else { return }
-        guard focusedHomeItemID == nil else { return }
-        guard homeReturnTarget == nil else { return }
-        guard lastHandledContentFocusSequence == 0 else { return }
-
-        focusHomeEntry(using: proxy, animated: false)
     }
 
     private func requestProgrammaticHomeFocus(
@@ -1957,50 +1897,44 @@ struct HomeView: View {
         scrollTargetID: String?,
         using proxy: ScrollViewProxy?,
         animated: Bool,
-        requestSequence: Int? = nil
+        anchor: UnitPoint? = nil
     ) {
-        if focusedHomeItemID == targetFocusID, preferredHomeFocusID == nil {
-            if let requestSequence {
-                notifyContentFocusReady?(.watchNow, requestSequence)
-            }
-            return
-        }
-
         homeFocusRequestToken += 1
         let requestToken = homeFocusRequestToken
 
-        preferredHomeFocusID = targetFocusID
         focusedHomeItemID = nil
 
         if let scrollTargetID, let proxy {
+            let scroll = {
+                if let anchor {
+                    proxy.scrollTo(scrollTargetID, anchor: anchor)
+                } else {
+                    proxy.scrollTo(scrollTargetID)
+                }
+            }
+
             if animated {
                 withAnimation(.easeInOut(duration: 0.28)) {
-                    proxy.scrollTo(scrollTargetID, anchor: .top)
+                    scroll()
                 }
             } else {
-                proxy.scrollTo(scrollTargetID, anchor: .top)
+                scroll()
             }
         }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: animated ? 180_000_000 : 40_000_000)
             guard requestToken == homeFocusRequestToken else { return }
-
             focusedHomeItemID = targetFocusID
-            resetFocus(in: tvHomeFocusScope)
-
-            try? await Task.sleep(nanoseconds: 180_000_000)
-            guard requestToken == homeFocusRequestToken else { return }
-            if let requestSequence {
-                notifyContentFocusReady?(.watchNow, requestSequence)
-            }
-
-            try? await Task.sleep(nanoseconds: 260_000_000)
-            guard requestToken == homeFocusRequestToken else { return }
-            if preferredHomeFocusID == targetFocusID {
-                preferredHomeFocusID = nil
-            }
         }
+    }
+
+    private func restoreHomeSelection(using proxy: ScrollViewProxy) {
+        let targetFocusID = tvHomeFocusPolicy.entryFocusID(
+            returnTarget: homeReturnTarget,
+            hasFeaturedContent: hasFeaturedContent
+        )
+        focusHomeTarget(targetFocusID, using: proxy, animated: true)
     }
 #endif
 
@@ -2011,8 +1945,8 @@ struct HomeView: View {
     private func handleDisplayedDetailSourceItemChange(_ item: MediaItem) {
 #if os(tvOS)
         if featuredItems.contains(where: { $0.id == item.id }) {
-            selectedDetailNamespace = posterNamespace
-            selectedDetailTransitionSourceID = item.id
+            selectedDetailNamespace = nil
+            selectedDetailTransitionSourceID = nil
             featuredHeroItemID = item.id
             homeReturnTarget = .featured(itemID: item.id)
             lastSelectedHomeRowID = nil

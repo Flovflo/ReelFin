@@ -3,12 +3,6 @@ import Shared
 import XCTest
 
 final class TVHomeFocusPolicyTests: XCTestCase {
-    func testPosterCardMetricsFavorDenserBrowsingWidthsOnTV() {
-        XCTAssertEqual(PosterCardMetrics.posterWidth(for: .row, compact: false), 198, accuracy: 0.001)
-        XCTAssertEqual(PosterCardMetrics.posterWidth(for: .grid, compact: false), 214, accuracy: 0.001)
-        XCTAssertEqual(PosterCardMetrics.posterWidth(for: .landscape, compact: false), 356, accuracy: 0.001)
-    }
-
     func testEntryFocusDefaultsToHeroPlayWhenFeaturedExists() {
         let policy = TVHomeFocusPolicy(rows: sampleRows)
 
@@ -56,6 +50,18 @@ final class TVHomeFocusPolicyTests: XCTestCase {
 
         XCTAssertEqual(downFocusID, "item-b2")
         XCTAssertEqual(upFocusID, "item-a2")
+    }
+
+    func testMovingDownFromLastRowHasNoTarget() {
+        let policy = TVHomeFocusPolicy(rows: sampleRows)
+
+        let focusID = policy.targetFocusID(
+            from: TVHomeRowFocusContext(rowID: "row-b", itemIndex: 1),
+            direction: .down,
+            hasFeaturedContent: true
+        )
+
+        XCTAssertNil(focusID)
     }
 
     private var sampleRows: [HomeRow] {

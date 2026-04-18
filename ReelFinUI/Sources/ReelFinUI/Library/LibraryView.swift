@@ -10,27 +10,19 @@ private enum TVLibraryWarmupScope {
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 #if os(tvOS)
-    @Environment(\.tvContentFocusReadyAction) private var notifyContentFocusReady
     @FocusState private var focusedControl: TVLibraryControlFocus?
 #endif
     @StateObject private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
-    private let contentFocusRequest: TVContentFocusRequest?
     @State private var warmupTask: Task<Void, Never>?
 #if os(tvOS)
     @State private var allowsControlBarTopNavigation = true
     @State private var controlBarNavigationUnlockTask: Task<Void, Never>?
-    @State private var lastHandledContentFocusSequence = 0
 #endif
 
     init(dependencies: ReelFinDependencies) {
-        self.init(dependencies: dependencies, contentFocusRequest: nil)
-    }
-
-    init(dependencies: ReelFinDependencies, contentFocusRequest: TVContentFocusRequest?) {
         _viewModel = StateObject(wrappedValue: LibraryViewModel(dependencies: dependencies))
         self.dependencies = dependencies
-        self.contentFocusRequest = contentFocusRequest
     }
 
     var body: some View {
@@ -80,12 +72,6 @@ struct LibraryView: View {
             Task { await viewModel.loadInitial() }
         }
 #if os(tvOS)
-        .onAppear {
-            applyContentFocusRequestIfNeeded()
-        }
-        .onChange(of: contentFocusRequest?.sequence) { _, _ in
-            applyContentFocusRequestIfNeeded()
-        }
         .toolbar(.hidden, for: .navigationBar)
         .preference(key: TVTopNavigationAppearancePreferenceKey.self, value: .neutral)
 #elseif os(iOS)
@@ -122,7 +108,7 @@ struct LibraryView: View {
         ) { _ in
             iosTopBar
                 .padding(.top, stickyHeaderTopPadding)
-                .padding(.bottom, 10)
+                .padding(.bottom, 14)
                 .accessibilityIdentifier("library_sticky_blur_header")
         } content: {
             libraryGridContent(topRowItemIDs: topRowItemIDs)
@@ -225,7 +211,7 @@ struct LibraryView: View {
     // MARK: - iOS top bar: full search bar + filter chips
 
     private var iosTopBar: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             HStack {
                 Text("Library")
                     .reelFinTitleStyle()
@@ -239,8 +225,8 @@ struct LibraryView: View {
                     }
                 } label: {
                     Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 40, height: 40)
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 44, height: 44)
                         .foregroundStyle(.white.opacity(0.98))
                         .background {
                             libraryCircleBackground()
@@ -248,7 +234,7 @@ struct LibraryView: View {
                 }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 filterChip(title: "Movies", filter: .movie)
                 filterChip(title: "Shows", filter: .series)
                 Spacer()
@@ -258,16 +244,16 @@ struct LibraryView: View {
                 "",
                 text: $viewModel.searchQuery,
                 prompt: Text("Search your library")
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    .font(.system(size: 17, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.72))
             )
 #if os(iOS)
                 .textInputAutocapitalization(.never)
 #endif
                 .autocorrectionDisabled(true)
-                .font(.system(size: 16, weight: .medium, design: .rounded))
-                .padding(.horizontal, 14)
-                .frame(height: 46)
+                .font(.system(size: 17, weight: .medium, design: .rounded))
+                .padding(.horizontal, 16)
+                .frame(height: 52)
                 .foregroundStyle(.white.opacity(0.98))
                 .background {
                     librarySearchBackground()
@@ -284,7 +270,7 @@ struct LibraryView: View {
         } label: {
             Text(title)
                 .font(.system(size: chipFontSize, weight: .bold, design: .rounded))
-                .frame(minWidth: 74)
+                .frame(minWidth: 82)
                 .padding(.horizontal, chipHPad)
                 .padding(.vertical, chipVPad)
                 .foregroundStyle(isActive ? Color.black.opacity(0.92) : Color.white.opacity(0.98))
@@ -381,35 +367,33 @@ struct LibraryView: View {
     }
 
     private var stickyHeaderTopPadding: CGFloat {
-        horizontalSizeClass == .compact ? 6 : 10
+        horizontalSizeClass == .compact ? 8 : 12
     }
 
     private var columns: [GridItem] {
 #if os(tvOS)
-        let cardWidth = PosterCardMetrics.posterWidth(for: .grid, compact: false)
-        return [GridItem(.adaptive(minimum: cardWidth, maximum: cardWidth + 22), spacing: 24)]
+        return [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 32)]
 #else
-        let cardWidth = PosterCardMetrics.posterWidth(for: .grid, compact: horizontalSizeClass == .compact)
         if horizontalSizeClass == .compact {
-            return [GridItem(.adaptive(minimum: cardWidth, maximum: cardWidth + 24), spacing: 10)]
+            return [GridItem(.adaptive(minimum: 152, maximum: 190), spacing: 12)]
         }
-        return [GridItem(.adaptive(minimum: cardWidth, maximum: cardWidth + 22), spacing: 12)]
+        return [GridItem(.adaptive(minimum: 186, maximum: 230), spacing: 16)]
 #endif
     }
 
     private var gridSpacing: CGFloat {
 #if os(tvOS)
-        return 28
+        return 40
 #else
-        return 12
+        return 16
 #endif
     }
 
     private var horizontalPadding: CGFloat {
 #if os(tvOS)
-        return 44
+        return 56
 #else
-        return horizontalSizeClass == .compact ? 10 : 18
+        return horizontalSizeClass == .compact ? 12 : 22
 #endif
     }
 
@@ -417,7 +401,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 18
 #else
-        return 14
+        return 15
 #endif
     }
 
@@ -425,7 +409,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 20
 #else
-        return 12
+        return 14
 #endif
     }
 
@@ -433,7 +417,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 12
 #else
-        return 7
+        return 9
 #endif
     }
 
@@ -541,20 +525,6 @@ struct LibraryView: View {
             interItemSpacing: 32
         )
         .firstRowItemIDs(in: viewModel.items)
-    }
-
-    private func applyContentFocusRequestIfNeeded() {
-        guard let contentFocusRequest else { return }
-        guard contentFocusRequest.destination == .library else { return }
-        guard contentFocusRequest.sequence != lastHandledContentFocusSequence else { return }
-
-        lastHandledContentFocusSequence = contentFocusRequest.sequence
-        focusPreferredControlBar()
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            notifyContentFocusReady?(.library, contentFocusRequest.sequence)
-        }
     }
 #endif
 }

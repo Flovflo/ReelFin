@@ -1,10 +1,5 @@
 import Shared
 
-enum TVHomeReturnTarget: Equatable {
-    case featured(itemID: String)
-    case row(rowID: String, itemID: String)
-}
-
 struct TVHomeRowFocusContext: Equatable {
     let rowID: String
     let itemIndex: Int
