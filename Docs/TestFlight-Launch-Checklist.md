@@ -6,7 +6,6 @@
 - [ ] Run `xcodegen generate` after any `project.yml` change
 - [ ] Build the `ReelFin` scheme for iOS simulator
 - [ ] Run the unit and UI tests you intend to rely on for the beta
-- [ ] Regenerate App Store screenshots with `./scripts/capture_app_store_screenshots.sh` if the UI changed
 - [ ] Refresh `README.md` media if the storefront UI changed materially
 
 ## App Store Connect
@@ -23,16 +22,16 @@
 ## TestFlight metadata
 
 - [ ] Beta App Description:
-  `ReelFin is a native beta client for self-hosted Jellyfin servers on iPhone and iPad.`
+  `ReelFin is a native beta client for self-hosted Jellyfin servers on iPhone and Apple TV.`
 - [ ] Feedback Email:
-  `floriantaffin@gmail.com`
+  `florian.taffin.pro@gmail.com`
 - [ ] What to Test:
-  `Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and iPad.`
+  `Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and Apple TV.`
 - [ ] Upload the current screenshots if you want them visible in TestFlight
 
 ## Media sanity check
 
-- [ ] Confirm `AppStore/Screenshots/` matches the current UI
+- [ ] Confirm the curated files in `AppStore/Screenshots/` match the current iPhone and Apple TV UI before manual upload
 - [ ] Confirm `Docs/Media/reelfin-transition.gif` still reflects the app flow shown in `README.md`
 - [ ] Confirm screenshot and README media use fictional or licensed library data only
 

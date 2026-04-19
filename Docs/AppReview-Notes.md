@@ -5,7 +5,7 @@ Do not paste this file verbatim into App Store Connect. Replace every field with
 
 ## Contact
 
-- Support email: `floriantaffin@gmail.com`
+- Support email: `florian.taffin.pro@gmail.com`
 
 ## Review account
 

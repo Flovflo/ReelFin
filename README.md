@@ -8,7 +8,7 @@ ReelFin is a native Jellyfin client built with SwiftUI, AVFoundation, and AVKit.
 
 ## Current Scope
 
-- Native app targets for iPhone, iPad, and Apple TV
+- Native app targets for iPhone and Apple TV
 - SwiftUI interface and platform-specific presentation layers
 - Jellyfin networking client and DTO decoding
 - Apple-native playback engine, subtitles, and local HLS support

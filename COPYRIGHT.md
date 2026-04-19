@@ -14,7 +14,7 @@ text and required notices with it.
 Commercial use, resale, or inclusion in a paid product or
 service requires prior written permission.
 
-Permission requests: floriantaffin@gmail.com
+Permission requests: florian.taffin.pro@gmail.com
 
 ## Brand, Docs, And Media
 
