@@ -84,6 +84,16 @@
   - native trickplay preview updates do not allocate a new MainActor task every 150 ms tick
   - obviously stale repo artifacts are removed only when they are unreferenced or point at deleted code
 
+### M10
+- Status: completed
+- Objective: reduce visible startup stalls while keeping resume and detail warmup latest-wins.
+- Scope: `PlaybackSessionController`, startup readiness policy, startup preheater, `DetailViewModel`
+- Acceptance:
+  - high-risk playback starts wait for bounded buffer readiness before autoplay
+  - direct-play preheat avoids byte-range probes for HLS playlists
+  - startup preheat overlaps AVPlayer preparation instead of blocking the player handoff
+  - stale episode warmup/progress work cannot overwrite the current detail playback target
+
 ## Validation Commands
 
 ```bash
@@ -108,6 +118,8 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStopReportingTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2' -only-testing:ReelFinTVUITests/TVLiveNavigationSmokeUITests`: passed with 3 expected skips because no authenticated tvOS session was present in the simulator
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests/testPrepareEpisodePlaybackLatestWinsAcrossWarmupSignals`: passed, 14 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:ReelFinUITests/AppStoreScreenshotTests`: passed, 4 tests
 
 ## Explicit Deferrals
 

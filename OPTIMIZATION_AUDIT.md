@@ -87,6 +87,8 @@
 - `PlaybackSessionController` now cancels delayed validation, synthetic seek invalidation, and synthetic prefetch work on stop/reload, instead of letting stale delayed tasks drift across sessions.
 - `NativePlayerViewController` no longer creates a new `Task` on every 150 ms trickplay preview tick.
 - Removed stale repo artifacts that no longer had a valid backing workflow: `tasks/todo.md` and `scripts/export_marketing_screenshots.sh`.
+- `PlaybackSessionController` now overlaps startup preheat with AVPlayer preparation and gates high-risk autoplay on bounded buffer readiness, reducing start-then-stall behavior without blocking HLS playlist startup behind byte-range probes.
+- `DetailViewModel` now treats episode playback preparation as latest-wins, so stale progress or warmup selections cannot overwrite the active detail playback target.
 
 ## Validation Results
 
@@ -98,12 +100,15 @@
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2' -only-testing:ReelFinTVUITests/TVLiveNavigationSmokeUITests`: passed with 3 expected skips because the simulator had no persisted authenticated tvOS session
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests/testPrepareEpisodePlaybackLatestWinsAcrossWarmupSignals`: passed, 14 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:ReelFinUITests/AppStoreScreenshotTests`: passed, 4 tests
 
 ## Remaining High-Value Follow-Ups
 
 - Split scroll-linked and hydration state out of `HomeView` and `DetailView` so focus and phased-loading updates do not invalidate large view roots.
 - Continue the playback lifecycle hardening pass for observer callbacks and reload paths that still hop through ad hoc `Task` boundaries.
 - Add launch/signpost regression assertions and stronger playback TTFF checks so performance assumptions stop living only in manual scripts.
+- Design the persistent `MediaGateway` layer for durable HLS segment and direct-play spool caches, with token-safe keys and explicit eviction budgets for iOS versus tvOS.
 
 ## Rejected Or Deferred Optimizations
 
