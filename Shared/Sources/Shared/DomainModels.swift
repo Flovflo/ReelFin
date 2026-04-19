@@ -220,11 +220,6 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     public var seriesPosterTag: String?
     public var indexNumber: Int?
     public var parentIndexNumber: Int?
-    public var preferredEpisodeID: String?
-    public var preferredEpisodeName: String?
-    public var preferredEpisodeOverview: String?
-    public var preferredEpisodeIndexNumber: Int?
-    public var preferredEpisodeSeasonNumber: Int?
     public var has4K: Bool
     public var hasDolbyVision: Bool
     public var hasClosedCaptions: Bool
@@ -250,11 +245,6 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         seriesPosterTag: String? = nil,
         indexNumber: Int? = nil,
         parentIndexNumber: Int? = nil,
-        preferredEpisodeID: String? = nil,
-        preferredEpisodeName: String? = nil,
-        preferredEpisodeOverview: String? = nil,
-        preferredEpisodeIndexNumber: Int? = nil,
-        preferredEpisodeSeasonNumber: Int? = nil,
         has4K: Bool = false,
         hasDolbyVision: Bool = false,
         hasClosedCaptions: Bool = false,
@@ -279,11 +269,6 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         self.seriesPosterTag = seriesPosterTag
         self.indexNumber = indexNumber
         self.parentIndexNumber = parentIndexNumber
-        self.preferredEpisodeID = preferredEpisodeID
-        self.preferredEpisodeName = preferredEpisodeName
-        self.preferredEpisodeOverview = preferredEpisodeOverview
-        self.preferredEpisodeIndexNumber = preferredEpisodeIndexNumber
-        self.preferredEpisodeSeasonNumber = preferredEpisodeSeasonNumber
         self.has4K = has4K
         self.hasDolbyVision = hasDolbyVision
         self.hasClosedCaptions = hasClosedCaptions
@@ -314,33 +299,6 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
             return nil
         }
         return min(1, max(0, Double(position) / Double(total)))
-    }
-
-    public var preferredEpisode: MediaItem? {
-        guard mediaType == .series, let preferredEpisodeID else { return nil }
-
-        return MediaItem(
-            id: preferredEpisodeID,
-            name: preferredEpisodeName ?? name,
-            overview: preferredEpisodeOverview,
-            mediaType: .episode,
-            year: year,
-            genres: genres,
-            communityRating: communityRating,
-            posterTag: seriesPosterTag ?? posterTag,
-            backdropTag: backdropTag,
-            libraryID: libraryID,
-            parentID: id,
-            seriesName: name,
-            seriesPosterTag: seriesPosterTag ?? posterTag,
-            indexNumber: preferredEpisodeIndexNumber,
-            parentIndexNumber: preferredEpisodeSeasonNumber,
-            has4K: has4K,
-            hasDolbyVision: hasDolbyVision,
-            hasClosedCaptions: hasClosedCaptions,
-            airDays: airDays,
-            isFavorite: isFavorite
-        )
     }
 
     private static func formatMinutes(_ totalMinutes: Int) -> String {
@@ -907,6 +865,56 @@ public struct PlaybackProgress: Codable, Hashable, Sendable {
     public var progressRatio: Double {
         guard totalTicks > 0 else { return 0 }
         return min(1, max(0, Double(positionTicks) / Double(totalTicks)))
+    }
+
+    public static func resolvedResumeProgress(
+        for item: MediaItem,
+        localProgress: PlaybackProgress?,
+        referenceDate: Date = Date()
+    ) -> PlaybackProgress? {
+        guard !item.isPlayed else { return nil }
+
+        let local = normalizedLocalProgress(localProgress, matching: item.id)
+        let server = serverProgress(for: item, referenceDate: referenceDate)
+
+        switch (local, server) {
+        case let (local?, server?):
+            return server.positionTicks > local.positionTicks ? server : local
+        case let (local?, nil):
+            return local
+        case let (nil, server?):
+            return server
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    private static func normalizedLocalProgress(
+        _ progress: PlaybackProgress?,
+        matching itemID: String
+    ) -> PlaybackProgress? {
+        guard var progress, progress.itemID == itemID, progress.positionTicks > 0 else {
+            return nil
+        }
+
+        progress.totalTicks = max(progress.totalTicks, progress.positionTicks)
+        return progress
+    }
+
+    private static func serverProgress(
+        for item: MediaItem,
+        referenceDate: Date
+    ) -> PlaybackProgress? {
+        guard let positionTicks = item.playbackPositionTicks, positionTicks > 0 else {
+            return nil
+        }
+
+        return PlaybackProgress(
+            itemID: item.id,
+            positionTicks: positionTicks,
+            totalTicks: max(item.runtimeTicks ?? 0, positionTicks),
+            updatedAt: referenceDate
+        )
     }
 }
 

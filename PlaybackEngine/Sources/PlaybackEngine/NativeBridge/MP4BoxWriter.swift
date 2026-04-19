@@ -471,7 +471,7 @@ public struct MP4BoxWriter {
         dsi.append(asc)
 
         // SLConfigDescriptor (predefined = 2)
-        var slc = Data([0x06, 0x01, 0x02])
+        let slc = Data([0x06, 0x01, 0x02])
 
         // DecoderConfigDescriptor
         var dcd = Data([0x04])

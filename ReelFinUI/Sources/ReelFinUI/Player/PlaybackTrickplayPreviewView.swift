@@ -1,7 +1,7 @@
 import Shared
 import UIKit
 
-#if os(iOS) || os(tvOS)
+#if os(iOS)
 final class PlaybackTrickplayPreviewView: UIView {
     private struct PreviewKey: Equatable {
         let width: Int
@@ -14,10 +14,11 @@ final class PlaybackTrickplayPreviewView: UIView {
         let tileImageIndex: Int
     }
 
-    private let chromeView = UIView()
+    private let materialView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
     private let imageView = UIImageView()
+    private let timeLabel = UILabel()
     private let consumerID = ImageRequestConsumerID()
-    private let previewWidth: CGFloat = 196
+    private let previewWidth: CGFloat = 220
 
     private var manifest: TrickplayManifest?
     private var timeOffsetSeconds: Double = 0
@@ -36,7 +37,7 @@ final class PlaybackTrickplayPreviewView: UIView {
     private var imageAspectConstraint: NSLayoutConstraint?
 
     override var intrinsicContentSize: CGSize {
-        CGSize(width: previewWidth, height: previewWidth * aspectRatio)
+        CGSize(width: previewWidth, height: (previewWidth * aspectRatio) + 34)
     }
 
     override init(frame: CGRect) {
@@ -121,6 +122,7 @@ final class PlaybackTrickplayPreviewView: UIView {
         }
 
         let key = PreviewKey(width: variant.width, tileImageIndex: frame.tileImageIndex, thumbnailIndex: frame.thumbnailIndex)
+        timeLabel.text = Self.format(seconds: max(0, seconds + timeOffsetSeconds))
 
         showIfNeeded()
         scheduleHide()
@@ -132,47 +134,51 @@ final class PlaybackTrickplayPreviewView: UIView {
 
     private func setupView() {
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.34
-        layer.shadowRadius = 26
-        layer.shadowOffset = CGSize(width: 0, height: 14)
+        layer.shadowOpacity = 0.22
+        layer.shadowRadius = 24
+        layer.shadowOffset = CGSize(width: 0, height: 16)
 
-        chromeView.translatesAutoresizingMaskIntoConstraints = false
-        chromeView.clipsToBounds = true
-        chromeView.layer.cornerCurve = .continuous
-        chromeView.layer.cornerRadius = 24
-        chromeView.layer.borderWidth = 1
-        chromeView.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
-        chromeView.backgroundColor = UIColor.black.withAlphaComponent(0.22)
+        materialView.translatesAutoresizingMaskIntoConstraints = false
+        materialView.clipsToBounds = true
+        materialView.layer.cornerCurve = .continuous
+        materialView.layer.cornerRadius = 20
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
-        imageView.layer.cornerCurve = .continuous
-        imageView.layer.cornerRadius = 22
-        imageView.backgroundColor = UIColor.white.withAlphaComponent(0.05)
+        imageView.backgroundColor = UIColor.white.withAlphaComponent(0.04)
 
-        addSubview(chromeView)
-        chromeView.addSubview(imageView)
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        timeLabel.textColor = .white
+        timeLabel.textAlignment = .center
+
+        addSubview(materialView)
+        materialView.contentView.addSubview(imageView)
+        materialView.contentView.addSubview(timeLabel)
 
         let imageAspectConstraint = imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: aspectRatio)
         self.imageAspectConstraint = imageAspectConstraint
 
         NSLayoutConstraint.activate([
-            chromeView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            chromeView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            chromeView.topAnchor.constraint(equalTo: topAnchor),
-            chromeView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            imageView.leadingAnchor.constraint(equalTo: chromeView.leadingAnchor, constant: 2),
-            imageView.trailingAnchor.constraint(equalTo: chromeView.trailingAnchor, constant: -2),
-            imageView.topAnchor.constraint(equalTo: chromeView.topAnchor, constant: 2),
-            imageView.bottomAnchor.constraint(equalTo: chromeView.bottomAnchor, constant: -2),
+            materialView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            materialView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            materialView.topAnchor.constraint(equalTo: topAnchor),
+            materialView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            imageView.leadingAnchor.constraint(equalTo: materialView.contentView.leadingAnchor, constant: 10),
+            imageView.trailingAnchor.constraint(equalTo: materialView.contentView.trailingAnchor, constant: -10),
+            imageView.topAnchor.constraint(equalTo: materialView.contentView.topAnchor, constant: 10),
+            timeLabel.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 8),
+            timeLabel.leadingAnchor.constraint(equalTo: materialView.contentView.leadingAnchor, constant: 10),
+            timeLabel.trailingAnchor.constraint(equalTo: materialView.contentView.trailingAnchor, constant: -10),
+            timeLabel.bottomAnchor.constraint(equalTo: materialView.contentView.bottomAnchor, constant: -10),
             imageAspectConstraint
         ])
     }
 
     private func loadPreviewImage(frame: TrickplayFrame, variant: TrickplayVariant) {
         if let loadedSheetKey, let loadedSheetImage, loadedSheetKey == SheetKey(width: variant.width, tileImageIndex: frame.tileImageIndex) {
-            imageView.image = croppedPreviewImage(from: loadedSheetImage, frame: frame)
+            imageView.image = loadedSheetImage.reelfinCropped(to: frame.cropRect)
             return
         }
 
@@ -200,19 +206,9 @@ final class PlaybackTrickplayPreviewView: UIView {
                 guard self.previewKey?.thumbnailIndex == frame.thumbnailIndex else { return }
                 self.loadedSheetKey = expectedKey
                 self.loadedSheetImage = sheetImage
-                self.imageView.image = self.croppedPreviewImage(from: sheetImage, frame: frame)
+                self.imageView.image = sheetImage.reelfinCropped(to: frame.cropRect)
             }
         }
-    }
-
-    private func croppedPreviewImage(from sheetImage: UIImage, frame: TrickplayFrame) -> UIImage? {
-        guard let cropped = sheetImage.reelfinCropped(to: frame.cropRect) else {
-            AppLog.ui.error(
-                "trickplay.crop.failed — tile=\(frame.tileImageIndex, privacy: .public) thumb=\(frame.thumbnailIndex, privacy: .public) rect=\(NSCoder.string(for: frame.cropRect), privacy: .public)"
-            )
-            return nil
-        }
-        return cropped
     }
 
     private func imageURL(for variant: TrickplayVariant, tileImageIndex: Int) async -> URL? {
@@ -307,10 +303,21 @@ final class PlaybackTrickplayPreviewView: UIView {
         components.path += "/\(tileImageIndex).jpg"
         return components.url
     }
+
+    private static func format(seconds: Double) -> String {
+        let totalSeconds = max(0, Int(seconds.rounded(.down)))
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let secs = totalSeconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%02d:%02d", minutes, secs)
+    }
 }
 
 private extension UIImage {
-    func reelfinCropped(to rect: CGRect) -> UIImage? {
+    func reelfinCropped(to rect: CGRect) -> UIImage {
         let scaledRect = CGRect(
             x: rect.origin.x * scale,
             y: rect.origin.y * scale,
@@ -318,15 +325,8 @@ private extension UIImage {
             height: rect.size.height * scale
         ).integral
 
-        guard
-            let cgImage,
-            scaledRect.minX >= 0,
-            scaledRect.minY >= 0,
-            scaledRect.maxX <= CGFloat(cgImage.width),
-            scaledRect.maxY <= CGFloat(cgImage.height),
-            let cropped = cgImage.cropping(to: scaledRect)
-        else {
-            return nil
+        guard let cgImage, let cropped = cgImage.cropping(to: scaledRect) else {
+            return self
         }
         return UIImage(cgImage: cropped, scale: scale, orientation: imageOrientation)
     }

@@ -1,18 +1,6 @@
 import Foundation
 
 enum PlaybackTVOSCachingPolicy {
-    struct StartupBufferingHint: Equatable, Sendable {
-        let forwardBufferDuration: Double
-        let waitsToMinimizeStalling: Bool
-        let minimumStartupBufferDuration: Double
-        let preferredStartupBufferDuration: Double
-        let startupTimeout: Double
-        let fastGrowthRateThreshold: Double
-        let syntheticPreloadCount: Int
-        let syntheticLookaheadSegments: Int
-        let reason: String
-    }
-
     struct AdaptiveCachingHint: Equatable, Sendable {
         enum Phase: Int, Comparable, Sendable {
             case warm
@@ -89,127 +77,6 @@ enum PlaybackTVOSCachingPolicy {
     static let syntheticSegmentCacheSizeBytes = 128 * 1024 * 1024
     static let syntheticReadAheadChunks = 2
     static let syntheticPlaylistPreloadCount = 4
-
-    static func startupBufferingHint(
-        defaultForwardBufferDuration: Double,
-        defaultWaitsToMinimizeStalling: Bool,
-        route: PlaybackRoute,
-        sourceBitrate: Int?,
-        isPremiumSource: Bool,
-        runtimeSeconds: Double?,
-        isTVOS: Bool
-    ) -> StartupBufferingHint? {
-        guard isTVOS else { return nil }
-
-        let bitrate = Double(max(0, sourceBitrate ?? 0))
-        let runtime = runtimeSeconds.flatMap { value -> Double? in
-            guard value.isFinite, value > 0 else { return nil }
-            return value
-        }
-
-        let hint: StartupBufferingHint
-        switch route {
-        case .nativeBridge:
-            hint = StartupBufferingHint(
-                forwardBufferDuration: max(defaultForwardBufferDuration, 6),
-                waitsToMinimizeStalling: true,
-                minimumStartupBufferDuration: 0,
-                preferredStartupBufferDuration: 0,
-                startupTimeout: 0,
-                fastGrowthRateThreshold: 0,
-                syntheticPreloadCount: isPremiumSource ? 16 : 12,
-                syntheticLookaheadSegments: isPremiumSource ? 10 : 8,
-                reason: "tvos_nativebridge_prefetch"
-            )
-        case let .directPlay(url) where url.pathExtension.lowercased() != "m3u8":
-            if isPremiumSource || bitrate >= 20_000_000 {
-                hint = StartupBufferingHint(
-                    forwardBufferDuration: max(defaultForwardBufferDuration, 30),
-                    waitsToMinimizeStalling: true,
-                    minimumStartupBufferDuration: 8,
-                    preferredStartupBufferDuration: 18,
-                    startupTimeout: 6.5,
-                    fastGrowthRateThreshold: 1.8,
-                    syntheticPreloadCount: 14,
-                    syntheticLookaheadSegments: 10,
-                    reason: "tvos_premium_direct_play"
-                )
-            } else if bitrate >= 8_000_000 {
-                hint = StartupBufferingHint(
-                    forwardBufferDuration: max(defaultForwardBufferDuration, 18),
-                    waitsToMinimizeStalling: true,
-                    minimumStartupBufferDuration: 6,
-                    preferredStartupBufferDuration: 12,
-                    startupTimeout: 5.5,
-                    fastGrowthRateThreshold: 1.8,
-                    syntheticPreloadCount: 12,
-                    syntheticLookaheadSegments: 8,
-                    reason: "tvos_mid_bitrate_direct_play"
-                )
-            } else {
-                hint = StartupBufferingHint(
-                    forwardBufferDuration: max(defaultForwardBufferDuration, 12),
-                    waitsToMinimizeStalling: max(defaultForwardBufferDuration, 12) > defaultForwardBufferDuration || defaultWaitsToMinimizeStalling,
-                    minimumStartupBufferDuration: 4,
-                    preferredStartupBufferDuration: 8,
-                    startupTimeout: 4.5,
-                    fastGrowthRateThreshold: 2.1,
-                    syntheticPreloadCount: 10,
-                    syntheticLookaheadSegments: 6,
-                    reason: "tvos_standard_direct_play"
-                )
-            }
-        default:
-            if isPremiumSource || bitrate >= 16_000_000 {
-                hint = StartupBufferingHint(
-                    forwardBufferDuration: max(defaultForwardBufferDuration, 18),
-                    waitsToMinimizeStalling: true,
-                    minimumStartupBufferDuration: 7,
-                    preferredStartupBufferDuration: 14,
-                    startupTimeout: 6,
-                    fastGrowthRateThreshold: 1.7,
-                    syntheticPreloadCount: 14,
-                    syntheticLookaheadSegments: 10,
-                    reason: "tvos_premium_streaming"
-                )
-            } else {
-                hint = StartupBufferingHint(
-                    forwardBufferDuration: max(defaultForwardBufferDuration, 12),
-                    waitsToMinimizeStalling: true,
-                    minimumStartupBufferDuration: 5,
-                    preferredStartupBufferDuration: 10,
-                    startupTimeout: 5,
-                    fastGrowthRateThreshold: 1.7,
-                    syntheticPreloadCount: 12,
-                    syntheticLookaheadSegments: 8,
-                    reason: "tvos_standard_streaming"
-                )
-            }
-        }
-
-        return clampStartupBufferingHint(hint, runtimeSeconds: runtime)
-    }
-
-    static func shouldStartPlayback(
-        bufferedDuration: Double,
-        growthRate: Double,
-        likelyToKeepUp: Bool,
-        hint: StartupBufferingHint
-    ) -> Bool {
-        guard bufferedDuration.isFinite, bufferedDuration >= 0 else { return likelyToKeepUp }
-        if hint.preferredStartupBufferDuration <= 0 {
-            return true
-        }
-        if bufferedDuration >= hint.preferredStartupBufferDuration {
-            return true
-        }
-        if likelyToKeepUp && bufferedDuration >= hint.minimumStartupBufferDuration {
-            return true
-        }
-        return growthRate.isFinite
-            && growthRate >= hint.fastGrowthRateThreshold
-            && bufferedDuration >= hint.minimumStartupBufferDuration
-    }
 
     static func startupForwardBufferDuration(
         baseBufferDuration: Double,
@@ -342,29 +209,6 @@ enum PlaybackTVOSCachingPolicy {
         max(
             indicatedBitrate.isFinite ? indicatedBitrate : 0,
             Double(sourceBitrate ?? 0)
-        )
-    }
-
-    private static func clampStartupBufferingHint(
-        _ hint: StartupBufferingHint,
-        runtimeSeconds: Double?
-    ) -> StartupBufferingHint {
-        guard let runtimeSeconds else { return hint }
-
-        let boundedForward = min(hint.forwardBufferDuration, runtimeSeconds)
-        let boundedPreferred = min(hint.preferredStartupBufferDuration, boundedForward)
-        let boundedMinimum = min(hint.minimumStartupBufferDuration, boundedPreferred)
-
-        return StartupBufferingHint(
-            forwardBufferDuration: boundedForward,
-            waitsToMinimizeStalling: hint.waitsToMinimizeStalling,
-            minimumStartupBufferDuration: boundedMinimum,
-            preferredStartupBufferDuration: boundedPreferred,
-            startupTimeout: hint.startupTimeout,
-            fastGrowthRateThreshold: hint.fastGrowthRateThreshold,
-            syntheticPreloadCount: hint.syntheticPreloadCount,
-            syntheticLookaheadSegments: hint.syntheticLookaheadSegments,
-            reason: hint.reason
         )
     }
 }

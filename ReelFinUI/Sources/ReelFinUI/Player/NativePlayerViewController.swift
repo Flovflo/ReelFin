@@ -2,7 +2,7 @@ import AVKit
 import PlaybackEngine
 import Shared
 import SwiftUI
-#if os(iOS) || os(tvOS)
+#if os(iOS)
 import UIKit
 #endif
 
@@ -30,9 +30,11 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = false
         context.coordinator.installSkipOverlayIfNeeded(in: controller)
-#endif
-#if os(iOS) || os(tvOS)
         context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
+        context.coordinator.updateSkipOverlay(
+            suggestion: transportState.activeSkipSuggestion,
+            onSkipSuggestion: onSkipSuggestion
+        )
         context.coordinator.updateTrickplayOverlay(
             manifest: transportState.trickplayManifest,
             timeOffsetSeconds: transportState.playbackTimeOffsetSeconds,
@@ -40,70 +42,43 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             imagePipeline: imagePipeline
         )
 #endif
-#if os(iOS)
-        context.coordinator.updateSkipOverlay(
-            suggestion: transportState.activeSkipSuggestion,
-            onSkipSuggestion: onSkipSuggestion
-        )
-#endif
-        // Let AVPlayer auto-select audio and subtitle tracks according to the
-        // device's language/accessibility settings. The native "···" button in
-        // AVPlayerViewController then lets the user override at runtime without
-        // any custom UI — it appears automatically whenever the asset exposes
-        // ≥2 AVMediaSelectionOptions in the audible or legible group.
-#if os(tvOS)
-        // On tvOS we provide our own audio/subtitle menus via transportBarCustomMenuItems.
-        // Disabling automatic criteria suppresses the duplicate native AVKit subtitle/audio
-        // buttons that would otherwise appear alongside our custom menu items.
-        controller.player?.appliesMediaSelectionCriteriaAutomatically = false
-        context.coordinator.updateTransportBarMenu(
-            in: controller,
-            transportState: transportState,
-            onSelectAudio: onSelectAudio,
-            onSelectSubtitle: onSelectSubtitle,
-            onSkipSuggestion: onSkipSuggestion
-        )
-#else
+        // Let AVPlayer auto-select audio/subtitle tracks and expose them through
+        // AVKit's native controls. tvOS gets noisy if we add duplicate custom
+        // transport-bar menus on top of the system media selection buttons.
         controller.player?.appliesMediaSelectionCriteriaAutomatically = true
-#endif
 
         context.coordinator.startObserving(player: player, controller: controller)
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
-        if controller.player !== player {
-            controller.player = player
-#if os(tvOS)
-            controller.player?.appliesMediaSelectionCriteriaAutomatically = false
+        let shouldAssignPlayer: Bool
+#if os(iOS)
+        shouldAssignPlayer = !context.coordinator.shouldDeferPlayerAssignment(
+            to: player,
+            controller: controller
+        )
 #else
-            controller.player?.appliesMediaSelectionCriteriaAutomatically = true
+        shouldAssignPlayer = true
 #endif
+
+        if shouldAssignPlayer, controller.player !== player {
+            controller.player = player
+            controller.player?.appliesMediaSelectionCriteriaAutomatically = true
             context.coordinator.startObserving(player: player, controller: controller)
         }
 #if os(iOS)
         context.coordinator.installSkipOverlayIfNeeded(in: controller)
+        context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
         context.coordinator.updateSkipOverlay(
             suggestion: transportState.activeSkipSuggestion,
             onSkipSuggestion: onSkipSuggestion
         )
-#endif
-#if os(iOS) || os(tvOS)
-        context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
         context.coordinator.updateTrickplayOverlay(
             manifest: transportState.trickplayManifest,
             timeOffsetSeconds: transportState.playbackTimeOffsetSeconds,
             apiClient: apiClient,
             imagePipeline: imagePipeline
-        )
-#endif
-#if os(tvOS)
-        context.coordinator.updateTransportBarMenu(
-            in: controller,
-            transportState: transportState,
-            onSelectAudio: onSelectAudio,
-            onSelectSubtitle: onSelectSubtitle,
-            onSkipSuggestion: onSkipSuggestion
         )
 #endif
     }
@@ -121,32 +96,25 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
     /// resulting in a black screen with working audio.
     @MainActor
     final class Coordinator: NSObject {
-#if os(tvOS)
-        private weak var lastTransportMenuController: AVPlayerViewController?
-        private var lastTransportMenuModel: PlaybackControlsModel?
-#endif
         private var itemObservation: NSKeyValueObservation?
         private var statusObservation: NSKeyValueObservation?
         private weak var controller: AVPlayerViewController?
         private weak var observedPlayer: AVPlayer?
-#if os(iOS) || os(tvOS)
-        private var timeJumpObserver: NSObjectProtocol?
-        private var previewTimeObserver: Any?
-        private let trickplayPreviewView = PlaybackTrickplayPreviewView()
-#endif
 #if os(iOS)
+        private var timeJumpObserver: NSObjectProtocol?
         private var didReattachForCurrentItem = false
+        private var isTemporarilyDetachedForReattach = false
         private var observedItemIdentifier: ObjectIdentifier?
         private var reattachGeneration: UInt = 0
         private var reattachWorkItem: DispatchWorkItem?
+        private var previewTimeObserver: Any?
         private let skipOverlayView = PlaybackSkipOverlayView()
+        private let trickplayPreviewView = PlaybackTrickplayPreviewView()
 #endif
 
         deinit {
 #if os(iOS)
             reattachWorkItem?.cancel()
-#endif
-#if os(iOS) || os(tvOS)
             if let timeJumpObserver {
                 NotificationCenter.default.removeObserver(timeJumpObserver)
             }
@@ -156,98 +124,14 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 #endif
         }
 
-#if os(tvOS)
-        func updateTransportBarMenu(
-            in controller: AVPlayerViewController,
-            transportState: PlaybackTransportState,
-            onSelectAudio: ((String) -> Void)?,
-            onSelectSubtitle: ((String?) -> Void)?,
-            onSkipSuggestion: (() -> Void)?
-        ) {
-            let controls = PlaybackControlsModel.make(
-                audioTracks: transportState.availableAudioTracks,
-                subtitleTracks: transportState.availableSubtitleTracks,
-                selectedAudioID: transportState.selectedAudioTrackID,
-                selectedSubtitleID: transportState.selectedSubtitleTrackID,
-                skipSuggestion: transportState.activeSkipSuggestion
-            )
-
-            let sameController = lastTransportMenuController === controller
-            guard !sameController || lastTransportMenuModel != controls else {
-                return
-            }
-
-            lastTransportMenuController = controller
-            lastTransportMenuModel = controls
-
-            guard controls.hasSelectableTracks || controls.skipSuggestion != nil else {
-                controller.transportBarCustomMenuItems = []
-                return
-            }
-
-            var menuItems: [UIMenuElement] = []
-
-            if let skipSuggestion = controls.skipSuggestion {
-                menuItems.append(
-                    UIAction(
-                        title: skipSuggestion.title,
-                        image: UIImage(systemName: skipSuggestion.systemImageName)
-                    ) { _ in
-                        Task { @MainActor in onSkipSuggestion?() }
-                    }
-                )
-            }
-
-            if !controls.audioOptions.isEmpty {
-                let audioActions: [UIAction] = controls.audioOptions.compactMap { option in
-                    guard let trackID = option.trackID else { return nil }
-                    return UIAction(
-                        title: option.title,
-                        image: UIImage(systemName: "speaker.wave.2"),
-                        state: option.isSelected ? .on : .off
-                    ) { _ in
-                        Task { @MainActor in onSelectAudio?(trackID) }
-                    }
-                }
-                menuItems.append(UIMenu(
-                    title: "Audio",
-                    image: UIImage(systemName: "speaker.wave.2"),
-                    options: .singleSelection,
-                    children: audioActions
-                ))
-            }
-
-            if !controls.subtitleOptions.isEmpty {
-                let subActions: [UIAction] = controls.subtitleOptions.map { option in
-                    UIAction(
-                        title: option.title,
-                        image: UIImage(systemName: option.iconName ?? "captions.bubble"),
-                        state: option.isSelected ? .on : .off
-                    ) { _ in
-                        Task { @MainActor in onSelectSubtitle?(option.trackID) }
-                    }
-                }
-                menuItems.append(UIMenu(
-                    title: "Sous-titres",
-                    image: UIImage(systemName: "captions.bubble"),
-                    options: .singleSelection,
-                    children: subActions
-                ))
-            }
-
-            controller.transportBarCustomMenuItems = menuItems
-        }
-#endif
-
         func startObserving(player: AVPlayer, controller: AVPlayerViewController) {
             self.controller = controller
-#if os(iOS)
+            #if os(iOS)
             reattachWorkItem?.cancel()
+            isTemporarilyDetachedForReattach = false
             didReattachForCurrentItem = false
             observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
             statusObservation = nil
-#endif
-#if os(iOS) || os(tvOS)
             if let timeJumpObserver {
                 NotificationCenter.default.removeObserver(timeJumpObserver)
                 self.timeJumpObserver = nil
@@ -261,21 +145,19 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             itemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] player, _ in
                 Task { @MainActor in
                     guard let self else { return }
-#if os(iOS)
                     self.reattachWorkItem?.cancel()
+                    self.isTemporarilyDetachedForReattach = false
                     self.didReattachForCurrentItem = false
                     self.observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
-                    self.observeItemStatus(player: player)
-#endif
                     self.observeTimeJumps(player: player)
+                    self.observeItemStatus(player: player)
                 }
             }
 
+            // If there's already a current item, observe it immediately.
             if player.currentItem != nil {
                 observeTimeJumps(player: player)
-#if os(iOS)
                 observeItemStatus(player: player)
-#endif
             }
 
             previewTimeObserver = player.addPeriodicTimeObserver(
@@ -292,11 +174,32 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                     )
                 }
             }
-#endif
+            #endif
         }
 
-#if os(iOS) || os(tvOS)
-        private static func normalizedDurationSeconds(for item: AVPlayerItem?) -> Double {
+#if os(iOS)
+        nonisolated static func shouldDeferPlayerAssignmentDuringReattach(
+            isTemporarilyDetachedForReattach: Bool,
+            controllerPlayerIsNil: Bool,
+            observedPlayerMatches: Bool
+        ) -> Bool {
+            isTemporarilyDetachedForReattach
+                && controllerPlayerIsNil
+                && observedPlayerMatches
+        }
+
+        func shouldDeferPlayerAssignment(
+            to player: AVPlayer,
+            controller: AVPlayerViewController
+        ) -> Bool {
+            Self.shouldDeferPlayerAssignmentDuringReattach(
+                isTemporarilyDetachedForReattach: isTemporarilyDetachedForReattach,
+                controllerPlayerIsNil: controller.player == nil,
+                observedPlayerMatches: observedPlayer === player
+            )
+        }
+
+        nonisolated private static func normalizedDurationSeconds(for item: AVPlayerItem?) -> Double {
             guard let seconds = item?.duration.seconds, seconds.isFinite, seconds > 0 else {
                 return 0
             }
@@ -324,9 +227,7 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 )
             }
         }
-#endif
 
-#if os(iOS)
         private func observeItemStatus(player: AVPlayer) {
             statusObservation = nil
             guard let item = player.currentItem else {
@@ -356,15 +257,26 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             guard let controller else { return }
             didReattachForCurrentItem = true
             reattachWorkItem?.cancel()
+            isTemporarilyDetachedForReattach = false
             reattachGeneration &+= 1
             let generation = reattachGeneration
 
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self, weak controller, weak item] in
+                guard let self, let controller, let item else { return }
+                guard self.reattachGeneration == generation else { return }
+                guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
+                guard player.currentItem === item else { return }
+
                 // Detach and re-attach the player to force AVPlayerViewController
                 // to fully re-initialize its internal video rendering pipeline (XPC).
+                self.isTemporarilyDetachedForReattach = true
                 controller.player = nil
                 let workItem = DispatchWorkItem { [weak self, weak controller, weak item] in
                     guard let self, let controller, let item else { return }
+                    defer {
+                        self.isTemporarilyDetachedForReattach = false
+                        self.reattachWorkItem = nil
+                    }
                     guard self.reattachGeneration == generation else { return }
                     guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
                     guard player.currentItem === item else { return }
@@ -393,6 +305,16 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             ])
         }
 
+        func installTrickplayOverlayIfNeeded(in controller: AVPlayerViewController) {
+            guard trickplayPreviewView.superview == nil else { return }
+            let overlayView = controller.contentOverlayView ?? controller.view!
+            overlayView.addSubview(trickplayPreviewView)
+            NSLayoutConstraint.activate([
+                trickplayPreviewView.centerXAnchor.constraint(equalTo: overlayView.centerXAnchor),
+                trickplayPreviewView.bottomAnchor.constraint(equalTo: overlayView.safeAreaLayoutGuide.bottomAnchor, constant: -110)
+            ])
+        }
+
         func updateSkipOverlay(
             suggestion: PlaybackSkipSuggestion?,
             onSkipSuggestion: (() -> Void)?
@@ -401,18 +323,6 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 suggestion: suggestion,
                 onSkipSuggestion: onSkipSuggestion
             )
-        }
-#endif
-
-#if os(iOS) || os(tvOS)
-        func installTrickplayOverlayIfNeeded(in controller: AVPlayerViewController) {
-            guard trickplayPreviewView.superview == nil else { return }
-            let overlayView = controller.contentOverlayView ?? controller.view!
-            overlayView.addSubview(trickplayPreviewView)
-            NSLayoutConstraint.activate([
-                trickplayPreviewView.centerXAnchor.constraint(equalTo: overlayView.centerXAnchor),
-                trickplayPreviewView.centerYAnchor.constraint(equalTo: overlayView.safeAreaLayoutGuide.centerYAnchor, constant: -28)
-            ])
         }
 
         func updateTrickplayOverlay(

@@ -294,6 +294,6 @@ public actor NativeBridgeSession: NativeBridgeResourceLoader.DataSource {
     }
 }
 
-private struct AssociatedKeys {
-    static var loader = "NativeBridgeResourceLoaderKey"
+private enum AssociatedKeys {
+    static var loader: UInt8 = 0
 }

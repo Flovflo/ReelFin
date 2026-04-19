@@ -1,5 +1,6 @@
 import AVFoundation
 @testable import PlaybackEngine
+@testable import ReelFinUI
 import Shared
 import XCTest
 
@@ -120,6 +121,78 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertFalse(shouldResume)
     }
 
+    func testResumeSecondsPrefersServerPositionWhenLocalProgressIsEarlier() {
+        let item = MediaItem(
+            id: "movie-1",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(10 * 60 * 10_000_000)
+        )
+        let localProgress = PlaybackProgress(
+            itemID: "movie-1",
+            positionTicks: Int64(11.4 * 10_000_000),
+            totalTicks: Int64(90 * 60 * 10_000_000),
+            updatedAt: Date()
+        )
+
+        let seconds = PlaybackSessionController.resolvedResumeSeconds(
+            for: item,
+            localProgress: localProgress
+        )
+
+        XCTAssertEqual(seconds ?? -1, 600, accuracy: 0.001)
+    }
+
+    func testResumeSecondsKeepsLaterLocalProgressWhenServerIsBehind() {
+        let item = MediaItem(
+            id: "movie-1",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        let localProgress = PlaybackProgress(
+            itemID: "movie-1",
+            positionTicks: Int64(12 * 60 * 10_000_000),
+            totalTicks: Int64(90 * 60 * 10_000_000),
+            updatedAt: Date()
+        )
+
+        let seconds = PlaybackSessionController.resolvedResumeSeconds(
+            for: item,
+            localProgress: localProgress
+        )
+
+        XCTAssertEqual(seconds ?? -1, 720, accuracy: 0.001)
+    }
+
+    func testControllerUpdateDefersAssignmentDuringTemporaryReattachDetach() {
+        XCTAssertTrue(
+            NativePlayerViewController.Coordinator.shouldDeferPlayerAssignmentDuringReattach(
+                isTemporarilyDetachedForReattach: true,
+                controllerPlayerIsNil: true,
+                observedPlayerMatches: true
+            )
+        )
+
+        XCTAssertFalse(
+            NativePlayerViewController.Coordinator.shouldDeferPlayerAssignmentDuringReattach(
+                isTemporarilyDetachedForReattach: true,
+                controllerPlayerIsNil: false,
+                observedPlayerMatches: true
+            )
+        )
+
+        XCTAssertFalse(
+            NativePlayerViewController.Coordinator.shouldDeferPlayerAssignmentDuringReattach(
+                isTemporarilyDetachedForReattach: true,
+                controllerPlayerIsNil: true,
+                observedPlayerMatches: false
+            )
+        )
+    }
+
     func testPremiumProgressiveDirectPlayUsesStallResistantBuffering() {
         let source = MediaSource(
             id: "premium-source",
@@ -185,7 +258,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertNil(queryMap["static"])
     }
 
-    func testPremiumDirectPlayStripsProgressiveFlagWhenNoBetterServerURLExists() {
+    func testPremiumDirectPlayKeepsCurrentURLWhenNoBetterServerURLExists() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -209,17 +282,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             currentAssetURL: currentURL
         )
 
-        let components = URLComponents(url: preferredURL, resolvingAgainstBaseURL: false)
-        let queryMap: [String: String] = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).compactMap { item in
-            guard let value = item.value else { return nil }
-            return (item.name.lowercased(), value)
-        })
-
-        XCTAssertEqual(preferredURL.path, "/Videos/item-premium/stream")
-        XCTAssertEqual(queryMap["audiostreamindex"], "2")
-        XCTAssertEqual(queryMap["api_key"], "token-1")
-        XCTAssertEqual(queryMap["mediasourceid"], "premium-source")
-        XCTAssertNil(queryMap["static"])
+        XCTAssertEqual(preferredURL, currentURL)
     }
 
     func testStandardDirectPlayKeepsOriginalBufferPolicy() {

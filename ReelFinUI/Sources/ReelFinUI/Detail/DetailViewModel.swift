@@ -129,7 +129,7 @@ final class DetailViewModel: ObservableObject {
     }
 
     var playbackStatusText: String? {
-        if shouldShowResume, let displayText = itemToPlay.playbackPositionDisplayText ?? playbackProgressDisplayText {
+        if shouldShowResume, let displayText = playbackProgressDisplayText ?? itemToPlay.playbackPositionDisplayText {
             return "Stopped at \(displayText)"
         }
 
@@ -387,24 +387,10 @@ final class DetailViewModel: ObservableObject {
     }
 
     private func resolvedPlaybackProgress(for item: MediaItem) async -> PlaybackProgress? {
-        guard !item.isPlayed else {
-            return nil
-        }
-
-        if let local = try? await dependencies.repository.fetchPlaybackProgress(itemID: item.id) {
-            return local
-        }
-
-        guard let positionTicks = item.playbackPositionTicks, positionTicks > 0 else {
-            return nil
-        }
-
-        let totalTicks = max(item.runtimeTicks ?? 0, positionTicks)
-        return PlaybackProgress(
-            itemID: item.id,
-            positionTicks: positionTicks,
-            totalTicks: totalTicks,
-            updatedAt: Date()
+        let local = try? await dependencies.repository.fetchPlaybackProgress(itemID: item.id)
+        return PlaybackProgress.resolvedResumeProgress(
+            for: item,
+            localProgress: local
         )
     }
 

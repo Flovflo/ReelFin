@@ -424,7 +424,7 @@ public actor FMP4Repackager: Repackager {
     }
     
     private func writeTfhd(trackID: UInt32) -> Data {
-        var payload = MP4BoxWriter.writeUInt32(trackID)
+        let payload = MP4BoxWriter.writeUInt32(trackID)
         // flags: default-base-is-moof (0x020000)
         return MP4BoxWriter.writeFullBox(type: "tfhd", flags: 0x020000, payload: payload)
     }
@@ -941,7 +941,6 @@ enum BMFFInspector {
             let dataRate = Int((firstWord >> 3) & 0x1FFF)
             let numIndSub = Int(firstWord & 0x0007) + 1
             let b2 = data[payloadRange.lowerBound + 2]
-            let b3 = data[payloadRange.lowerBound + 3]
             let b4 = data[payloadRange.lowerBound + 4]
             let fscod = Int((b2 & 0b1100_0000) >> 6)
             let sampleRate: Int = {

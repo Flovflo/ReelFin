@@ -159,14 +159,6 @@ struct DetailView: View {
         }
         .onChange(of: viewModel.detail.item.id) { _, newValue in
             iosSelectedCarouselItemID = newValue
-#if os(tvOS)
-            focusedSeasonID = nil
-            focusedHeroAction = nil
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 120_000_000)
-                focusedHeroAction = .play
-            }
-#endif
         }
         .onChange(of: currentReturnSourceItem.id) { _, _ in
             onDisplayedSourceItemChange?(currentReturnSourceItem)
@@ -204,7 +196,6 @@ struct DetailView: View {
                 )
             }
         }
-        .accessibilityIdentifier(prefersNativeZoomTransition ? "detail_transition_zoom" : "detail_transition_fallback")
         .modifier(DetailZoomTransitionModifier(namespace: transitionNamespace, sourceID: transitionSourceID))
     }
 
@@ -447,9 +438,7 @@ struct DetailView: View {
         .padding(.horizontal, stageMetrics.heroOuterHorizontalPadding)
         .frame(maxWidth: .infinity)
         .frame(height: heroHeightValue)
-#if os(tvOS)
         .focusSection()
-#endif
         .animation(.smooth(duration: 0.26, extraBounce: 0.02), value: stageMetrics.collapseProgress)
         .animation(.smooth(duration: 0.52, extraBounce: 0.04), value: revealProgress)
         .onChange(of: stageMetrics.previewInteractionEnabled) { _, isEnabled in
@@ -518,19 +507,29 @@ struct DetailView: View {
                 title: "Episodes",
                 subtitle: viewModel.selectedSeason?.name
             ) {
-                EpisodeShelfView(
-                    episodes: viewModel.episodes,
-                    selectedEpisodeID: viewModel.selectedEpisodeID,
-                    width: episodeCardWidth,
-                    spacing: episodeCardSpacing,
-                    onSelect: { episode in
-                        viewModel.prepareEpisodePlayback(episode)
-                        startPlayback(item: episode)
-                    },
-                    onMoveUp: focusAboveEpisodes,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline
-                )
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: episodeCardSpacing) {
+                        ForEach(viewModel.episodes) { episode in
+                            EpisodeCardView(
+                                episode: episode,
+                                width: episodeCardWidth,
+                                isSelected: episode.id == viewModel.selectedEpisodeID,
+                                onSelect: {
+                                    viewModel.prepareEpisodePlayback(episode)
+                                    startPlayback(item: episode)
+                                },
+                                onMoveUp: focusAboveEpisodes,
+                                apiClient: dependencies.apiClient,
+                                imagePipeline: dependencies.imagePipeline
+                            )
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .padding(.horizontal, rowContentHorizontalPadding)
+                    .padding(.vertical, rowContentVerticalPadding)
+                }
+                .scrollClipDisabled()
+                .scrollTargetBehavior(.viewAligned)
             }
             #else
             VStack(alignment: .leading, spacing: 18) {
@@ -545,18 +544,26 @@ struct DetailView: View {
                     }
                 )
 
-                EpisodeShelfView(
-                    episodes: viewModel.episodes,
-                    selectedEpisodeID: viewModel.selectedEpisodeID,
-                    width: episodeCardWidth,
-                    spacing: episodeCardSpacing,
-                    onSelect: { episode in
-                        viewModel.prepareEpisodePlayback(episode)
-                        startPlayback(item: episode)
-                    },
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline
-                )
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: episodeCardSpacing) {
+                        ForEach(viewModel.episodes) { episode in
+                            EpisodeCardView(
+                                episode: episode,
+                                width: episodeCardWidth,
+                                isSelected: episode.id == viewModel.selectedEpisodeID,
+                                onSelect: {
+                                    viewModel.prepareEpisodePlayback(episode)
+                                    startPlayback(item: episode)
+                                },
+                                apiClient: dependencies.apiClient,
+                                imagePipeline: dependencies.imagePipeline
+                            )
+                        }
+                    }
+                    .padding(.horizontal, rowContentHorizontalPadding)
+                    .padding(.vertical, rowContentVerticalPadding)
+                }
+                .scrollClipDisabled()
             }
             #endif
         }
@@ -802,10 +809,6 @@ struct DetailView: View {
         playerSession = nil
         showPlayer = false
         isLoadingPlayback = false
-#if os(tvOS)
-        focusedSeasonID = nil
-        focusedHeroAction = .play
-#endif
     }
 
     private var shouldShowSeasonPicker: Bool {
@@ -1386,12 +1389,8 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
         )
         .opacity(selected ? 1 : 1 - Double(topInsetProgress * 0.45))
         .offset(y: selected ? metrics.heroLift : 18 + (topInsetProgress * 12))
-        .modifier(
-            IOSDetailTopCarouselAccessibilityModifier(
-                isSelected: selected,
-                entryID: entry.id
-            )
-        )
+        .accessibilityIdentifier("detail_top_card_\(entry.id)")
+        .accessibilityElement(children: .contain)
     }
 
     private var isSelected: Bool {
@@ -1472,22 +1471,6 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
         }
 
         return values.joined(separator: " · ")
-    }
-}
-
-private struct IOSDetailTopCarouselAccessibilityModifier: ViewModifier {
-    let isSelected: Bool
-    let entryID: String
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if isSelected {
-            content
-        } else {
-            content
-                .accessibilityIdentifier("detail_top_card_\(entryID)")
-                .accessibilityElement(children: .contain)
-        }
     }
 }
 
@@ -1608,11 +1591,17 @@ private struct IOSDetailHeroContent: View {
             )
             .frame(maxWidth: 540)
 
-            Text(subtitleText)
-                .font(.system(size: 18, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.86))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
+            HStack(spacing: 10) {
+                Text(subtitleText)
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.86))
+                    .multilineTextAlignment(.center)
+
+                if optimizationStatus == .optimized {
+                    IOSHeroAccessoryBadge(systemImage: "tv")
+                }
+            }
+            .frame(maxWidth: .infinity)
 
             HStack(spacing: isCompactHeroLayout ? 12 : 14) {
                 IOSDetailHeroPrimaryButton(
@@ -1645,6 +1634,33 @@ private struct IOSDetailHeroContent: View {
                 )
             }
             .frame(maxWidth: min(contentWidth, isCompactHeroLayout ? 388 : 424))
+
+            resumeProgressBlock
+        }
+    }
+
+    @ViewBuilder
+    private var resumeProgressBlock: some View {
+        if hasResumeProgressInfo {
+            VStack(spacing: 8) {
+                if let playbackStatusText, !playbackStatusText.isEmpty {
+                    Text(playbackStatusText)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.84))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let progress, progress > 0 {
+                    HeroProgressView(
+                        progress: min(max(progress, 0), 1),
+                        centered: true
+                    )
+                }
+            }
+            .frame(maxWidth: min(contentWidth, isCompactHeroLayout ? 320 : 360))
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -1813,6 +1829,10 @@ private struct IOSDetailHeroContent: View {
     private var synopsisNeedsExpansion: Bool {
         guard let synopsisText else { return false }
         return synopsisText.count > 120
+    }
+
+    private var hasResumeProgressInfo: Bool {
+        playbackStatusText?.isEmpty == false || (progress ?? 0) > 0
     }
 
     private var footerPrimaryText: String {
@@ -2036,14 +2056,6 @@ private struct IOSDetailHeroPrimaryButton: View {
         }
         .buttonStyle(.plain)
         .disabled(isLoading)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(isLoading ? "Preparing" : title))
-        .accessibilityIdentifier("detail_play_button")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityRepresentation {
-            Button(isLoading ? "Preparing" : title, action: action)
-                .accessibilityIdentifier("detail_play_button")
-        }
         .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 }
@@ -2080,12 +2092,6 @@ private struct IOSDetailHeroRoundActionButton: View {
         .accessibilityLabel(Text(accessibilityLabel))
         .accessibilityIdentifier(accessibilityIdentifier)
         .accessibilityValue(Text(accessibilityValue))
-        .accessibilityAddTraits(.isButton)
-        .accessibilityRepresentation {
-            Button(accessibilityLabel, action: action)
-                .accessibilityIdentifier(accessibilityIdentifier)
-                .accessibilityValue(Text(accessibilityValue))
-        }
         .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
@@ -2098,6 +2104,22 @@ private struct IOSDetailHeroRoundActionButton: View {
 
     private var borderColor: Color {
         isFocused ? Color.white.opacity(0.34) : Color.white.opacity(isActive ? 0.20 : 0.12)
+    }
+}
+
+private struct IOSHeroAccessoryBadge: View {
+    let systemImage: String
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.84))
+            .frame(width: 26, height: 26)
+            .background(Color.white.opacity(0.10), in: Circle())
+            .overlay {
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+            }
     }
 }
 
@@ -2724,7 +2746,6 @@ private struct PrimaryActionsRow: View {
             HeroPrimaryButton(
                 title: playButtonLabel,
                 isLoading: isLoadingPlayback,
-                accessibilityIdentifier: "detail_play_button",
                 action: onPlay
             )
             .focused(focusedAction, equals: .play)
@@ -2736,7 +2757,6 @@ private struct PrimaryActionsRow: View {
                 action: onToggleWatchlist
             )
             .focused(focusedAction, equals: .watchlist)
-            .accessibilityIdentifier("detail_watchlist_button")
 
             HeroSecondaryButton(
                 title: isWatched ? "Watched" : "Mark Watched",
@@ -2745,7 +2765,6 @@ private struct PrimaryActionsRow: View {
                 action: onToggleWatched
             )
             .focused(focusedAction, equals: .watched)
-            .accessibilityIdentifier("detail_watched_button")
         }
         .defaultFocus(focusedAction, .play)
         .accessibilityElement(children: .contain)
@@ -2754,7 +2773,6 @@ private struct PrimaryActionsRow: View {
             HeroPrimaryButton(
                 title: playButtonLabel,
                 isLoading: isLoadingPlayback,
-                accessibilityIdentifier: nil,
                 action: onPlay
             )
             .focused(focusedAction, equals: .play)
@@ -2783,14 +2801,13 @@ private struct PrimaryActionsRow: View {
 
 private struct HeroPrimaryButton: View {
     #if os(tvOS)
-    @Environment(\.isFocused) private var isFocused
+    @FocusState private var isFocused: Bool
     #else
     @Environment(\.isFocused) private var isFocused
     #endif
 
     let title: String
     let isLoading: Bool
-    let accessibilityIdentifier: String?
     let action: () -> Void
 
     var body: some View {
@@ -2813,6 +2830,7 @@ private struct HeroPrimaryButton: View {
         .background { primaryButtonBackground }
         .contentShape(Capsule(style: .continuous))
         .focusable(!isLoading, interactions: .activate)
+        .focused($isFocused)
         .focusEffectDisabled(true)
         .onTapGesture {
             guard !isLoading else { return }
@@ -2822,12 +2840,8 @@ private struct HeroPrimaryButton: View {
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 24 : 12, x: 0, y: isFocused ? 14 : 8)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
-        .accessibilityIdentifier(accessibilityIdentifier ?? "")
-        .accessibilityValue(isFocused ? "focused" : "unfocused")
         .accessibilityRepresentation {
             Button(isLoading ? "Preparing" : title, action: action)
-                .accessibilityIdentifier(accessibilityIdentifier ?? "")
-                .accessibilityValue(isFocused ? "focused" : "unfocused")
         }
 #else
         buttonContent
@@ -2934,7 +2948,7 @@ private struct HeroIconActionButton: View {
 
 private struct HeroSecondaryButton: View {
     #if os(tvOS)
-    @Environment(\.isFocused) private var isFocused
+    @FocusState private var isFocused: Bool
     #else
     @Environment(\.isFocused) private var isFocused
     #endif
@@ -2959,6 +2973,7 @@ private struct HeroSecondaryButton: View {
         .onTapGesture(perform: action)
         .scaleEffect(isFocused ? 1.03 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
+        .focused($isFocused)
         .focusEffectDisabled(true)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
@@ -3311,6 +3326,9 @@ private struct SeasonPickerView: View {
                         #endif
                     }
                 }
+                #if os(tvOS)
+                .defaultFocus(focusedSeasonID, selectedSeasonID ?? seasons.first?.id)
+                #endif
                 .padding(.horizontal, rowContentHorizontalPadding)
                 .padding(.vertical, rowContentVerticalPadding)
             }
@@ -3324,89 +3342,6 @@ private struct SeasonPickerView: View {
         #else
         return 12
         #endif
-    }
-}
-
-private struct EpisodeShelfView: View {
-    let episodes: [MediaItem]
-    let selectedEpisodeID: String?
-    let width: CGFloat
-    let spacing: CGFloat
-    let onSelect: (MediaItem) -> Void
-    let onMoveUp: (() -> Void)?
-    let apiClient: any JellyfinAPIClientProtocol
-    let imagePipeline: any ImagePipelineProtocol
-
-    @State private var lastAlignedEpisodeID: String?
-
-    init(
-        episodes: [MediaItem],
-        selectedEpisodeID: String?,
-        width: CGFloat,
-        spacing: CGFloat,
-        onSelect: @escaping (MediaItem) -> Void,
-        onMoveUp: (() -> Void)? = nil,
-        apiClient: any JellyfinAPIClientProtocol,
-        imagePipeline: any ImagePipelineProtocol
-    ) {
-        self.episodes = episodes
-        self.selectedEpisodeID = selectedEpisodeID
-        self.width = width
-        self.spacing = spacing
-        self.onSelect = onSelect
-        self.onMoveUp = onMoveUp
-        self.apiClient = apiClient
-        self.imagePipeline = imagePipeline
-    }
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: spacing) {
-                    ForEach(episodes) { episode in
-                        EpisodeCardView(
-                            episode: episode,
-                            width: width,
-                            isSelected: episode.id == selectedEpisodeID,
-                            onSelect: {
-                                onSelect(episode)
-                            },
-                            onMoveUp: onMoveUp,
-                            apiClient: apiClient,
-                            imagePipeline: imagePipeline
-                        )
-                        .id(episode.id)
-                    }
-                }
-                .scrollTargetLayout()
-                .padding(.horizontal, rowContentHorizontalPadding)
-                .padding(.vertical, rowContentVerticalPadding)
-            }
-            .onAppear {
-                alignIfNeeded(using: proxy, force: true)
-            }
-            .onChange(of: selectedEpisodeID) { _, _ in
-                alignIfNeeded(using: proxy)
-            }
-            .onChange(of: episodes.map(\.id)) { _, _ in
-                alignIfNeeded(using: proxy, force: true)
-            }
-            .scrollClipDisabled()
-            .scrollTargetBehavior(.viewAligned)
-        }
-    }
-
-    private func alignIfNeeded(using proxy: ScrollViewProxy, force: Bool = false) {
-        guard let targetID = selectedEpisodeID ?? episodes.first?.id else { return }
-        guard force || lastAlignedEpisodeID != targetID else { return }
-        lastAlignedEpisodeID = targetID
-
-        Task { @MainActor in
-            await Task.yield()
-            withAnimation(.easeOut(duration: 0.22)) {
-                proxy.scrollTo(targetID, anchor: .leading)
-            }
-        }
     }
 }
 

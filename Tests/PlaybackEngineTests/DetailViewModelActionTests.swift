@@ -64,9 +64,41 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(favoriteCalls.first?.isFavorite, true)
     }
 
+    func testLoadUsesServerResumeWhenLocalProgressIsEarlier() async {
+        let serverPositionTicks = Int64(10 * 60 * 10_000_000)
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = DetailActionMetadataRepository(
+            localProgress: PlaybackProgress(
+                itemID: "movie-3",
+                positionTicks: Int64(11.4 * 10_000_000),
+                totalTicks: Int64(90 * 60 * 10_000_000),
+                updatedAt: Date()
+            )
+        )
+        let item = MediaItem(
+            id: "movie-3",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            isPlayed: false,
+            playbackPositionTicks: serverPositionTicks
+        )
+
+        let viewModel = DetailViewModel(
+            item: item,
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.playbackProgress?.positionTicks, serverPositionTicks)
+        XCTAssertEqual(viewModel.playbackStatusText, "Stopped at 10m")
+        XCTAssertEqual(viewModel.playButtonLabel, "Resume")
+    }
+
     private func makeDependencies(
-        apiClient: any JellyfinAPIClientProtocol,
-        repository: MockMetadataRepository
+        apiClient: DetailActionSpyAPIClient,
+        repository: any MetadataRepositoryProtocol
     ) -> ReelFinDependencies {
         let detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
@@ -134,6 +166,32 @@ final class DetailViewModelActionTests: XCTestCase {
 
         return await apiClient.favoriteCalls().count == expectedCount
     }
+}
+
+private actor DetailActionMetadataRepository: MetadataRepositoryProtocol {
+    private var localProgress: PlaybackProgress?
+
+    init(localProgress: PlaybackProgress?) {
+        self.localProgress = localProgress
+    }
+
+    func saveLibraryViews(_ views: [Shared.LibraryView]) async throws { _ = views }
+    func fetchLibraryViews() async throws -> [Shared.LibraryView] { [] }
+    func saveHomeFeed(_ feed: HomeFeed) async throws { _ = feed }
+    func fetchHomeFeed() async throws -> HomeFeed { .empty }
+    func upsertItems(_ items: [MediaItem]) async throws { _ = items }
+    func fetchItem(id: String) async throws -> MediaItem? { _ = id; return nil }
+    func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { _ = query; return [] }
+    func searchItems(query: String, limit: Int) async throws -> [MediaItem] { _ = query; _ = limit; return [] }
+    func savePlaybackProgress(_ progress: PlaybackProgress) async throws { localProgress = progress }
+
+    func fetchPlaybackProgress(itemID: String) async throws -> PlaybackProgress? {
+        guard localProgress?.itemID == itemID else { return nil }
+        return localProgress
+    }
+
+    func fetchLastSyncDate() async throws -> Date? { nil }
+    func setLastSyncDate(_ date: Date) async throws { _ = date }
 }
 
 private actor DetailActionSpyAPIClient: JellyfinAPIClientProtocol {
