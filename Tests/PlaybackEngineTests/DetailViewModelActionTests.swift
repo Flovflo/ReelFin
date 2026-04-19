@@ -96,9 +96,69 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.playButtonLabel, "Resume")
     }
 
+    func testPrepareEpisodePlaybackLatestWinsAcrossWarmupSignals() async {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = EpisodeProgressRepository(
+            progressByItemID: [
+                "episode-1": PlaybackProgress(
+                    itemID: "episode-1",
+                    positionTicks: 10 * 10_000_000,
+                    totalTicks: 40 * 10_000_000,
+                    updatedAt: Date(timeIntervalSince1970: 1)
+                ),
+                "episode-2": PlaybackProgress(
+                    itemID: "episode-2",
+                    positionTicks: 20 * 10_000_000,
+                    totalTicks: 40 * 10_000_000,
+                    updatedAt: Date(timeIntervalSince1970: 2)
+                )
+            ],
+            delayByItemID: [
+                "episode-1": 150_000_000,
+                "episode-2": 10_000_000
+            ]
+        )
+        let warmupManager = EpisodeWarmupManager(
+            delayByItemID: [
+                "episode-1": 150_000_000,
+                "episode-2": 10_000_000
+            ],
+            selectionByItemID: [
+                "episode-1": makeSelection(sourceID: "source-1", itemID: "episode-1"),
+                "episode-2": makeSelection(sourceID: "source-2", itemID: "episode-2")
+            ]
+        )
+        let series = MediaItem(id: "series-1", name: "Series", mediaType: .series)
+        let episode1 = MediaItem(id: "episode-1", name: "Episode 1", mediaType: .episode, parentID: "series-1")
+        let episode2 = MediaItem(id: "episode-2", name: "Episode 2", mediaType: .episode, parentID: "series-1")
+
+        let viewModel = DetailViewModel(
+            item: series,
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: repository,
+                warmupManager: warmupManager
+            )
+        )
+
+        viewModel.prepareEpisodePlayback(episode1)
+        viewModel.prepareEpisodePlayback(episode2)
+
+        let didSettle = await waitForCondition(timeout: 2) {
+            viewModel.playbackProgress?.itemID == "episode-2"
+                && viewModel.preferredPlaybackSource?.id == "source-2"
+        }
+
+        XCTAssertTrue(didSettle)
+        XCTAssertEqual(viewModel.playbackProgress?.itemID, "episode-2")
+        XCTAssertEqual(viewModel.playbackProgress?.positionTicks, 20 * 10_000_000)
+        XCTAssertEqual(viewModel.preferredPlaybackSource?.id, "source-2")
+    }
+
     private func makeDependencies(
         apiClient: DetailActionSpyAPIClient,
-        repository: any MetadataRepositoryProtocol
+        repository: any MetadataRepositoryProtocol,
+        warmupManager: (any PlaybackWarmupManaging)? = nil
     ) -> ReelFinDependencies {
         let detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
@@ -107,7 +167,7 @@ final class DetailViewModelActionTests: XCTestCase {
             detailTTL: 60,
             collectionTTL: 60
         )
-        let warmupManager = PlaybackWarmupManager(apiClient: apiClient, ttl: 60)
+        let resolvedWarmupManager = warmupManager ?? PlaybackWarmupManager(apiClient: apiClient, ttl: 60)
         let notifications = NoopEpisodeReleaseNotificationManager()
 
         return ReelFinDependencies(
@@ -119,15 +179,62 @@ final class DetailViewModelActionTests: XCTestCase {
             settingsStore: MockSettingsStore(),
             episodeReleaseNotificationManager: notifications,
             seriesCache: SeriesLookupCache(apiClient: apiClient),
-            playbackWarmupManager: warmupManager,
+            playbackWarmupManager: resolvedWarmupManager,
             tvFocusWarmupCoordinator: nil,
             makePlaybackSession: {
                 PlaybackSessionController(
                     apiClient: apiClient,
                     repository: repository,
-                    warmupManager: warmupManager
+                    warmupManager: resolvedWarmupManager
                 )
             }
+        )
+    }
+
+    @MainActor
+    private func waitForCondition(
+        timeout: TimeInterval,
+        pollInterval: UInt64 = 25_000_000,
+        condition: @escaping () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if condition() {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
+
+        return condition()
+    }
+
+    private func makeSelection(sourceID: String, itemID: String) -> PlaybackAssetSelection {
+        let assetURL = URL(string: "https://example.com/\(sourceID).m3u8")!
+        let source = MediaSource(
+            id: sourceID,
+            itemID: itemID,
+            name: sourceID,
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directPlayURL: assetURL
+        )
+
+        return PlaybackAssetSelection(
+            source: source,
+            decision: PlaybackDecision(sourceID: sourceID, route: .directPlay(assetURL)),
+            assetURL: assetURL,
+            headers: [:],
+            debugInfo: PlaybackDebugInfo(
+                container: "mp4",
+                videoCodec: "h264",
+                videoBitDepth: nil,
+                hdrMode: .sdr,
+                audioMode: "Stereo",
+                bitrate: nil,
+                playMethod: "DirectPlay"
+            )
         )
     }
 
@@ -168,8 +275,8 @@ final class DetailViewModelActionTests: XCTestCase {
     }
 }
 
-private actor DetailActionMetadataRepository: MetadataRepositoryProtocol {
-    private var localProgress: PlaybackProgress?
+    private actor DetailActionMetadataRepository: MetadataRepositoryProtocol {
+        private var localProgress: PlaybackProgress?
 
     init(localProgress: PlaybackProgress?) {
         self.localProgress = localProgress
@@ -190,11 +297,75 @@ private actor DetailActionMetadataRepository: MetadataRepositoryProtocol {
         return localProgress
     }
 
-    func fetchLastSyncDate() async throws -> Date? { nil }
-    func setLastSyncDate(_ date: Date) async throws { _ = date }
-}
+        func fetchLastSyncDate() async throws -> Date? { nil }
+        func setLastSyncDate(_ date: Date) async throws { _ = date }
+        func upsertEpisodeReleaseState(_ state: EpisodeReleaseState) async throws { _ = state }
+        func fetchEpisodeReleaseState(seriesID: String) async throws -> EpisodeReleaseState? { _ = seriesID; return nil }
+        func fetchEpisodeReleaseStates() async throws -> [EpisodeReleaseState] { [] }
+    }
 
-private actor DetailActionSpyAPIClient: JellyfinAPIClientProtocol {
+    private actor EpisodeProgressRepository: MetadataRepositoryProtocol {
+        private let progressByItemID: [String: PlaybackProgress]
+        private let delayByItemID: [String: UInt64]
+
+        init(progressByItemID: [String: PlaybackProgress], delayByItemID: [String: UInt64]) {
+            self.progressByItemID = progressByItemID
+            self.delayByItemID = delayByItemID
+        }
+
+        func saveLibraryViews(_ views: [Shared.LibraryView]) async throws { _ = views }
+        func fetchLibraryViews() async throws -> [Shared.LibraryView] { [] }
+        func saveHomeFeed(_ feed: HomeFeed) async throws { _ = feed }
+        func fetchHomeFeed() async throws -> HomeFeed { .empty }
+        func upsertItems(_ items: [MediaItem]) async throws { _ = items }
+        func fetchItem(id: String) async throws -> MediaItem? { _ = id; return nil }
+        func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { _ = query; return [] }
+        func searchItems(query: String, limit: Int) async throws -> [MediaItem] { _ = query; _ = limit; return [] }
+
+        func savePlaybackProgress(_ progress: PlaybackProgress) async throws { _ = progress }
+
+        func fetchPlaybackProgress(itemID: String) async throws -> PlaybackProgress? {
+            if let delay = delayByItemID[itemID] {
+                try? await Task.sleep(nanoseconds: delay)
+            }
+            return progressByItemID[itemID]
+        }
+
+        func fetchLastSyncDate() async throws -> Date? { nil }
+        func setLastSyncDate(_ date: Date) async throws { _ = date }
+        func upsertEpisodeReleaseState(_ state: EpisodeReleaseState) async throws { _ = state }
+        func fetchEpisodeReleaseState(seriesID: String) async throws -> EpisodeReleaseState? { _ = seriesID; return nil }
+        func fetchEpisodeReleaseStates() async throws -> [EpisodeReleaseState] { [] }
+    }
+
+    private actor EpisodeWarmupManager: PlaybackWarmupManaging {
+        private let delayByItemID: [String: UInt64]
+        private let selectionByItemID: [String: PlaybackAssetSelection]
+
+        init(
+            delayByItemID: [String: UInt64],
+            selectionByItemID: [String: PlaybackAssetSelection]
+        ) {
+            self.delayByItemID = delayByItemID
+            self.selectionByItemID = selectionByItemID
+        }
+
+        func warm(itemID: String) async {
+            if let delay = delayByItemID[itemID] {
+                try? await Task.sleep(nanoseconds: delay)
+            }
+        }
+
+        func selection(for itemID: String) async -> PlaybackAssetSelection? {
+            selectionByItemID[itemID]
+        }
+
+        func cancel(itemID: String) async { _ = itemID }
+        func trim(keeping itemIDs: [String]) async { _ = itemIDs }
+        func invalidate(itemID: String) async { _ = itemID }
+    }
+
+    private actor DetailActionSpyAPIClient: JellyfinAPIClientProtocol {
     private var recordedPlayedCalls: [(itemID: String, isPlayed: Bool)] = []
     private var recordedFavoriteCalls: [(itemID: String, isFavorite: Bool)] = []
 

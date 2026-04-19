@@ -32,6 +32,8 @@ final class DetailViewModel: ObservableObject {
     private let dependencies: ReelFinDependencies
     private var preferredEpisode: MediaItem?
     private var activeLoadToken = UUID()
+    private var playbackWarmupRequestToken = UUID()
+    private var playbackWarmupRequestItemID: String?
     private var backgroundTasks: [Task<Void, Never>] = []
     private var loadedItemID: String?
 
@@ -45,6 +47,8 @@ final class DetailViewModel: ObservableObject {
     func setDetailItem(_ item: MediaItem, preferredEpisode: MediaItem? = nil) {
         cancelBackgroundTasks()
         activeLoadToken = UUID()
+        playbackWarmupRequestToken = UUID()
+        playbackWarmupRequestItemID = nil
         loadedItemID = nil
         detail = MediaDetail(item: item)
         self.preferredEpisode = preferredEpisode
@@ -98,16 +102,14 @@ final class DetailViewModel: ObservableObject {
         nextUpEpisode = episode
         syncDerivedFlags()
 
-        Task {
-            let progress = await resolvedPlaybackProgress(for: episode)
-            await MainActor.run {
-                self.playbackProgress = progress
-            }
-        }
-
-        Task(priority: .utility) {
-            await warmPlayback(for: episode, loadToken: activeLoadToken)
-        }
+        let loadToken = activeLoadToken
+        let requestToken = beginPlaybackWarmupRequest(itemID: episode.id)
+        startPlaybackWarmup(
+            for: episode,
+            loadToken: loadToken,
+            requestToken: requestToken,
+            priority: .userInitiated
+        )
     }
 
     var shouldShowResume: Bool {
@@ -221,10 +223,14 @@ final class DetailViewModel: ObservableObject {
                 await self?.loadSeriesContext(seriesID: itemID, loadToken: loadToken)
             })
         } else {
-            tasks.append(Task(priority: .utility) { [weak self] in
-                guard let self else { return }
-                await self.warmPlayback(for: self.detail.item, loadToken: loadToken)
-            })
+            let playbackItem = detail.item
+            let playbackRequestToken = beginPlaybackWarmupRequest(itemID: playbackItem.id)
+            startPlaybackWarmup(
+                for: playbackItem,
+                loadToken: loadToken,
+                requestToken: playbackRequestToken,
+                priority: .utility
+            )
         }
 
         return tasks
@@ -270,6 +276,7 @@ final class DetailViewModel: ObservableObject {
 
     private func loadSeriesContext(seriesID: String, loadToken: UUID) async {
         do {
+            let playbackRequestToken = playbackWarmupRequestToken
             async let seasonsRequest = dependencies.detailRepository.loadSeasons(seriesID: seriesID)
             async let nextUpRequest = dependencies.detailRepository.loadNextUpEpisode(seriesID: seriesID)
 
@@ -285,10 +292,16 @@ final class DetailViewModel: ObservableObject {
 
             if let preferredSeason {
                 await loadEpisodes(for: preferredSeason, loadToken: loadToken)
+                guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else {
+                    return
+                }
                 nextUpEpisode = episodes.first(where: { $0.id == preferredEpisode?.id }) ?? preferredEpisode
             } else if let firstSeason = fetchedSeasons.first {
                 await loadEpisodes(for: firstSeason, loadToken: loadToken)
                 if isActive(loadToken: loadToken, itemID: seriesID) {
+                    guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else {
+                        return
+                    }
                     let serverNextUp = try await nextUpRequest
                     if let serverNextUp,
                        let matchingEpisode = episodes.first(where: { $0.id == serverNextUp.id }) {
@@ -300,10 +313,16 @@ final class DetailViewModel: ObservableObject {
             }
 
             guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+            guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
 
             if let nextUpEpisode {
-                playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode)
-                await warmPlayback(for: nextUpEpisode, loadToken: loadToken)
+                let requestToken = beginPlaybackWarmupRequest(itemID: nextUpEpisode.id)
+                startPlaybackWarmup(
+                    for: nextUpEpisode,
+                    loadToken: loadToken,
+                    requestToken: requestToken,
+                    priority: .utility
+                )
             }
             syncDerivedFlags()
         } catch {
@@ -313,6 +332,7 @@ final class DetailViewModel: ObservableObject {
     }
 
     private func loadEpisodes(for season: MediaItem, loadToken: UUID) async {
+        let playbackRequestToken = playbackWarmupRequestToken
         selectedSeason = season
         isLoadingEpisodes = true
         defer { isLoadingEpisodes = false }
@@ -334,7 +354,10 @@ final class DetailViewModel: ObservableObject {
             }
 
             if let nextUpEpisode {
-                playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode)
+                guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
+                let progress = await resolvedPlaybackProgress(for: nextUpEpisode)
+                guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
+                playbackProgress = progress
             }
             syncDerivedFlags()
         } catch {
@@ -343,19 +366,48 @@ final class DetailViewModel: ObservableObject {
         }
     }
 
-    private func warmPlayback(for item: MediaItem, loadToken: UUID) async {
+    private func startPlaybackWarmup(
+        for item: MediaItem,
+        loadToken: UUID,
+        requestToken: UUID,
+        priority: TaskPriority
+    ) {
+        Task(priority: priority) { [weak self] in
+            guard let self else { return }
+            await self.runPlaybackWarmup(for: item, loadToken: loadToken, requestToken: requestToken)
+        }
+    }
+
+    private func runPlaybackWarmup(
+        for item: MediaItem,
+        loadToken: UUID,
+        requestToken: UUID
+    ) async {
         guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+        guard isCurrentPlaybackWarmupRequest(requestToken, itemID: item.id) else { return }
 
         isWarmingPlayback = true
+        defer {
+            if isCurrentPlaybackWarmupRequest(requestToken, itemID: item.id) {
+                isWarmingPlayback = false
+            }
+        }
+
+        let progress = await resolvedPlaybackProgress(for: item)
+        guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+        guard isCurrentPlaybackWarmupRequest(requestToken, itemID: item.id) else { return }
+
+        playbackProgress = progress
+
         await dependencies.playbackWarmupManager.warm(itemID: item.id)
         let selection = await dependencies.playbackWarmupManager.selection(for: item.id)
 
         guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+        guard isCurrentPlaybackWarmupRequest(requestToken, itemID: item.id) else { return }
 
         preferredPlaybackSource = selection?.source
         playbackOptimizationStatus = ApplePlaybackOptimizationStatus(selection: selection)
         isPlaybackWarm = selection != nil
-        isWarmingPlayback = false
 
         if selection != nil {
             advancePhase(to: .playbackWarm)
@@ -366,10 +418,27 @@ final class DetailViewModel: ObservableObject {
     private func cancelBackgroundTasks() {
         backgroundTasks.forEach { $0.cancel() }
         backgroundTasks.removeAll()
+        playbackWarmupRequestToken = UUID()
+        playbackWarmupRequestItemID = nil
     }
 
     private func isActive(loadToken: UUID, itemID: String) -> Bool {
         activeLoadToken == loadToken && detail.item.id == itemID
+    }
+
+    private func beginPlaybackWarmupRequest(itemID: String) -> UUID {
+        let requestToken = UUID()
+        playbackWarmupRequestToken = requestToken
+        playbackWarmupRequestItemID = itemID
+        return requestToken
+    }
+
+    private func isCurrentPlaybackWarmupGeneration(_ requestToken: UUID) -> Bool {
+        playbackWarmupRequestToken == requestToken
+    }
+
+    private func isCurrentPlaybackWarmupRequest(_ requestToken: UUID, itemID: String) -> Bool {
+        playbackWarmupRequestToken == requestToken && playbackWarmupRequestItemID == itemID
     }
 
     private func advancePhase(to phase: LoadPhase) {
