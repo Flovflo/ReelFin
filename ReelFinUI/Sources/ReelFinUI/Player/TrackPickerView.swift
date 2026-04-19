@@ -184,7 +184,7 @@ struct TrackPickerView: View {
                                 isSelected: option.isSelected
                             ) {
                                 guard let trackID = option.trackID else { return }
-                                onSelect(.audio(trackID))
+                                select(.audio(trackID))
                             }
                         }
                     } header: {
@@ -202,7 +202,7 @@ struct TrackPickerView: View {
                                 icon: option.iconName,
                                 isSelected: option.isSelected
                             ) {
-                                onSelect(.subtitle(option.trackID))
+                                select(.subtitle(option.trackID))
                             }
                         }
                     } header: {
@@ -224,8 +224,13 @@ struct TrackPickerView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
 #endif
+        .accessibilityIdentifier("player_track_picker_sheet")
     }
 
+    private func select(_ selection: PlaybackControlSelection) {
+        onSelect(selection)
+        dismiss()
+    }
 }
 
 // MARK: - Track Row

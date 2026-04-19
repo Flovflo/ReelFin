@@ -7,6 +7,50 @@ import XCTest
 
 @MainActor
 final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
+    func testPlaybackControlsModelExposesSelectableAudioAndSubtitleTracks() {
+        let audioTracks = [
+            MediaTrack(id: "audio-en", title: "English AAC", language: "eng", codec: "aac", isDefault: true, index: 1),
+            MediaTrack(id: "audio-fr", title: "French E-AC-3", language: "fra", codec: "eac3", isDefault: false, index: 2)
+        ]
+        let subtitleTracks = [
+            MediaTrack(id: "sub-fr", title: "French", language: "fra", codec: "srt", isDefault: true, index: 3),
+            MediaTrack(id: "sub-en", title: "English forced", language: "eng", codec: "srt", isDefault: false, isForced: true, index: 4)
+        ]
+
+        let model = PlaybackControlsModel.make(
+            audioTracks: audioTracks,
+            subtitleTracks: subtitleTracks,
+            selectedAudioID: "audio-fr",
+            selectedSubtitleID: nil,
+            skipSuggestion: nil
+        )
+
+        XCTAssertTrue(model.hasSelectableTracks)
+        XCTAssertEqual(model.audioOptions.map(\.trackID), ["audio-en", "audio-fr"])
+        XCTAssertTrue(model.audioOptions.first { $0.trackID == "audio-fr" }?.isSelected == true)
+        XCTAssertEqual(model.subtitleOptions.map(\.trackID), [nil, "sub-fr", "sub-en"])
+        XCTAssertTrue(model.subtitleOptions.first?.isSelected == true)
+    }
+
+    func testPlaybackControlsModelHidesSingleAudioTrackButKeepsSubtitleToggle() {
+        let model = PlaybackControlsModel.make(
+            audioTracks: [
+                MediaTrack(id: "audio-fr", title: "French AAC", language: "fra", codec: "aac", isDefault: true, index: 1)
+            ],
+            subtitleTracks: [
+                MediaTrack(id: "sub-fr", title: "French", language: "fra", codec: "srt", isDefault: false, index: 2)
+            ],
+            selectedAudioID: "audio-fr",
+            selectedSubtitleID: "sub-fr",
+            skipSuggestion: nil
+        )
+
+        XCTAssertTrue(model.hasSelectableTracks)
+        XCTAssertTrue(model.audioOptions.isEmpty)
+        XCTAssertEqual(model.subtitleOptions.count, 2)
+        XCTAssertTrue(model.subtitleOptions.first { $0.trackID == "sub-fr" }?.isSelected == true)
+    }
+
     func testStartupSubtitleLoadActionAppliesEmbeddedTrack() {
         let action = PlaybackSessionController.startupSubtitleLoadAction(
             autoSelectedTrackID: "sub-fr",

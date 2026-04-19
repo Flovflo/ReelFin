@@ -11,8 +11,6 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
     var transportState: PlaybackTransportState = .empty
     let apiClient: JellyfinAPIClientProtocol
     let imagePipeline: ImagePipelineProtocol
-    var onSelectAudio: ((String) -> Void)?
-    var onSelectSubtitle: ((String?) -> Void)?
     var onSkipSuggestion: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
@@ -42,9 +40,9 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             imagePipeline: imagePipeline
         )
 #endif
-        // Let AVPlayer auto-select audio/subtitle tracks and expose them through
-        // AVKit's native controls. tvOS gets noisy if we add duplicate custom
-        // transport-bar menus on top of the system media selection buttons.
+        // Let AVPlayer auto-select embedded tracks. ReelFin exposes Jellyfin
+        // track switching from the SwiftUI player shell so external tracks can
+        // use the same audio/subtitle picker on iOS and tvOS.
         controller.player?.appliesMediaSelectionCriteriaAutomatically = true
 
         context.coordinator.startObserving(player: player, controller: controller)
