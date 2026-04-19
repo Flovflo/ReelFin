@@ -101,8 +101,6 @@ struct ItemDTO: Decodable {
     let overview: String?
     let type: String?
     let productionYear: Int?
-    let premiereDate: String?
-    let dateCreated: String?
     let runTimeTicks: Int64?
     let genres: [String]?
     let communityRating: Double?
@@ -126,8 +124,6 @@ struct ItemDTO: Decodable {
         case overview = "Overview"
         case type = "Type"
         case productionYear = "ProductionYear"
-        case premiereDate = "PremiereDate"
-        case dateCreated = "DateCreated"
         case runTimeTicks = "RunTimeTicks"
         case genres = "Genres"
         case communityRating = "CommunityRating"
@@ -152,8 +148,6 @@ struct ItemDTO: Decodable {
         overview: String? = nil,
         type: String? = nil,
         productionYear: Int? = nil,
-        premiereDate: String? = nil,
-        dateCreated: String? = nil,
         runTimeTicks: Int64? = nil,
         genres: [String]? = nil,
         communityRating: Double? = nil,
@@ -176,8 +170,6 @@ struct ItemDTO: Decodable {
         self.overview = overview
         self.type = type
         self.productionYear = productionYear
-        self.premiereDate = premiereDate
-        self.dateCreated = dateCreated
         self.runTimeTicks = runTimeTicks
         self.genres = genres
         self.communityRating = communityRating
