@@ -145,11 +145,6 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     }
 
     private func playbackActionButton(in app: XCUIApplication) throws -> XCUIElement {
-        let identifiedButton = app.buttons["detail_play_button"].firstMatch
-        if identifiedButton.waitForExistence(timeout: 8) {
-            return identifiedButton
-        }
-
         for prefix in ["Resume", "Play", "Play Again"] {
             let predicate = NSPredicate(format: "label BEGINSWITH[c] %@", prefix)
             let button = app.buttons.matching(predicate).firstMatch

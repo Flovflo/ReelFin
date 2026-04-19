@@ -27,8 +27,8 @@ struct TVLibraryPosterCard: View {
                 layoutStyle: .grid,
                 titleLineLimit: 2
             )
-            .padding(.horizontal, 8)
-            .padding(.bottom, 0)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 2)
             .opacity(isFocused ? 1 : 0.74)
         }
         .frame(width: cardContentWidth, alignment: .leading)
@@ -36,12 +36,12 @@ struct TVLibraryPosterCard: View {
         .clipShape(surfaceShape)
         .contentShape(surfaceShape)
         .tvMotionFocus(.libraryPoster, isFocused: isFocused)
-        .scaleEffect(isActivating ? 1.03 : 1)
+        .scaleEffect(isActivating ? 1.04 : 1)
         .shadow(
             color: .black.opacity(isFocused ? 0.34 : 0.16),
-            radius: isFocused ? 24 : 14,
+            radius: isFocused ? 28 : 16,
             x: 0,
-            y: isFocused ? 14 : 8
+            y: isFocused ? 16 : 10
         )
         .focusable(true, interactions: .activate)
         .onMoveCommand(perform: handleMoveCommand)
@@ -93,11 +93,11 @@ struct TVLibraryPosterCard: View {
     }
 
     private var cardContentWidth: CGFloat {
-        PosterCardMetrics.posterWidth(for: .grid, compact: false)
+        240
     }
 
     private var surfaceCornerRadius: CGFloat {
-        24
+        26
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {

@@ -3,7 +3,7 @@ import SwiftUI
 
 struct TVLibraryPillButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
-    @Environment(\.isFocused) private var isFocused
+    @FocusState private var isFocused: Bool
 
     let title: String
     var systemImage: String? = nil
@@ -81,10 +81,10 @@ struct TVLibraryPillButton: View {
     }
 
     private var content: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .symbolRenderingMode(.monochrome)
             }
 
@@ -92,15 +92,16 @@ struct TVLibraryPillButton: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.86)
         }
-        .font(.system(size: 19, weight: .semibold, design: .rounded))
+        .font(.system(size: 21, weight: .semibold, design: .rounded))
         .foregroundStyle(labelColor)
-        .padding(.horizontal, 20)
-        .frame(minHeight: 52)
+        .padding(.horizontal, 24)
+        .frame(minHeight: 60)
         .background { highlightBackground }
         .contentShape(Capsule(style: .continuous))
         .scaleEffect(isFocused ? 1.02 : 1)
         .focusable(true, interactions: .activate)
         .onMoveCommand(perform: handleMoveCommand)
+        .focused($isFocused)
         .focusEffectDisabled(true)
         .onTapGesture(perform: action)
         .animation(ReelFinTheme.tvFocusSpring, value: isFocused)

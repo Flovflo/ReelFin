@@ -6,32 +6,6 @@ import XCTest
 
 @MainActor
 final class HomeViewModelActionTests: XCTestCase {
-    func testSelectRecentlyReleasedSeriesKeepsPreferredEpisodeContext() {
-        let apiClient = HomeActionSpyAPIClient()
-        let repository = MockMetadataRepository()
-        let item = MediaItem(
-            id: "series-the-boys",
-            name: "The Boys",
-            mediaType: .series,
-            year: 2026,
-            libraryID: "shows",
-            preferredEpisodeID: "episode-the-boys-1",
-            preferredEpisodeName: "The Insider",
-            preferredEpisodeIndexNumber: 1,
-            preferredEpisodeSeasonNumber: 5
-        )
-
-        let viewModel = HomeViewModel(dependencies: makeDependencies(apiClient: apiClient, repository: repository))
-
-        viewModel.select(item: item)
-
-        XCTAssertEqual(viewModel.selectedItem?.id, "series-the-boys")
-        XCTAssertEqual(viewModel.selectedEpisode?.id, "episode-the-boys-1")
-        XCTAssertEqual(viewModel.selectedEpisode?.name, "The Insider")
-        XCTAssertEqual(viewModel.selectedEpisode?.parentIndexNumber, 5)
-        XCTAssertEqual(viewModel.selectedEpisode?.indexNumber, 1)
-    }
-
     func testToggleFeaturedWatchlistUpdatesFeedAndCallsFavoriteEndpoint() async throws {
         let apiClient = HomeActionSpyAPIClient()
         let repository = MockMetadataRepository()

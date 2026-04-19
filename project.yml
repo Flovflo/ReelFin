@@ -39,6 +39,32 @@ targets:
       - path: ReelFinApp/App/SystemEpisodeReleaseNotificationManager.swift
       - path: ReelFinApp/Resources
         buildPhase: resources
+    info:
+      path: ReelFinApp/App/Info.plist
+      properties:
+        CFBundleDisplayName: ReelFin
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.entertainment
+        REELFIN_PRIVACY_POLICY_URL: https://flovflo.github.io/reelfin-site/privacy.html
+        REELFIN_SENTRY_DSN: $(REELFIN_SENTRY_DSN)
+        REELFIN_SUPPORT_EMAIL: floriantaffin@gmail.com
+        REELFIN_SUPPORT_URL: https://flovflo.github.io/reelfin-site/support.html
+        REELFIN_TERMS_OF_SERVICE_URL: https://flovflo.github.io/reelfin-site/terms.html
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.reelfin.app.refresh
+        UILaunchStoryboardName: LaunchScreen
+        UIBackgroundModes:
+          - fetch
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~iphone:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     dependencies:
       - target: ReelFinUI
       - target: Shared
@@ -70,8 +96,6 @@ targets:
         INFOPLIST_KEY_REELFIN_SUPPORT_URL: https://flovflo.github.io/reelfin-site/support.html
         INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL: floriantaffin@gmail.com
         INFOPLIST_KEY_REELFIN_SENTRY_DSN: $(REELFIN_SENTRY_DSN)
-        INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers[0]: com.reelfin.app.refresh
-        INFOPLIST_KEY_UIBackgroundModes[0]: fetch
         REELFIN_SENTRY_DSN: ""
 
   # ──────────────────────────────────────────────
@@ -365,25 +389,11 @@ targets:
     sources:
       - path: Tests/ReelFinTVTests
     dependencies:
-      - target: ReelFinUITV
       - target: SharedTV
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.tv.tests
         PRODUCT_NAME: ReelFinTVTests
-  ReelFinTVUITests:
-    type: bundle.ui-testing
-    platform: tvOS
-    deploymentTarget: "26.0"
-    sources:
-      - path: Tests/ReelFinTVUITests
-    dependencies:
-      - target: ReelFinTVApp
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.tv.ui.tests
-        PRODUCT_NAME: ReelFinTVUITests
-        TEST_TARGET_NAME: ReelFinTVApp
 schemes:
   ReelFin:
     build:
@@ -402,4 +412,3 @@ schemes:
     test:
       targets:
         - ReelFinTVTests
-        - ReelFinTVUITests

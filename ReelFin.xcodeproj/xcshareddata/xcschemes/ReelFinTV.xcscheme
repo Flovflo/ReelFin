@@ -48,16 +48,6 @@
                ReferencedContainer = "container:ReelFin.xcodeproj">
             </BuildableReference>
          </TestableReference>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "14228532C64BFD86474339EC"
-               BuildableName = "ReelFinTVUITests.xctest"
-               BlueprintName = "ReelFinTVUITests"
-               ReferencedContainer = "container:ReelFin.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

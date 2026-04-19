@@ -13,6 +13,7 @@ import UIKit
 /// This avoids the default tvOS focused Button glass so we can control a stronger custom
 /// focus treatment that matches the rest of the home shelf motion.
 private struct TVCardButton: View {
+    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
     @State private var isActivating = false
 
@@ -28,7 +29,6 @@ private struct TVCardButton: View {
     let progress: Double?
     let optimizationStatus: ApplePlaybackOptimizationStatus?
     let onFocus: ((MediaItem) -> Void)?
-    let onMoveCommand: ((Int, MoveCommandDirection) -> Void)?
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
@@ -71,8 +71,8 @@ private struct TVCardButton: View {
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
-        guard direction == .up || direction == .down else { return }
-        onMoveCommand?(index, direction)
+        guard direction == .up, kind == .continueWatching else { return }
+        requestTopNavigationFocus?(.watchNow)
     }
 
     private func handleActivation() {
@@ -117,10 +117,6 @@ private struct TVHomeShelfCard: View {
     let isActivating: Bool
     let usesNativeZoomTransition: Bool
 
-    private var metrics: TVHomeShelfCardMetrics {
-        TVHomeShelfCardMetrics(layoutStyle: layoutStyle)
-    }
-
     var body: some View {
         let activationPhase = isActivating && !usesNativeZoomTransition
 
@@ -135,8 +131,7 @@ private struct TVHomeShelfCard: View {
                 progress: usesTVContinueWatchingStyle ? nil : progress,
                 optimizationStatus: optimizationStatus,
                 showsProgressOverlay: !usesTVContinueWatchingStyle,
-                showsTopTrailingBadges: false,
-                cornerRadius: metrics.cornerRadius
+                showsTopTrailingBadges: false
             )
             .modifier(TVMatchedTransitionSource(itemID: item.id, namespace: namespace))
 
@@ -149,7 +144,7 @@ private struct TVHomeShelfCard: View {
 
             defaultOverlay
         }
-        .frame(width: metrics.surfaceWidth, height: metrics.surfaceHeight)
+        .frame(width: cardWidth, height: cardHeight)
         .background(Color.white.opacity(0.03), in: cardShape)
         .overlay {
             cardShape
@@ -339,7 +334,27 @@ private struct TVHomeShelfCard: View {
     }
 
     private var cardShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous)
+        RoundedRectangle(cornerRadius: layoutStyle == .landscape ? 30 : 26, style: .continuous)
+    }
+
+    private var cardWidth: CGFloat {
+        switch layoutStyle {
+        case .row:
+            return 220
+        case .grid:
+            return 240
+        case .landscape:
+            return 400
+        }
+    }
+
+    private var cardHeight: CGFloat {
+        switch layoutStyle {
+        case .landscape:
+            return cardWidth * (9.0 / 16.0)
+        default:
+            return cardWidth * 1.55
+        }
     }
 
     private var contentPadding: CGFloat {
@@ -384,26 +399,6 @@ private struct TVHomeShelfCard: View {
             .init(color: .black.opacity(0.88), location: 0.92),
             .init(color: .black.opacity(0.96), location: 1)
         ]
-    }
-}
-
-struct TVHomeShelfCardMetrics {
-    let layoutStyle: PosterCardLayoutStyle
-
-    private var artworkMetrics: PosterCardMetrics {
-        PosterCardMetrics(layoutStyle: layoutStyle, compact: false)
-    }
-
-    var surfaceWidth: CGFloat {
-        artworkMetrics.posterWidth
-    }
-
-    var surfaceHeight: CGFloat {
-        artworkMetrics.posterHeight
-    }
-
-    var cornerRadius: CGFloat {
-        layoutStyle == .landscape ? 30 : 26
     }
 }
 
@@ -453,7 +448,7 @@ private enum TVHomeWarmupScope {
     static let focus = "home.focus"
 }
 
-enum TVHomeReturnTarget: Equatable {
+private enum TVHomeReturnTarget: Equatable {
     case featured(itemID: String)
     case row(rowID: String, itemID: String)
 }
@@ -796,7 +791,6 @@ public struct SectionRow: View {
     private let imagePipeline: ImagePipelineProtocol
     private let namespaceProvider: (String) -> Namespace.ID?
     private let focusedItemID: FocusState<String?>.Binding?
-    private let onMoveCommand: ((Int, MoveCommandDirection) -> Void)?
     private let optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)?
     private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
     private let onSelect: (MediaItem) -> Void
@@ -809,7 +803,6 @@ public struct SectionRow: View {
         imagePipeline: ImagePipelineProtocol,
         namespaceProvider: @escaping (String) -> Namespace.ID?,
         focusedItemID: FocusState<String?>.Binding? = nil,
-        onMoveCommand: ((Int, MoveCommandDirection) -> Void)? = nil,
         optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)? = nil,
         onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
         onSelect: @escaping (MediaItem) -> Void
@@ -821,7 +814,6 @@ public struct SectionRow: View {
         self.imagePipeline = imagePipeline
         self.namespaceProvider = namespaceProvider
         self.focusedItemID = focusedItemID
-        self.onMoveCommand = onMoveCommand
         self.optimizationStatusProvider = optimizationStatusProvider
         self.onFocus = onFocus
         self.onSelect = onSelect
@@ -865,7 +857,6 @@ public struct SectionRow: View {
                             onFocus: { focusedItem in
                                 onFocus?(focusedItem, items)
                             },
-                            onMoveCommand: onMoveCommand,
                             onSelect: onSelect
                         )
 #else
@@ -913,9 +904,6 @@ public struct SectionRow: View {
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, railVerticalPadding)
             }
-            #if os(tvOS)
-            .focusSection()
-            #endif
             .scrollTargetBehavior(.viewAligned)
         }
     }
@@ -1010,7 +998,6 @@ struct HomeView: View {
     @Namespace private var posterNamespace
 #if os(tvOS)
     @FocusState private var focusedHomeItemID: String?
-    @State private var homeFocusRequestToken = 0
 #endif
 
     private let dependencies: ReelFinDependencies
@@ -1195,11 +1182,7 @@ struct HomeView: View {
                 .padding(.bottom, 12)
                 .accessibilityIdentifier("home_sticky_blur_header")
         } content: {
-            homeScrollSections(
-                visibleRows: visibleRows,
-                rowIDByItemID: rowIDByItemID,
-                scrollProxy: nil
-            )
+            homeScrollSections(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .simultaneousGesture(
@@ -1217,25 +1200,12 @@ struct HomeView: View {
 #else
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                homeScrollSections(
-                    visibleRows: visibleRows,
-                    rowIDByItemID: rowIDByItemID,
-                    scrollProxy: proxy
-                )
+                homeScrollSections(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             #if os(tvOS)
-            .onAppear {
-                focusDefaultHomeEntryIfNeeded(using: proxy)
-            }
             .onChange(of: homeReturnRequest) { _, _ in
                 restoreHomeSelection(using: proxy)
-            }
-            .onChange(of: featuredItems.map(\.id)) { _, _ in
-                focusDefaultHomeEntryIfNeeded(using: proxy)
-            }
-            .onChange(of: visibleRows.map(\.id)) { _, _ in
-                focusDefaultHomeEntryIfNeeded(using: proxy)
             }
             #endif
         }
@@ -1249,8 +1219,7 @@ struct HomeView: View {
     @ViewBuilder
     private func homeScrollSections(
         visibleRows: [HomeRow],
-        rowIDByItemID: [String: String],
-        scrollProxy: ScrollViewProxy?
+        rowIDByItemID: [String: String]
     ) -> some View {
         LazyVStack(alignment: .leading, spacing: sectionSpacing) {
             if viewModel.isInitialLoading && visibleRows.isEmpty {
@@ -1273,16 +1242,6 @@ struct HomeView: View {
                             rowIDByItemID[itemID] == row.id ? posterNamespace : nil
                         },
                         focusedItemID: homeFocusedItemBinding,
-                        onMoveCommand: { itemIndex, direction in
-#if os(tvOS)
-                            handleRowMove(
-                                rowID: row.id,
-                                itemIndex: itemIndex,
-                                direction: direction,
-                                using: scrollProxy
-                            )
-#endif
-                        },
                         optimizationStatusProvider: { item in
                             appleOptimizationStatuses[item.id]
                         },
@@ -1336,8 +1295,6 @@ struct HomeView: View {
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 selectedItemID: $featuredHeroItemID,
-                focusedItemID: homeFocusedItemBinding,
-                focusID: TVHomeFocusPolicy.heroPlayFocusID,
                 onVisibleItemChange: { item in
                     scheduleWarmup(
                         for: item,
@@ -1448,16 +1405,6 @@ struct HomeView: View {
     private var featuredItems: [MediaItem] {
         Array(viewModel.feed.featured.prefix(10))
     }
-
-#if os(tvOS)
-    private var hasFeaturedContent: Bool {
-        !featuredItems.isEmpty
-    }
-
-    private var tvHomeFocusPolicy: TVHomeFocusPolicy {
-        TVHomeFocusPolicy(rows: viewModel.visibleRows)
-    }
-#endif
 
     private var homeFocusedItemBinding: FocusState<String?>.Binding? {
 #if os(tvOS)
@@ -1632,10 +1579,6 @@ struct HomeView: View {
     private func handleFeaturedPlay(_ item: MediaItem) {
         guard !isPreparingPlayback else { return }
         isPreparingPlayback = true
-#if os(tvOS)
-        featuredHeroItemID = item.id
-        homeReturnTarget = .featured(itemID: item.id)
-#endif
 
         Task {
             let playbackItem = await resolvePlaybackItem(for: item)
@@ -1813,128 +1756,28 @@ struct HomeView: View {
         playerItem = nil
         showPlayer = false
         isPreparingPlayback = false
-#if os(tvOS)
-        homeReturnRequest += 1
-#endif
     }
 
 #if os(tvOS)
-    private func focusDefaultHomeEntryIfNeeded(using proxy: ScrollViewProxy) {
-        guard viewModel.selectedItem == nil else { return }
-        guard !showPlayer else { return }
-        guard focusedHomeItemID == nil else { return }
-
-        let targetFocusID = tvHomeFocusPolicy.entryFocusID(
-            returnTarget: homeReturnTarget,
-            hasFeaturedContent: hasFeaturedContent
-        )
-        focusHomeTarget(targetFocusID, using: proxy, animated: false)
-    }
-
-    private func handleRowMove(
-        rowID: String,
-        itemIndex: Int,
-        direction: MoveCommandDirection,
-        using proxy: ScrollViewProxy?
-    ) {
-        let focusDirection: TVHomeFocusDirection
-        switch direction {
-        case .up:
-            focusDirection = .up
-        case .down:
-            focusDirection = .down
-        default:
-            return
-        }
-
-        let targetFocusID = tvHomeFocusPolicy.targetFocusID(
-            from: TVHomeRowFocusContext(rowID: rowID, itemIndex: itemIndex),
-            direction: focusDirection,
-            hasFeaturedContent: hasFeaturedContent
-        )
-        focusHomeTarget(targetFocusID, using: proxy, animated: true)
-    }
-
-    private func focusHeroPlay(
-        using proxy: ScrollViewProxy?,
-        animated: Bool
-    ) {
-        if featuredHeroItemID == nil {
-            featuredHeroItemID = featuredItems.first?.id
-        }
-
-        requestProgrammaticHomeFocus(
-            TVHomeFocusPolicy.heroPlayFocusID,
-            scrollTargetID: featuredScrollAnchorID,
-            using: proxy,
-            animated: animated,
-            anchor: .top
-        )
-    }
-
-    private func focusHomeTarget(
-        _ targetFocusID: String?,
-        using proxy: ScrollViewProxy?,
-        animated: Bool
-    ) {
-        guard let targetFocusID else { return }
-
-        if targetFocusID == TVHomeFocusPolicy.heroPlayFocusID {
-            focusHeroPlay(using: proxy, animated: animated)
-            return
-        }
-
-        requestProgrammaticHomeFocus(
-            targetFocusID,
-            scrollTargetID: viewModel.rowIDByItemID[targetFocusID],
-            using: proxy,
-            animated: animated
-        )
-    }
-
-    private func requestProgrammaticHomeFocus(
-        _ targetFocusID: String,
-        scrollTargetID: String?,
-        using proxy: ScrollViewProxy?,
-        animated: Bool,
-        anchor: UnitPoint? = nil
-    ) {
-        homeFocusRequestToken += 1
-        let requestToken = homeFocusRequestToken
-
-        focusedHomeItemID = nil
-
-        if let scrollTargetID, let proxy {
-            let scroll = {
-                if let anchor {
-                    proxy.scrollTo(scrollTargetID, anchor: anchor)
-                } else {
-                    proxy.scrollTo(scrollTargetID)
-                }
-            }
-
-            if animated {
-                withAnimation(.easeInOut(duration: 0.28)) {
-                    scroll()
-                }
-            } else {
-                scroll()
-            }
-        }
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: animated ? 180_000_000 : 40_000_000)
-            guard requestToken == homeFocusRequestToken else { return }
-            focusedHomeItemID = targetFocusID
-        }
-    }
-
     private func restoreHomeSelection(using proxy: ScrollViewProxy) {
-        let targetFocusID = tvHomeFocusPolicy.entryFocusID(
-            returnTarget: homeReturnTarget,
-            hasFeaturedContent: hasFeaturedContent
-        )
-        focusHomeTarget(targetFocusID, using: proxy, animated: true)
+        guard let homeReturnTarget else { return }
+
+        switch homeReturnTarget {
+        case let .featured(itemID):
+            featuredHeroItemID = itemID
+            withAnimation(.easeInOut(duration: 0.34)) {
+                proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
+            }
+        case let .row(rowID, itemID):
+            withAnimation(.easeInOut(duration: 0.34)) {
+                proxy.scrollTo(rowID, anchor: .top)
+            }
+
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 220_000_000)
+                focusedHomeItemID = itemID
+            }
+        }
     }
 #endif
 

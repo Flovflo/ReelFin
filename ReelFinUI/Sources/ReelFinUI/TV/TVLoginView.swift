@@ -59,7 +59,6 @@ public struct TVLoginView: View {
         }
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
-        .accessibilityIdentifier("tv_login_view")
         .onAppear(perform: handleAppear)
         .onChange(of: loginVM.serverURLText) { _, _ in
             loginVM.serverURLDidChange()

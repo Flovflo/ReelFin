@@ -133,31 +133,19 @@ private struct TVOnboardingCopyBlock: View {
             ForEach(items) { item in
                 let isActive = item.id == currentIndex
 
-                VStack(spacing: 16) {
-                    TVOnboardingEyebrow(text: item.eyebrow)
-
+                VStack(spacing: 8) {
                     Text(item.title)
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                         .accessibilityIdentifier("tv_onboarding_title_\(item.id)")
 
                     Text(item.subtitle)
-                        .font(.system(size: 21, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.80))
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.78))
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    TVOnboardingHighlightChips(highlights: item.highlights)
-
-                    if let footnote = item.footnote {
-                        Text(footnote)
-                            .font(.system(size: 15, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.54))
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
                 .opacity(isActive ? 1 : 0)
                 .blur(radius: isActive ? 0 : (reduceMotion ? 0 : 24))
@@ -166,7 +154,7 @@ private struct TVOnboardingCopyBlock: View {
                 .accessibilityHidden(!isActive)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 210, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: 126, alignment: .top)
     }
 }
 
@@ -241,61 +229,6 @@ private struct TVOnboardingBottomPanel: View {
                     )
                 )
         }
-    }
-}
-
-private struct TVOnboardingEyebrow: View {
-    let text: String
-
-    var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 13, weight: .black, design: .rounded))
-            .tracking(0.8)
-            .foregroundStyle(.white.opacity(0.86))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Color.white.opacity(0.08), in: Capsule(style: .continuous))
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
-            }
-    }
-}
-
-private struct TVOnboardingHighlightChips: View {
-    let highlights: [String]
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                ForEach(highlights, id: \.self) { highlight in
-                    chip(highlight)
-                }
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(highlights, id: \.self) { highlight in
-                        chip(highlight)
-                    }
-                }
-                .padding(.horizontal, 4)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func chip(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 15, weight: .bold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.92))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.white.opacity(0.05), in: Capsule(style: .continuous))
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
-            }
     }
 }
 

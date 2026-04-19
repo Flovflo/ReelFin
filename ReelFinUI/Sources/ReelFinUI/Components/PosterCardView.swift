@@ -89,8 +89,8 @@ public struct PosterCardView: View {
                 subtitleLineLimit: subtitleLineLimit
             )
             #if os(tvOS)
-            .padding(.horizontal, 4)
-            .padding(.bottom, 2)
+            .padding(.horizontal, 6)
+            .padding(.bottom, 4)
             #endif
         }
         .frame(width: PosterCardMetrics.posterWidth(for: layoutStyle, compact: isCompact), alignment: .leading)
@@ -129,7 +129,6 @@ public struct PosterCardArtworkView: View {
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
     private let showsProgressOverlay: Bool
     private let showsTopTrailingBadges: Bool
-    private let cornerRadiusOverride: CGFloat?
 
     public init(
         item: MediaItem,
@@ -142,8 +141,7 @@ public struct PosterCardArtworkView: View {
         progress: Double? = nil,
         optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
         showsProgressOverlay: Bool = true,
-        showsTopTrailingBadges: Bool = true,
-        cornerRadius: CGFloat? = nil
+        showsTopTrailingBadges: Bool = true
     ) {
         self.item = item
         self.apiClient = apiClient
@@ -156,7 +154,6 @@ public struct PosterCardArtworkView: View {
         self.optimizationStatus = optimizationStatus
         self.showsProgressOverlay = showsProgressOverlay
         self.showsTopTrailingBadges = showsTopTrailingBadges
-        self.cornerRadiusOverride = cornerRadius
     }
 
     public var body: some View {
@@ -169,13 +166,13 @@ public struct PosterCardArtworkView: View {
                 imagePipeline: imagePipeline
             )
             .frame(width: metrics.posterWidth, height: metrics.posterHeight)
-            .clipShape(RoundedRectangle(cornerRadius: artworkCornerRadius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
             #if !os(tvOS)
             .shadow(color: .black.opacity(isFocused ? focusedShadowOpacity : 0.18), radius: isFocused ? focusedShadowRadius : 10, x: 0, y: isFocused ? focusedShadowYOffset : 6)
             #endif
             #if os(iOS)
             .overlay {
-                RoundedRectangle(cornerRadius: artworkCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
                     .stroke(isFocused ? focusedStrokeColor : ReelFinTheme.glassStrokeColor, lineWidth: isFocused ? focusedStrokeWidth : ReelFinTheme.glassStrokeWidth)
             }
             #endif
@@ -236,7 +233,7 @@ public struct PosterCardArtworkView: View {
         }
         .frame(width: metrics.posterWidth, height: metrics.posterHeight)
         .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
-        .contentShape(RoundedRectangle(cornerRadius: artworkCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
         #if os(iOS)
         .scaleEffect(isFocused ? focusedScale : 1)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isFocused)
@@ -252,10 +249,6 @@ public struct PosterCardArtworkView: View {
 
     private var metrics: PosterCardMetrics {
         PosterCardMetrics(layoutStyle: layoutStyle, compact: horizontalSizeClass == .compact)
-    }
-
-    private var artworkCornerRadius: CGFloat {
-        cornerRadiusOverride ?? ReelFinTheme.cardCornerRadius
     }
 
     private var focusedStrokeColor: Color {
@@ -328,9 +321,11 @@ public struct PosterCardMetadataView: View {
             Text(item.seriesName ?? item.name)
                 .font(.system(size: titleFontSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(titleColor)
-                .lineLimit(metadataLayoutMetrics.resolvedTitleLineLimit)
+                .lineLimit(resolvedTitleLineLimit)
                 .fixedSize(horizontal: false, vertical: true)
+                #if os(tvOS)
                 .frame(maxWidth: .infinity, minHeight: titleBlockHeight, maxHeight: titleBlockHeight, alignment: .topLeading)
+                #endif
 
             secondaryMetadata
         }
@@ -339,7 +334,7 @@ public struct PosterCardMetadataView: View {
 
     private var titleFontSize: CGFloat {
         #if os(tvOS)
-        return layoutStyle == .landscape ? 22 : 20
+        return layoutStyle == .landscape ? 24 : 22
         #else
         return 15
         #endif
@@ -347,7 +342,7 @@ public struct PosterCardMetadataView: View {
 
     private var subtitleFontSize: CGFloat {
         #if os(tvOS)
-        return layoutStyle == .landscape ? 16 : 15
+        return layoutStyle == .landscape ? 18 : 17
         #else
         return 13
         #endif
@@ -355,7 +350,7 @@ public struct PosterCardMetadataView: View {
 
     private var badgeFontSize: CGFloat {
         #if os(tvOS)
-        return 14
+        return 15
         #else
         return 11
         #endif
@@ -363,7 +358,7 @@ public struct PosterCardMetadataView: View {
 
     private var metadataSpacing: CGFloat {
         #if os(tvOS)
-        return 6
+        return 8
         #else
         return 2
         #endif
@@ -410,15 +405,17 @@ public struct PosterCardMetadataView: View {
         #endif
     }
 
-    private var metadataLayoutMetrics: PosterCardMetadataLayoutMetrics {
-        PosterCardMetadataLayoutMetrics(
-            layoutStyle: layoutStyle,
-            titleLineLimit: titleLineLimit
-        )
+    private var resolvedTitleLineLimit: Int {
+        #if os(tvOS)
+        return max(titleLineLimit, 2)
+        #else
+        return titleLineLimit
+        #endif
     }
 
     private var titleBlockHeight: CGFloat {
-        metadataLayoutMetrics.titleBlockHeight
+        let lineHeight = titleFontSize * 1.18
+        return ceil(lineHeight * CGFloat(resolvedTitleLineLimit))
     }
 
     @ViewBuilder
@@ -463,11 +460,20 @@ public struct PosterCardMetadataView: View {
     }
 
     private var secondaryMetadataHeight: CGFloat {
-        metadataLayoutMetrics.secondaryMetadataHeight
+        #if os(tvOS)
+        let lineHeight = max(subtitleFontSize * 1.24, badgeFontSize + 8)
+        return ceil(lineHeight)
+        #else
+        return layoutStyle == .landscape ? ceil(max(subtitleFontSize * 1.24, badgeFontSize + 8)) : 0
+        #endif
     }
 
     private var reservesSecondaryMetadataSpace: Bool {
-        metadataLayoutMetrics.reservesSecondaryMetadataSpace
+        #if os(tvOS)
+        return true
+        #else
+        return false
+        #endif
     }
 
     private var inlineFooterText: String? {
@@ -491,70 +497,9 @@ public struct PosterCardMetadataView: View {
 
     private var inlineProgressWidth: CGFloat {
         #if os(tvOS)
-        return 50
+        return 56
         #else
         return 34
-        #endif
-    }
-}
-
-struct PosterCardMetadataLayoutMetrics {
-    let layoutStyle: PosterCardLayoutStyle
-    let titleLineLimit: Int
-
-    var resolvedTitleLineLimit: Int {
-        #if os(tvOS)
-        return max(titleLineLimit, 2)
-        #else
-        return max(titleLineLimit, 1)
-        #endif
-    }
-
-    var titleBlockHeight: CGFloat {
-        let lineHeight = titleFontSize * 1.18
-        return ceil(lineHeight * CGFloat(resolvedTitleLineLimit))
-    }
-
-    var secondaryMetadataHeight: CGFloat {
-        guard reservesSecondaryMetadataSpace else { return 0 }
-        let lineHeight = max(subtitleFontSize * 1.24, badgeFontSize + 8)
-        return ceil(lineHeight)
-    }
-
-    var reservesSecondaryMetadataSpace: Bool {
-        #if os(tvOS)
-        return true
-        #else
-        switch layoutStyle {
-        case .row, .landscape:
-            return true
-        case .grid:
-            return false
-        }
-        #endif
-    }
-
-    private var titleFontSize: CGFloat {
-        #if os(tvOS)
-        return layoutStyle == .landscape ? 22 : 20
-        #else
-        return 15
-        #endif
-    }
-
-    private var subtitleFontSize: CGFloat {
-        #if os(tvOS)
-        return layoutStyle == .landscape ? 16 : 15
-        #else
-        return 13
-        #endif
-    }
-
-    private var badgeFontSize: CGFloat {
-        #if os(tvOS)
-        return 14
-        #else
-        return 11
         #endif
     }
 }
@@ -576,7 +521,7 @@ private struct PosterCardInlineProgressTrack: View {
     }
 }
 
-struct PosterCardMetrics {
+private struct PosterCardMetrics {
     let layoutStyle: PosterCardLayoutStyle
     let compact: Bool
 
@@ -588,20 +533,20 @@ struct PosterCardMetrics {
         #if os(tvOS)
         switch layoutStyle {
         case .row:
-            return 198
+            return 220
         case .grid:
-            return 214
+            return 240
         case .landscape:
-            return 356
+            return 400
         }
         #else
         switch layoutStyle {
         case .row:
-            return compact ? 122 : 148
+            return compact ? 134 : 160
         case .grid:
-            return compact ? 146 : 188
+            return compact ? 158 : 206
         case .landscape:
-            return compact ? 220 : 272
+            return compact ? 240 : 300
         }
         #endif
     }

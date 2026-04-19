@@ -24,45 +24,37 @@ final class HomeAndDetailActionsUITests: XCTestCase {
     func testMockDetailHeroButtonsToggleWatchedAndLikedState() throws {
         let app = launchMockApp()
 
-        let firstPoster = app.buttons["media_card_button_continueWatching_cw-movie-1"].firstMatch
+        let firstPoster = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        ).firstMatch
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
         firstPoster.tap()
 
-        let watchedButton = findFirstExistingElement(
-            [
-                app.buttons["detail_watched_button"].firstMatch,
-                app.buttons.matching(NSPredicate(format: "label == %@", "Mark Watched")).firstMatch,
-                app.buttons.matching(NSPredicate(format: "label == %@", "Mark Unwatched")).firstMatch
-            ],
-            timeout: 8
-        )
-        XCTAssertNotNil(watchedButton)
-        guard let watchedButton else { return }
+        let watchedButton = app.otherElements.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Mark Watched", "not_watched")
+        ).firstMatch
+        XCTAssertTrue(watchedButton.waitForExistence(timeout: 8))
         XCTAssertTrue(waitUntilHittable(watchedButton, timeout: 5))
-        XCTAssertEqual(watchedButton.label, "Mark Watched")
 
         watchedButton.tap()
 
-        XCTAssertTrue(waitForLabel("Mark Unwatched", on: watchedButton, timeout: 3))
-        XCTAssertEqual(watchedButton.label, "Mark Unwatched")
+        let watchedState = app.otherElements.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Mark Unwatched", "watched")
+        ).firstMatch
+        XCTAssertTrue(watchedState.waitForExistence(timeout: 3))
 
-        let favoriteButton = findFirstExistingElement(
-            [
-                app.buttons["detail_favorite_button"].firstMatch,
-                app.buttons.matching(NSPredicate(format: "label == %@", "Like")).firstMatch,
-                app.buttons.matching(NSPredicate(format: "label == %@", "Unlike")).firstMatch
-            ],
-            timeout: 3
-        )
-        XCTAssertNotNil(favoriteButton)
-        guard let favoriteButton else { return }
+        let favoriteButton = app.otherElements.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Like", "not_liked")
+        ).firstMatch
+        XCTAssertTrue(favoriteButton.waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntilHittable(favoriteButton, timeout: 5))
-        XCTAssertEqual(favoriteButton.label, "Like")
 
         favoriteButton.tap()
 
-        XCTAssertTrue(waitForLabel("Unlike", on: favoriteButton, timeout: 3))
-        XCTAssertEqual(favoriteButton.label, "Unlike")
+        let likedState = app.otherElements.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Unlike", "liked")
+        ).firstMatch
+        XCTAssertTrue(likedState.waitForExistence(timeout: 3))
     }
 
     private func launchMockApp() -> XCUIApplication {
@@ -99,33 +91,5 @@ final class HomeAndDetailActionsUITests: XCTestCase {
         }
 
         return (element.value as? String) == expectedValue
-    }
-
-    private func waitForLabel(_ expectedLabel: String, on element: XCUIElement, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while Date() < deadline {
-            if element.label == expectedLabel {
-                return true
-            }
-
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-
-        return element.label == expectedLabel
-    }
-
-    private func findFirstExistingElement(_ elements: [XCUIElement], timeout: TimeInterval) -> XCUIElement? {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while Date() < deadline {
-            if let element = elements.first(where: \.exists) {
-                return element
-            }
-
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-
-        return elements.first(where: \.exists)
     }
 }

@@ -17,33 +17,33 @@ struct TVLibraryControlBar: View {
     let onSortToggle: () -> Void
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Library")
                     .reelFinTitleStyle()
 
                 Text("Browse movies and series with the same focus rhythm as Home.")
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.62))
             }
 
-            Spacer(minLength: 18)
+            Spacer(minLength: 24)
 
             controls
         }
-        .padding(.horizontal, 44)
-        .padding(.top, 16)
+        .padding(.horizontal, 56)
+        .padding(.top, 22)
         .focusSection()
     }
 
     private var controls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 14) {
             controlRow
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
                 .background(railBackground)
                 .overlay(railStroke)
-                .shadow(color: .black.opacity(0.22), radius: 16, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.22), radius: 20, x: 0, y: 10)
 
             TVLibraryPillButton(
                 title: sortMode.displayTitle,
@@ -59,7 +59,7 @@ struct TVLibraryControlBar: View {
     }
 
     private var controlRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             TVLibraryPillButton(
                 title: "Movies",
                 isSelected: selectedFilter == .movie,
