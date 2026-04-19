@@ -43,29 +43,45 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
     }
 
-    func testPreheatIssuesAlignedRangeRequestForRemoteDirectPlay() async throws {
+    func testPreheatSkipsIPhoneProgressiveDirectPlayEvenWhenResuming() async {
+        let selection = makeDirectPlaySelection(
+            sourceBitrate: 22_000_000
+        )
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 1_000,
+            runtimeSeconds: 7_200,
+            isTVOS: false
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
+    }
+
+    func testPreheatIssuesAlignedRangeRequestForTvOSRemoteDirectPlay() async throws {
         let selection = makeDirectPlaySelection(
             sourceFileSize: 10 * 1_048_576,
             sourceBitrate: 12_000_000,
             headers: ["X-Auth-Token": "token-123"]
         )
-        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 3 * 1_048_576))
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 4 * 1_048_576))
 
         let result = await PlaybackStartupPreheater.preheat(
             selection: selection,
             resumeSeconds: 20,
             runtimeSeconds: 100,
-            isTVOS: false,
+            isTVOS: true,
             urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
         )
 
-        XCTAssertEqual(result?.byteCount, 1 * 1_048_576)
-        XCTAssertEqual(result?.rangeStart, 2 * 1_048_576)
+        XCTAssertEqual(result?.byteCount, 4 * 1_048_576)
+        XCTAssertEqual(result?.rangeStart, 0)
         XCTAssertEqual(result?.reason, "directplay_range")
         XCTAssertGreaterThan(result?.observedBitrate ?? 0, 0)
 
         let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=2097152-3145727")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=0-4194303")
         XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "*/*")
     }

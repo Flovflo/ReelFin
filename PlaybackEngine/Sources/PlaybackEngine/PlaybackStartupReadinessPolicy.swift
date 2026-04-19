@@ -23,6 +23,7 @@ enum PlaybackStartupReadinessPolicy {
         switch route {
         case .directPlay:
             base = directPlayRequirement(
+                route: route,
                 bitrate: bitrate,
                 isResume: isResume,
                 isTVOS: isTVOS
@@ -63,37 +64,34 @@ enum PlaybackStartupReadinessPolicy {
     }
 
     private static func directPlayRequirement(
+        route: PlaybackRoute,
         bitrate: Int,
         isResume: Bool,
         isTVOS: Bool
     ) -> Requirement? {
-        if isTVOS {
-            if bitrate >= 18_000_000 {
-                return Requirement(
-                    minimumBufferDuration: 12,
-                    preferredBufferDuration: 30,
-                    timeout: 5,
-                    pollInterval: 0.15,
-                    reason: "tvos_high_bitrate_directplay"
-                )
+        guard isTVOS else {
+            guard case let .directPlay(url) = route, url.pathExtension.lowercased() == "m3u8" else {
+                return nil
             }
+            return streamingRequirement(bitrate: bitrate, isTVOS: false)
+        }
 
+        if bitrate >= 18_000_000 {
             return Requirement(
-                minimumBufferDuration: isResume || bitrate >= 8_000_000 ? 8 : 5,
-                preferredBufferDuration: isResume || bitrate >= 8_000_000 ? 18 : 10,
-                timeout: isResume || bitrate >= 8_000_000 ? 3.5 : 2,
+                minimumBufferDuration: 12,
+                preferredBufferDuration: 30,
+                timeout: 5,
                 pollInterval: 0.15,
-                reason: isResume ? "tvos_resume_directplay" : "tvos_directplay"
+                reason: "tvos_high_bitrate_directplay"
             )
         }
 
-        guard bitrate >= 10_000_000 || isResume else { return nil }
         return Requirement(
-            minimumBufferDuration: bitrate >= 18_000_000 ? 5 : 3,
-            preferredBufferDuration: bitrate >= 18_000_000 ? 10 : 6,
-            timeout: bitrate >= 18_000_000 ? 2 : 1.25,
-            pollInterval: 0.12,
-            reason: isResume ? "ios_resume_directplay" : "ios_high_bitrate_directplay"
+            minimumBufferDuration: isResume || bitrate >= 8_000_000 ? 8 : 5,
+            preferredBufferDuration: isResume || bitrate >= 8_000_000 ? 18 : 10,
+            timeout: isResume || bitrate >= 8_000_000 ? 3.5 : 2,
+            pollInterval: 0.15,
+            reason: isResume ? "tvos_resume_directplay" : "tvos_directplay"
         )
     }
 

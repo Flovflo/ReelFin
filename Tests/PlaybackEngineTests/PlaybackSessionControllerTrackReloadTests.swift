@@ -193,7 +193,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
-    func testPremiumProgressiveDirectPlayUsesStallResistantBuffering() {
+    func testPremiumProgressiveDirectPlayUsesFastStartupBufferingOniOS() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -212,7 +212,35 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
             source: source,
             defaultForwardBufferDuration: 2,
-            defaultWaitsToMinimizeStalling: false
+            defaultWaitsToMinimizeStalling: false,
+            isTVOS: false
+        )
+
+        XCTAssertEqual(policy.forwardBufferDuration, 2)
+        XCTAssertFalse(policy.waitsToMinimizeStalling)
+    }
+
+    func testPremiumProgressiveDirectPlayUsesStallResistantBufferingOnTvOS() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 14_885_349,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let policy = PlaybackSessionController.directPlayStabilityPolicy(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            source: source,
+            defaultForwardBufferDuration: 2,
+            defaultWaitsToMinimizeStalling: false,
+            isTVOS: true
         )
 
         XCTAssertEqual(policy.forwardBufferDuration, 12)
@@ -302,7 +330,8 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             route: .directPlay(URL(string: "https://example.com/Videos/item-standard/stream?static=true&MediaSourceId=standard-source")!),
             source: source,
             defaultForwardBufferDuration: 2,
-            defaultWaitsToMinimizeStalling: false
+            defaultWaitsToMinimizeStalling: false,
+            isTVOS: false
         )
 
         XCTAssertEqual(policy.forwardBufferDuration, 2)
@@ -437,5 +466,72 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
 
         XCTAssertFalse(shouldRecover)
+    }
+
+    func testWarmedDirectPlaySelectionCanBeReusedForResume() {
+        let selection = makeWarmedSelection(
+            route: .directPlay(URL(string: "https://example.com/Videos/item/stream?static=true")!)
+        )
+
+        XCTAssertTrue(
+            PlaybackSessionController.canUseWarmedSelection(selection, resumeSeconds: 1_039.7)
+        )
+    }
+
+    func testWarmedTranscodeSelectionIsNotReusedForResume() {
+        let selection = makeWarmedSelection(
+            route: .transcode(URL(string: "https://example.com/videos/item/master.m3u8")!)
+        )
+
+        XCTAssertFalse(
+            PlaybackSessionController.canUseWarmedSelection(selection, resumeSeconds: 1_039.7)
+        )
+    }
+
+    func testWarmedTranscodeSelectionCanBeReusedFromBeginning() {
+        let selection = makeWarmedSelection(
+            route: .transcode(URL(string: "https://example.com/videos/item/master.m3u8")!)
+        )
+
+        XCTAssertTrue(
+            PlaybackSessionController.canUseWarmedSelection(selection, resumeSeconds: 0)
+        )
+    }
+
+    private func makeWarmedSelection(route: PlaybackRoute) -> PlaybackAssetSelection {
+        let source = MediaSource(
+            id: "source-1",
+            itemID: "item-1",
+            name: "Warm selection",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 12_000_000,
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let assetURL: URL
+        switch route {
+        case .directPlay(let url), .remux(let url), .transcode(let url):
+            assetURL = url
+        case .nativeBridge:
+            assetURL = URL(string: "https://example.com/nativebridge")!
+        }
+
+        return PlaybackAssetSelection(
+            source: source,
+            decision: PlaybackDecision(sourceID: source.id, route: route),
+            assetURL: assetURL,
+            headers: [:],
+            debugInfo: PlaybackDebugInfo(
+                container: source.container ?? "unknown",
+                videoCodec: source.videoCodec ?? "unknown",
+                videoBitDepth: source.videoBitDepth,
+                hdrMode: .sdr,
+                audioMode: source.audioCodec ?? "unknown",
+                bitrate: source.bitrate,
+                playMethod: PlaybackDecision(sourceID: source.id, route: route).playMethod
+            )
+        )
     }
 }

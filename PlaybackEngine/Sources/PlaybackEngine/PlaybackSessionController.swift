@@ -620,10 +620,11 @@ public final class PlaybackSessionController {
             let warmedSelectionStart = Date()
             var selection: PlaybackAssetSelection
 
-            // Use a warmed selection only when there is no resume position (warm cache was
-            // resolved without StartTimeTicks; it cannot be trusted for mid-movie resume).
-            let candidateWarmed = initialResumeSecs <= 0 ? await warmupManager?.selection(for: item.id) : nil
-            if let warmedSelection = candidateWarmed {
+            // Transcode/remux warmups are resolved without StartTimeTicks, so they
+            // cannot be reused for resume. DirectPlay seeks client-side and is safe.
+            let candidateWarmed = await warmupManager?.selection(for: item.id)
+            if let warmedSelection = candidateWarmed,
+               Self.canUseWarmedSelection(warmedSelection, resumeSeconds: initialResumeSecs) {
                 selection = warmedSelection
                 ttffInfoInterval?.end(name: "ttff_playback_info", message: "warm_cache_hit")
                 ttffInfoInterval = nil
@@ -1259,7 +1260,8 @@ public final class PlaybackSessionController {
             route: selection.decision.route,
             source: selection.source,
             defaultForwardBufferDuration: forwardBuffer,
-            defaultWaitsToMinimizeStalling: waitsToMinimize
+            defaultWaitsToMinimizeStalling: waitsToMinimize,
+            isTVOS: Self.isTvOSPlatform
         )
         if directPlayPolicy.forwardBufferDuration != forwardBuffer
             || directPlayPolicy.waitsToMinimizeStalling != waitsToMinimize {
@@ -2427,9 +2429,6 @@ public final class PlaybackSessionController {
         AppLog.playback.info(
             "playback.startup.readiness.begin — \(self.playbackLogScope(), privacy: .public) reason=\(requirement.reason, privacy: .public) min=\(requirement.minimumBufferDuration, format: .fixed(precision: 1)) preferred=\(requirement.preferredBufferDuration, format: .fixed(precision: 1)) timeout=\(requirement.timeout, format: .fixed(precision: 1)) preheatBitrate=\(Int(observedPreheatBitrate), privacy: .public)"
         )
-
-        player.preroll(atRate: 1.0) { _ in }
-        defer { player.cancelPendingPrerolls() }
 
         while !Task.isCancelled {
             guard player.currentItem === item else { return }
@@ -4422,8 +4421,16 @@ public final class PlaybackSessionController {
         route: PlaybackRoute,
         source: MediaSource?,
         defaultForwardBufferDuration: Double,
-        defaultWaitsToMinimizeStalling: Bool
+        defaultWaitsToMinimizeStalling: Bool,
+        isTVOS: Bool
     ) -> DirectPlayStabilityPolicy {
+        guard isTVOS else {
+            return DirectPlayStabilityPolicy(
+                forwardBufferDuration: defaultForwardBufferDuration,
+                waitsToMinimizeStalling: defaultWaitsToMinimizeStalling
+            )
+        }
+
         guard shouldUseStallResistantDirectPlay(route: route, source: source) else {
             return DirectPlayStabilityPolicy(
                 forwardBufferDuration: defaultForwardBufferDuration,
@@ -4435,6 +4442,17 @@ public final class PlaybackSessionController {
             forwardBufferDuration: max(defaultForwardBufferDuration, 12),
             waitsToMinimizeStalling: true
         )
+    }
+
+    nonisolated static func canUseWarmedSelection(
+        _ selection: PlaybackAssetSelection,
+        resumeSeconds: Double
+    ) -> Bool {
+        guard resumeSeconds > 0 else { return true }
+        if case .directPlay = selection.decision.route {
+            return true
+        }
+        return false
     }
 
     static func shouldAttemptDirectPlayStallRecovery(
