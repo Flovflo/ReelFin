@@ -94,6 +94,16 @@
   - startup preheat overlaps AVPlayer preparation instead of blocking the player handoff
   - stale episode warmup/progress work cannot overwrite the current detail playback target
 
+### M11
+- Status: completed
+- Objective: establish durable, token-safe media cache foundations for zero-stall playback work.
+- Scope: `MediaGatewayCacheKey`, `MediaGatewayIndex`, `HLSSegmentDiskCache`, zero-stall validation runner
+- Acceptance:
+  - media cache keys are stable, route-aware, resume-bucketed, and do not persist raw secrets
+  - the media gateway index persists TTL/LRU metadata and recovers safely from corrupt index data
+  - HLS playlists, init segments, and media segments can be stored on disk with TTL and LRU eviction
+  - zero-stall validation has one repeatable script entry point for iOS/tvOS build and targeted startup tests
+
 ## Validation Commands
 
 ```bash
@@ -105,6 +115,7 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platfor
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/LibraryViewModelTests
 scripts/run_player_ui_probe.sh
 scripts/run_playback_qa_loop.sh
+scripts/run_zero_stall_validation.sh
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2' -only-testing:ReelFinTVUITests/TVLiveNavigationSmokeUITests
 ```
 
@@ -120,6 +131,9 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2' -only-testing:ReelFinTVUITests/TVLiveNavigationSmokeUITests`: passed with 3 expected skips because no authenticated tvOS session was present in the simulator
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests/testPrepareEpisodePlaybackLatestWinsAcrossWarmupSignals`: passed, 14 tests
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:ReelFinUITests/AppStoreScreenshotTests`: passed, 4 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/MediaGatewayCacheKeyTests -only-testing:PlaybackEngineTests/MediaGatewayIndexTests -only-testing:PlaybackEngineTests/HLSSegmentDiskCacheTests`: passed, 13 tests
+- `bash -n scripts/run_zero_stall_validation.sh`: passed
+- `scripts/run_zero_stall_validation.sh`: passed, artifacts in `.artifacts/zero-stall/20260419-160313`
 
 ## Explicit Deferrals
 

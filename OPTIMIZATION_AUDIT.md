@@ -89,6 +89,9 @@
 - Removed stale repo artifacts that no longer had a valid backing workflow: `tasks/todo.md` and `scripts/export_marketing_screenshots.sh`.
 - `PlaybackSessionController` now overlaps startup preheat with AVPlayer preparation and gates high-risk autoplay on bounded buffer readiness, reducing start-then-stall behavior without blocking HLS playlist startup behind byte-range probes.
 - `DetailViewModel` now treats episode playback preparation as latest-wins, so stale progress or warmup selections cannot overwrite the active detail playback target.
+- Added token-safe media cache keys and a durable `MediaGatewayIndex` so future player warmup and cache promotion work can reason about route, user/server scope, audio/subtitle choice, resume bucket, TTL, byte size, and LRU order without persisting raw credentials.
+- Added `HLSSegmentDiskCache` as the first concrete media payload cache for playlists, init segments, and media segments, with hashed filenames, TTL expiry, LRU eviction, corrupt-index recovery, and sensitive-material regression tests.
+- Added `scripts/run_zero_stall_validation.sh` as a repeatable validation runner for XcodeGen, iOS build, tvOS build, startup/detail tests, and App Store screenshot tests.
 
 ## Validation Results
 
@@ -102,13 +105,16 @@
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2' -only-testing:ReelFinTVUITests/TVLiveNavigationSmokeUITests`: passed with 3 expected skips because the simulator had no persisted authenticated tvOS session
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests/testPrepareEpisodePlaybackLatestWinsAcrossWarmupSignals`: passed, 14 tests
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:ReelFinUITests/AppStoreScreenshotTests`: passed, 4 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/MediaGatewayCacheKeyTests -only-testing:PlaybackEngineTests/MediaGatewayIndexTests -only-testing:PlaybackEngineTests/HLSSegmentDiskCacheTests`: passed, 13 tests
+- `bash -n scripts/run_zero_stall_validation.sh`: passed
+- `scripts/run_zero_stall_validation.sh`: passed, artifacts in `.artifacts/zero-stall/20260419-160313`
 
 ## Remaining High-Value Follow-Ups
 
 - Split scroll-linked and hydration state out of `HomeView` and `DetailView` so focus and phased-loading updates do not invalidate large view roots.
 - Continue the playback lifecycle hardening pass for observer callbacks and reload paths that still hop through ad hoc `Task` boundaries.
 - Add launch/signpost regression assertions and stronger playback TTFF checks so performance assumptions stop living only in manual scripts.
-- Design the persistent `MediaGateway` layer for durable HLS segment and direct-play spool caches, with token-safe keys and explicit eviction budgets for iOS versus tvOS.
+- Wire the persistent media cache foundations into the playback routes: HLS segment serving first, then direct-play prefetch/spooling once Range behavior and AVPlayer source promotion are proven stable.
 
 ## Rejected Or Deferred Optimizations
 
