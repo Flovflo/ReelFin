@@ -709,6 +709,39 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertTrue(profiles.isEmpty)
     }
 
+    func testStartupRecoveryCandidateStopsAtTerminalFallbackProfile() {
+        let hasCandidate = PlaybackSessionController.hasStartupRecoveryCandidate(
+            after: .forceH264Transcode,
+            playbackPolicy: .auto,
+            allowSDRFallback: true,
+            usesDirectRemuxOnly: false
+        )
+
+        XCTAssertFalse(hasCandidate)
+    }
+
+    func testStartupRecoveryCandidateAllowsInitialFallbackProfiles() {
+        let hasCandidate = PlaybackSessionController.hasStartupRecoveryCandidate(
+            after: .serverDefault,
+            playbackPolicy: .auto,
+            allowSDRFallback: true,
+            usesDirectRemuxOnly: false
+        )
+
+        XCTAssertTrue(hasCandidate)
+    }
+
+    func testStartupRecoveryCandidateKeepsDirectRemuxOnlyRecoveryPath() {
+        let hasCandidate = PlaybackSessionController.hasStartupRecoveryCandidate(
+            after: .forceH264Transcode,
+            playbackPolicy: .auto,
+            allowSDRFallback: true,
+            usesDirectRemuxOnly: true
+        )
+
+        XCTAssertTrue(hasCandidate)
+    }
+
     func testFallbackOrderIsDeterministic() {
         let p1 = PlaybackSessionController.recoveryPlan(after: .serverDefault, policy: .auto, allowSDRFallback: true)
         let p2 = PlaybackSessionController.recoveryPlan(after: .serverDefault, policy: .auto, allowSDRFallback: true)

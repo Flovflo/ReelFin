@@ -818,18 +818,28 @@ public final class PlaybackSessionController {
                     preheatResult: preheatResult
                 )
                 if !startupReady {
-                    _ = await attemptRecovery(
+                    if await attemptStartupRecoveryIfAvailable(
                         reason: StartupFailureReason.startupReadinessTimeout.rawValue,
                         userMessage: "Direct Play did not build a safe buffer. Switching playback profile."
+                    ) {
+                        return
+                    }
+                    logStartupRecoveryUnavailable(
+                        reason: StartupFailureReason.startupReadinessTimeout.rawValue,
+                        action: "continue_current_item"
                     )
-                    return
                 }
                 if !(await prepareSynchronizedStartupFrameIfNeeded(selection: selection)) {
-                    _ = await attemptRecovery(
+                    if await attemptStartupRecoveryIfAvailable(
                         reason: StartupFailureReason.startupVideoPrerollTimeout.rawValue,
                         userMessage: "Video did not preroll before audio. Switching playback profile."
+                    ) {
+                        return
+                    }
+                    logStartupRecoveryUnavailable(
+                        reason: StartupFailureReason.startupVideoPrerollTimeout.rawValue,
+                        action: "force_autoplay"
                     )
-                    return
                 }
                 play()
                 scheduleDecodedFrameWatchdog()
@@ -2514,6 +2524,28 @@ public final class PlaybackSessionController {
         }
 
         return false
+    }
+
+    private func attemptStartupRecoveryIfAvailable(
+        reason: String,
+        userMessage: String
+    ) async -> Bool {
+        guard Self.hasStartupRecoveryCandidate(
+            after: activeTranscodeProfile,
+            playbackPolicy: playbackPolicy,
+            allowSDRFallback: allowSDRFallback,
+            usesDirectRemuxOnly: usesDirectRemuxOnly
+        ) else {
+            return false
+        }
+
+        return await attemptRecovery(reason: reason, userMessage: userMessage)
+    }
+
+    private func logStartupRecoveryUnavailable(reason: String, action: String) {
+        AppLog.playback.warning(
+            "playback.startup.recovery_unavailable — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public) status=\(self.lastPlayerItemStatus, privacy: .public) action=\(action, privacy: .public)"
+        )
     }
 
     private func prepareSynchronizedStartupFrameIfNeeded(
@@ -4264,6 +4296,23 @@ public final class PlaybackSessionController {
         case .forceH264Transcode:
             return []
         }
+    }
+
+    nonisolated static func hasStartupRecoveryCandidate(
+        after activeProfile: TranscodeURLProfile,
+        playbackPolicy: PlaybackPolicy,
+        allowSDRFallback: Bool,
+        usesDirectRemuxOnly: Bool
+    ) -> Bool {
+        if usesDirectRemuxOnly {
+            return true
+        }
+
+        return !recoveryPlan(
+            after: activeProfile,
+            policy: playbackPolicy,
+            allowSDRFallback: allowSDRFallback
+        ).isEmpty
     }
 
     nonisolated static func initialProfile(
