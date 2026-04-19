@@ -771,8 +771,17 @@ public final class PlaybackSessionController {
             selection = selectionUsingStableDirectPlayURL(selection)
 
             let runtimeSeconds = item.runtimeTicks.map { Double($0) / 10_000_000 }
-            let preheatTask = autoPlay ? Task(priority: .utility) {
-                await PlaybackStartupPreheater.preheat(
+            let preheatTask: Task<PlaybackStartupPreheater.Result?, Never>? = autoPlay ? Task(priority: .utility) {
+                if let warmedResult = await warmupManager?.warm(
+                    selection: selection,
+                    resumeSeconds: initialResumeSecs,
+                    runtimeSeconds: runtimeSeconds,
+                    isTVOS: Self.isTvOSPlatform
+                ) {
+                    return warmedResult
+                }
+
+                return await PlaybackStartupPreheater.preheat(
                     selection: selection,
                     resumeSeconds: initialResumeSecs,
                     runtimeSeconds: runtimeSeconds,

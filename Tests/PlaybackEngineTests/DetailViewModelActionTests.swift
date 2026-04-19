@@ -155,6 +155,67 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.preferredPlaybackSource?.id, "source-2")
     }
 
+    func testLoadWarmsServerNextUpEpisodeFromMatchingSeason() async {
+        let season1 = MediaItem(id: "season-1", name: "Season 1", mediaType: .season, indexNumber: 1)
+        let season5 = MediaItem(id: "season-5", name: "Season 5", mediaType: .season, indexNumber: 5)
+        let s1e1 = MediaItem(
+            id: "s1e1",
+            name: "Pilot",
+            mediaType: .episode,
+            runtimeTicks: 1_800 * 10_000_000,
+            parentID: "series-1",
+            indexNumber: 1,
+            parentIndexNumber: 1
+        )
+        let s5e2 = MediaItem(
+            id: "s5e2",
+            name: "The Current One",
+            mediaType: .episode,
+            runtimeTicks: 1_800 * 10_000_000,
+            parentID: "series-1",
+            indexNumber: 2,
+            parentIndexNumber: 5,
+            playbackPositionTicks: 300 * 10_000_000
+        )
+        let apiClient = DetailActionSpyAPIClient(
+            seasonsBySeriesID: ["series-1": [season1, season5]],
+            episodesBySeasonID: [
+                "season-1": [s1e1],
+                "season-5": [s5e2]
+            ],
+            nextUpBySeriesID: ["series-1": s5e2]
+        )
+        let warmupManager = EpisodeWarmupManager(
+            delayByItemID: [:],
+            selectionByItemID: [
+                "s5e2": makeSelection(sourceID: "source-s5e2", itemID: "s5e2")
+            ]
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(id: "series-1", name: "Series", mediaType: .series),
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: MockMetadataRepository(),
+                warmupManager: warmupManager
+            )
+        )
+
+        await viewModel.load()
+
+        let didWarmNextUp = await waitForCondition(timeout: 2) {
+            viewModel.selectedSeason?.id == "season-5"
+                && viewModel.nextUpEpisode?.id == "s5e2"
+                && viewModel.isPlaybackWarm
+        }
+        let warmupRequests = await warmupManager.startupWarmupRequests()
+
+        XCTAssertTrue(didWarmNextUp)
+        XCTAssertEqual(viewModel.playButtonLabel, "Resume S5 E2")
+        XCTAssertEqual(warmupRequests.last?.itemID, "s5e2")
+        XCTAssertEqual(warmupRequests.last?.resumeSeconds, 300)
+        XCTAssertEqual(warmupRequests.last?.runtimeSeconds, 1_800)
+    }
+
     private func makeDependencies(
         apiClient: DetailActionSpyAPIClient,
         repository: any MetadataRepositoryProtocol,
@@ -339,8 +400,16 @@ final class DetailViewModelActionTests: XCTestCase {
     }
 
     private actor EpisodeWarmupManager: PlaybackWarmupManaging {
+        struct StartupWarmupRequest: Equatable {
+            let itemID: String
+            let resumeSeconds: Double
+            let runtimeSeconds: Double?
+            let isTVOS: Bool
+        }
+
         private let delayByItemID: [String: UInt64]
         private let selectionByItemID: [String: PlaybackAssetSelection]
+        private var startupRequests: [StartupWarmupRequest] = []
 
         init(
             delayByItemID: [String: UInt64],
@@ -356,8 +425,24 @@ final class DetailViewModelActionTests: XCTestCase {
             }
         }
 
+        func warm(itemID: String, resumeSeconds: Double, runtimeSeconds: Double?, isTVOS: Bool) async {
+            startupRequests.append(
+                StartupWarmupRequest(
+                    itemID: itemID,
+                    resumeSeconds: resumeSeconds,
+                    runtimeSeconds: runtimeSeconds,
+                    isTVOS: isTVOS
+                )
+            )
+            await warm(itemID: itemID)
+        }
+
         func selection(for itemID: String) async -> PlaybackAssetSelection? {
             selectionByItemID[itemID]
+        }
+
+        func startupWarmupRequests() -> [StartupWarmupRequest] {
+            startupRequests
         }
 
         func cancel(itemID: String) async { _ = itemID }
@@ -366,8 +451,21 @@ final class DetailViewModelActionTests: XCTestCase {
     }
 
     private actor DetailActionSpyAPIClient: JellyfinAPIClientProtocol {
+    private let seasonsBySeriesID: [String: [MediaItem]]
+    private let episodesBySeasonID: [String: [MediaItem]]
+    private let nextUpBySeriesID: [String: MediaItem]
     private var recordedPlayedCalls: [(itemID: String, isPlayed: Bool)] = []
     private var recordedFavoriteCalls: [(itemID: String, isFavorite: Bool)] = []
+
+    init(
+        seasonsBySeriesID: [String: [MediaItem]] = [:],
+        episodesBySeasonID: [String: [MediaItem]] = [:],
+        nextUpBySeriesID: [String: MediaItem] = [:]
+    ) {
+        self.seasonsBySeriesID = seasonsBySeriesID
+        self.episodesBySeasonID = episodesBySeasonID
+        self.nextUpBySeriesID = nextUpBySeriesID
+    }
 
     func currentConfiguration() async -> ServerConfiguration? { nil }
     func currentSession() async -> UserSession? { nil }
@@ -379,11 +477,25 @@ final class DetailViewModelActionTests: XCTestCase {
     func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
     func fetchUserViews() async throws -> [Shared.LibraryView] { [] }
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed { _ = since; return .empty }
-    func fetchItem(id: String) async throws -> MediaItem { MediaItem(id: id, name: id) }
-    func fetchItemDetail(id: String) async throws -> MediaDetail { MediaDetail(item: MediaItem(id: id, name: id)) }
-    func fetchSeasons(seriesID: String) async throws -> [MediaItem] { _ = seriesID; return [] }
-    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { _ = seriesID; _ = seasonID; return [] }
-    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { _ = seriesID; return nil }
+    func fetchItem(id: String) async throws -> MediaItem {
+        if seasonsBySeriesID[id] != nil {
+            return MediaItem(id: id, name: id, mediaType: .series)
+        }
+        return MediaItem(id: id, name: id)
+    }
+    func fetchItemDetail(id: String) async throws -> MediaDetail {
+        MediaDetail(item: try await fetchItem(id: id))
+    }
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] {
+        seasonsBySeriesID[seriesID] ?? []
+    }
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] {
+        _ = seriesID
+        return episodesBySeasonID[seasonID] ?? []
+    }
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? {
+        nextUpBySeriesID[seriesID]
+    }
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { _ = query; return [] }
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] { _ = itemID; return [] }
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? {

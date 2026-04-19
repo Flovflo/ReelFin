@@ -95,6 +95,8 @@
 - High-bitrate iOS DirectPlay startup now keeps AVPlayer paused through replacement, seek, bounded readiness gating, and video preroll, refuses timeout-based start when measured buffer is still empty, uses a 12s no-stall buffer target instead of the 30s startup-heavy target, and only marks first frame after a real video pixel buffer when video output is attached.
 - Startup DirectPlay stalls, readiness timeouts, and video-preroll failures now preserve resume ticks and recover through direct-route-disabled HLS/transcode profiles instead of replaying the same progressive DirectPlay path that just failed.
 - The latest log regression (`resume=1077.5s` followed by fallback `resume=none` and first frame near 2s) is covered by tests that force a DirectPlay-capable MOV/MP4 source through recovery and assert `StartTimeTicks` plus an H.264 transcode route.
+- Detail-page playback warmup now passes resume/runtime/platform context into `PlaybackWarmupManager`, which deduplicates startup media-byte preheats by route, platform, and resume bucket; playback startup uses the same preheater path so a warmed detail page can avoid repeating untracked probes.
+- Series detail warmup now resolves Jellyfin Next Up before loading episodes, selects the matching season when the next episode is in a later season, and only falls back to first unplayed/first episode when the server has no Next Up target.
 
 ## Validation Results
 
@@ -115,6 +117,7 @@
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests`: passed, 124 tests
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinDetailWarmupDerivedData -only-testing:PlaybackEngineTests/PlaybackWarmupManagerTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests`: passed, 8 tests
 
 ## Remaining High-Value Follow-Ups
 

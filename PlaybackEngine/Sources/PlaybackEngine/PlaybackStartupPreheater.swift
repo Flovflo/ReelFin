@@ -1,13 +1,27 @@
 import Foundation
 import Shared
 
-enum PlaybackStartupPreheater {
-    struct Result: Sendable, Equatable {
-        let byteCount: Int
-        let elapsedSeconds: Double
-        let observedBitrate: Double
-        let rangeStart: Int64?
-        let reason: String
+public enum PlaybackStartupPreheater {
+    public struct Result: Sendable, Equatable {
+        public let byteCount: Int
+        public let elapsedSeconds: Double
+        public let observedBitrate: Double
+        public let rangeStart: Int64?
+        public let reason: String
+
+        public init(
+            byteCount: Int,
+            elapsedSeconds: Double,
+            observedBitrate: Double,
+            rangeStart: Int64?,
+            reason: String
+        ) {
+            self.byteCount = byteCount
+            self.elapsedSeconds = elapsedSeconds
+            self.observedBitrate = observedBitrate
+            self.rangeStart = rangeStart
+            self.reason = reason
+        }
     }
 
     static func preheat(

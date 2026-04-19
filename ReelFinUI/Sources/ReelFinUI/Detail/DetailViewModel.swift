@@ -37,6 +37,14 @@ final class DetailViewModel: ObservableObject {
     private var backgroundTasks: [Task<Void, Never>] = []
     private var loadedItemID: String?
 
+    private static var isTVOSPlatform: Bool {
+#if os(tvOS)
+        true
+#else
+        false
+#endif
+    }
+
     init(item: MediaItem, preferredEpisode: MediaItem? = nil, dependencies: ReelFinDependencies) {
         self.detail = MediaDetail(item: item)
         self.preferredEpisode = preferredEpisode
@@ -286,29 +294,30 @@ final class DetailViewModel: ObservableObject {
             seasons = fetchedSeasons
             advancePhase(to: .content)
 
-            let preferredSeason = preferredEpisode.flatMap {
-                seasonMatching(preferredEpisode: $0, seasons: fetchedSeasons)
+            let targetEpisode: MediaItem?
+            if let preferredEpisode {
+                targetEpisode = preferredEpisode
+            } else {
+                targetEpisode = try? await nextUpRequest
             }
 
-            if let preferredSeason {
-                await loadEpisodes(for: preferredSeason, loadToken: loadToken)
-                guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else {
-                    return
-                }
-                nextUpEpisode = episodes.first(where: { $0.id == preferredEpisode?.id }) ?? preferredEpisode
-            } else if let firstSeason = fetchedSeasons.first {
-                await loadEpisodes(for: firstSeason, loadToken: loadToken)
-                if isActive(loadToken: loadToken, itemID: seriesID) {
-                    guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else {
-                        return
-                    }
-                    let serverNextUp = try await nextUpRequest
-                    if let serverNextUp,
-                       let matchingEpisode = episodes.first(where: { $0.id == serverNextUp.id }) {
-                        nextUpEpisode = mergedEpisode(matchingEpisode, preferred: serverNextUp)
+            let targetSeason = targetEpisode.flatMap {
+                seasonMatching(preferredEpisode: $0, seasons: fetchedSeasons)
+            } ?? fetchedSeasons.first
+
+            if let targetSeason {
+                await loadEpisodes(for: targetSeason, loadToken: loadToken)
+                guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+                guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
+
+                if let targetEpisode {
+                    if let matchingEpisode = episodes.first(where: { $0.id == targetEpisode.id }) {
+                        nextUpEpisode = mergedEpisode(matchingEpisode, preferred: targetEpisode)
                     } else {
-                        nextUpEpisode = serverNextUp ?? episodes.first
+                        nextUpEpisode = targetEpisode
                     }
+                } else {
+                    nextUpEpisode = episodes.first(where: { !$0.isPlayed }) ?? episodes.first
                 }
             }
 
@@ -316,6 +325,10 @@ final class DetailViewModel: ObservableObject {
             guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
 
             if let nextUpEpisode {
+                playbackProgress = await resolvedPlaybackProgress(for: nextUpEpisode)
+                guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+                guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
+
                 let requestToken = beginPlaybackWarmupRequest(itemID: nextUpEpisode.id)
                 startPlaybackWarmup(
                     for: nextUpEpisode,
@@ -399,7 +412,12 @@ final class DetailViewModel: ObservableObject {
 
         playbackProgress = progress
 
-        await dependencies.playbackWarmupManager.warm(itemID: item.id)
+        await dependencies.playbackWarmupManager.warm(
+            itemID: item.id,
+            resumeSeconds: Self.resumeSeconds(from: progress, item: item),
+            runtimeSeconds: Self.runtimeSeconds(for: item),
+            isTVOS: Self.isTVOSPlatform
+        )
         let selection = await dependencies.playbackWarmupManager.selection(for: item.id)
 
         guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
@@ -452,6 +470,11 @@ final class DetailViewModel: ObservableObject {
             return exact
         }
 
+        if let parentID = preferredEpisode.parentID,
+           let exact = seasons.first(where: { $0.id == parentID }) {
+            return exact
+        }
+
         return seasons.first
     }
 
@@ -461,6 +484,25 @@ final class DetailViewModel: ObservableObject {
             for: item,
             localProgress: local
         )
+    }
+
+    private static func resumeSeconds(from progress: PlaybackProgress?, item: MediaItem) -> Double {
+        if let positionTicks = progress?.positionTicks, positionTicks > 0 {
+            return Double(positionTicks) / 10_000_000
+        }
+
+        if let positionTicks = item.playbackPositionTicks, positionTicks > 0 {
+            return Double(positionTicks) / 10_000_000
+        }
+
+        return 0
+    }
+
+    private static func runtimeSeconds(for item: MediaItem) -> Double? {
+        guard let runtimeTicks = item.runtimeTicks, runtimeTicks > 0 else {
+            return nil
+        }
+        return Double(runtimeTicks) / 10_000_000
     }
 
     private func mergedEpisode(_ item: MediaItem, preferred: MediaItem) -> MediaItem {
