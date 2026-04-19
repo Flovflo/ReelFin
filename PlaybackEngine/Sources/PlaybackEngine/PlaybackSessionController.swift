@@ -764,6 +764,16 @@ public final class PlaybackSessionController {
             )
             selection = selectionUsingStableDirectPlayURL(selection)
 
+            let runtimeSeconds = item.runtimeTicks.map { Double($0) / 10_000_000 }
+            let preheatTask = autoPlay ? Task(priority: .utility) {
+                await PlaybackStartupPreheater.preheat(
+                    selection: selection,
+                    resumeSeconds: initialResumeSecs,
+                    runtimeSeconds: runtimeSeconds,
+                    isTVOS: Self.isTvOSPlatform
+                )
+            } : nil
+
             // For transcode/remux routes: Jellyfin already starts from initialResumeSecs
             // (via StartTimeTicks). Track the offset so currentTime/progress are reported
             // in movie-absolute seconds rather than HLS-stream-relative seconds.
@@ -785,6 +795,13 @@ public final class PlaybackSessionController {
             ttffTuning = coordinator.ttffTuning
 
             if autoPlay {
+                let preheatResult = await preheatTask?.value
+                await performStartupReadinessGateIfNeeded(
+                    selection: selection,
+                    resumeSeconds: initialResumeSecs,
+                    runtimeSeconds: runtimeSeconds,
+                    preheatResult: preheatResult
+                )
                 play()
                 scheduleDecodedFrameWatchdog()
             }
@@ -2388,6 +2405,74 @@ public final class PlaybackSessionController {
         let seekTime = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
         let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
         _ = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
+    }
+
+    private func performStartupReadinessGateIfNeeded(
+        selection: PlaybackAssetSelection,
+        resumeSeconds: Double,
+        runtimeSeconds: Double?,
+        preheatResult: PlaybackStartupPreheater.Result?
+    ) async {
+        guard let requirement = PlaybackStartupReadinessPolicy.requirement(
+            route: selection.decision.route,
+            sourceBitrate: selection.source.bitrate,
+            runtimeSeconds: runtimeSeconds,
+            resumeSeconds: resumeSeconds,
+            isTVOS: Self.isTvOSPlatform
+        ) else { return }
+        guard let item = player.currentItem else { return }
+
+        let startedAt = Date()
+        let observedPreheatBitrate = preheatResult?.observedBitrate ?? 0
+        AppLog.playback.info(
+            "playback.startup.readiness.begin — \(self.playbackLogScope(), privacy: .public) reason=\(requirement.reason, privacy: .public) min=\(requirement.minimumBufferDuration, format: .fixed(precision: 1)) preferred=\(requirement.preferredBufferDuration, format: .fixed(precision: 1)) timeout=\(requirement.timeout, format: .fixed(precision: 1)) preheatBitrate=\(Int(observedPreheatBitrate), privacy: .public)"
+        )
+
+        player.preroll(atRate: 1.0) { _ in }
+        defer { player.cancelPendingPrerolls() }
+
+        while !Task.isCancelled {
+            guard player.currentItem === item else { return }
+
+            let elapsed = Date().timeIntervalSince(startedAt)
+            let bufferedDuration = bufferedDurationAhead(for: item)
+            let likelyToKeepUp = item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull
+
+            if PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: bufferedDuration,
+                likelyToKeepUp: likelyToKeepUp,
+                elapsedSeconds: elapsed,
+                requirement: requirement
+            ) {
+                AppLog.playback.info(
+                    "playback.startup.readiness.ready — \(self.playbackLogScope(), privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 2)) buffered=\(bufferedDuration, format: .fixed(precision: 1)) likely=\(likelyToKeepUp, privacy: .public) reason=\(requirement.reason, privacy: .public)"
+                )
+                return
+            }
+
+            guard elapsed < requirement.timeout else { return }
+            let sleepNanoseconds = UInt64(max(0.05, requirement.pollInterval) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: sleepNanoseconds)
+        }
+    }
+
+    private func bufferedDurationAhead(for item: AVPlayerItem) -> Double {
+        let currentSeconds = player.currentTime().seconds
+        let playbackPosition = currentSeconds.isFinite ? max(0, currentSeconds) : 0
+
+        return item.loadedTimeRanges
+            .map(\.timeRangeValue)
+            .reduce(0) { longestDuration, range in
+                let start = range.start.seconds
+                let end = CMTimeRangeGetEnd(range).seconds
+                guard start.isFinite, end.isFinite, end > playbackPosition else {
+                    return longestDuration
+                }
+                guard start <= playbackPosition + 0.5 else {
+                    return longestDuration
+                }
+                return max(longestDuration, end - playbackPosition)
+            }
     }
 
     private func scheduleStartupWatchdog() {
