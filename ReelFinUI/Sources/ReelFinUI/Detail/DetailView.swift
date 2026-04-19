@@ -48,6 +48,11 @@ struct DetailView: View {
     @State private var navigationContext: DetailNavigationContext
     @State private var iosSelectedCarouselItemID: String?
     @State private var currentReturnSourceItem: MediaItem
+#if os(tvOS)
+    @State private var tvScrollRequest: TVDetailScrollRequest?
+    @State private var tvScrollRequestID = 0
+    @State private var pendingTVFocusTarget: TVDetailFocusTarget?
+#endif
     @FocusState private var focusedHeroAction: DetailHeroAction?
     @FocusState private var focusedSeasonID: String?
     private let transitionNamespace: Namespace.ID?
@@ -94,6 +99,8 @@ struct DetailView: View {
                 horizontalPadding: horizontalPadding,
                 sectionSpacing: sectionSpacing,
                 forcedHeroCollapseProgress: focusedSeasonID == nil ? nil : 1,
+                scrollRequest: tvScrollRequest,
+                onScrollRequestCompleted: handleTVScrollRequestCompleted,
                 hero: { stageMetrics in
                     heroSection(
                         heroHeight: heroHeight,
@@ -464,25 +471,38 @@ struct DetailView: View {
                         }
                     }
                 )
+                .id(TVDetailScrollTarget.seasons)
             }
             #endif
 
             if viewModel.detail.item.mediaType == .series {
+                #if os(tvOS)
                 episodeSection
+                    .id(TVDetailScrollTarget.episodes)
+                #else
+                episodeSection
+                #endif
             } else {
-                relatedSection(title: "Related")
+                relatedSection(
+                    title: "Related",
+                    onMoveUp: focusHeroPrimaryActionFromDetailRow
+                )
             }
 
             if !viewModel.detail.cast.isEmpty {
                 CastRowView(
                     cast: viewModel.detail.cast,
+                    onMoveUp: castRowMoveUpAction,
                     apiClient: dependencies.apiClient,
                     imagePipeline: dependencies.imagePipeline
                 )
             }
 
             if viewModel.detail.item.mediaType == .series {
-                relatedSection(title: "More Like This")
+                relatedSection(
+                    title: "More Like This",
+                    onMoveUp: moreLikeThisMoveUpAction
+                )
             }
 
             if shouldShowSkeleton {
@@ -570,7 +590,7 @@ struct DetailView: View {
     }
 
     @ViewBuilder
-    private func relatedSection(title: String) -> some View {
+    private func relatedSection(title: String, onMoveUp: (() -> Void)? = nil) -> some View {
         if !viewModel.detail.similar.isEmpty {
             RelatedRowView(
                 title: title,
@@ -581,6 +601,7 @@ struct DetailView: View {
                         context: DetailNavigationContext(title: title, items: viewModel.detail.similar)
                     )
                 },
+                onMoveUp: onMoveUp,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline
             )
@@ -734,11 +755,15 @@ struct DetailView: View {
 #endif
 
     private func focusHeroPrimaryActionFromSeasonPicker() {
+#if os(tvOS)
+        focusHeroPrimaryActionFromDetailRow()
+#else
         focusedSeasonID = nil
 
         Task { @MainActor in
             focusedHeroAction = .play
         }
+#endif
     }
 
     private func focusAboveEpisodes() {
@@ -746,18 +771,72 @@ struct DetailView: View {
         // Keep a deterministic path back to the hero so tvOS never traps focus in the episode rail.
         let targetSeasonID = viewModel.selectedSeason?.id ?? viewModel.seasons.first?.id
 
-        Task { @MainActor in
-            withAnimation(.smooth(duration: 0.28, extraBounce: 0.02)) {
-                if shouldShowSeasonPicker, let targetSeasonID {
-                    focusedSeasonID = targetSeasonID
-                } else {
-                    focusedSeasonID = nil
-                    focusedHeroAction = .play
-                }
-            }
+        if shouldShowSeasonPicker, let targetSeasonID {
+            requestTVFocus(.season(targetSeasonID), scrollTarget: .seasons)
+        } else {
+            focusHeroPrimaryActionFromDetailRow()
         }
 #endif
     }
+
+#if os(tvOS)
+    private var castRowMoveUpAction: (() -> Void)? {
+        let hasEarlierFocusableRow: Bool
+        if viewModel.detail.item.mediaType == .series {
+            hasEarlierFocusableRow = shouldShowSeasonPicker || !viewModel.episodes.isEmpty
+        } else {
+            hasEarlierFocusableRow = !viewModel.detail.similar.isEmpty
+        }
+
+        return hasEarlierFocusableRow ? nil : { focusHeroPrimaryActionFromDetailRow() }
+    }
+
+    private var moreLikeThisMoveUpAction: (() -> Void)? {
+        let hasEarlierFocusableRow = shouldShowSeasonPicker
+            || !viewModel.episodes.isEmpty
+            || !viewModel.detail.cast.isEmpty
+        return hasEarlierFocusableRow ? nil : { focusHeroPrimaryActionFromDetailRow() }
+    }
+
+    @MainActor
+    private func focusHeroPrimaryActionFromDetailRow() {
+        focusedSeasonID = nil
+        requestTVFocus(.heroPrimary, scrollTarget: .hero)
+    }
+
+    @MainActor
+    private func requestTVFocus(_ focusTarget: TVDetailFocusTarget, scrollTarget: TVDetailScrollTarget) {
+        pendingTVFocusTarget = focusTarget
+        tvScrollRequestID += 1
+        tvScrollRequest = TVDetailScrollRequest(id: tvScrollRequestID, target: scrollTarget)
+    }
+
+    @MainActor
+    private func handleTVScrollRequestCompleted(_ request: TVDetailScrollRequest) {
+        guard tvScrollRequest == request else { return }
+        tvScrollRequest = nil
+        applyTVFocusTarget(pendingTVFocusTarget)
+        pendingTVFocusTarget = nil
+    }
+
+    @MainActor
+    private func applyTVFocusTarget(_ target: TVDetailFocusTarget?) {
+        switch target {
+        case .heroPrimary:
+            focusedSeasonID = nil
+            focusedHeroAction = .play
+        case let .season(seasonID):
+            focusedHeroAction = nil
+            focusedSeasonID = seasonID
+        case nil:
+            break
+        }
+    }
+#else
+    private func focusHeroPrimaryActionFromDetailRow() {}
+    private var castRowMoveUpAction: (() -> Void)? { nil }
+    private var moreLikeThisMoveUpAction: (() -> Void)? { nil }
+#endif
 
     private func makePresentedDetailItem(from item: MediaItem) -> MediaItem {
         guard item.mediaType == .episode, let seriesID = item.parentID else {
@@ -927,6 +1006,31 @@ private struct DetailZoomTransitionModifier: ViewModifier {
 }
 
 #if os(tvOS)
+private enum TVDetailScrollTarget: Hashable {
+    case hero
+    case seasons
+    case episodes
+
+    var anchor: UnitPoint {
+        switch self {
+        case .hero:
+            return .top
+        case .seasons, .episodes:
+            return .center
+        }
+    }
+}
+
+private struct TVDetailScrollRequest: Equatable {
+    let id: Int
+    let target: TVDetailScrollTarget
+}
+
+private enum TVDetailFocusTarget: Equatable {
+    case heroPrimary
+    case season(String)
+}
+
 private struct TVDetailScrollSnapshot: Equatable {
     var offsetY: CGFloat = 0
     var topInset: CGFloat = 0
@@ -994,6 +1098,8 @@ private struct TVDetailScreen<Hero: View, Supporting: View>: View {
     let horizontalPadding: CGFloat
     let sectionSpacing: CGFloat
     let forcedHeroCollapseProgress: CGFloat?
+    let scrollRequest: TVDetailScrollRequest?
+    let onScrollRequestCompleted: (TVDetailScrollRequest) -> Void
     @ViewBuilder let hero: (TVDetailStageMetrics) -> Hero
     @ViewBuilder let supportingContent: () -> Supporting
 
@@ -1011,24 +1117,42 @@ private struct TVDetailScreen<Hero: View, Supporting: View>: View {
             TVDetailAmbientBackground()
                 .ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: sectionSpacing) {
-                    hero(metrics)
-                        .padding(.top, 20)
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: sectionSpacing) {
+                        hero(metrics)
+                            .padding(.top, 20)
+                            .id(TVDetailScrollTarget.hero)
 
-                    supportingContent()
-                        .padding(.horizontal, horizontalPadding)
-                        .padding(.bottom, 96)
+                        supportingContent()
+                            .padding(.horizontal, horizontalPadding)
+                            .padding(.bottom, 96)
+                    }
+                }
+                .onScrollGeometryChange(for: TVDetailScrollSnapshot.self) { geometry in
+                    TVDetailScrollSnapshot(
+                        offsetY: geometry.contentOffset.y,
+                        topInset: geometry.contentInsets.top
+                    )
+                } action: { _, newValue in
+                    scrollSnapshot = newValue
+                }
+                .onChange(of: scrollRequest) { _, request in
+                    guard let request else { return }
+                    scroll(to: request, using: proxy)
                 }
             }
-            .onScrollGeometryChange(for: TVDetailScrollSnapshot.self) { geometry in
-                TVDetailScrollSnapshot(
-                    offsetY: geometry.contentOffset.y,
-                    topInset: geometry.contentInsets.top
-                )
-            } action: { _, newValue in
-                scrollSnapshot = newValue
-            }
+        }
+    }
+
+    private func scroll(to request: TVDetailScrollRequest, using proxy: ScrollViewProxy) {
+        withAnimation(.easeInOut(duration: 0.28)) {
+            proxy.scrollTo(request.target, anchor: request.target.anchor)
+        }
+
+        Task { @MainActor in
+            await Task.yield()
+            onScrollRequestCompleted(request)
         }
     }
 }
@@ -2331,66 +2455,69 @@ private struct TVDetailContextPreviewCard: View {
     let action: () -> Void
 
     var body: some View {
-        ZStack(alignment: overlayAlignment) {
-            CachedRemoteImage(
-                itemID: previewItemID,
-                type: previewImageType,
-                width: Int(width * 3),
-                quality: 84,
-                contentMode: .fill,
-                apiClient: apiClient,
-                imagePipeline: imagePipeline
-            )
-            .frame(width: width, height: height)
-            .clipped()
+        Button(action: action) {
+            ZStack(alignment: overlayAlignment) {
+                CachedRemoteImage(
+                    itemID: previewItemID,
+                    type: previewImageType,
+                    width: Int(width * 3),
+                    quality: 84,
+                    contentMode: .fill,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline
+                )
+                .frame(width: width, height: height)
+                .clipped()
 
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.38), location: 0.0),
-                    .init(color: .clear, location: 0.22),
-                    .init(color: .clear, location: 0.58),
-                    .init(color: .black.opacity(0.78), location: 1.0)
-                ],
-                startPoint: edge == .leading ? .leading : .trailing,
-                endPoint: edge == .leading ? .trailing : .leading
-            )
+                LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0.38), location: 0.0),
+                        .init(color: .clear, location: 0.22),
+                        .init(color: .clear, location: 0.58),
+                        .init(color: .black.opacity(0.78), location: 1.0)
+                    ],
+                    startPoint: edge == .leading ? .leading : .trailing,
+                    endPoint: edge == .leading ? .trailing : .leading
+                )
 
-            VStack(alignment: edge == .leading ? .leading : .trailing, spacing: 10) {
-                Image(systemName: edge == .leading ? "chevron.left.circle.fill" : "chevron.right.circle.fill")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.96))
+                VStack(alignment: edge == .leading ? .leading : .trailing, spacing: 10) {
+                    Image(systemName: edge == .leading ? "chevron.left.circle.fill" : "chevron.right.circle.fill")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.96))
 
-                Text(previewTitle)
-                    .font(.system(size: 19, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(4)
-                    .minimumScaleFactor(0.88)
-                    .multilineTextAlignment(edge == .leading ? .leading : .trailing)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let subtitle = previewSubtitle {
-                    Text(subtitle)
-                        .font(.system(size: 15, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.74))
-                        .lineLimit(2)
+                    Text(previewTitle)
+                        .font(.system(size: 19, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(4)
+                        .minimumScaleFactor(0.88)
                         .multilineTextAlignment(edge == .leading ? .leading : .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let subtitle = previewSubtitle {
+                        Text(subtitle)
+                            .font(.system(size: 15, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.74))
+                            .lineLimit(2)
+                            .multilineTextAlignment(edge == .leading ? .leading : .trailing)
+                    }
                 }
+                .padding(18)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: overlayAlignment)
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: overlayAlignment)
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
+                    .stroke(Color.white.opacity(isFocused ? 0.16 : 0.08), lineWidth: 1)
+            }
         }
-        .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(Color.white.opacity(isFocused ? 0.16 : 0.08), lineWidth: 1)
-        }
+        .buttonStyle(TVNoChromeButtonStyle())
+        .disabled(!isEnabled)
         .opacity((isFocused ? 1 : 0.88) * visibility)
         .scaleEffect((isFocused ? 1.04 : 0.98) - ((1 - visibility) * 0.08))
         .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 16 : 10)
-        .focusable(isEnabled, interactions: .activate)
-        .onTapGesture(perform: action)
         .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
         .focused($isFocused)
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
         .animation(.smooth(duration: 0.30, extraBounce: 0.02), value: visibility)
@@ -2812,37 +2939,37 @@ private struct HeroPrimaryButton: View {
 
     var body: some View {
 #if os(tvOS)
-        HStack(spacing: 12) {
-            if isLoading {
-                ProgressView()
-                Text("Preparing")
-            } else {
-                Image(systemName: "play.fill")
-                Text(title)
-            }
-        }
-        .font(.system(size: 24, weight: .semibold, design: .rounded))
-        .foregroundStyle(primaryButtonForeground)
-        .lineLimit(1)
-        .minimumScaleFactor(0.85)
-        .frame(minWidth: 318, minHeight: 78)
-        .padding(.horizontal, 26)
-        .background { primaryButtonBackground }
-        .contentShape(Capsule(style: .continuous))
-        .focusable(!isLoading, interactions: .activate)
-        .focused($isFocused)
-        .focusEffectDisabled(true)
-        .onTapGesture {
+        Button {
             guard !isLoading else { return }
             action()
+        } label: {
+            HStack(spacing: 12) {
+                if isLoading {
+                    ProgressView()
+                    Text("Preparing")
+                } else {
+                    Image(systemName: "play.fill")
+                    Text(title)
+                }
+            }
+            .font(.system(size: 24, weight: .semibold, design: .rounded))
+            .foregroundStyle(primaryButtonForeground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .frame(minWidth: 318, minHeight: 78)
+            .padding(.horizontal, 26)
+            .background { primaryButtonBackground }
+            .contentShape(Capsule(style: .continuous))
         }
+        .buttonStyle(TVNoChromeButtonStyle())
+        .disabled(isLoading)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? 1.03 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 24 : 12, x: 0, y: isFocused ? 14 : 8)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
-        .accessibilityRepresentation {
-            Button(isLoading ? "Preparing" : title, action: action)
-        }
 #else
         buttonContent
 #endif
@@ -2960,26 +3087,25 @@ private struct HeroSecondaryButton: View {
 
     var body: some View {
 #if os(tvOS)
-        Label(title, systemImage: systemImage)
-            .font(.system(size: 20, weight: .semibold, design: .rounded))
-            .foregroundStyle(buttonForeground)
-            .lineLimit(1)
-            .minimumScaleFactor(0.86)
-            .frame(minWidth: 196, minHeight: 72)
-            .padding(.horizontal, 20)
-            .background { buttonBackground }
-            .contentShape(Capsule(style: .continuous))
-        .focusable(true, interactions: .activate)
-        .onTapGesture(perform: action)
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .foregroundStyle(buttonForeground)
+                .lineLimit(1)
+                .minimumScaleFactor(0.86)
+                .frame(minWidth: 196, minHeight: 72)
+                .padding(.horizontal, 20)
+                .background { buttonBackground }
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(TVNoChromeButtonStyle())
         .scaleEffect(isFocused ? 1.03 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
         .focused($isFocused)
         .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
-        .accessibilityRepresentation {
-            Button(title, action: action)
-        }
 #else
         Button(action: action) {
             HStack(spacing: 10) {
@@ -3347,6 +3473,7 @@ private struct SeasonPickerView: View {
 
 private struct CastRowView: View {
     let cast: [PersonCredit]
+    let onMoveUp: (() -> Void)?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
 
@@ -3361,6 +3488,7 @@ private struct CastRowView: View {
                             itemWidth: itemWidth,
                             nameFontSize: nameFontSize,
                             roleFontSize: roleFontSize,
+                            onMoveUp: onMoveUp,
                             apiClient: apiClient,
                             imagePipeline: imagePipeline
                         )
@@ -3434,6 +3562,7 @@ private struct TVCastRowItem: View {
     let itemWidth: CGFloat
     let nameFontSize: CGFloat
     let roleFontSize: CGFloat
+    let onMoveUp: (() -> Void)?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
 
@@ -3466,6 +3595,11 @@ private struct TVCastRowItem: View {
         .focusable()
         .focused($isFocused)
         .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
+        .onMoveCommand { direction in
+            guard direction == .up else { return }
+            onMoveUp?()
+        }
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isFocused)
         .accessibilityElement(children: .combine)
     }
@@ -3544,6 +3678,7 @@ private struct RelatedRowView: View {
     let title: String
     let items: [MediaItem]
     let onSelect: (MediaItem) -> Void
+    let onMoveUp: (() -> Void)?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
 
@@ -3557,6 +3692,7 @@ private struct RelatedRowView: View {
                             item: item,
                             apiClient: apiClient,
                             imagePipeline: imagePipeline,
+                            onMoveUp: onMoveUp,
                             action: { onSelect(item) }
                         )
                         #else
@@ -3593,43 +3729,50 @@ private struct TVRelatedRowItem: View {
     let item: MediaItem
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
+    let onMoveUp: (() -> Void)?
     let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            PosterCardArtworkView(
-                item: item,
-                apiClient: apiClient,
-                imagePipeline: imagePipeline,
-                layoutStyle: .row,
-                focusStyle: .subtle
-            )
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 14) {
+                PosterCardArtworkView(
+                    item: item,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline,
+                    layoutStyle: .row,
+                    focusStyle: .subtle
+                )
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(item.name)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(isFocused ? .white : .white.opacity(0.92))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(height: titleBlockHeight, alignment: .topLeading)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.name)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(isFocused ? .white : .white.opacity(0.92))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(height: titleBlockHeight, alignment: .topLeading)
 
-                if let year = item.year {
-                    Text(String(year))
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(.white.opacity(isFocused ? 0.68 : 0.48))
-                        .lineLimit(1)
+                    if let year = item.year {
+                        Text(String(year))
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(.white.opacity(isFocused ? 0.68 : 0.48))
+                            .lineLimit(1)
+                    }
                 }
+                .padding(.horizontal, 4)
+                .frame(height: metadataBlockHeight, alignment: .topLeading)
             }
-            .padding(.horizontal, 4)
-            .frame(height: metadataBlockHeight, alignment: .topLeading)
+            .frame(width: relatedCardWidth, alignment: .leading)
         }
-        .frame(width: relatedCardWidth, alignment: .leading)
+        .buttonStyle(TVNoChromeButtonStyle())
         .scaleEffect(isFocused ? 1.045 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 26 : 12, x: 0, y: isFocused ? 16 : 8)
-        .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
-        .onTapGesture(perform: action)
+        .hoverEffectDisabled(true)
+        .onMoveCommand { direction in
+            guard direction == .up else { return }
+            onMoveUp?()
+        }
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)

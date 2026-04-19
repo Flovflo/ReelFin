@@ -97,6 +97,7 @@
 - The latest log regression (`resume=1077.5s` followed by fallback `resume=none` and first frame near 2s) is covered by tests that force a DirectPlay-capable MOV/MP4 source through recovery and assert `StartTimeTicks` plus an H.264 transcode route.
 - Detail-page playback warmup now passes resume/runtime/platform context into `PlaybackWarmupManager`, which deduplicates startup media-byte preheats by route, platform, and resume bucket; playback startup uses the same preheater path so a warmed detail page can avoid repeating untracked probes.
 - Series detail warmup now resolves Jellyfin Next Up before loading episodes, selects the matching season when the next episode is in a later season, and only falls back to first unplayed/first episode when the server has no Next Up target.
+- tvOS Home, Detail, Library, Search, and top navigation now use native no-chrome `Button` activation for selectable focus surfaces instead of custom focusable views with tap gestures; Detail row-up navigation also scrolls the target section into view before applying the focus handoff.
 
 ## Validation Results
 
@@ -118,6 +119,10 @@
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinDetailWarmupDerivedData -only-testing:PlaybackEngineTests/PlaybackWarmupManagerTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests`: passed, 8 tests
+- `xcodegen generate`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
 
 ## Remaining High-Value Follow-Ups
 

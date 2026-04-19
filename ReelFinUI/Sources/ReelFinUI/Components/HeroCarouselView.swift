@@ -714,26 +714,28 @@ private struct TVHeroCapsuleButton: View {
     let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 20, weight: .bold))
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20, weight: .bold))
 
-            Text(title)
-                .lineLimit(1)
-                .minimumScaleFactor(0.86)
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.86)
+            }
+            .font(.system(size: 22, weight: .semibold, design: .rounded))
+            .foregroundStyle(isFocused ? Color.black.opacity(0.92) : .white)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 16)
+            .background { backgroundView }
+            .contentShape(Capsule(style: .continuous))
         }
-        .font(.system(size: 22, weight: .semibold, design: .rounded))
-        .foregroundStyle(isFocused ? Color.black.opacity(0.92) : .white)
-        .padding(.horizontal, 28)
-        .padding(.vertical, 16)
-        .background { backgroundView }
-        .contentShape(Capsule(style: .continuous))
+        .buttonStyle(TVNoChromeButtonStyle())
         .tvMotionFocus(.heroButton, isFocused: isFocused)
-        .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
         .onMoveCommand(perform: handleMoveCommand)
-        .onTapGesture(perform: action)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Swipe left or right to browse featured titles.")
     }

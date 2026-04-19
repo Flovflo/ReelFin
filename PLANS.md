@@ -130,6 +130,17 @@
   - series Detail warmup chooses Jellyfin Next Up, including later seasons, before falling back to the first unplayed/first episode
   - transcode/remux resume warmup does not preheat stale HLS URLs that were resolved without `StartTimeTicks`
 
+### M14
+- Status: completed
+- Objective: make tvOS OK activation and upward focus return deterministic across Home, Detail, Library, Search, and top navigation.
+- Scope: `HomeView`, `DetailView`, tvOS card/button components, top navigation, search and library controls
+- Acceptance:
+  - Continue Watching and other tvOS rails use native `Button` activation instead of focusable views with tap gestures
+  - Detail rows can request a visible scroll target before transferring focus back to seasons or hero actions
+  - top navigation, search, and library controls use the same native activation path as Home and Detail
+  - native tvOS activation does not expose the system button chrome over custom ReelFin focus styling
+  - iOS build compatibility is preserved after shared SwiftUI file changes
+
 ## Validation Commands
 
 ```bash
@@ -165,6 +176,10 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests`: passed, 124 tests
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodegen generate`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
 
 ## Explicit Deferrals
 

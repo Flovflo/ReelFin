@@ -12,28 +12,29 @@ struct TVTopNavigationItem: View {
     let action: () -> Void
 
     var body: some View {
-        Label(destination.title, systemImage: destination.systemImage)
-            .labelStyle(.titleAndIcon)
-            .symbolRenderingMode(.monochrome)
-            .font(.system(size: 22, weight: .semibold, design: .rounded))
-            .foregroundStyle(labelColor)
-            .padding(.horizontal, 24)
-            .frame(height: ReelFinTheme.tvTopNavigationItemHeight)
-            .frame(minWidth: minimumWidth)
-            .background { highlightBackground }
-            .contentShape(Capsule(style: .continuous))
-            .scaleEffect(isFocused ? 1.02 : (isHighlighted ? 1.01 : 1))
-            .offset(y: isHighlighted ? -1 : 0)
-            .tvMotionFocus(.navItem, isFocused: isFocused, isSelected: isSelected)
-            .focusable(true, interactions: .activate)
-            .focused(focusedDestination, equals: destination)
-            .focused($isFocused)
-            .focusEffectDisabled(true)
-            .onTapGesture(perform: action)
-            .animation(ReelFinTheme.tvFocusSpring, value: isHighlighted)
-            .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
-            .accessibilityRepresentation { Button(destination.title, action: action) }
+        Button(action: action) {
+            Label(destination.title, systemImage: destination.systemImage)
+                .labelStyle(.titleAndIcon)
+                .symbolRenderingMode(.monochrome)
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .foregroundStyle(labelColor)
+                .padding(.horizontal, 24)
+                .frame(height: ReelFinTheme.tvTopNavigationItemHeight)
+                .frame(minWidth: minimumWidth)
+                .background { highlightBackground }
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(TVNoChromeButtonStyle())
+        .scaleEffect(isFocused ? 1.02 : (isHighlighted ? 1.01 : 1))
+        .offset(y: isHighlighted ? -1 : 0)
+        .tvMotionFocus(.navItem, isFocused: isFocused, isSelected: isSelected)
+        .focused(focusedDestination, equals: destination)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
+        .animation(ReelFinTheme.tvFocusSpring, value: isHighlighted)
+        .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var labelColor: Color {

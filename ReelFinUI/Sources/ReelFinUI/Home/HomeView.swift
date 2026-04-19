@@ -9,9 +9,8 @@ import UIKit
 
 #if os(tvOS)
 /// A focusable card for Apple TV Siri Remote navigation.
-/// Uses .focusable(interactions: .activate) on the VStack directly — no Button wrapper.
-/// This avoids the default tvOS focused Button glass so we can control a stronger custom
-/// focus treatment that matches the rest of the home shelf motion.
+/// Uses a plain Button so Siri Remote OK activates reliably while keeping the
+/// custom focus treatment that matches the rest of the home shelf motion.
 private struct TVCardButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
@@ -34,26 +33,26 @@ private struct TVCardButton: View {
     var body: some View {
         let transitionNamespace = namespaceProvider(item.id)
 
-        TVHomeShelfCard(
-            item: item,
-            kind: kind,
-            ranking: isTop10 ? (index + 1) : nil,
-            layoutStyle: layoutStyle,
-            progress: progress,
-            optimizationStatus: optimizationStatus,
-            namespace: transitionNamespace,
-            apiClient: apiClient,
-            imagePipeline: imagePipeline,
-            isFocused: isFocused,
-            isActivating: isActivating,
-            usesNativeZoomTransition: usesNativeZoomTransition(namespace: transitionNamespace)
-        )
-        // focusable on the VStack itself — no Button = no Liquid Glass container.
-        // onTapGesture fires when the Siri Remote touchpad is clicked on the focused element.
-        .focusable(true, interactions: .activate)
+        Button(action: handleActivation) {
+            TVHomeShelfCard(
+                item: item,
+                kind: kind,
+                ranking: isTop10 ? (index + 1) : nil,
+                layoutStyle: layoutStyle,
+                progress: progress,
+                optimizationStatus: optimizationStatus,
+                namespace: transitionNamespace,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
+                isFocused: isFocused,
+                isActivating: isActivating,
+                usesNativeZoomTransition: usesNativeZoomTransition(namespace: transitionNamespace)
+            )
+        }
+        .buttonStyle(TVNoChromeButtonStyle())
         .onMoveCommand(perform: handleMoveCommand)
-        .onTapGesture(perform: handleActivation)
         .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
         .focused($isFocused)
         .modifier(TVHomeItemFocusModifier(itemID: item.id, focusedItemID: focusedItemID))
         .id(item.id)

@@ -26,27 +26,28 @@ struct SeasonChipButton: View {
     // ─────────────────────────────────────────────────────────────────────────
     #if os(tvOS)
     private var tvBody: some View {
-        Text(title)
-            .lineLimit(1)
-            .minimumScaleFactor(0.82)
-            .font(.system(size: 24, weight: isSelected || isFocused ? .semibold : .medium, design: .rounded))
-            .foregroundStyle(tvForeground)
-            .padding(.horizontal, 26)
-            .frame(minHeight: 66)
-            .background { tvBackground }
-            .contentShape(Capsule(style: .continuous))
-        .focusable(true, interactions: .activate)
-        .onTapGesture(perform: action)
+        Button(action: action) {
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .font(.system(size: 24, weight: isSelected || isFocused ? .semibold : .medium, design: .rounded))
+                .foregroundStyle(tvForeground)
+                .padding(.horizontal, 26)
+                .frame(minHeight: 66)
+                .background { tvBackground }
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(TVNoChromeButtonStyle())
         .tvMotionFocus(.chip, isFocused: isFocused, isSelected: isSelected)
         .focused($isFocused)
         .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? 1.02 : 1)
         .shadow(color: .black.opacity(isFocused ? 0.26 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
         .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityValue(isSelected ? "Current season" : "")
-        .accessibilityRepresentation { Button(title, action: action) }
     }
     #endif
 

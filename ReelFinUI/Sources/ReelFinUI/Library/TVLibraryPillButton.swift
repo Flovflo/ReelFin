@@ -81,32 +81,33 @@ struct TVLibraryPillButton: View {
     }
 
     private var content: some View {
-        HStack(spacing: 10) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .semibold))
-                    .symbolRenderingMode(.monochrome)
-            }
+        Button(action: action) {
+            HStack(spacing: 10) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 20, weight: .semibold))
+                        .symbolRenderingMode(.monochrome)
+                }
 
-            Text(title)
-                .lineLimit(1)
-                .minimumScaleFactor(0.86)
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.86)
+            }
+            .font(.system(size: 21, weight: .semibold, design: .rounded))
+            .foregroundStyle(labelColor)
+            .padding(.horizontal, 24)
+            .frame(minHeight: 60)
+            .background { highlightBackground }
+            .contentShape(Capsule(style: .continuous))
         }
-        .font(.system(size: 21, weight: .semibold, design: .rounded))
-        .foregroundStyle(labelColor)
-        .padding(.horizontal, 24)
-        .frame(minHeight: 60)
-        .background { highlightBackground }
-        .contentShape(Capsule(style: .continuous))
+        .buttonStyle(TVNoChromeButtonStyle())
         .scaleEffect(isFocused ? 1.02 : 1)
-        .focusable(true, interactions: .activate)
         .onMoveCommand(perform: handleMoveCommand)
         .focused($isFocused)
         .focusEffectDisabled(true)
-        .onTapGesture(perform: action)
+        .hoverEffectDisabled(true)
         .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityRepresentation { Button(title, action: action) }
     }
 }
 #endif

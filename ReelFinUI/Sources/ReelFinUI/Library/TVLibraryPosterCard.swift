@@ -13,28 +13,31 @@ struct TVLibraryPosterCard: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ReelFinTheme.tvCardMetadataSpacing) {
-            PosterCardArtworkView(
-                item: item,
-                apiClient: dependencies.apiClient,
-                imagePipeline: dependencies.imagePipeline,
-                layoutStyle: .grid
-            )
-            .clipShape(surfaceShape)
+        Button(action: handleActivation) {
+            VStack(alignment: .leading, spacing: ReelFinTheme.tvCardMetadataSpacing) {
+                PosterCardArtworkView(
+                    item: item,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline,
+                    layoutStyle: .grid
+                )
+                .clipShape(surfaceShape)
 
-            PosterCardMetadataView(
-                item: item,
-                layoutStyle: .grid,
-                titleLineLimit: 2
-            )
-            .padding(.horizontal, 10)
-            .padding(.bottom, 2)
-            .opacity(isFocused ? 1 : 0.74)
+                PosterCardMetadataView(
+                    item: item,
+                    layoutStyle: .grid,
+                    titleLineLimit: 2
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 2)
+                .opacity(isFocused ? 1 : 0.74)
+            }
+            .frame(width: cardContentWidth, alignment: .leading)
+            .background { focusSurface }
+            .clipShape(surfaceShape)
+            .contentShape(surfaceShape)
         }
-        .frame(width: cardContentWidth, alignment: .leading)
-        .background { focusSurface }
-        .clipShape(surfaceShape)
-        .contentShape(surfaceShape)
+        .buttonStyle(TVNoChromeButtonStyle())
         .tvMotionFocus(.libraryPoster, isFocused: isFocused)
         .scaleEffect(isActivating ? 1.04 : 1)
         .shadow(
@@ -43,11 +46,10 @@ struct TVLibraryPosterCard: View {
             x: 0,
             y: isFocused ? 16 : 10
         )
-        .focusable(true, interactions: .activate)
         .onMoveCommand(perform: handleMoveCommand)
         .focused($isFocused)
         .focusEffectDisabled(true)
-        .onTapGesture(perform: handleActivation)
+        .hoverEffectDisabled(true)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("media_card_button_\(item.id)")
         .onChange(of: isFocused) { _, focused in

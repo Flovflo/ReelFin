@@ -302,3 +302,19 @@ private struct TVMotionFocusModifier: ViewModifier {
             .animation(TVMotion.focusAnimation, value: isSelected)
     }
 }
+
+struct TVNoChromeButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        #if os(tvOS)
+        configuration.label
+            .opacity(configuration.isPressed ? 0.94 : 1)
+            .focusEffectDisabled(true)
+            .hoverEffectDisabled(true)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+        #else
+        configuration.label
+            .opacity(configuration.isPressed ? 0.94 : 1)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+        #endif
+    }
+}

@@ -51,28 +51,30 @@ public struct EpisodeCardView: View {
     // ─────────────────────────────────────────────────────────────────────────
     #if os(tvOS)
     private var tvBody: some View {
-        ZStack(alignment: .bottomLeading) {
-            tvArtworkLayer
-            tvOverlayGradient
-            tvTextOverlay
+        Button(action: onSelect) {
+            ZStack(alignment: .bottomLeading) {
+                tvArtworkLayer
+                tvOverlayGradient
+                tvTextOverlay
+            }
+            .frame(width: width, height: tvCardHeight, alignment: .leading)
+            .background(Color.white.opacity(0.03), in: tvCardShape)
+            .overlay {
+                tvCardShape
+                    .stroke(
+                        Color.white.opacity(isFocused ? 0.18 : (isSelected ? 0.16 : 0.08)),
+                        lineWidth: isFocused ? 1.2 : 0.9
+                    )
+            }
+            .clipShape(tvCardShape)
+            .contentShape(tvCardShape)
         }
-        .frame(width: width, height: tvCardHeight, alignment: .leading)
-        .background(Color.white.opacity(0.03), in: tvCardShape)
-        .overlay {
-            tvCardShape
-                .stroke(
-                    Color.white.opacity(isFocused ? 0.18 : (isSelected ? 0.16 : 0.08)),
-                    lineWidth: isFocused ? 1.2 : 0.9
-                )
-        }
-        .clipShape(tvCardShape)
-        .contentShape(tvCardShape)
+        .buttonStyle(TVNoChromeButtonStyle())
         .tvMotionFocus(.episodeCard, isFocused: isFocused)
         .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 14 : 8)
-        .focusable(true, interactions: .activate)
         .focused($isFocused)
         .focusEffectDisabled(true)
-        .onTapGesture(perform: onSelect)
+        .hoverEffectDisabled(true)
         .onMoveCommand { direction in
             guard direction == .up else { return }
             onMoveUp?()

@@ -130,35 +130,35 @@ struct TVSearchView: View {
     }
 
     private func searchHeader(containerWidth: CGFloat) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(isSearchChromeHighlighted ? .white.opacity(0.92) : .white.opacity(0.68))
+        Button(action: activateSearch) {
+            HStack(spacing: 14) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(isSearchChromeHighlighted ? .white.opacity(0.92) : .white.opacity(0.68))
 
-            Text(searchDisplayText)
-                .font(.system(size: 24, weight: .semibold, design: .rounded))
-                .foregroundStyle(searchDisplayColor)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(searchDisplayText)
+                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .foregroundStyle(searchDisplayColor)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 24)
+            .frame(width: searchFieldWidth(for: containerWidth), height: 72, alignment: .leading)
+            .background { searchFieldBackground }
+            .overlay { searchFieldStroke }
+            .shadow(
+                color: .black.opacity(isSearchChromeHighlighted ? 0.18 : 0.10),
+                radius: isSearchChromeHighlighted ? 18 : 12,
+                x: 0,
+                y: isSearchChromeHighlighted ? 10 : 7
+            )
+            .frame(maxWidth: .infinity, alignment: .center)
+            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         }
-        .padding(.horizontal, 24)
-        .frame(width: searchFieldWidth(for: containerWidth), height: 72, alignment: .leading)
-        .background { searchFieldBackground }
-        .overlay { searchFieldStroke }
-        .shadow(
-            color: .black.opacity(isSearchChromeHighlighted ? 0.18 : 0.10),
-            radius: isSearchChromeHighlighted ? 18 : 12,
-            x: 0,
-            y: isSearchChromeHighlighted ? 10 : 7
-        )
-        .frame(maxWidth: .infinity, alignment: .center)
-        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .focusable(true, interactions: .activate)
+        .buttonStyle(TVNoChromeButtonStyle())
         .focused($isSearchBarFocused)
         .focusEffectDisabled(true)
-        .onTapGesture {
-            activateSearch()
-        }
+        .hoverEffectDisabled(true)
         .onMoveCommand { direction in
             guard direction == .up else { return }
             requestTopNavigationFocus?(.search)
