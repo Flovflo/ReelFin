@@ -104,6 +104,21 @@
   - HLS playlists, init segments, and media segments can be stored on disk with TTL and LRU eviction
   - zero-stall validation has one repeatable script entry point for iOS/tvOS build and targeted startup tests
 
+### M12
+- Status: completed
+- Objective: keep high-bitrate iOS DirectPlay startup audiovisual-synchronized without reintroducing long visible waits.
+- Scope: `PlaybackSessionController`, startup readiness policy
+- Acceptance:
+  - DirectPlay startup remains paused until the bounded readiness gate finishes
+  - iOS DirectPlay does not start after a readiness timeout unless AVPlayer reports measured buffer
+  - measured preferred buffer wins over a late timeout sample instead of triggering a false fallback
+  - iOS DirectPlay prerolls a video frame before allowing audio playback to start
+  - iOS DirectPlay preroll failures recover via a safer playback profile instead of starting audio-only
+  - startup DirectPlay recovery preserves the original resume position via `StartTimeTicks`
+  - startup DirectPlay stalls fall back to HLS/transcode recovery instead of reloading the same progressive URL or another direct route
+  - iOS high-bitrate DirectPlay uses a smaller no-stall buffer target instead of a 30s startup-heavy target
+  - first-frame telemetry requires an actual video pixel buffer when a video output is attached
+
 ## Validation Commands
 
 ```bash
@@ -134,6 +149,10 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/MediaGatewayCacheKeyTests -only-testing:PlaybackEngineTests/MediaGatewayIndexTests -only-testing:PlaybackEngineTests/HLSSegmentDiskCacheTests`: passed, 13 tests
 - `bash -n scripts/run_zero_stall_validation.sh`: passed
 - `scripts/run_zero_stall_validation.sh`: passed, artifacts in `.artifacts/zero-stall/20260419-160313`
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed, 42 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests`: passed, 124 tests
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 
 ## Explicit Deferrals
 

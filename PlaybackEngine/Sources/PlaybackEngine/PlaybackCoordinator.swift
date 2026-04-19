@@ -87,7 +87,8 @@ public actor PlaybackCoordinator {
         mode: PlaybackMode = .performance,
         allowTranscodingFallbackInPerformance: Bool = true,
         transcodeProfile: TranscodeURLProfile = .serverDefault,
-        startTimeTicks: Int64? = nil
+        startTimeTicks: Int64? = nil,
+        allowDirectRoutes: Bool = true
     ) async throws -> PlaybackAssetSelection {
         guard
             let configuration = await apiClient.currentConfiguration(),
@@ -104,6 +105,11 @@ public actor PlaybackCoordinator {
             configuration: configuration
         )
         initialOptions.startTimeTicks = startTimeTicks
+        if !allowDirectRoutes {
+            initialOptions.enableDirectPlay = false
+            initialOptions.enableDirectStream = false
+            initialOptions.allowTranscoding = true
+        }
         let initialOptionBitrate = initialOptions.maxStreamingBitrate ?? maxBitrate
 
         let requestInterval = SignpostInterval(signposter: Signpost.playbackInfo, name: "playback_info_request")
@@ -121,7 +127,8 @@ public actor PlaybackCoordinator {
             transcodeProfile: transcodeProfile,
             maxBitrate: initialOptionBitrate,
             mode: initialOptions.mode,
-            startTimeTicks: startTimeTicks
+            startTimeTicks: startTimeTicks,
+            allowDirectRoutes: allowDirectRoutes
         ) {
             selectionInterval.end(name: "playback_url_selection", message: "selection_complete")
             return selection
@@ -135,6 +142,11 @@ public actor PlaybackCoordinator {
                 configuration: configuration
             )
             fallbackOptions.startTimeTicks = startTimeTicks
+            if !allowDirectRoutes {
+                fallbackOptions.enableDirectPlay = false
+                fallbackOptions.enableDirectStream = false
+                fallbackOptions.allowTranscoding = true
+            }
             let fallbackBitrate = fallbackOptions.maxStreamingBitrate ?? maxBitrate
             let fallbackRequest = SignpostInterval(signposter: Signpost.playbackInfo, name: "playback_info_request_fallback")
             let fallbackSources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: fallbackOptions)
@@ -149,7 +161,8 @@ public actor PlaybackCoordinator {
                 transcodeProfile: transcodeProfile,
                 maxBitrate: fallbackBitrate,
                 mode: fallbackOptions.mode,
-                startTimeTicks: startTimeTicks
+                startTimeTicks: startTimeTicks,
+                allowDirectRoutes: allowDirectRoutes
             ) {
                 selectionInterval.end(name: "playback_url_selection", message: "fallback_selection_complete")
                 return fallbackSelection
@@ -170,6 +183,7 @@ public actor PlaybackCoordinator {
         maxBitrate: Int,
         mode: PlaybackMode,
         startTimeTicks: Int64?,
+        allowDirectRoutes: Bool,
         allowDedicatedProfileRefetch: Bool = true
     ) async throws -> PlaybackAssetSelection? {
         guard let decision = decisionEngine.decide(
@@ -177,7 +191,8 @@ public actor PlaybackCoordinator {
             sources: sources,
             configuration: configuration,
             token: session.token,
-            allowTranscoding: allowTranscoding
+            allowTranscoding: allowTranscoding,
+            allowDirectRoutes: allowDirectRoutes
         ) else {
             return nil
         }
@@ -255,7 +270,8 @@ public actor PlaybackCoordinator {
                transcodeProfile: effectiveProfile,
                maxBitrate: maxBitrate,
                mode: mode,
-               startTimeTicks: startTimeTicks
+               startTimeTicks: startTimeTicks,
+               allowDirectRoutes: allowDirectRoutes
            ) {
             return dedicatedSelection
         }
@@ -352,7 +368,8 @@ public actor PlaybackCoordinator {
         transcodeProfile: TranscodeURLProfile,
         maxBitrate: Int,
         mode: PlaybackMode,
-        startTimeTicks: Int64?
+        startTimeTicks: Int64?,
+        allowDirectRoutes: Bool
     ) async throws -> PlaybackAssetSelection? {
         var options = playbackOptions(
             mode: mode,
@@ -361,6 +378,11 @@ public actor PlaybackCoordinator {
             configuration: configuration
         )
         options.startTimeTicks = startTimeTicks
+        if !allowDirectRoutes {
+            options.enableDirectPlay = false
+            options.enableDirectStream = false
+            options.allowTranscoding = true
+        }
 
         let dedicatedSources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: options)
         let dedicatedBitrate = options.maxStreamingBitrate ?? maxBitrate
@@ -374,6 +396,7 @@ public actor PlaybackCoordinator {
             maxBitrate: dedicatedBitrate,
             mode: options.mode,
             startTimeTicks: startTimeTicks,
+            allowDirectRoutes: allowDirectRoutes,
             allowDedicatedProfileRefetch: false
         )
     }

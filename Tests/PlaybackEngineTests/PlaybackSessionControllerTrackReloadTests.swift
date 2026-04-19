@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 @testable import PlaybackEngine
 @testable import ReelFinUI
 import Shared
@@ -244,9 +245,77 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertEqual(policy.forwardBufferDuration, 30)
+        XCTAssertEqual(policy.forwardBufferDuration, 12)
         XCTAssertTrue(policy.waitsToMinimizeStalling)
         XCTAssertEqual(policy.reason, "ios_no_stall_directplay_guard")
+    }
+
+    func testPresentationSizeAloneDoesNotCountAsRenderedFrameWhenOutputIsAttached() {
+        XCTAssertFalse(
+            PlaybackSessionController.hasRenderableVideoFrame(
+                copiedPixelBuffer: false,
+                presentationSize: CGSize(width: 3840, height: 1608),
+                videoOutputAttached: true
+            )
+        )
+    }
+
+    func testCopiedPixelBufferCountsAsRenderedFrame() {
+        XCTAssertTrue(
+            PlaybackSessionController.hasRenderableVideoFrame(
+                copiedPixelBuffer: true,
+                presentationSize: CGSize(width: 3840, height: 1608),
+                videoOutputAttached: true
+            )
+        )
+    }
+
+    func testHighBitrateIPhoneDirectPlayPrerollsVideoBeforeAudioStart() {
+        let source = MediaSource(
+            id: "high-bitrate-source",
+            itemID: "item-high-bitrate",
+            name: "High bitrate stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldPrerollVideoBeforeAudioStart(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-high-bitrate/stream?static=true")!),
+                source: source,
+                isTVOS: false
+            )
+        )
+    }
+
+    func testTvOSDirectPlayDoesNotUseIPhoneVideoPrerollGate() {
+        let source = MediaSource(
+            id: "high-bitrate-source",
+            itemID: "item-high-bitrate",
+            name: "High bitrate stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPrerollVideoBeforeAudioStart(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-high-bitrate/stream?static=true")!),
+                source: source,
+                isTVOS: true
+            )
+        )
     }
 
     func testPremiumProgressiveDirectPlayUsesStallResistantBufferingOnTvOS() {

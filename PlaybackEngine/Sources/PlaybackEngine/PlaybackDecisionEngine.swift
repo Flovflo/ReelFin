@@ -518,9 +518,11 @@ public struct PlaybackDecisionEngine: Sendable {
         sources: [MediaSource],
         configuration: ServerConfiguration,
         token: String?,
-        allowTranscoding: Bool
+        allowTranscoding: Bool,
+        allowDirectRoutes: Bool = true
     ) -> PlaybackDecision? {
-        if let rawDecision = rawDirectPlayDecision(
+        if allowDirectRoutes,
+           let rawDecision = rawDirectPlayDecision(
             itemID: itemID,
             sources: sources,
             configuration: configuration,
@@ -544,47 +546,51 @@ public struct PlaybackDecisionEngine: Sendable {
             sources: sources,
             itemID: itemID,
             configuration: configuration,
-            token: token
+            token: token,
+            allowTranscoding: allowTranscoding,
+            allowDirectRoutes: allowDirectRoutes
         ) {
             return plannedDecision
         }
 
-        let directBest = sources
-            .compactMap { directPlayCandidate(for: $0, itemID: itemID, configuration: configuration, token: token) }
-            .max(by: { $0.score < $1.score })
-
-        if let directBest {
-            return PlaybackDecision(
-                sourceID: directBest.source.id,
-                route: .directPlay(directBest.url),
-                playbackPlan: playbackPlan
-            )
-        }
-
-        if Self.isNativeBridgeEnabled, !NativeBridgeFailureCache.isDisabled(itemID: itemID) {
-            let bridgeBest = sources
-                .compactMap { nativeBridgeCandidate(for: $0, itemID: itemID, configuration: configuration) }
+        if allowDirectRoutes {
+            let directBest = sources
+                .compactMap { directPlayCandidate(for: $0, itemID: itemID, configuration: configuration, token: token) }
                 .max(by: { $0.score < $1.score })
 
-            if let bridgeBest {
+            if let directBest {
                 return PlaybackDecision(
-                    sourceID: bridgeBest.source.id,
-                    route: .nativeBridge(bridgeBest.plan),
+                    sourceID: directBest.source.id,
+                    route: .directPlay(directBest.url),
                     playbackPlan: playbackPlan
                 )
             }
-        }
 
-        let remuxBest = sources
-            .compactMap { remuxCandidate(for: $0, configuration: configuration) }
-            .max(by: { $0.score < $1.score })
+            if Self.isNativeBridgeEnabled, !NativeBridgeFailureCache.isDisabled(itemID: itemID) {
+                let bridgeBest = sources
+                    .compactMap { nativeBridgeCandidate(for: $0, itemID: itemID, configuration: configuration) }
+                    .max(by: { $0.score < $1.score })
 
-        if let remuxBest {
-            return PlaybackDecision(
-                sourceID: remuxBest.source.id,
-                route: .remux(remuxBest.url),
-                playbackPlan: playbackPlan
-            )
+                if let bridgeBest {
+                    return PlaybackDecision(
+                        sourceID: bridgeBest.source.id,
+                        route: .nativeBridge(bridgeBest.plan),
+                        playbackPlan: playbackPlan
+                    )
+                }
+            }
+
+            let remuxBest = sources
+                .compactMap { remuxCandidate(for: $0, configuration: configuration) }
+                .max(by: { $0.score < $1.score })
+
+            if let remuxBest {
+                return PlaybackDecision(
+                    sourceID: remuxBest.source.id,
+                    route: .remux(remuxBest.url),
+                    playbackPlan: playbackPlan
+                )
+            }
         }
 
         guard allowTranscoding else {
@@ -680,7 +686,9 @@ public struct PlaybackDecisionEngine: Sendable {
         sources: [MediaSource],
         itemID: String,
         configuration: ServerConfiguration,
-        token: String?
+        token: String?,
+        allowTranscoding: Bool,
+        allowDirectRoutes: Bool
     ) -> PlaybackDecision? {
         guard plan.lane != .rejected else { return nil }
         guard let sourceID = plan.sourceID, let source = sources.first(where: { $0.id == sourceID }) else {
@@ -689,19 +697,34 @@ public struct PlaybackDecisionEngine: Sendable {
 
         switch plan.lane {
         case .nativeDirectPlay:
-            guard let url = directPlayableURL(for: source, itemID: itemID, configuration: configuration, token: token)
-                ?? plan.targetURL else { return nil }
+            if allowDirectRoutes {
+                guard let url = directPlayableURL(for: source, itemID: itemID, configuration: configuration, token: token)
+                    ?? plan.targetURL else { return nil }
+                if qualityMode(for: source, configuration: configuration) == .strictQuality,
+                   !isStrictRouteAllowed(source: source, route: .directPlay(url)) {
+                    return nil
+                }
+                return PlaybackDecision(sourceID: sourceID, route: .directPlay(url), playbackPlan: plan)
+            }
+
+            guard allowTranscoding else { return nil }
+            let fallbackURL = source.transcodeURL ?? buildTranscodeURL(
+                itemID: itemID,
+                source: source,
+                configuration: configuration,
+                token: token
+            )
             if qualityMode(for: source, configuration: configuration) == .strictQuality,
-               !isStrictRouteAllowed(source: source, route: .directPlay(url)) {
+               !isStrictRouteAllowed(source: source, route: .transcode(fallbackURL)) {
                 return nil
             }
-            return PlaybackDecision(sourceID: sourceID, route: .directPlay(url), playbackPlan: plan)
+            return PlaybackDecision(sourceID: sourceID, route: .transcode(fallbackURL), playbackPlan: plan)
         case .jitRepackageHLS:
             // For Apple-native containers, do not force a transcode lane just because
             // the planner selected jit packaging. Prefer direct play/remux when valid.
             let container = source.normalizedContainer
             let isAppleContainer = container == "mp4" || container == "m4v" || container == "mov"
-            if isAppleContainer {
+            if allowDirectRoutes, isAppleContainer {
                 if let directURL = directPlayableURL(for: source, itemID: itemID, configuration: configuration, token: token),
                    isDirectPlayable(source: source, url: directURL) {
                     if qualityMode(for: source, configuration: configuration) == .strictQuality,
@@ -723,7 +746,7 @@ public struct PlaybackDecisionEngine: Sendable {
             // For MKV with compatible codecs, prefer DirectStream (remux) which
             // lets Jellyfin repackage MKV→MP4 without re-encoding video/audio.
             // Only fall back to transcode when codecs are truly incompatible.
-            if source.supportsDirectStream, let remuxURL = source.directStreamURL {
+            if allowDirectRoutes, source.supportsDirectStream, let remuxURL = source.directStreamURL {
                 let codecsCompatible = hasCompatibleCodecs(source: source)
                 if codecsCompatible,
                    !shouldAvoidRemuxForReliability(source: source, url: remuxURL) {

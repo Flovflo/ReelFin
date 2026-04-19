@@ -92,6 +92,9 @@
 - Added token-safe media cache keys and a durable `MediaGatewayIndex` so future player warmup and cache promotion work can reason about route, user/server scope, audio/subtitle choice, resume bucket, TTL, byte size, and LRU order without persisting raw credentials.
 - Added `HLSSegmentDiskCache` as the first concrete media payload cache for playlists, init segments, and media segments, with hashed filenames, TTL expiry, LRU eviction, corrupt-index recovery, and sensitive-material regression tests.
 - Added `scripts/run_zero_stall_validation.sh` as a repeatable validation runner for XcodeGen, iOS build, tvOS build, startup/detail tests, and App Store screenshot tests.
+- High-bitrate iOS DirectPlay startup now keeps AVPlayer paused through replacement, seek, bounded readiness gating, and video preroll, refuses timeout-based start when measured buffer is still empty, uses a 12s no-stall buffer target instead of the 30s startup-heavy target, and only marks first frame after a real video pixel buffer when video output is attached.
+- Startup DirectPlay stalls, readiness timeouts, and video-preroll failures now preserve resume ticks and recover through direct-route-disabled HLS/transcode profiles instead of replaying the same progressive DirectPlay path that just failed.
+- The latest log regression (`resume=1077.5s` followed by fallback `resume=none` and first frame near 2s) is covered by tests that force a DirectPlay-capable MOV/MP4 source through recovery and assert `StartTimeTicks` plus an H.264 transcode route.
 
 ## Validation Results
 
@@ -108,6 +111,10 @@
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/MediaGatewayCacheKeyTests -only-testing:PlaybackEngineTests/MediaGatewayIndexTests -only-testing:PlaybackEngineTests/HLSSegmentDiskCacheTests`: passed, 13 tests
 - `bash -n scripts/run_zero_stall_validation.sh`: passed
 - `scripts/run_zero_stall_validation.sh`: passed, artifacts in `.artifacts/zero-stall/20260419-160313`
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed, 42 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests`: passed, 124 tests
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 
 ## Remaining High-Value Follow-Ups
 

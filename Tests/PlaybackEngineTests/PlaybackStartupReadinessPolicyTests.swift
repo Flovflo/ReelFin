@@ -36,11 +36,12 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertEqual(requirement?.minimumBufferDuration, 8)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 20)
-        XCTAssertEqual(requirement?.timeout, 6)
+        XCTAssertEqual(requirement?.minimumBufferDuration, 5)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 10)
+        XCTAssertEqual(requirement?.timeout, 4)
         XCTAssertEqual(requirement?.pollInterval, 0.15)
         XCTAssertEqual(requirement?.reason, "ios_resume_directplay_guard")
+        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
     }
 
     func testRequirementUsesIPhoneHLSPolicyForDirectPlayPlaylist() {
@@ -125,7 +126,8 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             preferredBufferDuration: 4,
             timeout: 1,
             pollInterval: 0.12,
-            reason: "ios_nativebridge"
+            reason: "ios_nativebridge",
+            allowsTimeoutStart: true
         )
 
         XCTAssertTrue(
@@ -144,7 +146,8 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             preferredBufferDuration: 4,
             timeout: 1,
             pollInterval: 0.12,
-            reason: "ios_nativebridge"
+            reason: "ios_nativebridge",
+            allowsTimeoutStart: true
         )
 
         XCTAssertFalse(
@@ -166,13 +169,54 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
     }
 
-    func testShouldStartReturnsTrueAfterTimeoutEvenWithLowBuffer() {
+    func testShouldStartHonorsTimeoutStartPolicyWithLowBuffer() {
         let requirement = PlaybackStartupReadinessPolicy.Requirement(
             minimumBufferDuration: 2,
             preferredBufferDuration: 4,
             timeout: 1,
             pollInterval: 0.12,
-            reason: "ios_nativebridge"
+            reason: "ios_nativebridge",
+            allowsTimeoutStart: false
+        )
+
+        XCTAssertFalse(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 0,
+                likelyToKeepUp: true,
+                elapsedSeconds: 1,
+                requirement: requirement
+            )
+        )
+    }
+
+    func testShouldStartAcceptsMeasuredBufferAtTimeoutForStrictPolicies() {
+        let requirement = PlaybackStartupReadinessPolicy.Requirement(
+            minimumBufferDuration: 5,
+            preferredBufferDuration: 10,
+            timeout: 4,
+            pollInterval: 0.15,
+            reason: "ios_resume_directplay_guard",
+            allowsTimeoutStart: false
+        )
+
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 10.4,
+                likelyToKeepUp: true,
+                elapsedSeconds: 4.03,
+                requirement: requirement
+            )
+        )
+    }
+
+    func testShouldStartPreservesTimeoutStartForPermissivePolicies() {
+        let requirement = PlaybackStartupReadinessPolicy.Requirement(
+            minimumBufferDuration: 2,
+            preferredBufferDuration: 4,
+            timeout: 1,
+            pollInterval: 0.12,
+            reason: "ios_nativebridge",
+            allowsTimeoutStart: true
         )
 
         XCTAssertTrue(

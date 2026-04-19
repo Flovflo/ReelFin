@@ -50,8 +50,9 @@ enum PlaybackStartupPreheater {
                 rangeStart: requestPlan.rangeStart,
                 reason: requestPlan.reason
             )
+            let rangeStart = result.rangeStart.map(String.init) ?? "none"
             AppLog.playback.info(
-                "playback.startup.preheat.done — item=\(selection.source.itemID.prefix(8), privacy: .public) bytes=\(result.byteCount, privacy: .public) elapsed=\(result.elapsedSeconds, format: .fixed(precision: 3)) bitrate=\(Int(result.observedBitrate), privacy: .public) reason=\(result.reason, privacy: .public)"
+                "playback.startup.preheat.done — item=\(selection.source.itemID.prefix(8), privacy: .public) bytes=\(result.byteCount, privacy: .public) elapsed=\(result.elapsedSeconds, format: .fixed(precision: 3)) bitrate=\(Int(result.observedBitrate), privacy: .public) rangeStart=\(rangeStart, privacy: .public) reason=\(result.reason, privacy: .public)"
             )
             return result
         } catch {

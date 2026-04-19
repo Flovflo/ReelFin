@@ -14,6 +14,9 @@ public enum StartupFailureReason: String, Sendable, Equatable {
     case networkTimeout = "network_timeout"
     case playerItemFailed = "player_item_failed"
     case playerItemFailedTransient = "player_item_failed_transient"
+    case startupReadinessTimeout = "startup_readiness_timeout"
+    case startupVideoPrerollTimeout = "startup_video_preroll_timeout"
+    case directPlayStall = "directplay_stall"
     case startupWatchdogExpired = "startup_watchdog"
     case nativeBridgePackagingFailure = "nativebridge_packaging_failure"
     case unknownStartupFailure = "unknown_startup_failure"
@@ -22,6 +25,7 @@ public enum StartupFailureReason: String, Sendable, Equatable {
     public var shouldTriggerRecovery: Bool {
         switch self {
         case .decodedFrameWatchdog, .readyButNoVideoFrame, .decoderStall, .presentationSizeZero,
+             .startupReadinessTimeout, .startupVideoPrerollTimeout, .directPlayStall,
              .startupWatchdogExpired, .playerItemFailed, .firstSegmentTimeout:
             return true
         case .manifestLoadFailed, .networkTimeout, .playerItemFailedTransient:

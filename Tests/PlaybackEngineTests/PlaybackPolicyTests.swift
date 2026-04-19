@@ -85,6 +85,29 @@ final class PlaybackPolicyTests: XCTestCase {
         )
     }
 
+    func testDirectPlayStartupRecoveryDisablesDirectRoutes() {
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.startupReadinessTimeout.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.startupVideoPrerollTimeout.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.directPlayStall.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.playerItemFailed.rawValue
+            )
+        )
+    }
+
     func testInitialProfilePromotesStoredH264FallbackToHEVCForDolbyVisionItems() {
         let profile = PlaybackSessionController.initialProfile(
             stored: .forceH264Transcode,
@@ -641,6 +664,12 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertTrue(StartupFailureReason.decodedFrameWatchdog.shouldTriggerRecovery)
     }
 
+    func testStartupFailureReasonDirectPlayStartupGuardsTriggerRecovery() {
+        XCTAssertTrue(StartupFailureReason.startupReadinessTimeout.shouldTriggerRecovery)
+        XCTAssertTrue(StartupFailureReason.startupVideoPrerollTimeout.shouldTriggerRecovery)
+        XCTAssertTrue(StartupFailureReason.directPlayStall.shouldTriggerRecovery)
+    }
+
     func testStartupFailureReasonTransientDoesNotTriggerRecovery() {
         XCTAssertFalse(StartupFailureReason.playerItemFailedTransient.shouldTriggerRecovery)
     }
@@ -658,6 +687,9 @@ final class PlaybackPolicyTests: XCTestCase {
             .decoderStall,
             .presentationSizeZero,
             .playerItemFailed,
+            .startupReadinessTimeout,
+            .startupVideoPrerollTimeout,
+            .directPlayStall,
             .startupWatchdogExpired,
             .nativeBridgePackagingFailure,
             .unknownStartupFailure

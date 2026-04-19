@@ -269,6 +269,54 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(selection.debugInfo.playMethod, "DirectPlay")
     }
 
+    func testCoordinatorCanForceTranscodeAndPreserveResumeTicksForRecovery() async throws {
+        let configuration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
+        let session = UserSession(userID: "user", username: "tester", token: "abc")
+        let source = MediaSource(
+            id: "source-recovery",
+            itemID: "item-recovery",
+            name: "Recovery MP4",
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://demo.reelfin.app/Videos/item-recovery/stream"),
+            directPlayURL: URL(string: "https://demo.reelfin.app/Videos/item-recovery/stream"),
+            transcodeURL: URL(string: "https://demo.reelfin.app/videos/item-recovery/master.m3u8?MediaSourceId=source-recovery")
+        )
+        let apiClient = PlaybackCoordinatorTestAPIClient(
+            configuration: configuration,
+            session: session,
+            sourcesByItemID: ["item-recovery": [source]]
+        )
+        let coordinator = PlaybackCoordinator(apiClient: apiClient)
+        let resumeTicks: Int64 = 10_775_000_000
+
+        let selection = try await coordinator.resolvePlayback(
+            itemID: "item-recovery",
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .forceH264Transcode,
+            startTimeTicks: resumeTicks,
+            allowDirectRoutes: false
+        )
+
+        guard case .transcode = selection.decision.route else {
+            return XCTFail("Recovery must not return DirectPlay after a DirectPlay startup failure.")
+        }
+
+        let queryMap = queryMap(from: selection.assetURL)
+        XCTAssertEqual(apiClient.optionsHistory.first?.startTimeTicks, resumeTicks)
+        XCTAssertEqual(apiClient.optionsHistory.first?.enableDirectPlay, false)
+        XCTAssertEqual(apiClient.optionsHistory.first?.enableDirectStream, false)
+        XCTAssertEqual(selection.assetURL.path, "/videos/item-recovery/master.m3u8")
+        XCTAssertEqual(queryMap["VideoCodec"], "h264")
+        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
+        XCTAssertEqual(queryMap["Container"], "ts")
+    }
+
     func testCoordinatorKeepsExternalDirectPlayURLForMockLikeSources() async throws {
         let configuration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
         let session = UserSession(userID: "user", username: "tester", token: "abc")
@@ -1065,6 +1113,7 @@ private final class PlaybackCoordinatorTestAPIClient: JellyfinAPIClientProtocol,
     private let configuration: ServerConfiguration
     private let session: UserSession
     private let sourcesByItemID: [String: [MediaSource]]
+    private(set) var optionsHistory: [PlaybackInfoOptions] = []
 
     init(
         configuration: ServerConfiguration,
@@ -1104,7 +1153,7 @@ private final class PlaybackCoordinatorTestAPIClient: JellyfinAPIClientProtocol,
     }
 
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
-        _ = options
+        optionsHistory.append(options)
         return sourcesByItemID[itemID] ?? []
     }
 

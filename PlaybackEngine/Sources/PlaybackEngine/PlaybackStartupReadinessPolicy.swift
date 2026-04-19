@@ -7,6 +7,7 @@ enum PlaybackStartupReadinessPolicy {
         let timeout: Double
         let pollInterval: Double
         let reason: String
+        let allowsTimeoutStart: Bool
     }
 
     static func requirement(
@@ -47,8 +48,10 @@ enum PlaybackStartupReadinessPolicy {
         elapsedSeconds: Double,
         requirement: Requirement
     ) -> Bool {
-        guard elapsedSeconds < requirement.timeout else { return true }
         guard bufferedDuration.isFinite, bufferedDuration >= 0 else {
+            if elapsedSeconds >= requirement.timeout {
+                return requirement.allowsTimeoutStart
+            }
             return likelyToKeepUp && elapsedSeconds >= requirement.pollInterval
         }
 
@@ -58,6 +61,10 @@ enum PlaybackStartupReadinessPolicy {
 
         if likelyToKeepUp, bufferedDuration >= requirement.minimumBufferDuration {
             return true
+        }
+
+        if elapsedSeconds >= requirement.timeout {
+            return requirement.allowsTimeoutStart
         }
 
         return false
@@ -78,11 +85,12 @@ enum PlaybackStartupReadinessPolicy {
                 return nil
             }
             return Requirement(
-                minimumBufferDuration: 8,
-                preferredBufferDuration: 20,
-                timeout: 6,
+                minimumBufferDuration: 5,
+                preferredBufferDuration: 10,
+                timeout: 4,
                 pollInterval: 0.15,
-                reason: isResume ? "ios_resume_directplay_guard" : "ios_high_bitrate_directplay_guard"
+                reason: isResume ? "ios_resume_directplay_guard" : "ios_high_bitrate_directplay_guard",
+                allowsTimeoutStart: false
             )
         }
 
@@ -92,7 +100,8 @@ enum PlaybackStartupReadinessPolicy {
                 preferredBufferDuration: 30,
                 timeout: 5,
                 pollInterval: 0.15,
-                reason: "tvos_high_bitrate_directplay"
+                reason: "tvos_high_bitrate_directplay",
+                allowsTimeoutStart: true
             )
         }
 
@@ -101,7 +110,8 @@ enum PlaybackStartupReadinessPolicy {
             preferredBufferDuration: isResume || bitrate >= 8_000_000 ? 18 : 10,
             timeout: isResume || bitrate >= 8_000_000 ? 3.5 : 2,
             pollInterval: 0.15,
-            reason: isResume ? "tvos_resume_directplay" : "tvos_directplay"
+            reason: isResume ? "tvos_resume_directplay" : "tvos_directplay",
+            allowsTimeoutStart: true
         )
     }
 
@@ -111,7 +121,8 @@ enum PlaybackStartupReadinessPolicy {
             preferredBufferDuration: isTVOS ? 12 : 4,
             timeout: isTVOS ? 3 : 1,
             pollInterval: 0.12,
-            reason: isTVOS ? "tvos_nativebridge" : "ios_nativebridge"
+            reason: isTVOS ? "tvos_nativebridge" : "ios_nativebridge",
+            allowsTimeoutStart: true
         )
     }
 
@@ -125,7 +136,8 @@ enum PlaybackStartupReadinessPolicy {
                 preferredBufferDuration: bitrate >= 15_000_000 ? 18 : 10,
                 timeout: bitrate >= 15_000_000 ? 3.5 : 2.25,
                 pollInterval: 0.15,
-                reason: "tvos_hls_startup"
+                reason: "tvos_hls_startup",
+                allowsTimeoutStart: true
             )
         }
 
@@ -135,7 +147,8 @@ enum PlaybackStartupReadinessPolicy {
             preferredBufferDuration: 6,
             timeout: 1.25,
             pollInterval: 0.12,
-            reason: "ios_high_bitrate_hls"
+            reason: "ios_high_bitrate_hls",
+            allowsTimeoutStart: true
         )
     }
 
@@ -162,7 +175,8 @@ enum PlaybackStartupReadinessPolicy {
             preferredBufferDuration: preferred,
             timeout: requirement.timeout,
             pollInterval: requirement.pollInterval,
-            reason: requirement.reason
+            reason: requirement.reason,
+            allowsTimeoutStart: requirement.allowsTimeoutStart
         )
     }
 }
