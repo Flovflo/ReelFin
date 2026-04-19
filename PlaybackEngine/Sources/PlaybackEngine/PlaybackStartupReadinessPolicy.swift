@@ -70,10 +70,20 @@ enum PlaybackStartupReadinessPolicy {
         isTVOS: Bool
     ) -> Requirement? {
         guard isTVOS else {
-            guard case let .directPlay(url) = route, url.pathExtension.lowercased() == "m3u8" else {
+            guard case let .directPlay(url) = route else { return nil }
+            if url.pathExtension.lowercased() == "m3u8" {
+                return streamingRequirement(bitrate: bitrate, isTVOS: false)
+            }
+            guard bitrate >= 18_000_000 || (isResume && bitrate >= 12_000_000) else {
                 return nil
             }
-            return streamingRequirement(bitrate: bitrate, isTVOS: false)
+            return Requirement(
+                minimumBufferDuration: 8,
+                preferredBufferDuration: 20,
+                timeout: 6,
+                pollInterval: 0.15,
+                reason: isResume ? "ios_resume_directplay_guard" : "ios_high_bitrate_directplay_guard"
+            )
         }
 
         if bitrate >= 18_000_000 {

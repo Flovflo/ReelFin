@@ -82,7 +82,7 @@ enum PlaybackStartupPreheater {
                 return playlistProbePlan(url: selection.assetURL, isTVOS: isTVOS)
             }
 
-            let length = isTVOS ? 4 * 1_024 * 1_024 : 1 * 1_024 * 1_024
+            let length = isTVOS ? 4 * 1_024 * 1_024 : 2 * 1_024 * 1_024
             let offset = estimatedByteOffset(
                 fileSize: selection.source.fileSize,
                 runtimeSeconds: runtimeSeconds,

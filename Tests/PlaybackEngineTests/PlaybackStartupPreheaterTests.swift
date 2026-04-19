@@ -43,9 +43,9 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
     }
 
-    func testPreheatSkipsIPhoneProgressiveDirectPlayEvenWhenResuming() async {
+    func testPreheatSkipsLowBitrateIPhoneProgressiveDirectPlayEvenWhenResuming() async {
         let selection = makeDirectPlaySelection(
-            sourceBitrate: 22_000_000
+            sourceBitrate: 1_000_000
         )
 
         let result = await PlaybackStartupPreheater.preheat(
@@ -57,6 +57,33 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
 
         XCTAssertNil(result)
         XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
+    }
+
+    func testPreheatIssuesRangeRequestForIPhoneHighBitrateDirectPlay() async throws {
+        let selection = makeDirectPlaySelection(
+            sourceFileSize: 10 * 1_048_576,
+            sourceBitrate: 22_000_000,
+            headers: ["X-Auth-Token": "token-123"]
+        )
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 4 * 1_048_576))
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 20,
+            runtimeSeconds: 100,
+            isTVOS: false,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
+        )
+
+        XCTAssertEqual(result?.byteCount, 2 * 1_048_576)
+        XCTAssertEqual(result?.rangeStart, 2 * 1_048_576)
+        XCTAssertEqual(result?.reason, "directplay_range")
+        XCTAssertGreaterThan(result?.observedBitrate ?? 0, 0)
+
+        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=2097152-4194303")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "*/*")
     }
 
     func testPreheatIssuesAlignedRangeRequestForTvOSRemoteDirectPlay() async throws {

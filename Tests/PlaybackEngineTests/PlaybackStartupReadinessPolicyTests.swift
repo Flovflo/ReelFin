@@ -15,7 +15,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         XCTAssertNil(requirement)
     }
 
-    func testRequirementSkipsIPhoneProgressiveDirectPlayEvenWhenResuming() {
+    func testRequirementSkipsLowBitrateIPhoneProgressiveDirectPlayEvenWhenResuming() {
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: .directPlay(URL(string: "https://example.com/video.mp4")!),
             sourceBitrate: 1_000_000,
@@ -25,6 +25,22 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
 
         XCTAssertNil(requirement)
+    }
+
+    func testRequirementUsesIPhoneProgressiveDirectPlayGuardForHighBitrateResume() {
+        let requirement = PlaybackStartupReadinessPolicy.requirement(
+            route: .directPlay(URL(string: "https://example.com/video.mp4")!),
+            sourceBitrate: 22_000_000,
+            runtimeSeconds: nil,
+            resumeSeconds: 1_039,
+            isTVOS: false
+        )
+
+        XCTAssertEqual(requirement?.minimumBufferDuration, 8)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 20)
+        XCTAssertEqual(requirement?.timeout, 6)
+        XCTAssertEqual(requirement?.pollInterval, 0.15)
+        XCTAssertEqual(requirement?.reason, "ios_resume_directplay_guard")
     }
 
     func testRequirementUsesIPhoneHLSPolicyForDirectPlayPlaylist() {

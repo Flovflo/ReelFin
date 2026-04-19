@@ -351,6 +351,7 @@ public final class PlaybackSessionController {
     struct DirectPlayStabilityPolicy: Equatable {
         let forwardBufferDuration: Double
         let waitsToMinimizeStalling: Bool
+        let reason: String?
     }
 
     nonisolated static func makePlaybackLogSessionID(itemID: String) -> String {
@@ -1265,8 +1266,9 @@ public final class PlaybackSessionController {
         )
         if directPlayPolicy.forwardBufferDuration != forwardBuffer
             || directPlayPolicy.waitsToMinimizeStalling != waitsToMinimize {
+            let reason = directPlayPolicy.reason ?? "directplay_buffering_override"
             AppLog.playback.notice(
-                "playback.directplay.buffering_override — \(self.playbackLogScope(), privacy: .public) buffer=\(directPlayPolicy.forwardBufferDuration, format: .fixed(precision: 1)) waits=\(directPlayPolicy.waitsToMinimizeStalling, privacy: .public) reason=premium_direct_play_stability"
+                "playback.directplay.buffering_override — \(self.playbackLogScope(), privacy: .public) buffer=\(directPlayPolicy.forwardBufferDuration, format: .fixed(precision: 1)) waits=\(directPlayPolicy.waitsToMinimizeStalling, privacy: .public) reason=\(reason, privacy: .public)"
             )
         }
         forwardBuffer = directPlayPolicy.forwardBufferDuration
@@ -4425,23 +4427,42 @@ public final class PlaybackSessionController {
         isTVOS: Bool
     ) -> DirectPlayStabilityPolicy {
         guard isTVOS else {
+            guard shouldUseIPhoneNoStallDirectPlayGuard(route: route, source: source) else {
+                return DirectPlayStabilityPolicy(
+                    forwardBufferDuration: defaultForwardBufferDuration,
+                    waitsToMinimizeStalling: defaultWaitsToMinimizeStalling,
+                    reason: nil
+                )
+            }
             return DirectPlayStabilityPolicy(
-                forwardBufferDuration: defaultForwardBufferDuration,
-                waitsToMinimizeStalling: defaultWaitsToMinimizeStalling
+                forwardBufferDuration: max(defaultForwardBufferDuration, 30),
+                waitsToMinimizeStalling: true,
+                reason: "ios_no_stall_directplay_guard"
             )
         }
 
         guard shouldUseStallResistantDirectPlay(route: route, source: source) else {
             return DirectPlayStabilityPolicy(
                 forwardBufferDuration: defaultForwardBufferDuration,
-                waitsToMinimizeStalling: defaultWaitsToMinimizeStalling
+                waitsToMinimizeStalling: defaultWaitsToMinimizeStalling,
+                reason: nil
             )
         }
 
         return DirectPlayStabilityPolicy(
             forwardBufferDuration: max(defaultForwardBufferDuration, 12),
-            waitsToMinimizeStalling: true
+            waitsToMinimizeStalling: true,
+            reason: "premium_direct_play_stability"
         )
+    }
+
+    private nonisolated static func shouldUseIPhoneNoStallDirectPlayGuard(
+        route: PlaybackRoute,
+        source: MediaSource?
+    ) -> Bool {
+        guard case let .directPlay(url) = route else { return false }
+        guard url.pathExtension.lowercased() != "m3u8" else { return false }
+        return (source?.bitrate ?? 0) >= 18_000_000
     }
 
     nonisolated static func canUseWarmedSelection(

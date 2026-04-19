@@ -218,6 +218,35 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
 
         XCTAssertEqual(policy.forwardBufferDuration, 2)
         XCTAssertFalse(policy.waitsToMinimizeStalling)
+        XCTAssertNil(policy.reason)
+    }
+
+    func testHighBitrateProgressiveDirectPlayUsesNoStallBufferingOniOS() {
+        let source = MediaSource(
+            id: "high-bitrate-source",
+            itemID: "item-high-bitrate",
+            name: "High bitrate stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let policy = PlaybackSessionController.directPlayStabilityPolicy(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-high-bitrate/stream?static=true&MediaSourceId=high-bitrate-source")!),
+            source: source,
+            defaultForwardBufferDuration: 2,
+            defaultWaitsToMinimizeStalling: false,
+            isTVOS: false
+        )
+
+        XCTAssertEqual(policy.forwardBufferDuration, 30)
+        XCTAssertTrue(policy.waitsToMinimizeStalling)
+        XCTAssertEqual(policy.reason, "ios_no_stall_directplay_guard")
     }
 
     func testPremiumProgressiveDirectPlayUsesStallResistantBufferingOnTvOS() {
@@ -245,6 +274,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
 
         XCTAssertEqual(policy.forwardBufferDuration, 12)
         XCTAssertTrue(policy.waitsToMinimizeStalling)
+        XCTAssertEqual(policy.reason, "premium_direct_play_stability")
     }
 
     func testPremiumDirectPlayPrefersProvidedStableURLAndPreservesQueryItems() {
@@ -336,6 +366,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
 
         XCTAssertEqual(policy.forwardBufferDuration, 2)
         XCTAssertFalse(policy.waitsToMinimizeStalling)
+        XCTAssertNil(policy.reason)
     }
 
     func testStandardDirectPlayKeepsCurrentURL() {
