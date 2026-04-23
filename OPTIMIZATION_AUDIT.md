@@ -121,6 +121,7 @@
 - Fallback/profile re-resolution now preserves `StartTimeTicks`, and pinned HLS variant URLs carry resume query parameters from the master playlist URL so a Resume action cannot silently rebuild a zero-second playlist.
 - Home and Library duplicate enrichment now score local playback quality from existing metadata instead of resolving playback sources or warming media routes during feed/list normalization, removing the repeated `playback.selection` network storm seen before the user clicked Play.
 - Periodic playback progress still saves local position on every player tick, but remote Jellyfin `/Sessions/Playing/Progress` updates are throttled, latest-wins, and paused during route recovery so telemetry cannot compete with media startup/fallback traffic.
+- The latest The Boys black-screen log (`audio_only_no_video` after Direct Play DV/HDR10+ advanced playback without a decoded frame) is now treated as a structured video-decode failure. It no longer reloads the same Direct Play URL; recovery suspends the old item and disables direct routes so the next candidate must be a profile fallback. `directplay_stall` remains the only same-route Direct Play recovery reason.
 
 ## Validation Results
 
@@ -131,6 +132,7 @@
 - `xcodegen generate`: passed
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 - `git diff --check`: passed
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinBlackScreenDD -only-testing:PlaybackEngineTests/PlaybackPolicyTests/testStartupRecoveryDisablesDirectRoutesForUnsafeProgressiveFailures -only-testing:PlaybackEngineTests/PlaybackPolicyTests/testStartupFailureReasonAudioOnlyNoVideoTriggersRecovery -only-testing:PlaybackEngineTests/PlaybackPolicyTests/testStartupFailureReasonRawValueRoundTrip -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests/testStartupDirectPlayFailuresSkipSameRouteRecovery -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests/testVideoDecodeFailuresDisableDirectRouteRecovery`: passed, 5 tests
 - `xcodegen generate`: passed
 - `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/PlaybackWarmupManagerTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackResumeSeekPlannerTests -only-testing:PlaybackEngineTests/PlaybackTVOSCachingPolicyTests`: passed
 - `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed

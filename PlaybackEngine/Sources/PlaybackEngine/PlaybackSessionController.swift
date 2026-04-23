@@ -2521,7 +2521,7 @@ public final class PlaybackSessionController {
             if self.currentTime >= 3.0, !self.hasDecodedVideoFrame {
                 AppLog.playback.warning("Playback advanced without decoded video frame. Trying playback recovery.")
                 if !(await self.attemptRecoveryPreservingDirectPlay(
-                    reason: "audio_only_no_video",
+                    reason: StartupFailureReason.audioOnlyNoVideo.rawValue,
                     userMessage: "Audio is playing without video. Retrying playback."
                 )) {
                     self.playbackErrorMessage = "Audio is playing but no video frame is decoding."
@@ -3063,7 +3063,8 @@ public final class PlaybackSessionController {
         userMessage: String,
         retryDelayNanoseconds: UInt64 = 0
     ) async -> Bool {
-        if Self.shouldPreserveDirectPlayRecovery(route: lastPreparedSelection?.decision.route) {
+        if Self.shouldAttemptSameRouteDirectPlayRecovery(reason: reason),
+           Self.shouldPreserveDirectPlayRecovery(route: lastPreparedSelection?.decision.route) {
             if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: reason) {
                 return true
             }
@@ -3073,9 +3074,6 @@ public final class PlaybackSessionController {
             return false
         }
 
-        if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: reason) {
-            return true
-        }
         return await attemptRecovery(
             reason: reason,
             userMessage: userMessage,
@@ -3099,16 +3097,6 @@ public final class PlaybackSessionController {
         if hasMarkedFirstFrame {
             AppLog.playback.error(
                 "playback.poststart.recovery_suppressed — \(self.playbackLogScope(), privacy: .public) message=\(message, privacy: .public)"
-            )
-            return false
-        }
-
-        if Self.shouldPreserveDirectPlayRecovery(route: lastPreparedSelection?.decision.route) {
-            if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: StartupFailureReason.playerItemFailed.rawValue) {
-                return true
-            }
-            AppLog.playback.warning(
-                "playback.directplay.profile_fallback_suppressed — \(self.playbackLogScope(), privacy: .public) reason=\(StartupFailureReason.playerItemFailed.rawValue, privacy: .public)"
             )
             return false
         }
@@ -4119,7 +4107,8 @@ public final class PlaybackSessionController {
         let baseProfiles: [TranscodeURLProfile]
 
         switch failureReason {
-        case .decodedFrameWatchdog, .readyButNoVideoFrame, .decoderStall, .presentationSizeZero:
+        case .decodedFrameWatchdog, .audioOnlyNoVideo, .readyButNoVideoFrame,
+             .decoderStall, .presentationSizeZero, .playerItemFailed:
             // Video decode failure on HEVC: skip to H264 directly when allowed
             if Self.shouldPreferImmediateH264Recovery(
                 activeProfile: activeTranscodeProfile,
@@ -5289,7 +5278,13 @@ public final class PlaybackSessionController {
         case .startupReadinessTimeout,
              .startupVideoPrerollTimeout,
              .directPlayPreflightInsufficient,
-             .directPlayPostStartStall:
+             .directPlayPostStartStall,
+             .decodedFrameWatchdog,
+             .audioOnlyNoVideo,
+             .readyButNoVideoFrame,
+             .decoderStall,
+             .presentationSizeZero,
+             .playerItemFailed:
             return true
         default:
             return false
@@ -5301,7 +5296,13 @@ public final class PlaybackSessionController {
         case .startupReadinessTimeout,
              .startupVideoPrerollTimeout,
              .directPlayPreflightInsufficient,
-             .directPlayPostStartStall:
+             .directPlayPostStartStall,
+             .decodedFrameWatchdog,
+             .audioOnlyNoVideo,
+             .readyButNoVideoFrame,
+             .decoderStall,
+             .presentationSizeZero,
+             .playerItemFailed:
             return true
         default:
             return false

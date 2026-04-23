@@ -245,6 +245,17 @@
   - Home and Library duplicate enrichment no longer resolve playback sources or warm media routes during feed/list normalization
   - Jellyfin progress updates keep local progress responsive but throttle remote `/Sessions/Playing/Progress` reports with latest-wins behavior
 
+### M24
+- Status: completed
+- Objective: fix Direct Play black-screen recovery without abandoning the fast native path.
+- Scope: `PlaybackSessionController`, `StartupFailureReason`, playback policy tests
+- Acceptance:
+  - compatible tvOS Direct Play still starts as Direct Play when selected and network headroom is available
+  - `audio_only_no_video`, decoded-frame watchdog, zero presentation size, and player-item failure no longer reload the same progressive Direct Play URL
+  - black-screen/profile recovery disables direct routes and suspends the old player item before loading the fallback route
+  - `directplay_stall` remains the only failure reason allowed to attempt same-route Direct Play recovery
+  - the new `audio_only_no_video` reason is structured, triggers recovery, and round-trips through `StartupFailureReason`
+
 ## Validation Commands
 
 ```bash
@@ -273,6 +284,7 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/PlaybackWarmupManagerTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackResumeSeekPlannerTests -only-testing:PlaybackEngineTests/PlaybackTVOSCachingPolicyTests`: passed
 - `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 - `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed after rerunning sequentially
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinBlackScreenDD -only-testing:PlaybackEngineTests/PlaybackPolicyTests/testStartupRecoveryDisablesDirectRoutesForUnsafeProgressiveFailures -only-testing:PlaybackEngineTests/PlaybackPolicyTests/testStartupFailureReasonAudioOnlyNoVideoTriggersRecovery -only-testing:PlaybackEngineTests/PlaybackPolicyTests/testStartupFailureReasonRawValueRoundTrip -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests/testStartupDirectPlayFailuresSkipSameRouteRecovery -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests/testVideoDecodeFailuresDisableDirectRouteRecovery`: passed, 5 tests
 - `git diff --check`: passed
 - `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed
 - `xcodegen generate`: passed for build `1.0 (6)`

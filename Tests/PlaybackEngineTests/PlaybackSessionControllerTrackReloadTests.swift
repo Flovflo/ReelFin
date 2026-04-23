@@ -698,6 +698,30 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertTrue(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
     }
 
+    func testVideoDecodeFailuresDisableDirectRouteRecovery() {
+        for reason in [
+            StartupFailureReason.audioOnlyNoVideo,
+            .decodedFrameWatchdog,
+            .readyButNoVideoFrame,
+            .presentationSizeZero,
+            .playerItemFailed
+        ] {
+            XCTAssertTrue(
+                PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                    reason: reason.rawValue
+                ),
+                reason.rawValue
+            )
+            XCTAssertTrue(
+                PlaybackSessionController.shouldSuspendCurrentItemBeforeProfileRecovery(
+                    reason: reason.rawValue
+                ),
+                reason.rawValue
+            )
+            XCTAssertTrue(reason.shouldTriggerRecovery, reason.rawValue)
+        }
+    }
+
     func testTvOSHighBitrateDirectPlayBlocksAutoplayOnSparseBufferTelemetry() {
         let source = MediaSource(
             id: "premium-source",
@@ -851,6 +875,21 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertFalse(
             PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                 reason: StartupFailureReason.directPlayPreflightInsufficient.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.audioOnlyNoVideo.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.playerItemFailed.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.readyButNoVideoFrame.rawValue
             )
         )
         XCTAssertTrue(

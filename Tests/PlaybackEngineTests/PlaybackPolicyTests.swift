@@ -106,7 +106,22 @@ final class PlaybackPolicyTests: XCTestCase {
                 reason: StartupFailureReason.directPlayStall.rawValue
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.audioOnlyNoVideo.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.decodedFrameWatchdog.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.readyButNoVideoFrame.rawValue
+            )
+        )
+        XCTAssertTrue(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.playerItemFailed.rawValue
             )
@@ -704,6 +719,10 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertTrue(StartupFailureReason.decodedFrameWatchdog.shouldTriggerRecovery)
     }
 
+    func testStartupFailureReasonAudioOnlyNoVideoTriggersRecovery() {
+        XCTAssertTrue(StartupFailureReason.audioOnlyNoVideo.shouldTriggerRecovery)
+    }
+
     func testStartupFailureReasonDirectPlayStartupGuardsTriggerRecovery() {
         XCTAssertTrue(StartupFailureReason.startupReadinessTimeout.shouldTriggerRecovery)
         XCTAssertTrue(StartupFailureReason.startupVideoPrerollTimeout.shouldTriggerRecovery)
@@ -724,6 +743,7 @@ final class PlaybackPolicyTests: XCTestCase {
             StartupFailureReason.manifestLoadFailed,
             .firstSegmentTimeout,
             .decodedFrameWatchdog,
+            .audioOnlyNoVideo,
             .readyButNoVideoFrame,
             .decoderStall,
             .presentationSizeZero,
