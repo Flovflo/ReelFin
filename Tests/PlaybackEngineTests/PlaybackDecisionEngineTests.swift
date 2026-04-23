@@ -725,12 +725,14 @@ final class PlaybackDecisionEngineTests: XCTestCase {
             compatibilityH264Sources: ["item-profile-upgrade": [compatibilitySource]]
         )
         let coordinator = PlaybackCoordinator(apiClient: client)
+        let resumeTicks: Int64 = 51_130_000_000
 
         let selection = try await coordinator.resolvePlayback(
             itemID: "item-profile-upgrade",
             mode: .balanced,
             allowTranscodingFallbackInPerformance: true,
-            transcodeProfile: .serverDefault
+            transcodeProfile: .serverDefault,
+            startTimeTicks: resumeTicks
         )
 
         guard case .transcode = selection.decision.route else {
@@ -739,6 +741,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         }
 
         let queryMap = queryMap(from: selection.assetURL)
+        XCTAssertEqual(client.optionsHistory.map(\.startTimeTicks), [resumeTicks, resumeTicks])
         XCTAssertEqual(queryMap["PlaySessionId"], "session-1")
         XCTAssertEqual(queryMap["DeviceProfileId"], "profile-1")
         XCTAssertEqual(queryMap["VideoCodec"], "h264")
@@ -1291,6 +1294,7 @@ private final class ProfileAwareMockPlaybackAPIClient: JellyfinAPIClientProtocol
     private let session: UserSession
     private let defaultSources: [String: [MediaSource]]
     private let compatibilityH264Sources: [String: [MediaSource]]
+    private(set) var optionsHistory: [PlaybackInfoOptions] = []
 
     init(
         configuration: ServerConfiguration,
@@ -1336,6 +1340,7 @@ private final class ProfileAwareMockPlaybackAPIClient: JellyfinAPIClientProtocol
     }
 
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        optionsHistory.append(options)
         if options.deviceProfile == .iosCompatibilityH264 {
             return compatibilityH264Sources[itemID] ?? []
         }

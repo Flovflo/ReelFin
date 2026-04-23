@@ -1611,10 +1611,10 @@ struct HomeView: View {
         let session = dependencies.makePlaybackSession()
         playerSession = session
         playerItem = item
+        showPlayer = true
 
         do {
             try await session.load(item: item)
-            showPlayer = true
         } catch {
             playerSession = nil
             playerItem = nil

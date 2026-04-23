@@ -39,22 +39,24 @@ final class LibraryViewModelTests: XCTestCase {
         XCTAssertEqual(resolvedViewIDs, ["movies-a", "movies-b"])
     }
 
-    func testLoadInitialPrefersAppleOptimizedDuplicateAcrossLibraries() async throws {
-        let serverPrepared = MediaItem(
-            id: "captain-america-a-server-prep",
+    func testLoadInitialPrefersLocalPlaybackQualityWithoutResolvingSourcesAcrossLibraries() async throws {
+        let standardCopy = MediaItem(
+            id: "captain-america-a-standard",
             name: "Captain America",
             mediaType: .movie,
             year: 2011,
             runtimeTicks: Int64(124 * 60 * 10_000_000),
             libraryID: "movies-a"
         )
-        let appleOptimized = MediaItem(
-            id: "captain-america-z-apple",
+        let dolbyVisionCopy = MediaItem(
+            id: "captain-america-z-dolby-vision",
             name: "Captain America",
             mediaType: .movie,
             year: 2011,
             runtimeTicks: Int64(124 * 60 * 10_000_000),
-            libraryID: "movies-b"
+            libraryID: "movies-b",
+            has4K: true,
+            hasDolbyVision: true
         )
         let apiClient = LibraryViewModelAPIClientStub(
             views: [
@@ -62,33 +64,22 @@ final class LibraryViewModelTests: XCTestCase {
                 SharedLibraryView(id: "movies-b", name: "Movies B", collectionType: "movies")
             ],
             itemsByViewID: [
-                "movies-a": [serverPrepared],
-                "movies-b": [appleOptimized]
+                "movies-a": [standardCopy],
+                "movies-b": [dolbyVisionCopy]
             ]
         )
         let repository = LibraryViewModelRepositoryStub()
-        let warmupManager = LibraryViewWarmupManagerStub(
-            selectionsByItemID: [
-                serverPrepared.id: makeSelection(
-                    itemID: serverPrepared.id,
-                    route: .transcode(URL(string: "https://example.com/captain-america-server-prep.m3u8")!)
-                ),
-                appleOptimized.id: makeSelection(
-                    itemID: appleOptimized.id,
-                    route: .directPlay(URL(string: "https://example.com/captain-america-apple.mp4")!)
-                )
-            ]
-        )
         let dependencies = makeDependencies(
             apiClient: apiClient,
-            repository: repository,
-            warmupManager: warmupManager
+            repository: repository
         )
 
         let viewModel = LibraryViewModel(dependencies: dependencies)
         await viewModel.loadInitial()
 
-        XCTAssertEqual(viewModel.items.map(\.id), [appleOptimized.id])
+        XCTAssertEqual(viewModel.items.map(\.id), [dolbyVisionCopy.id])
+        let playbackSourceItemIDs = await apiClient.recordedPlaybackSourceItemIDs()
+        XCTAssertEqual(playbackSourceItemIDs, [])
     }
 }
 
@@ -96,6 +87,7 @@ private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
     private let views: [SharedLibraryView]
     private let itemsByViewID: [String: [MediaItem]]
     private var queries: [LibraryQuery] = []
+    private var playbackSourceItemIDs: [String] = []
 
     init(views: [SharedLibraryView], itemsByViewID: [String: [MediaItem]]) {
         self.views = views
@@ -166,7 +158,7 @@ private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
     }
 
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
-        _ = itemID
+        playbackSourceItemIDs.append(itemID)
         return []
     }
 
@@ -196,6 +188,10 @@ private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
 
     func recordedQueries() -> [LibraryQuery] {
         queries
+    }
+
+    func recordedPlaybackSourceItemIDs() -> [String] {
+        playbackSourceItemIDs
     }
 }
 
@@ -282,65 +278,5 @@ private func makeDependencies(
                 warmupManager: resolvedWarmupManager
             )
         }
-    )
-}
-
-private actor LibraryViewWarmupManagerStub: PlaybackWarmupManaging {
-    private let selectionsByItemID: [String: PlaybackAssetSelection]
-
-    init(selectionsByItemID: [String: PlaybackAssetSelection]) {
-        self.selectionsByItemID = selectionsByItemID
-    }
-
-    func warm(itemID: String) async {
-        _ = itemID
-    }
-
-    func selection(for itemID: String) async -> PlaybackAssetSelection? {
-        selectionsByItemID[itemID]
-    }
-
-    func cancel(itemID: String) async {
-        _ = itemID
-    }
-
-    func trim(keeping itemIDs: [String]) async {
-        _ = itemIDs
-    }
-
-    func invalidate(itemID: String) async {
-        _ = itemID
-    }
-}
-
-private func makeSelection(itemID: String, route: PlaybackRoute) -> PlaybackAssetSelection {
-    let source = MediaSource(
-        id: "source-\(itemID)",
-        itemID: itemID,
-        name: "Example",
-        container: "mp4",
-        videoCodec: "hevc",
-        audioCodec: "eac3",
-        supportsDirectPlay: true,
-        supportsDirectStream: true,
-        directStreamURL: URL(string: "https://example.com/\(itemID)/stream.m3u8"),
-        directPlayURL: URL(string: "https://example.com/\(itemID)/direct.mp4"),
-        transcodeURL: URL(string: "https://example.com/\(itemID)/transcode.m3u8")
-    )
-
-    return PlaybackAssetSelection(
-        source: source,
-        decision: PlaybackDecision(sourceID: source.id, route: route),
-        assetURL: URL(string: "https://example.com/\(itemID)/asset")!,
-        headers: [:],
-        debugInfo: PlaybackDebugInfo(
-            container: "mp4",
-            videoCodec: "hevc",
-            videoBitDepth: 10,
-            hdrMode: .dolbyVision,
-            audioMode: "EAC3",
-            bitrate: 18_000_000,
-            playMethod: "DirectPlay"
-        )
     )
 }

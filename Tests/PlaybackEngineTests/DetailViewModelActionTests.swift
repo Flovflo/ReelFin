@@ -96,6 +96,116 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.playButtonLabel, "Resume")
     }
 
+    func testBackgroundWarmupDoesNotShowBlockingPlaybackPreparation() {
+        XCTAssertFalse(
+            DetailView.showsBlockingPlaybackPreparation(
+                isLoadingPlayback: false,
+                isBackgroundWarmingPlayback: true
+            )
+        )
+    }
+
+    func testExplicitPlaybackLoadShowsBlockingPlaybackPreparation() {
+        XCTAssertTrue(
+            DetailView.showsBlockingPlaybackPreparation(
+                isLoadingPlayback: true,
+                isBackgroundWarmingPlayback: false
+            )
+        )
+    }
+
+    func testRemoteProgressiveDirectPlayWarmupDoesNotMarkReadyWithoutConsumableEvidence() async {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let warmupManager = EpisodeWarmupManager(
+            delayByItemID: [:],
+            selectionByItemID: [
+                "movie-cache": makeSelection(
+                    sourceID: "source-cache",
+                    itemID: "movie-cache",
+                    assetExtension: "mp4",
+                    bitrate: 22_000_000
+                )
+            ]
+        )
+        let item = MediaItem(
+            id: "movie-cache",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(10 * 60 * 10_000_000)
+        )
+        let viewModel = DetailViewModel(
+            item: item,
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: repository,
+                warmupManager: warmupManager
+            )
+        )
+
+        await viewModel.load()
+
+        let didResolveSelection = await waitForCondition(timeout: 2) {
+            viewModel.preferredPlaybackSource?.id == "source-cache"
+        }
+
+        XCTAssertTrue(didResolveSelection)
+        XCTAssertFalse(viewModel.isPlaybackWarm)
+        XCTAssertNotEqual(viewModel.playbackStatusText, "Ready to play")
+    }
+
+    func testHighBitrateProgressiveDirectPlayWarmupDoesNotMarkReadyFromDisposablePreheat() async {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let warmupManager = EpisodeWarmupManager(
+            delayByItemID: [:],
+            selectionByItemID: [
+                "movie-ready": makeSelection(
+                    sourceID: "source-ready",
+                    itemID: "movie-ready",
+                    assetExtension: "mp4",
+                    bitrate: 22_000_000
+                )
+            ],
+            startupPreheatByItemID: [
+                "movie-ready": PlaybackStartupPreheater.Result(
+                    byteCount: 4_194_304,
+                    elapsedSeconds: 0.5,
+                    observedBitrate: 67_108_864,
+                    rangeStart: 0,
+                    reason: "directplay_range"
+                )
+            ]
+        )
+        let item = MediaItem(
+            id: "movie-ready",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(10 * 60 * 10_000_000)
+        )
+        let viewModel = DetailViewModel(
+            item: item,
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: repository,
+                warmupManager: warmupManager
+            )
+        )
+
+        await viewModel.load()
+
+        let didResolveSelection = await waitForCondition(timeout: 2) {
+            viewModel.preferredPlaybackSource?.id == "source-ready"
+        }
+
+        XCTAssertTrue(didResolveSelection)
+        XCTAssertFalse(viewModel.isPlaybackWarm)
+        XCTAssertNotEqual(viewModel.loadPhase, .playbackWarm)
+        XCTAssertEqual(viewModel.playbackStatusText, "Stopped at 10m")
+    }
+
     func testPrepareEpisodePlaybackLatestWinsAcrossWarmupSignals() async {
         let apiClient = DetailActionSpyAPIClient()
         let repository = EpisodeProgressRepository(
@@ -271,12 +381,18 @@ final class DetailViewModelActionTests: XCTestCase {
         return condition()
     }
 
-    private func makeSelection(sourceID: String, itemID: String) -> PlaybackAssetSelection {
-        let assetURL = URL(string: "https://example.com/\(sourceID).m3u8")!
+    private func makeSelection(
+        sourceID: String,
+        itemID: String,
+        assetExtension: String = "m3u8",
+        bitrate: Int? = nil
+    ) -> PlaybackAssetSelection {
+        let assetURL = URL(string: "https://example.com/\(sourceID).\(assetExtension)")!
         let source = MediaSource(
             id: sourceID,
             itemID: itemID,
             name: sourceID,
+            bitrate: bitrate,
             supportsDirectPlay: true,
             supportsDirectStream: true,
             directPlayURL: assetURL
@@ -409,14 +525,17 @@ final class DetailViewModelActionTests: XCTestCase {
 
         private let delayByItemID: [String: UInt64]
         private let selectionByItemID: [String: PlaybackAssetSelection]
+        private let startupPreheatByItemID: [String: PlaybackStartupPreheater.Result]
         private var startupRequests: [StartupWarmupRequest] = []
 
         init(
             delayByItemID: [String: UInt64],
-            selectionByItemID: [String: PlaybackAssetSelection]
+            selectionByItemID: [String: PlaybackAssetSelection],
+            startupPreheatByItemID: [String: PlaybackStartupPreheater.Result] = [:]
         ) {
             self.delayByItemID = delayByItemID
             self.selectionByItemID = selectionByItemID
+            self.startupPreheatByItemID = startupPreheatByItemID
         }
 
         func warm(itemID: String) async {
@@ -439,6 +558,32 @@ final class DetailViewModelActionTests: XCTestCase {
 
         func selection(for itemID: String) async -> PlaybackAssetSelection? {
             selectionByItemID[itemID]
+        }
+
+        func startupPreheatResult(
+            for itemID: String,
+            resumeSeconds: Double,
+            runtimeSeconds: Double?,
+            isTVOS: Bool
+        ) async -> PlaybackStartupPreheater.Result? {
+            _ = resumeSeconds
+            _ = runtimeSeconds
+            _ = isTVOS
+            return startupPreheatByItemID[itemID]
+        }
+
+        func startupPreheatResult(
+            for selection: PlaybackAssetSelection,
+            resumeSeconds: Double,
+            runtimeSeconds: Double?,
+            isTVOS: Bool
+        ) async -> PlaybackStartupPreheater.Result? {
+            await startupPreheatResult(
+                for: selection.source.itemID,
+                resumeSeconds: resumeSeconds,
+                runtimeSeconds: runtimeSeconds,
+                isTVOS: isTVOS
+            )
         }
 
         func startupWarmupRequests() -> [StartupWarmupRequest] {

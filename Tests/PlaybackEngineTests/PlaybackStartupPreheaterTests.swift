@@ -59,7 +59,7 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
     }
 
-    func testPreheatIssuesRangeRequestForIPhoneHighBitrateDirectPlay() async throws {
+    func testPreheatSkipsIPhoneProgressiveDirectPlayRangeProbe() async {
         let selection = makeDirectPlaySelection(
             sourceFileSize: 10 * 1_048_576,
             sourceBitrate: 22_000_000,
@@ -75,18 +75,11 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
             urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
         )
 
-        XCTAssertEqual(result?.byteCount, 2 * 1_048_576)
-        XCTAssertEqual(result?.rangeStart, 2 * 1_048_576)
-        XCTAssertEqual(result?.reason, "directplay_range")
-        XCTAssertGreaterThan(result?.observedBitrate ?? 0, 0)
-
-        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=2097152-4194303")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "*/*")
+        XCTAssertNil(result)
+        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
     }
 
-    func testPreheatIssuesAlignedRangeRequestForTvOSRemoteDirectPlay() async throws {
+    func testPreheatSkipsTvOSProgressiveDirectPlayRangeProbe() async {
         let selection = makeDirectPlaySelection(
             sourceFileSize: 10 * 1_048_576,
             sourceBitrate: 12_000_000,
@@ -102,15 +95,8 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
             urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
         )
 
-        XCTAssertEqual(result?.byteCount, 4 * 1_048_576)
-        XCTAssertEqual(result?.rangeStart, 0)
-        XCTAssertEqual(result?.reason, "directplay_range")
-        XCTAssertGreaterThan(result?.observedBitrate ?? 0, 0)
-
-        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=0-4194303")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "*/*")
+        XCTAssertNil(result)
+        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
     }
 
     func testPreheatTreatsDirectPlayPlaylistAsProbeWithoutRangeRequest() async throws {

@@ -27,7 +27,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         XCTAssertNil(requirement)
     }
 
-    func testRequirementUsesIPhoneProgressiveDirectPlayGuardForHighBitrateResume() {
+    func testRequirementUsesReadyToPlayGateForIPhoneHighBitrateResume() throws {
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: .directPlay(URL(string: "https://example.com/video.mp4")!),
             sourceBitrate: 22_000_000,
@@ -36,12 +36,49 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertEqual(requirement?.minimumBufferDuration, 5)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 10)
+        XCTAssertEqual(requirement?.minimumBufferDuration, 0)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 0)
         XCTAssertEqual(requirement?.timeout, 4)
         XCTAssertEqual(requirement?.pollInterval, 0.15)
-        XCTAssertEqual(requirement?.reason, "ios_resume_directplay_guard")
+        XCTAssertEqual(requirement?.reason, "ios_resume_directplay_ready")
         XCTAssertEqual(requirement?.allowsTimeoutStart, false)
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 0,
+                likelyToKeepUp: false,
+                elapsedSeconds: 0.2,
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+        XCTAssertFalse(
+            PlaybackStartupReadinessPolicy.allowsImmediateStartBeforeReadyToPlay(
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+    }
+
+    func testIPhoneProgressiveDirectPlayDoesNotRequireDisposablePreheat() {
+        let requiresPreheat = PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+            route: .directPlay(URL(string: "https://example.com/video.mp4")!),
+            sourceBitrate: 22_000_000,
+            runtimeSeconds: nil,
+            resumeSeconds: 1_039,
+            isTVOS: false
+        )
+
+        XCTAssertFalse(requiresPreheat)
+    }
+
+    func testTvOSProgressiveDirectPlayDoesNotRequireDisposablePreheat() {
+        let requiresPreheat = PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+            route: .directPlay(URL(string: "https://example.com/video.mp4")!),
+            sourceBitrate: 22_000_000,
+            runtimeSeconds: nil,
+            resumeSeconds: 4_655,
+            isTVOS: true
+        )
+
+        XCTAssertFalse(requiresPreheat)
     }
 
     func testRequirementUsesIPhoneHLSPolicyForDirectPlayPlaylist() {
@@ -60,20 +97,117 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         XCTAssertEqual(requirement?.reason, "ios_high_bitrate_hls")
     }
 
-    func testRequirementClampsTvOSHighBitrateDirectPlayToRemainingRuntime() {
+    func testRequirementUsesNoStallGateForTvOSHighBitrateDirectPlay() {
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: .directPlay(URL(string: "https://example.com/video.mp4")!),
             sourceBitrate: 18_000_000,
-            runtimeSeconds: 20,
+            runtimeSeconds: nil,
             resumeSeconds: 0,
             isTVOS: true
         )
 
         XCTAssertEqual(requirement?.minimumBufferDuration, 4)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 4)
-        XCTAssertEqual(requirement?.timeout, 5)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 12)
+        XCTAssertEqual(requirement?.timeout, 6)
         XCTAssertEqual(requirement?.pollInterval, 0.15)
-        XCTAssertEqual(requirement?.reason, "tvos_high_bitrate_directplay")
+        XCTAssertEqual(requirement?.reason, "tvos_high_bitrate_directplay_ready")
+        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
+    }
+
+    func testTvOSHighBitrateDirectPlayWaitsForMeasuredBufferTelemetry() throws {
+        let requirement = PlaybackStartupReadinessPolicy.requirement(
+            route: .directPlay(URL(string: "https://example.com/video.mp4")!),
+            sourceBitrate: 22_000_000,
+            runtimeSeconds: nil,
+            resumeSeconds: 1_102,
+            isTVOS: true
+        )
+
+        XCTAssertEqual(requirement?.minimumBufferDuration, 4)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 12)
+        XCTAssertEqual(requirement?.timeout, 6)
+        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
+        XCTAssertFalse(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 0,
+                likelyToKeepUp: false,
+                elapsedSeconds: 0.2,
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+        XCTAssertFalse(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 0,
+                likelyToKeepUp: false,
+                elapsedSeconds: 6.1,
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+        XCTAssertFalse(
+            PlaybackStartupReadinessPolicy.allowsImmediateStartBeforeReadyToPlay(
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+    }
+
+    func testTvOSHighBitrateDirectPlayStillStartsWithMeasuredBuffer() throws {
+        let requirement = try XCTUnwrap(
+            PlaybackStartupReadinessPolicy.requirement(
+                route: .directPlay(URL(string: "https://example.com/video.mp4")!),
+                sourceBitrate: 22_000_000,
+                runtimeSeconds: nil,
+                resumeSeconds: 1_102,
+                isTVOS: true
+            )
+        )
+
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 30.1,
+                likelyToKeepUp: true,
+                elapsedSeconds: 1.5,
+                requirement: requirement
+            )
+        )
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 4,
+                likelyToKeepUp: true,
+                elapsedSeconds: 1.5,
+                requirement: requirement
+            )
+        )
+    }
+
+    func testTvOSLowerBitrateDirectPlayPreservesPermissiveTimeoutStart() throws {
+        let requirement = try XCTUnwrap(
+            PlaybackStartupReadinessPolicy.requirement(
+                route: .directPlay(URL(string: "https://example.com/video.mp4")!),
+                sourceBitrate: 8_000_000,
+                runtimeSeconds: nil,
+                resumeSeconds: 0,
+                isTVOS: true
+            )
+        )
+
+        XCTAssertEqual(requirement.minimumBufferDuration, 0)
+        XCTAssertEqual(requirement.preferredBufferDuration, 0)
+        XCTAssertEqual(requirement.timeout, 3)
+        XCTAssertEqual(requirement.reason, "tvos_directplay_ready")
+        XCTAssertEqual(requirement.allowsTimeoutStart, true)
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 0,
+                likelyToKeepUp: false,
+                elapsedSeconds: 3,
+                requirement: requirement
+            )
+        )
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.allowsImmediateStartBeforeReadyToPlay(
+                requirement: requirement
+            )
+        )
     }
 
     func testRequirementUsesNativeBridgePolicyOnIPhone() {
@@ -195,7 +329,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             preferredBufferDuration: 10,
             timeout: 4,
             pollInterval: 0.15,
-            reason: "ios_resume_directplay_guard",
+            reason: "strict_buffer_guard",
             allowsTimeoutStart: false
         )
 

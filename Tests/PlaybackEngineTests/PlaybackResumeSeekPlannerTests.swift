@@ -34,4 +34,16 @@ final class PlaybackResumeSeekPlannerTests: XCTestCase {
             )
         )
     }
+
+    func testDoesNotSeekAfterFirstFrameForResumeBasedTranscode() {
+        XCTAssertFalse(
+            PlaybackResumeSeekPlanner.shouldApplySeek(
+                pendingResumeSeconds: 2_325.5,
+                currentPlayerTime: 0.4,
+                currentItemDuration: nil,
+                currentMediaRuntimeSeconds: 7_200,
+                transcodeStartOffset: 2_325.5
+            )
+        )
+    }
 }

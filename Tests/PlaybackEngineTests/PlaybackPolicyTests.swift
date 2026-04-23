@@ -85,7 +85,7 @@ final class PlaybackPolicyTests: XCTestCase {
         )
     }
 
-    func testDirectPlayStartupRecoveryDisablesDirectRoutes() {
+    func testStartupRecoveryDisablesDirectRoutesForUnsafeProgressiveFailures() {
         XCTAssertTrue(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.startupReadinessTimeout.rawValue
@@ -98,6 +98,11 @@ final class PlaybackPolicyTests: XCTestCase {
         )
         XCTAssertTrue(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.directPlayPreflightInsufficient.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.directPlayStall.rawValue
             )
         )
@@ -105,6 +110,22 @@ final class PlaybackPolicyTests: XCTestCase {
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.playerItemFailed.rawValue
             )
+        )
+    }
+
+    func testDirectPlayRecoveryPreservesDirectPlayRoute() {
+        XCTAssertTrue(
+            PlaybackSessionController.shouldPreserveDirectPlayRecovery(
+                route: .directPlay(URL(string: "https://example.com/Videos/item/stream?static=true")!)
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPreserveDirectPlayRecovery(
+                route: .transcode(URL(string: "https://example.com/videos/item/master.m3u8")!)
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPreserveDirectPlayRecovery(route: nil)
         )
     }
 
@@ -233,6 +254,25 @@ final class PlaybackPolicyTests: XCTestCase {
                 allowAudioStreamCopy: false
             )
         )
+    }
+
+    func testPinnedHLSVariantPreservesMasterResumeQuery() throws {
+        let masterURL = URL(string: "https://example.com/videos/item/master.m3u8?MediaSourceId=source&StartTimeTicks=51130000000&api_key=token")!
+        let variantURL = URL(string: "https://example.com/videos/item/main.m3u8?MediaSourceId=source&api_key=token")!
+
+        let resolved = PlaybackSessionController.variantURLPreservingResumeQuery(
+            masterURL: masterURL,
+            variantURL: variantURL
+        )
+
+        let query = Dictionary(
+            uniqueKeysWithValues: URLComponents(url: resolved, resolvingAgainstBaseURL: false)!.queryItems!.map {
+                ($0.name.lowercased(), $0.value ?? "")
+            }
+        )
+        XCTAssertEqual(query["starttimeticks"], "51130000000")
+        XCTAssertEqual(query["mediasourceid"], "source")
+        XCTAssertEqual(query["api_key"], "token")
     }
 
     func testVariantPinningProfileKeepsExplicitConservativeRecoveryProfile() {
@@ -667,7 +707,8 @@ final class PlaybackPolicyTests: XCTestCase {
     func testStartupFailureReasonDirectPlayStartupGuardsTriggerRecovery() {
         XCTAssertTrue(StartupFailureReason.startupReadinessTimeout.shouldTriggerRecovery)
         XCTAssertTrue(StartupFailureReason.startupVideoPrerollTimeout.shouldTriggerRecovery)
-        XCTAssertTrue(StartupFailureReason.directPlayStall.shouldTriggerRecovery)
+        XCTAssertFalse(StartupFailureReason.directPlayPreflightInsufficient.shouldTriggerRecovery)
+        XCTAssertFalse(StartupFailureReason.directPlayStall.shouldTriggerRecovery)
     }
 
     func testStartupFailureReasonTransientDoesNotTriggerRecovery() {
@@ -689,6 +730,7 @@ final class PlaybackPolicyTests: XCTestCase {
             .playerItemFailed,
             .startupReadinessTimeout,
             .startupVideoPrerollTimeout,
+            .directPlayPreflightInsufficient,
             .directPlayStall,
             .startupWatchdogExpired,
             .nativeBridgePackagingFailure,

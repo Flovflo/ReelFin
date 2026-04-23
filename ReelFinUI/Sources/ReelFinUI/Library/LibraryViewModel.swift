@@ -45,7 +45,7 @@ final class LibraryViewModel: ObservableObject {
             let query = try await makeLibraryQuery(page: 0, pageSize: pageSize)
             let remote = try await dependencies.apiClient.fetchLibraryItems(query: query)
             try await dependencies.repository.upsertItems(remote)
-            items = await sorted(items + remote)
+            items = sorted(items + remote)
         } catch {
             AppLog.ui.error("Search failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -82,7 +82,7 @@ final class LibraryViewModel: ObservableObject {
             let local = try await dependencies.repository.fetchLibraryItems(
                 query: query
             )
-            items = await sorted(local)
+            items = sorted(local)
             if reset {
                 currentPage = 0
                 isLastPage = false
@@ -107,11 +107,11 @@ final class LibraryViewModel: ObservableObject {
             }
 
             if reset {
-                items = await sorted(remoteItems)
+                items = sorted(remoteItems)
                 currentPage = 1
             } else {
-                let merged = await sorted(items + remoteItems)
-                items = await deduped(merged)
+                let merged = sorted(items + remoteItems)
+                items = deduped(merged)
                 currentPage += 1
             }
 
@@ -165,8 +165,8 @@ final class LibraryViewModel: ObservableObject {
             .map(\.id)
     }
 
-    private func sorted(_ values: [MediaItem]) async -> [MediaItem] {
-        let unique = await deduped(values)
+    private func sorted(_ values: [MediaItem]) -> [MediaItem] {
+        let unique = deduped(values)
         switch sortMode {
         case .recent:
             return unique.sorted {
@@ -179,14 +179,14 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
-    private func deduped(_ values: [MediaItem]) async -> [MediaItem] {
+    private func deduped(_ values: [MediaItem]) -> [MediaItem] {
         var grouped: [String: MediaItem] = [:]
         var orderedKeys: [String] = []
 
         for item in values {
             let key = canonicalKey(for: item)
             if let existing = grouped[key] {
-                grouped[key] = await preferredItem(between: existing, and: item)
+                grouped[key] = Self.preferredItem(between: existing, and: item)
                 continue
             }
 
@@ -227,13 +227,7 @@ final class LibraryViewModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func preferredItem(between lhs: MediaItem, and rhs: MediaItem) async -> MediaItem {
-        let lhsOptimization = await optimizationPreferenceScore(for: lhs)
-        let rhsOptimization = await optimizationPreferenceScore(for: rhs)
-        if lhsOptimization != rhsOptimization {
-            return lhsOptimization > rhsOptimization ? lhs : rhs
-        }
-
+    private static func preferredItem(between lhs: MediaItem, and rhs: MediaItem) -> MediaItem {
         let lhsScore = qualityScore(for: lhs)
         let rhsScore = qualityScore(for: rhs)
         if lhsScore == rhsScore {
@@ -242,43 +236,16 @@ final class LibraryViewModel: ObservableObject {
         return lhsScore > rhsScore ? lhs : rhs
     }
 
-    private func optimizationPreferenceScore(for item: MediaItem) async -> Int {
-        guard let playbackItem = await optimizationPlaybackItem(for: item) else {
-            return 0
-        }
-
-        await dependencies.playbackWarmupManager.warm(itemID: playbackItem.id)
-        let selection = await dependencies.playbackWarmupManager.selection(for: playbackItem.id)
-
-        switch ApplePlaybackOptimizationStatus(selection: selection) {
-        case .optimized?:
-            return 2
-        case .needsServerPrep?:
-            return 1
-        case nil:
-            return 0
-        }
-    }
-
-    private func optimizationPlaybackItem(for item: MediaItem) async -> MediaItem? {
-        guard item.mediaType == .series else {
-            return item
-        }
-
-        do {
-            return try await dependencies.detailRepository.loadNextUpEpisode(seriesID: item.id)
-        } catch {
-            return nil
-        }
-    }
-
-    private func qualityScore(for item: MediaItem) -> Int {
+    private static func qualityScore(for item: MediaItem) -> Int {
         var score = 0
+        score += item.hasDolbyVision ? 60 : 0
+        score += item.has4K ? 40 : 0
         score += item.overview?.isEmpty == false ? 5 : 0
         score += item.posterTag == nil ? 0 : 4
         score += item.backdropTag == nil ? 0 : 3
         score += item.communityRating == nil ? 0 : 2
         score += item.playbackPositionTicks == nil ? 0 : 2
+        score += item.hasClosedCaptions ? 1 : 0
         score += item.isFavorite ? 1 : 0
         score += item.isPlayed ? 1 : 0
         score += min(item.genres.count, 3)

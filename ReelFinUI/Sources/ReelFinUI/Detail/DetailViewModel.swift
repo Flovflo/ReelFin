@@ -412,22 +412,49 @@ final class DetailViewModel: ObservableObject {
 
         playbackProgress = progress
 
+        let resumeSeconds = Self.resumeSeconds(from: progress, item: item)
+        let runtimeSeconds = Self.runtimeSeconds(for: item)
+
         await dependencies.playbackWarmupManager.warm(
             itemID: item.id,
-            resumeSeconds: Self.resumeSeconds(from: progress, item: item),
-            runtimeSeconds: Self.runtimeSeconds(for: item),
+            resumeSeconds: resumeSeconds,
+            runtimeSeconds: runtimeSeconds,
             isTVOS: Self.isTVOSPlatform
         )
         let selection = await dependencies.playbackWarmupManager.selection(for: item.id)
+        let startupPreheatReady: Bool
+        if let selection {
+            let requiresStartupPreheat = PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+                route: selection.decision.route,
+                sourceBitrate: selection.source.bitrate,
+                runtimeSeconds: runtimeSeconds,
+                resumeSeconds: resumeSeconds,
+                isTVOS: Self.isTVOSPlatform
+            )
+            if requiresStartupPreheat {
+                let preheatResult = await dependencies.playbackWarmupManager.startupPreheatResult(
+                    for: selection,
+                    resumeSeconds: resumeSeconds,
+                    runtimeSeconds: runtimeSeconds,
+                    isTVOS: Self.isTVOSPlatform
+                )
+                startupPreheatReady = preheatResult != nil
+                    && !Self.usesDisposableProgressiveDirectPlayPreheat(selection)
+            } else {
+                startupPreheatReady = !Self.usesDisposableProgressiveDirectPlayPreheat(selection)
+            }
+        } else {
+            startupPreheatReady = false
+        }
 
         guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
         guard isCurrentPlaybackWarmupRequest(requestToken, itemID: item.id) else { return }
 
         preferredPlaybackSource = selection?.source
         playbackOptimizationStatus = ApplePlaybackOptimizationStatus(selection: selection)
-        isPlaybackWarm = selection != nil
+        isPlaybackWarm = selection != nil && startupPreheatReady
 
-        if selection != nil {
+        if selection != nil && startupPreheatReady {
             advancePhase(to: .playbackWarm)
             await DetailPresentationTelemetry.shared.markPlayReady(for: item.id)
         }
@@ -503,6 +530,12 @@ final class DetailViewModel: ObservableObject {
             return nil
         }
         return Double(runtimeTicks) / 10_000_000
+    }
+
+    private static func usesDisposableProgressiveDirectPlayPreheat(_ selection: PlaybackAssetSelection) -> Bool {
+        guard case let .directPlay(url) = selection.decision.route else { return false }
+        guard !["m3u8", "m3u"].contains(url.pathExtension.lowercased()) else { return false }
+        return url.host != "127.0.0.1" && url.host != "localhost"
     }
 
     private func mergedEpisode(_ item: MediaItem, preferred: MediaItem) -> MediaItem {

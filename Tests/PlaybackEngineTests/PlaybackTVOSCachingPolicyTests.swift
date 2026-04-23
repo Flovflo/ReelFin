@@ -32,6 +32,7 @@ final class PlaybackTVOSCachingPolicyTests: XCTestCase {
             indicatedBitrate: 12_000_000,
             sourceBitrate: 10_000_000,
             currentTime: 20,
+            playbackElapsedSeconds: 20,
             runtimeSeconds: 3_600,
             healthySampleCount: 1,
             isTVOS: true
@@ -50,6 +51,7 @@ final class PlaybackTVOSCachingPolicyTests: XCTestCase {
             indicatedBitrate: 12_000_000,
             sourceBitrate: 10_000_000,
             currentTime: 180,
+            playbackElapsedSeconds: 180,
             runtimeSeconds: 3_600,
             healthySampleCount: 6,
             isTVOS: true
@@ -68,6 +70,7 @@ final class PlaybackTVOSCachingPolicyTests: XCTestCase {
             indicatedBitrate: 12_000_000,
             sourceBitrate: 10_000_000,
             currentTime: 90,
+            playbackElapsedSeconds: 90,
             runtimeSeconds: 3_600,
             healthySampleCount: 3,
             isTVOS: true
@@ -83,8 +86,25 @@ final class PlaybackTVOSCachingPolicyTests: XCTestCase {
             indicatedBitrate: 12_000_000,
             sourceBitrate: 10_000_000,
             currentTime: 8,
+            playbackElapsedSeconds: 8,
             runtimeSeconds: 3_600,
             healthySampleCount: 1,
+            isTVOS: true
+        )
+
+        XCTAssertNil(hint)
+    }
+
+    func testAdaptiveCachingHintDoesNotUseResumePositionAsPlaybackElapsedTime() {
+        let hint = PlaybackTVOSCachingPolicy.adaptiveCachingHint(
+            currentBufferDuration: 6,
+            observedBitrate: 120_000_000,
+            indicatedBitrate: 12_000_000,
+            sourceBitrate: 22_000_000,
+            currentTime: 4_655,
+            playbackElapsedSeconds: 4,
+            runtimeSeconds: 7_200,
+            healthySampleCount: 10,
             isTVOS: true
         )
 

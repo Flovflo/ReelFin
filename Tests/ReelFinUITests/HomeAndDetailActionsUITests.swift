@@ -57,6 +57,30 @@ final class HomeAndDetailActionsUITests: XCTestCase {
         XCTAssertTrue(likedState.waitForExistence(timeout: 3))
     }
 
+    func testMockDetailDownloadButtonShowsComingSoonMessage() throws {
+        let app = launchMockApp()
+
+        let firstPoster = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        ).firstMatch
+        XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
+        firstPoster.tap()
+
+        let downloadButton = app.buttons["Download"].firstMatch
+        XCTAssertTrue(downloadButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitUntilHittable(downloadButton, timeout: 5))
+
+        downloadButton.tap()
+
+        let alert = app.alerts["Downloads coming soon"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            alert.staticTexts[
+                "Offline downloads are not available yet. This feature will arrive in a future update."
+            ].exists
+        )
+    }
+
     private func launchMockApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]

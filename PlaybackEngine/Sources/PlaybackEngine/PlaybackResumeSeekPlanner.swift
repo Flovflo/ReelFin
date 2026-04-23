@@ -8,9 +8,14 @@ enum PlaybackResumeSeekPlanner {
         pendingResumeSeconds: Double?,
         currentPlayerTime: Double,
         currentItemDuration: Double?,
-        currentMediaRuntimeSeconds: Double?
+        currentMediaRuntimeSeconds: Double?,
+        transcodeStartOffset: Double = 0
     ) -> Bool {
         guard let pendingResumeSeconds, pendingResumeSeconds > 0 else {
+            return false
+        }
+
+        if transcodeStartOffset > 0 {
             return false
         }
 

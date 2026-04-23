@@ -185,6 +185,16 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
+        guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+            route: selection.decision.route,
+            sourceBitrate: selection.source.bitrate,
+            runtimeSeconds: runtimeSeconds,
+            resumeSeconds: resumeSeconds,
+            isTVOS: isTVOS
+        ) else {
+            return nil
+        }
+
         guard let key = startupPreheatKey(
             for: selection,
             resumeSeconds: resumeSeconds,
@@ -225,12 +235,25 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
-        guard let selection = await selection(for: itemID),
-              let key = startupPreheatKey(
-                for: selection,
-                resumeSeconds: resumeSeconds,
-                isTVOS: isTVOS
-              ) else {
+        guard let selection = await selection(for: itemID) else {
+            return nil
+        }
+
+        guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+            route: selection.decision.route,
+            sourceBitrate: selection.source.bitrate,
+            runtimeSeconds: runtimeSeconds,
+            resumeSeconds: resumeSeconds,
+            isTVOS: isTVOS
+        ) else {
+            return nil
+        }
+
+        guard let key = startupPreheatKey(
+            for: selection,
+            resumeSeconds: resumeSeconds,
+            isTVOS: isTVOS
+        ) else {
             return nil
         }
 
@@ -253,6 +276,16 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
+        guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+            route: selection.decision.route,
+            sourceBitrate: selection.source.bitrate,
+            runtimeSeconds: runtimeSeconds,
+            resumeSeconds: resumeSeconds,
+            isTVOS: isTVOS
+        ) else {
+            return nil
+        }
+
         guard let key = startupPreheatKey(
             for: selection,
             resumeSeconds: resumeSeconds,

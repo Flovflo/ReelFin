@@ -32,13 +32,13 @@ public enum PlaybackStartupPreheater {
         urlProtocolClasses: [AnyClass]? = nil
     ) async -> Result? {
         guard !isLocalURL(selection.assetURL) else { return nil }
-        guard PlaybackStartupReadinessPolicy.requirement(
+        guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
             runtimeSeconds: runtimeSeconds,
             resumeSeconds: resumeSeconds,
             isTVOS: isTVOS
-        ) != nil else {
+        ) else {
             return nil
         }
 

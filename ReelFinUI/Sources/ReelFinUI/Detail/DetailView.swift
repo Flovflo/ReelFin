@@ -273,7 +273,10 @@ struct DetailView: View {
                 playButtonLabel: viewModel.playButtonLabel,
                 playbackStatusText: viewModel.playbackStatusText,
                 progress: resolvedHeroProgress,
-                isLoadingPlayback: isLoadingPlayback || viewModel.isWarmingPlayback,
+                isLoadingPlayback: Self.showsBlockingPlaybackPreparation(
+                    isLoadingPlayback: isLoadingPlayback,
+                    isBackgroundWarmingPlayback: viewModel.isWarmingPlayback
+                ),
                 isInWatchlist: viewModel.isInWatchlist,
                 isWatched: viewModel.isWatched || viewModel.itemToPlay.isPlayed,
                 contentWidth: resolvedMetadataWidth(for: viewportSize),
@@ -392,7 +395,10 @@ struct DetailView: View {
                         playButtonLabel: viewModel.playButtonLabel,
                         playbackStatusText: viewModel.playbackStatusText,
                         progress: resolvedHeroProgress,
-                        isLoadingPlayback: isLoadingPlayback || viewModel.isWarmingPlayback,
+                        isLoadingPlayback: Self.showsBlockingPlaybackPreparation(
+                            isLoadingPlayback: isLoadingPlayback,
+                            isBackgroundWarmingPlayback: viewModel.isWarmingPlayback
+                        ),
                         isInWatchlist: viewModel.isInWatchlist,
                         isWatched: viewModel.detail.item.isPlayed || viewModel.isWatched,
                         horizontalPadding: 0,
@@ -866,20 +872,28 @@ struct DetailView: View {
 
         isLoadingPlayback = true
         playerSession = session
+        showPlayer = true
 
-        Task {
+        Task { @MainActor in
+            await Task.yield()
             do {
                 try await session.load(item: targetItem, upNextEpisodes: nextEpisodeQueue)
                 isLoadingPlayback = false
-                showPlayer = true
             } catch {
                 isLoadingPlayback = false
-                await MainActor.run {
-                    viewModel.errorMessage = error.localizedDescription
-                    showPlayer = false
-                }
+                playerSession = nil
+                viewModel.errorMessage = error.localizedDescription
+                showPlayer = false
             }
         }
+    }
+
+    static func showsBlockingPlaybackPreparation(
+        isLoadingPlayback: Bool,
+        isBackgroundWarmingPlayback: Bool
+    ) -> Bool {
+        _ = isBackgroundWarmingPlayback
+        return isLoadingPlayback
     }
 
     @MainActor
@@ -1632,6 +1646,7 @@ private struct IOSDetailHeroContent: View {
     let onToggleWatched: () -> Void
 
     @State private var isSynopsisExpanded = false
+    @State private var isDownloadAvailabilityAlertPresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1655,6 +1670,11 @@ private struct IOSDetailHeroContent: View {
         .opacity(animateIn ? 1 : 0)
         .offset(y: animateIn ? 0 : entryOffset)
         .animation(entryAnimation, value: animateIn)
+        .alert("Downloads coming soon", isPresented: $isDownloadAvailabilityAlertPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Offline downloads are not available yet. This feature will arrive in a future update.")
+        }
     }
 
     private var topBar: some View {
@@ -1674,7 +1694,9 @@ private struct IOSDetailHeroContent: View {
                     accessibilityLabel: "Download",
                     controlWidth: isCompactHeroLayout ? 40 : 44,
                     controlHeight: isCompactHeroLayout ? 28 : 30
-                ) {}
+                ) {
+                    isDownloadAvailabilityAlertPresented = true
+                }
 
                 Rectangle()
                     .fill(Color.white.opacity(0.18))
@@ -2962,7 +2984,6 @@ private struct HeroPrimaryButton: View {
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(TVNoChromeButtonStyle())
-        .disabled(isLoading)
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)

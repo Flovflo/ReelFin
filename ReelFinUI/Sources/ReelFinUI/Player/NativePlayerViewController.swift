@@ -40,10 +40,9 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             imagePipeline: imagePipeline
         )
 #endif
-        // Let AVPlayer auto-select embedded tracks. ReelFin exposes Jellyfin
-        // track switching from the SwiftUI player shell so external tracks can
-        // use the same audio/subtitle picker on iOS and tvOS.
-        controller.player?.appliesMediaSelectionCriteriaAutomatically = true
+        // Keep startup deterministic: ReelFin selects one audio path in the
+        // playback URL and applies subtitles only after the first video frame.
+        controller.player?.appliesMediaSelectionCriteriaAutomatically = false
 
         context.coordinator.startObserving(player: player, controller: controller)
         return controller
@@ -62,7 +61,7 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
         if shouldAssignPlayer, controller.player !== player {
             controller.player = player
-            controller.player?.appliesMediaSelectionCriteriaAutomatically = true
+            controller.player?.appliesMediaSelectionCriteriaAutomatically = false
             context.coordinator.startObserving(player: player, controller: controller)
         }
 #if os(iOS)
@@ -264,6 +263,13 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 guard self.reattachGeneration == generation else { return }
                 guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
                 guard player.currentItem === item else { return }
+                let playbackIntent = PlaybackResumePolicy.controllerReattachPlaybackIntent(
+                    playerRate: player.rate,
+                    timeControlStatus: player.timeControlStatus
+                )
+                if playbackIntent.pauseDuringDetach {
+                    player.pause()
+                }
 
                 // Detach and re-attach the player to force AVPlayerViewController
                 // to fully re-initialize its internal video rendering pipeline (XPC).
@@ -279,10 +285,8 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                     guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
                     guard player.currentItem === item else { return }
                     controller.player = player
-                    if PlaybackResumePolicy.shouldResumeAfterControllerReattach(
-                        playerRate: player.rate,
-                        timeControlStatus: player.timeControlStatus
-                    ) {
+                    controller.player?.appliesMediaSelectionCriteriaAutomatically = false
+                    if playbackIntent.resumeAfterAttach {
                         player.play()
                     }
                 }

@@ -87,51 +87,42 @@ final class HomeViewModelFeedEnrichmentTests: XCTestCase {
         XCTAssertEqual(viewModel.rowIDByItemID["jurassic-world"], viewModel.visibleRows.first?.id)
     }
 
-    func testLoadPrefersAppleOptimizedSourceWhenDuplicateCandidatesShareTheSameMovie() async throws {
+    func testLoadPrefersLocalPlaybackQualityWithoutWarmupWhenDuplicateCandidatesShareTheSameMovie() async throws {
         let repository = MockMetadataRepository()
         let apiClient = MockJellyfinAPIClient()
-        let serverPrepared = MediaItem(
-            id: "jurassic-world-server-prep",
+        let standardCopy = MediaItem(
+            id: "jurassic-world-a-standard",
             name: "Jurassic World",
             mediaType: .movie,
             year: 2015,
             runtimeTicks: Int64(124 * 60 * 10_000_000),
             libraryID: "movies-a"
         )
-        let appleOptimized = MediaItem(
-            id: "jurassic-world-apple",
+        let dolbyVisionCopy = MediaItem(
+            id: "jurassic-world-z-dolby-vision",
             name: "Jurassic World",
             mediaType: .movie,
             year: 2015,
             runtimeTicks: Int64(124 * 60 * 10_000_000),
-            libraryID: "movies-b"
+            libraryID: "movies-b",
+            has4K: true,
+            hasDolbyVision: true
         )
 
         try await repository.saveHomeFeed(
             HomeFeed(
-                featured: [serverPrepared, appleOptimized],
+                featured: [standardCopy, dolbyVisionCopy],
                 rows: [
                     HomeRow(
                         kind: .recentlyReleasedMovies,
                         title: "Recently Released Movies",
-                        items: [serverPrepared, appleOptimized]
+                        items: [dolbyVisionCopy, standardCopy]
                     )
                 ]
             )
         )
 
-        let warmupManager = HomeFeedWarmupManagerStub(
-            selectionsByItemID: [
-                serverPrepared.id: makeSelection(
-                    itemID: serverPrepared.id,
-                    route: .transcode(URL(string: "https://example.com/jurassic-world-server-prep.m3u8")!)
-                ),
-                appleOptimized.id: makeSelection(
-                    itemID: appleOptimized.id,
-                    route: .directPlay(URL(string: "https://example.com/jurassic-world-apple.mp4")!)
-                )
-            ]
-        )
+        let warmupManager = HomeFeedWarmupManagerStub()
 
         let viewModel = HomeViewModel(
             dependencies: makeDependencies(
@@ -142,8 +133,10 @@ final class HomeViewModelFeedEnrichmentTests: XCTestCase {
         )
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.feed.featured.map(\.id), [appleOptimized.id])
-        XCTAssertEqual(viewModel.visibleRows.first?.items.map(\.id), [appleOptimized.id])
+        XCTAssertEqual(viewModel.feed.featured.map(\.id), [dolbyVisionCopy.id])
+        XCTAssertEqual(viewModel.visibleRows.first?.items.map(\.id), [dolbyVisionCopy.id])
+        let warmedItemIDs = await warmupManager.warmedItemIDs()
+        XCTAssertEqual(warmedItemIDs, [])
     }
 
     private func makeDependencies(
@@ -180,52 +173,22 @@ final class HomeViewModelFeedEnrichmentTests: XCTestCase {
         )
     }
 
-    private func makeSelection(itemID: String, route: PlaybackRoute) -> PlaybackAssetSelection {
-        let source = MediaSource(
-            id: "source-\(itemID)",
-            itemID: itemID,
-            name: "Example",
-            container: "mp4",
-            videoCodec: "hevc",
-            audioCodec: "eac3",
-            supportsDirectPlay: true,
-            supportsDirectStream: true,
-            directStreamURL: URL(string: "https://example.com/\(itemID)/stream.m3u8"),
-            directPlayURL: URL(string: "https://example.com/\(itemID)/direct.mp4"),
-            transcodeURL: URL(string: "https://example.com/\(itemID)/transcode.m3u8")
-        )
-
-        return PlaybackAssetSelection(
-            source: source,
-            decision: PlaybackDecision(sourceID: source.id, route: route),
-            assetURL: URL(string: "https://example.com/\(itemID)/asset")!,
-            headers: [:],
-            debugInfo: PlaybackDebugInfo(
-                container: "mp4",
-                videoCodec: "hevc",
-                videoBitDepth: 10,
-                hdrMode: .dolbyVision,
-                audioMode: "EAC3",
-                bitrate: 18_000_000,
-                playMethod: "DirectPlay"
-            )
-        )
-    }
 }
 
 private actor HomeFeedWarmupManagerStub: PlaybackWarmupManaging {
-    private let selectionsByItemID: [String: PlaybackAssetSelection]
-
-    init(selectionsByItemID: [String: PlaybackAssetSelection]) {
-        self.selectionsByItemID = selectionsByItemID
-    }
+    private var warmedIDs: [String] = []
 
     func warm(itemID: String) async {
-        _ = itemID
+        warmedIDs.append(itemID)
     }
 
     func selection(for itemID: String) async -> PlaybackAssetSelection? {
-        selectionsByItemID[itemID]
+        _ = itemID
+        return nil
+    }
+
+    func warmedItemIDs() -> [String] {
+        warmedIDs
     }
 
     func cancel(itemID: String) async {

@@ -340,6 +340,7 @@ public final class PlaybackSessionController {
     private var lastPreparedSelection: PlaybackAssetSelection?
     var markerRefreshTask: Task<Void, Never>?
     private var trickplayRefreshTask: Task<Void, Never>?
+    private var didApplyStartupSubtitleSelection = false
     @ObservationIgnored private let transportStateCommitter = PlaybackTransportStateCommitter()
     private var transportStateSnapshotUpdatesSuspended = false
 
@@ -378,6 +379,12 @@ public final class PlaybackSessionController {
         Self.playbackLogScope(sessionID: playbackLogSessionID, itemID: currentItemID, attempt: attempt)
     }
 
+    private func isActivePlaybackTarget(itemID: String) -> Bool {
+        guard currentItemID == itemID else { return false }
+        guard let currentMediaItem else { return false }
+        return currentMediaItem.id == itemID
+    }
+
     private var readyInterval: SignpostInterval?
     private var firstFrameInterval: SignpostInterval?
     private var activeStallInterval: SignpostInterval?
@@ -388,6 +395,10 @@ public final class PlaybackSessionController {
     private var startupWatchdogTask: Task<Void, Never>?
     private var decodedFrameWatchdogTask: Task<Void, Never>?
     private var videoOutputPollTask: Task<Void, Never>?
+    private var remoteProgressReportTask: Task<Void, Never>?
+    private var pendingRemoteProgressUpdate: PlaybackProgressUpdate?
+    private var lastRemoteProgressReportDate: Date?
+    private var currentMaxStreamingBitrate = QualityPreference.auto.maxStreamingBitrate
     private var videoOutput: AVPlayerItemVideoOutput?
     private var ttffTuning: TTFFTuningConfiguration = .default
     private var ttffInfoMs: Double = 0
@@ -396,6 +407,10 @@ public final class PlaybackSessionController {
     private var ttffReadyMs: Double = 0
     private static let preferredProfileStorageKey = "reelfin.playback.preferredTranscodeProfileByItemID.v2"
     private static let localhostHLSMaxStartupAttempts = 2
+    private static let remoteProgressMinimumInterval: TimeInterval = 10
+    private static let remoteProgressRecoveryPollInterval: TimeInterval = 1
+    private var startupSubtitleSelectionTask: Task<Void, Never>?
+    private var videoValidationTask: Task<Void, Never>?
 
     private static var isTvOSPlatform: Bool {
         #if os(tvOS)
@@ -513,6 +528,7 @@ public final class PlaybackSessionController {
         startupWatchdogTask?.cancel()
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
+        remoteProgressReportTask?.cancel()
         markerRefreshTask?.cancel()
         trickplayRefreshTask?.cancel()
         localHLSServer?.stop(reason: "controller_deinit")
@@ -557,8 +573,19 @@ public final class PlaybackSessionController {
         playbackErrorMessage = nil
         currentPlaybackPlan = nil
         startupWatchdogTask?.cancel()
+        startupWatchdogTask = nil
         decodedFrameWatchdogTask?.cancel()
+        decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
+        videoOutputPollTask = nil
+        remoteProgressReportTask?.cancel()
+        remoteProgressReportTask = nil
+        pendingRemoteProgressUpdate = nil
+        lastRemoteProgressReportDate = nil
+        startupSubtitleSelectionTask?.cancel()
+        startupSubtitleSelectionTask = nil
+        videoValidationTask?.cancel()
+        videoValidationTask = nil
         attemptedPlaybackTriples.removeAll()
         selectedVariantInfo = nil
         selectedMasterPlaylistURL = nil
@@ -578,6 +605,7 @@ public final class PlaybackSessionController {
         preferAudioTranscodeOnly = playbackConfig.preferAudioTranscodeOnly
         preferredAudioLanguage = playbackConfig.preferredAudioLanguage
         preferredSubtitleLanguage = playbackConfig.preferredSubtitleLanguage
+        currentMaxStreamingBitrate = playbackConfig.maxStreamingBitrate
         if playbackPolicy == .originalLockHDRDV {
             playbackQualityMode = .strictQuality
             allowSDRFallback = false
@@ -667,6 +695,7 @@ public final class PlaybackSessionController {
             selection = try await stabilizeInitialSelectionIfNeeded(
                 itemID: item.id,
                 selection: selection,
+                startTimeTicks: resumeTimeTicks,
                 itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                     itemPrefersDolbyVision: item.hasDolbyVision,
                     source: selection.source
@@ -675,12 +704,23 @@ public final class PlaybackSessionController {
             selection = try await upgradeRiskyInitialSelectionIfNeeded(
                 itemID: item.id,
                 selection: selection,
+                startTimeTicks: resumeTimeTicks,
                 itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                     itemPrefersDolbyVision: item.hasDolbyVision,
                     source: selection.source
                 )
             )
-            activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
+            selection = try await preemptHighRiskTVOSDirectPlayIfNeeded(
+                itemID: item.id,
+                selection: selection,
+                startTimeTicks: resumeTimeTicks,
+                maxStreamingBitrate: playbackConfig.maxStreamingBitrate,
+                itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                    itemPrefersDolbyVision: item.hasDolbyVision,
+                    source: selection.source
+                )
+            )
+            activeTranscodeProfile = inferredActiveProfile(for: selection, fallback: activeTranscodeProfile)
             if !registerAttempt(selection: selection, profile: activeTranscodeProfile) {
                 throw AppError.network("Playback attempt already tried with the same profile and URL.")
             }
@@ -727,6 +767,7 @@ public final class PlaybackSessionController {
                     selection = try await stabilizeInitialSelectionIfNeeded(
                         itemID: item.id,
                         selection: selection,
+                        startTimeTicks: resumeTimeTicks,
                         itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                             itemPrefersDolbyVision: item.hasDolbyVision,
                             source: selection.source
@@ -735,12 +776,23 @@ public final class PlaybackSessionController {
                     selection = try await upgradeRiskyInitialSelectionIfNeeded(
                         itemID: item.id,
                         selection: selection,
+                        startTimeTicks: resumeTimeTicks,
                         itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                             itemPrefersDolbyVision: item.hasDolbyVision,
                             source: selection.source
                         )
                     )
-                    activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
+                    selection = try await preemptHighRiskTVOSDirectPlayIfNeeded(
+                        itemID: item.id,
+                        selection: selection,
+                        startTimeTicks: resumeTimeTicks,
+                        maxStreamingBitrate: playbackConfig.maxStreamingBitrate,
+                        itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
+                            itemPrefersDolbyVision: item.hasDolbyVision,
+                            source: selection.source
+                        )
+                    )
+                    activeTranscodeProfile = inferredActiveProfile(for: selection, fallback: activeTranscodeProfile)
                     _ = registerAttempt(selection: selection, profile: activeTranscodeProfile)
                     await self.nativeBridgeSession?.invalidate()
                     self.nativeBridgeSession = nil
@@ -771,7 +823,17 @@ public final class PlaybackSessionController {
             selection = selectionUsingStableDirectPlayURL(selection)
 
             let runtimeSeconds = item.runtimeTicks.map { Double($0) / 10_000_000 }
-            let preheatTask: Task<PlaybackStartupPreheater.Result?, Never>? = autoPlay ? Task(priority: .utility) {
+            let shouldPreserveDirectPlayStartup = Self.shouldPreserveDirectPlayStartup(
+                route: selection.decision.route,
+                source: selection.source,
+                playbackPolicy: playbackPolicy,
+                allowSDRFallback: allowSDRFallback,
+                usesDirectRemuxOnly: usesDirectRemuxOnly,
+                maxStreamingBitrate: playbackConfig.maxStreamingBitrate,
+                isTVOS: Self.isTvOSPlatform
+            )
+            let shouldRunInlinePreheat = autoPlay && !shouldPreserveDirectPlayStartup
+            let preheatTask: Task<PlaybackStartupPreheater.Result?, Never>? = shouldRunInlinePreheat ? Task(priority: .utility) {
                 if let warmedResult = await warmupManager?.warm(
                     selection: selection,
                     resumeSeconds: initialResumeSecs,
@@ -811,17 +873,40 @@ public final class PlaybackSessionController {
 
             if autoPlay {
                 let preheatResult = await preheatTask?.value
+                logUnsafeDirectPlayStartupHeadroomIfNeeded(
+                    selection: selection,
+                    preheatResult: preheatResult
+                )
                 let startupReady = await performStartupReadinessGateIfNeeded(
                     selection: selection,
                     resumeSeconds: initialResumeSecs,
                     runtimeSeconds: runtimeSeconds,
-                    preheatResult: preheatResult
+                    preheatResult: preheatResult,
+                    maxStreamingBitrate: playbackConfig.maxStreamingBitrate
                 )
                 if !startupReady {
-                    if await attemptStartupRecoveryIfAvailable(
-                        reason: StartupFailureReason.startupReadinessTimeout.rawValue,
-                        userMessage: "Direct Play did not build a safe buffer. Switching playback profile."
+                    if !shouldPreserveDirectPlayStartup {
+                        if await attemptStartupRecoveryIfAvailable(
+                            reason: StartupFailureReason.startupReadinessTimeout.rawValue,
+                            userMessage: "Playback did not build a safe buffer. Switching playback profile."
+                        ) {
+                            return
+                        }
+                    }
+                    if !shouldPreserveDirectPlayStartup,
+                       Self.shouldBlockAutoplayAfterUnsafeStartup(
+                        route: selection.decision.route,
+                        source: selection.source,
+                        runtimeSeconds: runtimeSeconds,
+                        resumeSeconds: initialResumeSecs,
+                        isTVOS: Self.isTvOSPlatform
                     ) {
+                        logStartupRecoveryUnavailable(
+                            reason: StartupFailureReason.startupReadinessTimeout.rawValue,
+                            action: "block_autoplay"
+                        )
+                        pause()
+                        playbackErrorMessage = "Playback did not build a safe buffer. Try a lower quality profile."
                         return
                     }
                     logStartupRecoveryUnavailable(
@@ -830,17 +915,23 @@ public final class PlaybackSessionController {
                     )
                 }
                 if !(await prepareSynchronizedStartupFrameIfNeeded(selection: selection)) {
-                    if await attemptStartupRecoveryIfAvailable(
-                        reason: StartupFailureReason.startupVideoPrerollTimeout.rawValue,
-                        userMessage: "Video did not preroll before audio. Switching playback profile."
-                    ) {
-                        return
+                    if !shouldPreserveDirectPlayStartup {
+                        if await attemptStartupRecoveryIfAvailable(
+                            reason: StartupFailureReason.startupVideoPrerollTimeout.rawValue,
+                            userMessage: "Video did not preroll before audio. Switching playback profile."
+                        ) {
+                            return
+                        }
                     }
                     logStartupRecoveryUnavailable(
                         reason: StartupFailureReason.startupVideoPrerollTimeout.rawValue,
                         action: "force_autoplay"
                     )
                 }
+                await ensureDirectPlayResumePositionBeforeAutoplayIfNeeded(
+                    selection: selection,
+                    resumeSeconds: initialResumeSecs
+                )
                 play()
                 scheduleDecodedFrameWatchdog()
             }
@@ -870,6 +961,15 @@ public final class PlaybackSessionController {
         ) else { return nil }
 
         return Double(progress.positionTicks) / 10_000_000
+    }
+
+    nonisolated static func isResumePositionSatisfied(
+        currentTime: Double,
+        resumeSeconds: Double,
+        toleranceSeconds: Double = 3
+    ) -> Bool {
+        guard currentTime.isFinite, resumeSeconds.isFinite else { return false }
+        return abs(currentTime - resumeSeconds) <= toleranceSeconds
     }
 
     private var usesDirectRemuxOnly: Bool {
@@ -1150,16 +1250,33 @@ public final class PlaybackSessionController {
     }
 
     private func prepareAndLoadSelection(_ selection: PlaybackAssetSelection, resumeSeconds: Double?) {
+        guard isActivePlaybackTarget(itemID: selection.source.itemID) else {
+            AppLog.playback.warning(
+                "playback.asset.stale_prepare_skipped — \(Self.playbackLogScope(sessionID: self.playbackLogSessionID, itemID: selection.source.itemID), privacy: .public) activeItem=\(self.currentItemID.map { AppLogFormat.shortIdentifier($0) } ?? "none", privacy: .public)"
+            )
+            return
+        }
+
         trickplayRefreshTask?.cancel()
         lastPreparedSelection = selection
         startupWatchdogTask?.cancel()
+        startupWatchdogTask = nil
         decodedFrameWatchdogTask?.cancel()
+        decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
+        videoOutputPollTask = nil
+        remoteProgressReportTask?.cancel()
+        remoteProgressReportTask = nil
+        pendingRemoteProgressUpdate = nil
+        startupSubtitleSelectionTask?.cancel()
+        startupSubtitleSelectionTask = nil
+        videoValidationTask?.cancel()
+        videoValidationTask = nil
         videoOutput = nil
         videoFormatSnapshotTask?.cancel()
         videoFormatSnapshotTask = nil
         cachedVideoFormatSnapshot = nil
-        activeTranscodeProfile = inferredTranscodeProfile(from: selection.assetURL, fallback: activeTranscodeProfile)
+        activeTranscodeProfile = inferredActiveProfile(for: selection, fallback: activeTranscodeProfile)
         currentSource = selection.source
         // Keep runtime quality mode tied to explicit policy/user settings.
         debugInfo = selection.debugInfo
@@ -1299,6 +1416,7 @@ public final class PlaybackSessionController {
             source: selection.source,
             defaultForwardBufferDuration: forwardBuffer,
             defaultWaitsToMinimizeStalling: waitsToMinimize,
+            maxStreamingBitrate: currentMaxStreamingBitrate,
             isTVOS: Self.isTvOSPlatform
         )
         if directPlayPolicy.forwardBufferDuration != forwardBuffer
@@ -1383,6 +1501,7 @@ public final class PlaybackSessionController {
         hasMarkedFirstFrame = false
         firstFrameDate = nil
         hasDecodedVideoFrame = false
+        didApplyStartupSubtitleSelection = false
         startDate = Date()
 
         player.pause()
@@ -1550,6 +1669,13 @@ public final class PlaybackSessionController {
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
         videoOutputPollTask = nil
+        remoteProgressReportTask?.cancel()
+        remoteProgressReportTask = nil
+        pendingRemoteProgressUpdate = nil
+        startupSubtitleSelectionTask?.cancel()
+        startupSubtitleSelectionTask = nil
+        videoValidationTask?.cancel()
+        videoValidationTask = nil
         markerRefreshTask?.cancel()
         markerRefreshTask = nil
 
@@ -1833,6 +1959,8 @@ public final class PlaybackSessionController {
 
     private func replaceCurrentItemForTrackReload(_ item: AVPlayerItem) {
         videoOutputPollTask?.cancel()
+        startupSubtitleSelectionTask?.cancel()
+        videoValidationTask?.cancel()
         let output = makeVideoOutput()
         item.add(output)
         videoOutput = output
@@ -2110,6 +2238,7 @@ public final class PlaybackSessionController {
         ) { [weak self] time in
             guard let self else { return }
             Task { @MainActor in
+                guard self.player.currentItem === item else { return }
                 self.currentTime = max(0, time.seconds) + self.transcodeStartOffset
                 let hlsDuration = self.player.currentItem?.duration.seconds ?? 0
                 self.duration = max(self.currentTime, hlsDuration + self.transcodeStartOffset)
@@ -2127,6 +2256,7 @@ public final class PlaybackSessionController {
         ) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
+                guard self.player.currentItem === item else { return }
                 self.isPlaying = false
                 await self.finishCurrentPlayback()
             }
@@ -2139,6 +2269,7 @@ public final class PlaybackSessionController {
         ) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
+                guard self.player.currentItem === item else { return }
                 self.metrics.stallCount += 1
                 self.activeStallInterval = SignpostInterval(signposter: Signpost.playbackStalls, name: "playback_stall")
                 AppLog.playback.warning("Playback stalled.")
@@ -2148,6 +2279,7 @@ public final class PlaybackSessionController {
                     now.timeIntervalSince($0) <= 12
                 }
                 self.recentStallTimestamps.append(now)
+                let elapsedSinceFirstFrame = self.firstFrameDate.map { now.timeIntervalSince($0) }
 
                 guard
                     !self.didAttemptDirectPlayStallRecovery,
@@ -2157,22 +2289,30 @@ public final class PlaybackSessionController {
                         source: self.currentSource,
                         recentStallCount: self.recentStallTimestamps.count,
                         elapsedSecondsSinceLoad: now.timeIntervalSince(self.startDate),
-                        elapsedSecondsSinceFirstFrame: self.firstFrameDate.map { now.timeIntervalSince($0) }
+                        elapsedSecondsSinceFirstFrame: elapsedSinceFirstFrame
                     )
                 else {
                     return
                 }
 
-                self.didAttemptDirectPlayStallRecovery = true
-                AppLog.playback.warning(
-                    "playback.directplay.stall_fallback — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s"
-                )
-
-                if !(await self.attemptRecovery(
-                    reason: StartupFailureReason.directPlayStall.rawValue,
-                    userMessage: "Direct Play stalled. Switching playback profile."
-                )) {
-                    self.playbackErrorMessage = "Direct Play stalled repeatedly."
+                if elapsedSinceFirstFrame != nil {
+                    self.didAttemptDirectPlayStallRecovery = true
+                    AppLog.playback.warning(
+                        "playback.directplay.poststart_stall_fallback — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s"
+                    )
+                    if !(await self.attemptRecovery(
+                        reason: StartupFailureReason.directPlayPostStartStall.rawValue,
+                        userMessage: "Direct Play stalled after startup. Switching to a stable stream."
+                    )) {
+                        self.playbackErrorMessage = "Direct Play stalled after startup."
+                    }
+                } else {
+                    AppLog.playback.warning(
+                        "playback.directplay.stall_reload — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s"
+                    )
+                    if !(await self.attemptDirectPlaySameRouteRecoveryIfAvailable(reason: StartupFailureReason.directPlayStall.rawValue)) {
+                        self.playbackErrorMessage = "Direct Play stalled repeatedly."
+                    }
                 }
             }
         }
@@ -2184,6 +2324,7 @@ public final class PlaybackSessionController {
         ) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
+                guard self.player.currentItem === item else { return }
                 guard let event = item.accessLog()?.events.last else { return }
                 self.metrics.droppedFrames = Int(event.numberOfDroppedVideoFrames)
                 if self.debugInfo?.bitrate == nil, event.observedBitrate > 0 {
@@ -2229,33 +2370,6 @@ public final class PlaybackSessionController {
                     self.updatePlaybackProof(from: observedItem)
                     self.scheduleVideoValidation(for: observedItem)
                     self.emitLocalHLSStartupSummary(avplayerResult: "readyToPlay")
-                    // Apply the initial subtitle selection now that AVFoundation media
-                    // selection groups are available. This is a no-op if nil.
-                    // Only apply embedded subtitles automatically. External subtitle
-                    // injection requires a full HLS reload, which is disruptive
-                    // enough to look like a startup restart to the user.
-                    let selectedSubtitleTrackID = self.selectedSubtitleTrackID
-                    let isEmbedded: Bool
-                    if let selectedSubtitleTrackID {
-                        isEmbedded = await self.isSubtitleEmbedded(id: selectedSubtitleTrackID, in: observedItem)
-                    } else {
-                        isEmbedded = false
-                    }
-                    switch Self.startupSubtitleLoadAction(
-                        autoSelectedTrackID: selectedSubtitleTrackID,
-                        isEmbedded: isEmbedded
-                    ) {
-                    case .applyEmbedded(let trackID):
-                        self.selectSubtitleTrack(id: trackID)
-                    case .skipExternal(let trackID):
-                        if let track = self.availableSubtitleTracks.first(where: { $0.id == trackID }) {
-                            AppLog.playback.info(
-                                "playback.subtitle.reload_skipped — \(self.playbackLogScope(), privacy: .public) track='\(track.title, privacy: .public)' reason=external_startup_reload"
-                            )
-                        }
-                    case .none:
-                        break
-                    }
                 } else if observedItem.status == .failed {
                     self.readyInterval?.end(name: "avplayer_item_ready", message: "ready_failed")
                     self.firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_failed")
@@ -2324,6 +2438,8 @@ public final class PlaybackSessionController {
         startupWatchdogTask?.cancel()
         decodedFrameWatchdogTask?.cancel()
         videoOutputPollTask?.cancel()
+        videoValidationTask?.cancel()
+        videoValidationTask = nil
         let playerStartupMs = firstFrameDate.timeIntervalSince(startDate) * 1000
         let totalTTFFMs = firstFrameDate.timeIntervalSince(loadStartDate) * 1000
         metrics.timeToFirstFrameMs = totalTTFFMs
@@ -2346,20 +2462,54 @@ public final class PlaybackSessionController {
         if playMethodForReporting == "NativeBridge", let itemID = currentItemID {
             NativeBridgeFailureCache.clearFailure(itemID: itemID)
         }
+
+        applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for: currentItem)
+    }
+
+    private func applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for item: AVPlayerItem) {
+        guard !didApplyStartupSubtitleSelection else { return }
+        guard let selectedSubtitleTrackID else { return }
+        didApplyStartupSubtitleSelection = true
+
+        startupSubtitleSelectionTask?.cancel()
+        startupSubtitleSelectionTask = Task { @MainActor [weak self, weak item] in
+            guard let self, let item else { return }
+            guard self.player.currentItem === item else { return }
+
+            let isEmbedded = await self.isSubtitleEmbedded(id: selectedSubtitleTrackID, in: item)
+            switch Self.startupSubtitleLoadAction(
+                autoSelectedTrackID: selectedSubtitleTrackID,
+                isEmbedded: isEmbedded
+            ) {
+            case .applyEmbedded(let trackID):
+                await self.selectSubtitleTrackAsync(id: trackID)
+            case .skipExternal(let trackID):
+                if let track = self.availableSubtitleTracks.first(where: { $0.id == trackID }) {
+                    AppLog.playback.info(
+                        "playback.subtitle.reload_skipped — \(self.playbackLogScope(), privacy: .public) track='\(track.title, privacy: .public)' reason=external_startup_reload_after_first_frame"
+                    )
+                }
+            case .none:
+                break
+            }
+        }
     }
 
     private func scheduleVideoValidation(for item: AVPlayerItem) {
-        Task { @MainActor [weak self] in
+        videoValidationTask?.cancel()
+        videoValidationTask = Task { @MainActor [weak self, weak item] in
             guard let self else { return }
+            guard let item else { return }
             let validationDelay = self.videoValidationDelayNanoseconds()
             try? await Task.sleep(nanoseconds: validationDelay)
+            guard !Task.isCancelled else { return }
             guard self.player.currentItem === item else { return }
             guard !self.hasMarkedFirstFrame else { return }
             self.refreshDecodedVideoFrameState()
 
             if self.isRiskyServerDefaultHEVCTranscode(item: item) {
                 AppLog.playback.warning("Server default HEVC stream-copy detected before first frame. Switching to Apple optimized profile.")
-                if !(await self.attemptRecovery(
+                if !(await self.attemptRecoveryPreservingDirectPlay(
                     reason: "risky_hevc_stream_copy",
                     userMessage: "Optimizing HEVC playback path to avoid black screen."
                 )) {
@@ -2369,10 +2519,10 @@ public final class PlaybackSessionController {
             }
 
             if self.currentTime >= 3.0, !self.hasDecodedVideoFrame {
-                AppLog.playback.warning("Playback advanced without decoded video frame. Trying compatibility profile.")
-                if !(await self.attemptRecovery(
+                AppLog.playback.warning("Playback advanced without decoded video frame. Trying playback recovery.")
+                if !(await self.attemptRecoveryPreservingDirectPlay(
                     reason: "audio_only_no_video",
-                    userMessage: "Audio is playing without video. Switching stream profile."
+                    userMessage: "Audio is playing without video. Retrying playback."
                 )) {
                     self.playbackErrorMessage = "Audio is playing but no video frame is decoding."
                 }
@@ -2382,10 +2532,10 @@ public final class PlaybackSessionController {
             let size = item.presentationSize
             guard size.width <= 1 || size.height <= 1 else { return }
 
-            AppLog.playback.error("Ready item has no video presentation size. Trying compatibility transcode.")
-            if !(await self.attemptRecovery(
+            AppLog.playback.error("Ready item has no video presentation size. Trying playback recovery.")
+            if !(await self.attemptRecoveryPreservingDirectPlay(
                 reason: "video_presentation_size_zero",
-                userMessage: "No video frame decoded. Trying compatibility stream."
+                userMessage: "No video frame decoded. Retrying playback."
             )) {
                 self.playbackErrorMessage = "Audio plays but no video frame is decodable for this source."
             }
@@ -2427,7 +2577,8 @@ public final class PlaybackSessionController {
         let selection = selectionUsingStableDirectPlayURL(lastPreparedSelection)
         guard case .directPlay = selection.decision.route else { return false }
 
-        let resumeSeconds = player.currentTime().seconds.isFinite ? max(0, player.currentTime().seconds) : 0
+        let playerSeconds = player.currentTime().seconds.isFinite ? max(0, player.currentTime().seconds) : 0
+        let resumeSeconds = hasMarkedFirstFrame ? playerSeconds : max(sessionInitialResumeSeconds, playerSeconds)
         recentStallTimestamps.removeAll()
         await loadDirectPlaySelectionAtResumePosition(selection, resumeSeconds: resumeSeconds)
         routeDescription = "Direct Play (stability recovery)"
@@ -2446,12 +2597,61 @@ public final class PlaybackSessionController {
         resumeSeconds: Double?
     ) async {
         prepareAndLoadSelection(selection, resumeSeconds: resumeSeconds)
+        guard isActivePlaybackTarget(itemID: selection.source.itemID), player.currentItem != nil else {
+            return
+        }
         guard let resumeSeconds, resumeSeconds > 0 else { return }
 
         let seekTime = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
         let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-        _ = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
+        let completed = await player.seek(to: seekTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
+        logDirectPlayResumeSeekResult(
+            phase: "initial",
+            target: resumeSeconds,
+            completed: completed
+        )
         player.pause()
+    }
+
+    private func ensureDirectPlayResumePositionBeforeAutoplayIfNeeded(
+        selection: PlaybackAssetSelection,
+        resumeSeconds: Double?
+    ) async {
+        guard case .directPlay = selection.decision.route else { return }
+        guard let resumeSeconds, resumeSeconds > 0 else { return }
+        guard !Self.isResumePositionSatisfied(
+            currentTime: player.currentTime().seconds,
+            resumeSeconds: resumeSeconds
+        ) else {
+            pendingResumeSeconds = nil
+            return
+        }
+
+        let target = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
+        let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
+        let completed = await player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
+        logDirectPlayResumeSeekResult(
+            phase: "preplay",
+            target: resumeSeconds,
+            completed: completed
+        )
+        player.pause()
+        pendingResumeSeconds = nil
+    }
+
+    private func logDirectPlayResumeSeekResult(
+        phase: String,
+        target: Double,
+        completed: Bool
+    ) {
+        let current = player.currentTime().seconds
+        let satisfied = Self.isResumePositionSatisfied(
+            currentTime: current,
+            resumeSeconds: target
+        )
+        AppLog.playback.info(
+            "playback.directplay.resume_seek — \(self.playbackLogScope(), privacy: .public) phase=\(phase, privacy: .public) target=\(target, format: .fixed(precision: 3)) current=\(current, format: .fixed(precision: 3)) completed=\(completed, privacy: .public) satisfied=\(satisfied, privacy: .public)"
+        )
     }
 
     private func recoveryResumeSeconds() -> Double? {
@@ -2474,8 +2674,21 @@ public final class PlaybackSessionController {
         selection: PlaybackAssetSelection,
         resumeSeconds: Double,
         runtimeSeconds: Double?,
-        preheatResult: PlaybackStartupPreheater.Result?
+        preheatResult: PlaybackStartupPreheater.Result?,
+        maxStreamingBitrate: Int
     ) async -> Bool {
+        if Self.shouldUseFastDirectPlayStartup(
+            route: selection.decision.route,
+            source: selection.source,
+            maxStreamingBitrate: maxStreamingBitrate,
+            isTVOS: Self.isTvOSPlatform
+        ) {
+            AppLog.playback.info(
+                "playback.startup.readiness.skipped — \(self.playbackLogScope(), privacy: .public) reason=directplay_network_headroom sourceBitrate=\(selection.source.bitrate ?? 0, privacy: .public) maxStreamingBitrate=\(maxStreamingBitrate, privacy: .public)"
+            )
+            return true
+        }
+
         guard let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
@@ -2506,9 +2719,12 @@ public final class PlaybackSessionController {
                 elapsedSeconds: elapsed,
                 requirement: requirement
             )
-            if bufferReady, item.status == .readyToPlay {
+            let canStartBeforeReady = PlaybackStartupReadinessPolicy.allowsImmediateStartBeforeReadyToPlay(
+                requirement: requirement
+            )
+            if bufferReady, item.status == .readyToPlay || canStartBeforeReady {
                 AppLog.playback.info(
-                    "playback.startup.readiness.ready — \(self.playbackLogScope(), privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 2)) buffered=\(bufferedDuration, format: .fixed(precision: 1)) likely=\(likelyToKeepUp, privacy: .public) reason=\(requirement.reason, privacy: .public)"
+                    "playback.startup.readiness.ready — \(self.playbackLogScope(), privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 2)) buffered=\(bufferedDuration, format: .fixed(precision: 1)) likely=\(likelyToKeepUp, privacy: .public) status=\(self.lastPlayerItemStatus, privacy: .public) early=\(canStartBeforeReady, privacy: .public) reason=\(requirement.reason, privacy: .public)"
                 )
                 return true
             }
@@ -2526,10 +2742,36 @@ public final class PlaybackSessionController {
         return false
     }
 
+    private func logUnsafeDirectPlayStartupHeadroomIfNeeded(
+        selection: PlaybackAssetSelection,
+        preheatResult: PlaybackStartupPreheater.Result?
+    ) {
+        guard preheatResult != nil else { return }
+        guard let reason = Self.directPlayPrestartRecoveryReason(
+            route: selection.decision.route,
+            sourceBitrate: selection.source.bitrate,
+            preheatResult: preheatResult,
+            isTVOS: Self.isTvOSPlatform
+        ) else {
+            return
+        }
+
+        let sourceBitrate = selection.source.bitrate ?? 0
+        let observedBitrate = Int(preheatResult?.observedBitrate ?? 0)
+        let rangeStart = preheatResult?.rangeStart.map(String.init) ?? "none"
+        AppLog.playback.warning(
+            "playback.directplay.prestart_headroom — \(self.playbackLogScope(), privacy: .public) reason=\(reason.rawValue, privacy: .public) action=keep_directplay sourceBitrate=\(sourceBitrate, privacy: .public) preheatBitrate=\(observedBitrate, privacy: .public) rangeStart=\(rangeStart, privacy: .public)"
+        )
+    }
+
     private func attemptStartupRecoveryIfAvailable(
         reason: String,
         userMessage: String
     ) async -> Bool {
+        if Self.shouldAttemptSameRouteDirectPlayRecovery(reason: reason),
+           await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: reason) {
+            return true
+        }
         guard Self.hasStartupRecoveryCandidate(
             after: activeTranscodeProfile,
             playbackPolicy: playbackPolicy,
@@ -2571,7 +2813,7 @@ public final class PlaybackSessionController {
         refreshDecodedVideoFrameState()
         if hasDecodedVideoFrame {
             AppLog.playback.info(
-                "playback.startup.video_preroll.ready — \(self.playbackLogScope(), privacy: .public) elapsed=0.00 reason=ios_directplay_audio_video_sync source=decoded_frame_already_available"
+                "playback.startup.video_preroll.ready — \(self.playbackLogScope(), privacy: .public) elapsed=0.00 reason=directplay_audio_video_sync source=decoded_frame_already_available"
             )
             return true
         }
@@ -2579,7 +2821,7 @@ public final class PlaybackSessionController {
         let timeout: TimeInterval = 6
         let startedAt = Date()
         AppLog.playback.info(
-            "playback.startup.video_preroll.begin — \(self.playbackLogScope(), privacy: .public) timeout=\(timeout, format: .fixed(precision: 1)) reason=ios_directplay_audio_video_sync"
+            "playback.startup.video_preroll.begin — \(self.playbackLogScope(), privacy: .public) timeout=\(timeout, format: .fixed(precision: 1)) reason=directplay_audio_video_sync"
         )
         player.preroll(atRate: 1.0, completionHandler: nil)
 
@@ -2589,7 +2831,7 @@ public final class PlaybackSessionController {
             if hasDecodedVideoFrame {
                 let elapsed = Date().timeIntervalSince(startedAt)
                 AppLog.playback.info(
-                    "playback.startup.video_preroll.ready — \(self.playbackLogScope(), privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 2)) reason=ios_directplay_audio_video_sync"
+                    "playback.startup.video_preroll.ready — \(self.playbackLogScope(), privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 2)) reason=directplay_audio_video_sync"
                 )
                 return true
             }
@@ -2598,7 +2840,7 @@ public final class PlaybackSessionController {
             guard elapsed < timeout else {
                 player.cancelPendingPrerolls()
                 AppLog.playback.warning(
-                    "playback.startup.video_preroll.timeout — \(self.playbackLogScope(), privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 2)) reason=ios_directplay_audio_video_sync"
+                    "playback.startup.video_preroll.timeout — \(self.playbackLogScope(), privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 2)) reason=directplay_audio_video_sync"
                 )
                 return false
             }
@@ -2629,6 +2871,7 @@ public final class PlaybackSessionController {
     }
 
     private func scheduleStartupWatchdog() {
+        startupWatchdogTask?.cancel()
         startupWatchdogTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let delay = self.startupWatchdogDelayNanoseconds()
@@ -2657,9 +2900,9 @@ public final class PlaybackSessionController {
                 AppLog.playback.error(
                     "playback.startup.failure — \(self.playbackLogScope(), privacy: .public) reason=\(reason.rawValue, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public) hardDeadline=\(totalDelay, format: .fixed(precision: 1))s status=readyToPlay decodedFrame=false"
                 )
-                if !(await self.attemptRecovery(
+                if !(await self.attemptRecoveryPreservingDirectPlay(
                     reason: reason.rawValue,
-                    userMessage: "No video frame after readyToPlay. Switching profile."
+                    userMessage: "No video frame after readyToPlay. Retrying playback."
                 )), self.playbackErrorMessage == nil {
                     self.playbackErrorMessage = "No video frame received. Try changing quality or source."
                 }
@@ -2667,9 +2910,9 @@ public final class PlaybackSessionController {
             }
 
             AppLog.playback.warning("playback.watchdog.startup — \(self.playbackLogScope(), privacy: .public) elapsed=\(delaySeconds, format: .fixed(precision: 1))s decodedFrame=false")
-            if !(await self.attemptRecovery(
+            if !(await self.attemptRecoveryPreservingDirectPlay(
                 reason: StartupFailureReason.startupWatchdogExpired.rawValue,
-                userMessage: "Startup was too slow. Retrying with safer playback profile."
+                userMessage: "Startup was too slow. Retrying playback."
             )), self.playbackErrorMessage == nil {
                 self.playbackErrorMessage = "No video frame received. Try changing quality or source."
             }
@@ -2677,6 +2920,7 @@ public final class PlaybackSessionController {
     }
 
     private func scheduleDecodedFrameWatchdog() {
+        decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let delay = self.decodedFrameWatchdogDelayNanoseconds()
@@ -2691,14 +2935,18 @@ public final class PlaybackSessionController {
             let playerSecondsRaw = self.player.currentTime().seconds
             let playerSeconds = playerSecondsRaw.isFinite ? max(0, playerSecondsRaw) : 0
             let playbackSeconds = max(self.currentTime, playerSeconds)
-            let playbackHasStarted = playbackSeconds >= 0.8
+            let playbackHasStarted = Self.decodedFrameWatchdogPlaybackHasStarted(
+                playerSeconds: playerSeconds,
+                absolutePlaybackSeconds: playbackSeconds,
+                transcodeStartOffset: self.transcodeStartOffset
+            )
             guard playbackHasStarted else { return }
 
             let delaySeconds = Double(delay) / 1_000_000_000
             AppLog.playback.warning("playback.watchdog.decoded_frame — \(self.playbackLogScope(), privacy: .public) elapsed=\(delaySeconds, format: .fixed(precision: 1))s playbackTime=\(playbackSeconds, format: .fixed(precision: 2)) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)")
-            if !(await self.attemptRecovery(
+            if !(await self.attemptRecoveryPreservingDirectPlay(
                 reason: StartupFailureReason.decodedFrameWatchdog.rawValue,
-                userMessage: "Video decoding did not start quickly enough. Retrying profile."
+                userMessage: "Video decoding did not start quickly enough. Retrying playback."
             )), self.playbackErrorMessage == nil {
                 self.playbackErrorMessage = "Video decoding did not start."
             }
@@ -2706,9 +2954,25 @@ public final class PlaybackSessionController {
     }
 
     private func decodedFrameWatchdogDelayNanoseconds() -> UInt64 {
-        switch activeTranscodeProfile {
+        Self.decodedFrameWatchdogDelayNanoseconds(
+            activeProfile: activeTranscodeProfile,
+            isHEVCStreamCopyTranscode: isCurrentHEVCStreamCopyTranscode(),
+            isStallResistantDirectPlay: isCurrentStallResistantDirectPlay()
+        )
+    }
+
+    nonisolated static func decodedFrameWatchdogDelayNanoseconds(
+        activeProfile: TranscodeURLProfile,
+        isHEVCStreamCopyTranscode: Bool,
+        isStallResistantDirectPlay: Bool
+    ) -> UInt64 {
+        if isStallResistantDirectPlay {
+            return 30_000_000_000
+        }
+
+        switch activeProfile {
         case .serverDefault:
-            return isCurrentHEVCStreamCopyTranscode() ? 3_000_000_000 : 5_000_000_000
+            return isHEVCStreamCopyTranscode ? 3_000_000_000 : 5_000_000_000
         case .appleOptimizedHEVC:
             return 5_000_000_000
         case .conservativeCompatibility:
@@ -2719,9 +2983,27 @@ public final class PlaybackSessionController {
     }
 
     private func startupWatchdogDelayNanoseconds() -> UInt64 {
-        switch activeTranscodeProfile {
+        Self.startupWatchdogDelayNanoseconds(
+            activeProfile: activeTranscodeProfile,
+            currentItemHasDolbyVision: currentItemHasDolbyVision,
+            isHEVCStreamCopyTranscode: isCurrentHEVCStreamCopyTranscode(),
+            isStallResistantDirectPlay: isCurrentStallResistantDirectPlay()
+        )
+    }
+
+    nonisolated static func startupWatchdogDelayNanoseconds(
+        activeProfile: TranscodeURLProfile,
+        currentItemHasDolbyVision: Bool,
+        isHEVCStreamCopyTranscode: Bool,
+        isStallResistantDirectPlay: Bool
+    ) -> UInt64 {
+        if isStallResistantDirectPlay {
+            return 30_000_000_000
+        }
+
+        switch activeProfile {
         case .serverDefault:
-            return isCurrentHEVCStreamCopyTranscode() ? 6_000_000_000 : 8_000_000_000
+            return isHEVCStreamCopyTranscode ? 6_000_000_000 : 8_000_000_000
         case .appleOptimizedHEVC:
             // HEVC startup on large HDR/DV assets can legitimately exceed 8s.
             // Give more room before switching to an SDR fallback profile.
@@ -2776,7 +3058,61 @@ public final class PlaybackSessionController {
         return await reloadRecoveryTranscode(reason: reason, attempt: attempt)
     }
 
+    private func attemptRecoveryPreservingDirectPlay(
+        reason: String,
+        userMessage: String,
+        retryDelayNanoseconds: UInt64 = 0
+    ) async -> Bool {
+        if Self.shouldPreserveDirectPlayRecovery(route: lastPreparedSelection?.decision.route) {
+            if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: reason) {
+                return true
+            }
+            AppLog.playback.warning(
+                "playback.directplay.profile_fallback_suppressed — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public)"
+            )
+            return false
+        }
+
+        if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: reason) {
+            return true
+        }
+        return await attemptRecovery(
+            reason: reason,
+            userMessage: userMessage,
+            retryDelayNanoseconds: retryDelayNanoseconds
+        )
+    }
+
+    private func attemptDirectPlaySameRouteRecoveryIfAvailable(reason: String) async -> Bool {
+        guard !didAttemptDirectPlayStallRecovery else { return false }
+        guard let selection = lastPreparedSelection else { return false }
+        guard case .directPlay = selection.decision.route else { return false }
+
+        didAttemptDirectPlayStallRecovery = true
+        AppLog.playback.warning(
+            "playback.directplay.same_route_recovery — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public)"
+        )
+        return await attemptDirectPlayStallRecovery()
+    }
+
     private func handlePlaybackFailure(message: String, error: NSError?) async -> Bool {
+        if hasMarkedFirstFrame {
+            AppLog.playback.error(
+                "playback.poststart.recovery_suppressed — \(self.playbackLogScope(), privacy: .public) message=\(message, privacy: .public)"
+            )
+            return false
+        }
+
+        if Self.shouldPreserveDirectPlayRecovery(route: lastPreparedSelection?.decision.route) {
+            if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: StartupFailureReason.playerItemFailed.rawValue) {
+                return true
+            }
+            AppLog.playback.warning(
+                "playback.directplay.profile_fallback_suppressed — \(self.playbackLogScope(), privacy: .public) reason=\(StartupFailureReason.playerItemFailed.rawValue, privacy: .public)"
+            )
+            return false
+        }
+
         if isLocalSyntheticHLSTransportFailure(error) {
             return await attemptLocalSyntheticHLSRecovery(
                 reason: "local_hls_transport_failure",
@@ -3121,11 +3457,13 @@ public final class PlaybackSessionController {
                 candidate = try await stabilizeInitialSelectionIfNeeded(
                     itemID: itemID,
                     selection: candidate,
+                    startTimeTicks: startTimeTicks,
                     itemPrefersDolbyVision: itemPrefersDolbyVision
                 )
                 candidate = try await upgradeRiskyInitialSelectionIfNeeded(
                     itemID: itemID,
                     selection: candidate,
+                    startTimeTicks: startTimeTicks,
                     itemPrefersDolbyVision: itemPrefersDolbyVision
                 )
 
@@ -3377,17 +3715,19 @@ public final class PlaybackSessionController {
         allowSDRFallback: Bool,
         preferAudioTranscodeOnly: Bool,
         preferredAudioLanguage: String?,
-        preferredSubtitleLanguage: String?
+        preferredSubtitleLanguage: String?,
+        maxStreamingBitrate: Int
     ) {
         guard let configuration = await apiClient.currentConfiguration() else {
-            return (.auto, true, true, nil, nil)
+            return (.auto, true, true, nil, nil, QualityPreference.auto.maxStreamingBitrate)
         }
         return (
             configuration.playbackPolicy,
             configuration.allowSDRFallback,
             configuration.preferAudioTranscodeOnly,
             configuration.preferredAudioLanguage,
-            configuration.preferredSubtitleLanguage
+            configuration.preferredSubtitleLanguage,
+            configuration.effectiveMaxStreamingBitrate
         )
     }
 
@@ -3538,20 +3878,23 @@ public final class PlaybackSessionController {
 
             selectedVariantInfo = preferred
             var updated = selection
-            updated.assetURL = preferred.resolvedURL
+            updated.assetURL = Self.variantURLPreservingResumeQuery(
+                masterURL: selection.assetURL,
+                variantURL: preferred.resolvedURL
+            )
             AppLog.playback.info(
                     "playback.hls.variant.pinned — \(self.playbackLogScope(), privacy: .public) bandwidth=\(preferred.bandwidth, privacy: .public) resolution=\(preferred.width, privacy: .public)x\(preferred.height, privacy: .public) codec=\(preferred.normalizedCodec, privacy: .public) codecs=\(preferred.codecs, privacy: .public) supplemental=\(preferred.supplementalCodecs, privacy: .public) videoRange=\(preferred.videoRange, privacy: .public) allowVideoCopy=\(String(describing: preferred.allowsVideoCopy), privacy: .public)"
             )
 
-            let variantManifest = try await fetchPlaylist(url: preferred.resolvedURL, headers: selection.headers)
+            let variantManifest = try await fetchPlaylist(url: updated.assetURL, headers: selection.headers)
             let variantInspection = StreamVariantInspector.inspectVariantPlaylist(
                 manifest: variantManifest,
-                variantURL: preferred.resolvedURL
+                variantURL: updated.assetURL
             )
             selectedVariantPlaylistInspection = variantInspection
             let transport = StreamVariantInspector.inferTransport(from: preferred, playlist: variantInspection)
             AppLog.playback.notice(
-                "playback.hls.variant.selected — \(self.playbackLogScope(), privacy: .public) url=\(preferred.resolvedURL.reelfinCompactLogString, privacy: .public) transport=\(transport, privacy: .public) map=\(variantInspection.mapURI ?? "none", privacy: .public) firstSegment=\(variantInspection.firstSegmentURI ?? "none", privacy: .public)"
+                "playback.hls.variant.selected — \(self.playbackLogScope(), privacy: .public) url=\(updated.assetURL.reelfinCompactLogString, privacy: .public) transport=\(transport, privacy: .public) map=\(variantInspection.mapURI ?? "none", privacy: .public) firstSegment=\(variantInspection.firstSegmentURI ?? "none", privacy: .public)"
             )
 
             if strictQualityIsActive, selection.source.isLikelyHDRorDV, transport != "fMP4" {
@@ -3604,6 +3947,11 @@ public final class PlaybackSessionController {
         let resumeSeconds = recoveryResumeSeconds()
         let resumeTimeTicks: Int64? = resumeSeconds.map { Int64($0 * 10_000_000) }
         guard let itemID = currentItemID else { return false }
+        guard isActivePlaybackTarget(itemID: itemID) else { return false }
+
+        if Self.shouldSuspendCurrentItemBeforeProfileRecovery(reason: reason) {
+            suspendCurrentItemForProfileRecovery(reason: reason)
+        }
 
         if playMethodForReporting == "NativeBridge" || reason == "nativebridge_packaging_failure" {
             NativeBridgeFailureCache.recordFailure(itemID: itemID)
@@ -3630,6 +3978,7 @@ public final class PlaybackSessionController {
                     startTimeTicks: resumeTimeTicks,
                     allowDirectRoutes: allowDirectRoutes
                 )
+                guard isActivePlaybackTarget(itemID: itemID) else { return false }
 
                 if !allowDirectRoutes {
                     switch selection.decision.route {
@@ -3655,6 +4004,7 @@ public final class PlaybackSessionController {
                     } else {
                         let session = NativeBridgeSession(plan: plan, token: await apiClient.currentSession()?.token)
                         try await session.prepare()
+                        guard isActivePlaybackTarget(itemID: itemID) else { return false }
                         nativeBridgeSession = session
                         syntheticHLSSession = nil
                         localHLSServer?.stop(reason: "recovery_switch_to_resource_loader")
@@ -3674,14 +4024,17 @@ public final class PlaybackSessionController {
                         requestedProfile: profile
                     )
                 )
+                guard isActivePlaybackTarget(itemID: itemID) else { return false }
                 selection = try await stabilizeInitialSelectionIfNeeded(
                     itemID: itemID,
                     selection: selection,
+                    startTimeTicks: resumeTimeTicks,
                     itemPrefersDolbyVision: shouldPreferDolbyVisionVariant(
                         itemPrefersDolbyVision: currentItemHasDolbyVision || (currentSource?.isLikelyHDRorDV ?? false),
                         source: selection.source
                     )
                 )
+                guard isActivePlaybackTarget(itemID: itemID) else { return false }
 
                 if !registerAttempt(selection: selection, profile: profile) {
                     continue
@@ -3692,6 +4045,7 @@ public final class PlaybackSessionController {
                         "Recovery preflight failed for profile=\(profile.rawValue, privacy: .public). Continuing load."
                     )
                 }
+                guard isActivePlaybackTarget(itemID: itemID) else { return false }
 
                 activeTranscodeProfile = profile
                 // Update offset to reflect the new transcode start position.
@@ -3730,6 +4084,31 @@ public final class PlaybackSessionController {
         return false
     }
 
+    private func suspendCurrentItemForProfileRecovery(reason: String) {
+        player.pause()
+        player.cancelPendingPrerolls()
+        tearDownCurrentItemObservers()
+        startupWatchdogTask?.cancel()
+        startupWatchdogTask = nil
+        decodedFrameWatchdogTask?.cancel()
+        decodedFrameWatchdogTask = nil
+        videoOutputPollTask?.cancel()
+        videoOutputPollTask = nil
+        videoFormatSnapshotTask?.cancel()
+        videoFormatSnapshotTask = nil
+        startupSubtitleSelectionTask?.cancel()
+        startupSubtitleSelectionTask = nil
+        videoValidationTask?.cancel()
+        videoValidationTask = nil
+        videoOutput = nil
+        activeStallInterval?.end(name: "playback_stall", message: "recovery")
+        activeStallInterval = nil
+        player.replaceCurrentItem(with: nil)
+        AppLog.playback.notice(
+            "playback.fallback.suspended_old_item — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public)"
+        )
+    }
+
     private func recoveryProfiles(for reason: String, attempt: Int) -> [TranscodeURLProfile] {
         _ = attempt
         if usesDirectRemuxOnly {
@@ -3750,7 +4129,11 @@ public final class PlaybackSessionController {
             } else {
                 baseProfiles = startupRecoveryProfiles(after: activeTranscodeProfile)
             }
-        case .startupReadinessTimeout, .startupVideoPrerollTimeout, .directPlayStall:
+        case .directPlayPreflightInsufficient, .directPlayStall:
+            baseProfiles = [.serverDefault]
+        case .directPlayPostStartStall:
+            baseProfiles = allowSDRFallback ? [.forceH264Transcode] : startupRecoveryProfiles(after: activeTranscodeProfile)
+        case .startupReadinessTimeout, .startupVideoPrerollTimeout:
             // A startup failure on progressive Direct Play should not reload the
             // same raw file through another copy-friendly profile. Prefer the
             // first profile that forces server-managed HLS/video samples.
@@ -3909,6 +4292,7 @@ public final class PlaybackSessionController {
             indicatedBitrate: indicatedBitrate,
             sourceBitrate: currentSource?.bitrate,
             currentTime: currentTime,
+            playbackElapsedSeconds: playbackElapsedSecondsForCachingRamp(),
             runtimeSeconds: runtimeSeconds,
             healthySampleCount: tvosHealthyAccessLogSamples,
             isTVOS: Self.isTvOSPlatform
@@ -3927,6 +4311,11 @@ public final class PlaybackSessionController {
         AppLog.playback.info(
             "tvOS caching ramp phase=\(String(describing: hint.phase), privacy: .public) buffer=\(hint.forwardBufferDuration, format: .fixed(precision: 1))s preload=\(hint.syntheticPreloadCount, privacy: .public) lookahead=\(hint.syntheticLookaheadSegments, privacy: .public) headroom=\(hint.headroomRatio, format: .fixed(precision: 2))x"
         )
+    }
+
+    private func playbackElapsedSecondsForCachingRamp() -> Double {
+        let anchor = firstFrameDate ?? startDate
+        return max(0, Date().timeIntervalSince(anchor))
     }
 
     private func shouldUpgradeInitialTranscodeProfile(_ selection: PlaybackAssetSelection) -> Bool {
@@ -3948,6 +4337,7 @@ public final class PlaybackSessionController {
     private func upgradeRiskyInitialSelectionIfNeeded(
         itemID: String,
         selection: PlaybackAssetSelection,
+        startTimeTicks: Int64?,
         itemPrefersDolbyVision: Bool
     ) async throws -> PlaybackAssetSelection {
         guard shouldUpgradeInitialTranscodeProfile(selection) else { return selection }
@@ -3965,7 +4355,8 @@ public final class PlaybackSessionController {
             itemID: itemID,
             mode: .balanced,
             allowTranscodingFallbackInPerformance: true,
-            transcodeProfile: saferProfile
+            transcodeProfile: saferProfile,
+            startTimeTicks: startTimeTicks
         )
         upgraded = try await pinPreferredVariantIfNeeded(
             selection: upgraded,
@@ -3976,9 +4367,56 @@ public final class PlaybackSessionController {
         return upgraded
     }
 
+    private func preemptHighRiskTVOSDirectPlayIfNeeded(
+        itemID: String,
+        selection: PlaybackAssetSelection,
+        startTimeTicks: Int64?,
+        maxStreamingBitrate: Int,
+        itemPrefersDolbyVision: Bool
+    ) async throws -> PlaybackAssetSelection {
+        guard Self.shouldPreemptivelyUseStableTVOSHLS(
+            route: selection.decision.route,
+            source: selection.source,
+            playbackPolicy: playbackPolicy,
+            allowSDRFallback: allowSDRFallback,
+            usesDirectRemuxOnly: usesDirectRemuxOnly,
+            maxStreamingBitrate: maxStreamingBitrate,
+            isTVOS: Self.isTvOSPlatform
+        ) else {
+            return selection
+        }
+
+        AppLog.playback.warning(
+            "playback.directplay.preemptive_fallback — \(self.playbackLogScope(), privacy: .public) reason=tvos_high_bitrate_progressive_over_budget sourceBitrate=\(selection.source.bitrate ?? 0, privacy: .public) maxStreamingBitrate=\(maxStreamingBitrate, privacy: .public)"
+        )
+
+        var upgraded = try await coordinator.resolvePlayback(
+            itemID: itemID,
+            mode: .balanced,
+            allowTranscodingFallbackInPerformance: true,
+            transcodeProfile: .forceH264Transcode,
+            startTimeTicks: startTimeTicks,
+            allowDirectRoutes: false
+        )
+        upgraded = try await pinPreferredVariantIfNeeded(
+            selection: upgraded,
+            itemPrefersDolbyVision: itemPrefersDolbyVision,
+            profileOverride: .forceH264Transcode
+        )
+        upgraded = try await stabilizeInitialSelectionIfNeeded(
+            itemID: itemID,
+            selection: upgraded,
+            startTimeTicks: startTimeTicks,
+            itemPrefersDolbyVision: itemPrefersDolbyVision
+        )
+        activeTranscodeProfile = inferredActiveProfile(for: upgraded, fallback: .forceH264Transcode)
+        return upgraded
+    }
+
     private func stabilizeInitialSelectionIfNeeded(
         itemID: String,
         selection: PlaybackAssetSelection,
+        startTimeTicks: Int64?,
         itemPrefersDolbyVision: Bool
     ) async throws -> PlaybackAssetSelection {
         guard await shouldPreemptivelyFallbackToH264(
@@ -3992,7 +4430,8 @@ public final class PlaybackSessionController {
             itemID: itemID,
             mode: .balanced,
             allowTranscodingFallbackInPerformance: true,
-            transcodeProfile: .forceH264Transcode
+            transcodeProfile: .forceH264Transcode,
+            startTimeTicks: startTimeTicks
         )
         upgraded = try await pinPreferredVariantIfNeeded(
             selection: upgraded,
@@ -4063,6 +4502,15 @@ public final class PlaybackSessionController {
         return isHEVCCodec(codec)
     }
 
+    private func isCurrentStallResistantDirectPlay() -> Bool {
+        guard Self.isTvOSPlatform else { return false }
+        guard let selection = lastPreparedSelection else { return false }
+        return Self.shouldUseStallResistantDirectPlay(
+            route: selection.decision.route,
+            source: currentSource ?? selection.source
+        )
+    }
+
     private func applyDeferredResumeSeekIfNeeded() {
         guard let seconds = pendingResumeSeconds, seconds > 0 else { return }
 
@@ -4074,7 +4522,8 @@ public final class PlaybackSessionController {
             pendingResumeSeconds: seconds,
             currentPlayerTime: current,
             currentItemDuration: currentDuration,
-            currentMediaRuntimeSeconds: runtimeSeconds
+            currentMediaRuntimeSeconds: runtimeSeconds,
+            transcodeStartOffset: transcodeStartOffset
         ) else {
             pendingResumeSeconds = nil
             return
@@ -4142,6 +4591,16 @@ public final class PlaybackSessionController {
         Self.variantPinningProfile(from: url, requestedProfile: fallback)
     }
 
+    private func inferredActiveProfile(
+        for selection: PlaybackAssetSelection,
+        fallback: TranscodeURLProfile
+    ) -> TranscodeURLProfile {
+        if case .directPlay = selection.decision.route {
+            return .serverDefault
+        }
+        return inferredTranscodeProfile(from: selection.assetURL, fallback: fallback)
+    }
+
     private static func loadStoredPreferredProfiles() -> [String: TranscodeURLProfile] {
         guard let stored = UserDefaults.standard.dictionary(forKey: preferredProfileStorageKey) as? [String: String] else {
             return [:]
@@ -4197,12 +4656,60 @@ public final class PlaybackSessionController {
     private func persistProgress(
         snapshot: (local: PlaybackProgress, remote: PlaybackProgressUpdate)
     ) async {
-        await Self.persistProgress(
-            snapshot: snapshot,
-            repository: repository,
-            apiClient: apiClient,
-            sendStopped: false
-        )
+        try? await repository.savePlaybackProgress(snapshot.local)
+        enqueueRemoteProgressReport(snapshot.remote)
+    }
+
+    private func enqueueRemoteProgressReport(_ progress: PlaybackProgressUpdate) {
+        pendingRemoteProgressUpdate = progress
+        startRemoteProgressReportTaskIfNeeded()
+    }
+
+    private func startRemoteProgressReportTaskIfNeeded() {
+        guard remoteProgressReportTask == nil else { return }
+
+        remoteProgressReportTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+
+                if self.isRecoveryInProgress {
+                    await Self.sleepForRemoteProgress(seconds: Self.remoteProgressRecoveryPollInterval)
+                    continue
+                }
+
+                guard let progress = self.pendingRemoteProgressUpdate else {
+                    self.remoteProgressReportTask = nil
+                    return
+                }
+
+                if let lastReport = self.lastRemoteProgressReportDate {
+                    let remaining = Self.remoteProgressMinimumInterval - Date().timeIntervalSince(lastReport)
+                    if remaining > 0 {
+                        await Self.sleepForRemoteProgress(seconds: remaining)
+                        continue
+                    }
+                }
+
+                self.pendingRemoteProgressUpdate = nil
+                self.lastRemoteProgressReportDate = Date()
+                let apiClient = self.apiClient
+                await Self.reportRemotePlaybackProgress(progress, apiClient: apiClient)
+            }
+
+            self?.remoteProgressReportTask = nil
+        }
+    }
+
+    private nonisolated static func sleepForRemoteProgress(seconds: TimeInterval) async {
+        let nanoseconds = UInt64(max(0.1, seconds) * 1_000_000_000)
+        try? await Task.sleep(nanoseconds: nanoseconds)
+    }
+
+    private nonisolated static func reportRemotePlaybackProgress(
+        _ progress: PlaybackProgressUpdate,
+        apiClient: any JellyfinAPIClientProtocol & Sendable
+    ) async {
+        try? await apiClient.reportPlayback(progress: progress)
     }
 
     private nonisolated static func persistProgress(
@@ -4214,7 +4721,7 @@ public final class PlaybackSessionController {
         // Save locally regardless of whether the item is in media_items
         // (playback_progress has no FK since migration v2_playback_progress_no_fk)
         try? await repository.savePlaybackProgress(snapshot.local)
-        try? await apiClient.reportPlayback(progress: snapshot.remote)
+        await reportRemotePlaybackProgress(snapshot.remote, apiClient: apiClient)
         if sendStopped {
             try? await apiClient.reportPlaybackStopped(progress: snapshot.remote)
         }
@@ -4239,6 +4746,11 @@ public final class PlaybackSessionController {
     }
 
     private func tearDownCurrentItemObservers() {
+        startupSubtitleSelectionTask?.cancel()
+        startupSubtitleSelectionTask = nil
+        videoValidationTask?.cancel()
+        videoValidationTask = nil
+
         if let periodicObserver {
             player.removeTimeObserver(periodicObserver)
             self.periodicObserver = nil
@@ -4254,6 +4766,7 @@ public final class PlaybackSessionController {
         stalledObserver = nil
         accessLogObserver = nil
         playerItemStatusObserver = nil
+        timeControlObserver = nil
     }
 
     private func routeLabel(for route: PlaybackRoute) -> String {
@@ -4622,6 +5135,7 @@ public final class PlaybackSessionController {
         source: MediaSource?,
         defaultForwardBufferDuration: Double,
         defaultWaitsToMinimizeStalling: Bool,
+        maxStreamingBitrate: Int? = nil,
         isTVOS: Bool
     ) -> DirectPlayStabilityPolicy {
         guard isTVOS else {
@@ -4639,6 +5153,19 @@ public final class PlaybackSessionController {
             )
         }
 
+        if shouldUseFastDirectPlayStartup(
+            route: route,
+            source: source,
+            maxStreamingBitrate: maxStreamingBitrate ?? 0,
+            isTVOS: isTVOS
+        ) {
+            return DirectPlayStabilityPolicy(
+                forwardBufferDuration: defaultForwardBufferDuration,
+                waitsToMinimizeStalling: defaultWaitsToMinimizeStalling,
+                reason: nil
+            )
+        }
+
         guard shouldUseStallResistantDirectPlay(route: route, source: source) else {
             return DirectPlayStabilityPolicy(
                 forwardBufferDuration: defaultForwardBufferDuration,
@@ -4648,9 +5175,9 @@ public final class PlaybackSessionController {
         }
 
         return DirectPlayStabilityPolicy(
-            forwardBufferDuration: max(defaultForwardBufferDuration, 12),
+            forwardBufferDuration: max(defaultForwardBufferDuration, 24),
             waitsToMinimizeStalling: true,
-            reason: "premium_direct_play_stability"
+            reason: "tvos_no_stall_directplay_guard"
         )
     }
 
@@ -4673,18 +5200,108 @@ public final class PlaybackSessionController {
         return presentationSize.width > 2 && presentationSize.height > 2
     }
 
+    nonisolated static func decodedFrameWatchdogPlaybackHasStarted(
+        playerSeconds: Double,
+        absolutePlaybackSeconds: Double,
+        transcodeStartOffset: Double
+    ) -> Bool {
+        let relativePlayerSeconds = playerSeconds.isFinite ? max(0, playerSeconds) : 0
+        if transcodeStartOffset > 0 {
+            return relativePlayerSeconds >= 0.8
+        }
+
+        let absoluteSeconds = absolutePlaybackSeconds.isFinite ? max(0, absolutePlaybackSeconds) : 0
+        return max(relativePlayerSeconds, absoluteSeconds) >= 0.8
+    }
+
     nonisolated static func shouldPrerollVideoBeforeAudioStart(
         route: PlaybackRoute,
         source: MediaSource?,
         isTVOS: Bool
     ) -> Bool {
-        guard !isTVOS else { return false }
+        if isTVOS {
+            return false
+        }
         return shouldUseIPhoneNoStallDirectPlayGuard(route: route, source: source)
+    }
+
+    nonisolated static func shouldPreserveDirectPlayStartup(route: PlaybackRoute) -> Bool {
+        shouldPreserveDirectPlayRecovery(route: route)
+    }
+
+    nonisolated static func shouldPreserveDirectPlayStartup(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        playbackPolicy: PlaybackPolicy,
+        allowSDRFallback: Bool,
+        usesDirectRemuxOnly: Bool,
+        maxStreamingBitrate: Int,
+        isTVOS: Bool
+    ) -> Bool {
+        if shouldPreemptivelyUseStableTVOSHLS(
+            route: route,
+            source: source,
+            playbackPolicy: playbackPolicy,
+            allowSDRFallback: allowSDRFallback,
+            usesDirectRemuxOnly: usesDirectRemuxOnly,
+            maxStreamingBitrate: maxStreamingBitrate,
+            isTVOS: isTVOS
+        ) {
+            return false
+        }
+
+        return shouldPreserveDirectPlayStartup(route: route)
+    }
+
+    nonisolated static func shouldPreserveDirectPlayRecovery(route: PlaybackRoute?) -> Bool {
+        guard let route else { return false }
+        if case .directPlay = route {
+            return true
+        }
+        return false
+    }
+
+    nonisolated static func shouldAttemptSameRouteDirectPlayRecovery(reason: String) -> Bool {
+        switch StartupFailureReason(rawValue: reason) {
+        case .directPlayStall:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated static func shouldUseFastDirectPlayStartup(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        maxStreamingBitrate: Int,
+        isTVOS: Bool
+    ) -> Bool {
+        guard isTVOS else { return false }
+        guard case let .directPlay(url) = route else { return false }
+        guard url.pathExtension.lowercased() != "m3u8" else { return false }
+        guard let bitrate = source?.bitrate, bitrate > 0 else { return false }
+        guard maxStreamingBitrate > 0 else { return false }
+        return Double(maxStreamingBitrate) >= Double(bitrate) * 1.5
+    }
+
+    nonisolated static func shouldSuspendCurrentItemBeforeProfileRecovery(reason: String) -> Bool {
+        switch StartupFailureReason(rawValue: reason) {
+        case .startupReadinessTimeout,
+             .startupVideoPrerollTimeout,
+             .directPlayPreflightInsufficient,
+             .directPlayPostStartStall:
+            return true
+        default:
+            return false
+        }
     }
 
     nonisolated static func shouldDisableDirectRoutesForRecovery(reason: String) -> Bool {
         switch StartupFailureReason(rawValue: reason) {
-        case .startupReadinessTimeout, .startupVideoPrerollTimeout, .directPlayStall:
+        case .startupReadinessTimeout,
+             .startupVideoPrerollTimeout,
+             .directPlayPreflightInsufficient,
+             .directPlayPostStartStall:
             return true
         default:
             return false
@@ -4709,11 +5326,54 @@ public final class PlaybackSessionController {
         elapsedSecondsSinceLoad: Double,
         elapsedSecondsSinceFirstFrame: Double?
     ) -> Bool {
-        guard recentStallCount >= 2 else { return false }
-        let duringInitialStartup = elapsedSecondsSinceLoad <= 12
-        let rightAfterLateFirstFrame = elapsedSecondsSinceFirstFrame.map { $0 <= 8 } ?? false
-        guard duringInitialStartup || rightAfterLateFirstFrame else { return false }
-        return shouldUseStallResistantDirectPlay(route: route, source: source)
+        guard shouldUseStallResistantDirectPlay(route: route, source: source) else { return false }
+        guard elapsedSecondsSinceLoad <= 45 else { return false }
+
+        if let elapsedSecondsSinceFirstFrame {
+            return elapsedSecondsSinceFirstFrame <= 20 && recentStallCount >= 1
+        }
+
+        return elapsedSecondsSinceLoad <= 12 && recentStallCount >= 2
+    }
+
+    nonisolated static func directPlayPrestartRecoveryReason(
+        route: PlaybackRoute,
+        sourceBitrate: Int?,
+        preheatResult: PlaybackStartupPreheater.Result?,
+        isTVOS: Bool
+    ) -> StartupFailureReason? {
+        guard isTVOS else { return nil }
+        guard case let .directPlay(url) = route else { return nil }
+        guard url.pathExtension.lowercased() != "m3u8" else { return nil }
+        guard let sourceBitrate, sourceBitrate >= 18_000_000 else { return nil }
+
+        guard
+            let observedBitrate = preheatResult?.observedBitrate,
+            observedBitrate.isFinite,
+            observedBitrate > 0
+        else {
+            return .directPlayPreflightInsufficient
+        }
+
+        let requiredBitrate = Double(sourceBitrate) * 1.25
+        return observedBitrate >= requiredBitrate ? nil : .directPlayPreflightInsufficient
+    }
+
+    static func shouldBlockAutoplayAfterUnsafeStartup(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        runtimeSeconds: Double?,
+        resumeSeconds: Double,
+        isTVOS: Bool
+    ) -> Bool {
+        let requirement = PlaybackStartupReadinessPolicy.requirement(
+            route: route,
+            sourceBitrate: source?.bitrate,
+            runtimeSeconds: runtimeSeconds,
+            resumeSeconds: resumeSeconds,
+            isTVOS: isTVOS
+        )
+        return requirement?.allowsTimeoutStart == false
     }
 
     nonisolated private static func shouldUseStableDirectPlayURL(
@@ -4757,6 +5417,50 @@ public final class PlaybackSessionController {
         return source.isPremiumVideoSource || (source.bitrate ?? 0) >= 12_000_000
     }
 
+    nonisolated static func shouldPreemptivelyUseStableTVOSHLS(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        playbackPolicy: PlaybackPolicy,
+        allowSDRFallback: Bool,
+        usesDirectRemuxOnly: Bool,
+        maxStreamingBitrate: Int,
+        isTVOS: Bool
+    ) -> Bool {
+        guard isTVOS else { return false }
+        guard playbackPolicy == .auto, allowSDRFallback, !usesDirectRemuxOnly else { return false }
+        guard case let .directPlay(url) = route else { return false }
+        guard url.pathExtension.lowercased() != "m3u8" else { return false }
+        guard let bitrate = source?.bitrate, bitrate >= 18_000_000 else { return false }
+        guard maxStreamingBitrate > 0 else { return false }
+        return Double(bitrate) > Double(maxStreamingBitrate) * 1.25
+    }
+
+    nonisolated static func variantURLPreservingResumeQuery(
+        masterURL: URL,
+        variantURL: URL
+    ) -> URL {
+        guard var components = URLComponents(url: variantURL, resolvingAgainstBaseURL: false) else {
+            return variantURL
+        }
+
+        let masterItems = URLComponents(url: masterURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        var variantItems = components.queryItems ?? []
+        let resumeKeys = ["StartTimeTicks", "startTimeTicks", "StartTime", "startTime"]
+
+        for key in resumeKeys {
+            guard !variantItems.contains(where: { $0.name.caseInsensitiveCompare(key) == .orderedSame }) else {
+                continue
+            }
+            guard let item = masterItems.first(where: { $0.name.caseInsensitiveCompare(key) == .orderedSame }) else {
+                continue
+            }
+            variantItems.append(URLQueryItem(name: item.name, value: item.value))
+        }
+
+        components.queryItems = variantItems.isEmpty ? nil : variantItems
+        return components.url ?? variantURL
+    }
+
     nonisolated static func shouldResumePlaybackAfterTrackReload(
         wasPlayingBeforeReplacement: Bool,
         playerRate: Float,
@@ -4793,5 +5497,24 @@ public enum PlaybackResumePolicy {
         timeControlStatus: AVPlayer.TimeControlStatus
     ) -> Bool {
         playerRate > 0 || timeControlStatus == .playing || timeControlStatus == .waitingToPlayAtSpecifiedRate
+    }
+
+    public struct ControllerReattachPlaybackIntent: Equatable, Sendable {
+        public let pauseDuringDetach: Bool
+        public let resumeAfterAttach: Bool
+    }
+
+    public static func controllerReattachPlaybackIntent(
+        playerRate: Float,
+        timeControlStatus: AVPlayer.TimeControlStatus
+    ) -> ControllerReattachPlaybackIntent {
+        let shouldResume = shouldResumeAfterControllerReattach(
+            playerRate: playerRate,
+            timeControlStatus: timeControlStatus
+        )
+        return ControllerReattachPlaybackIntent(
+            pauseDuringDetach: shouldResume,
+            resumeAfterAttach: shouldResume
+        )
     }
 }

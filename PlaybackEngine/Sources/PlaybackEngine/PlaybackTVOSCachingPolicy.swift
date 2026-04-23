@@ -97,13 +97,15 @@ enum PlaybackTVOSCachingPolicy {
         indicatedBitrate: Double,
         sourceBitrate: Int?,
         currentTime: Double,
+        playbackElapsedSeconds: Double,
         runtimeSeconds: Double?,
         healthySampleCount: Int,
         isTVOS: Bool
     ) -> AdaptiveCachingHint? {
         guard isTVOS else { return nil }
         guard currentBufferDuration.isFinite, currentBufferDuration >= 0 else { return nil }
-        guard currentTime.isFinite, currentTime >= minimumAggressiveBufferPlaybackSeconds else { return nil }
+        guard currentTime.isFinite, currentTime >= 0 else { return nil }
+        guard playbackElapsedSeconds.isFinite, playbackElapsedSeconds >= minimumAggressiveBufferPlaybackSeconds else { return nil }
         guard let runtimeSeconds, runtimeSeconds.isFinite, runtimeSeconds > 0 else { return nil }
         guard observedBitrate.isFinite, observedBitrate > 0 else { return nil }
 
@@ -122,7 +124,7 @@ enum PlaybackTVOSCachingPolicy {
         guard headroomRatio >= healthyHeadroomRatio else { return nil }
 
         guard let configuration = rampConfigurations.last(where: {
-            currentTime >= $0.minimumPlaybackSeconds &&
+            playbackElapsedSeconds >= $0.minimumPlaybackSeconds &&
                 healthySampleCount >= $0.minimumHealthySamples &&
                 headroomRatio >= $0.minimumHeadroomRatio
         }) else {
@@ -165,6 +167,7 @@ enum PlaybackTVOSCachingPolicy {
         indicatedBitrate: Double,
         sourceBitrate: Int?,
         currentTime: Double,
+        playbackElapsedSeconds: Double,
         runtimeSeconds: Double?,
         healthySampleCount: Int = .max,
         isTVOS: Bool
@@ -175,6 +178,7 @@ enum PlaybackTVOSCachingPolicy {
             indicatedBitrate: indicatedBitrate,
             sourceBitrate: sourceBitrate,
             currentTime: currentTime,
+            playbackElapsedSeconds: playbackElapsedSeconds,
             runtimeSeconds: runtimeSeconds,
             healthySampleCount: healthySampleCount,
             isTVOS: isTVOS

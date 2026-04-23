@@ -1,6 +1,6 @@
 import Foundation
 
-enum PlaybackStartupReadinessPolicy {
+public enum PlaybackStartupReadinessPolicy {
     struct Requirement: Equatable, Sendable {
         let minimumBufferDuration: Double
         let preferredBufferDuration: Double
@@ -42,6 +42,26 @@ enum PlaybackStartupReadinessPolicy {
         return clamp(base, runtimeSeconds: runtimeSeconds, resumeSeconds: resumeSeconds)
     }
 
+    public static func requiresStartupPreheat(
+        route: PlaybackRoute,
+        sourceBitrate: Int?,
+        runtimeSeconds: Double?,
+        resumeSeconds: Double,
+        isTVOS: Bool
+    ) -> Bool {
+        if isProgressiveDirectPlay(route: route) {
+            return false
+        }
+
+        return requirement(
+            route: route,
+            sourceBitrate: sourceBitrate,
+            runtimeSeconds: runtimeSeconds,
+            resumeSeconds: resumeSeconds,
+            isTVOS: isTVOS
+        ) != nil
+    }
+
     static func shouldStart(
         bufferedDuration: Double,
         likelyToKeepUp: Bool,
@@ -70,47 +90,62 @@ enum PlaybackStartupReadinessPolicy {
         return false
     }
 
+    static func allowsImmediateStartBeforeReadyToPlay(requirement: Requirement) -> Bool {
+        requirement.allowsTimeoutStart
+            && requirement.minimumBufferDuration <= 0
+            && requirement.preferredBufferDuration <= 0
+    }
+
+    private static func isProgressiveDirectPlay(route: PlaybackRoute) -> Bool {
+        guard case let .directPlay(url) = route else { return false }
+        return !isPlaylistURL(url)
+    }
+
     private static func directPlayRequirement(
         route: PlaybackRoute,
         bitrate: Int,
         isResume: Bool,
         isTVOS: Bool
     ) -> Requirement? {
+        guard case let .directPlay(url) = route else { return nil }
+        if url.pathExtension.lowercased() == "m3u8" {
+            return streamingRequirement(bitrate: bitrate, isTVOS: isTVOS)
+        }
+
         guard isTVOS else {
-            guard case let .directPlay(url) = route else { return nil }
-            if url.pathExtension.lowercased() == "m3u8" {
-                return streamingRequirement(bitrate: bitrate, isTVOS: false)
-            }
             guard bitrate >= 18_000_000 || (isResume && bitrate >= 12_000_000) else {
                 return nil
             }
             return Requirement(
-                minimumBufferDuration: 5,
-                preferredBufferDuration: 10,
+                minimumBufferDuration: 0,
+                preferredBufferDuration: 0,
                 timeout: 4,
                 pollInterval: 0.15,
-                reason: isResume ? "ios_resume_directplay_guard" : "ios_high_bitrate_directplay_guard",
+                reason: isResume ? "ios_resume_directplay_ready" : "ios_high_bitrate_directplay_ready",
                 allowsTimeoutStart: false
             )
         }
 
+        let guardedDirectPlay = isResume || bitrate >= 8_000_000
+        guard guardedDirectPlay else { return nil }
+
         if bitrate >= 18_000_000 {
             return Requirement(
-                minimumBufferDuration: 12,
-                preferredBufferDuration: 30,
-                timeout: 5,
+                minimumBufferDuration: 4,
+                preferredBufferDuration: 12,
+                timeout: 6,
                 pollInterval: 0.15,
-                reason: "tvos_high_bitrate_directplay",
-                allowsTimeoutStart: true
+                reason: "tvos_high_bitrate_directplay_ready",
+                allowsTimeoutStart: false
             )
         }
 
         return Requirement(
-            minimumBufferDuration: isResume || bitrate >= 8_000_000 ? 8 : 5,
-            preferredBufferDuration: isResume || bitrate >= 8_000_000 ? 18 : 10,
-            timeout: isResume || bitrate >= 8_000_000 ? 3.5 : 2,
+            minimumBufferDuration: 0,
+            preferredBufferDuration: 0,
+            timeout: 3,
             pollInterval: 0.15,
-            reason: isResume ? "tvos_resume_directplay" : "tvos_directplay",
+            reason: isResume ? "tvos_resume_directplay_ready" : "tvos_directplay_ready",
             allowsTimeoutStart: true
         )
     }
@@ -150,6 +185,11 @@ enum PlaybackStartupReadinessPolicy {
             reason: "ios_high_bitrate_hls",
             allowsTimeoutStart: true
         )
+    }
+
+    private static func isPlaylistURL(_ url: URL) -> Bool {
+        let pathExtension = url.pathExtension.lowercased()
+        return pathExtension == "m3u8" || pathExtension == "m3u"
     }
 
     private static func clamp(

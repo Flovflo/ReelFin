@@ -207,7 +207,7 @@ final class HomeViewModel: ObservableObject {
     private func loadFromCache() async {
         do {
             let cached = try await dependencies.repository.fetchHomeFeed()
-            let normalized = await normalizedFeed(cached)
+            let normalized = normalizedFeed(cached)
             guard !normalized.rows.isEmpty || !normalized.featured.isEmpty else { return }
 
             ensureKnownSectionKinds(from: normalized.rows)
@@ -254,7 +254,7 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func applyEnrichedFeed(_ processed: HomeFeed) async {
-        let merged = await normalizedFeed(mergeEnrichedFeed(current: feed, processed: processed))
+        let merged = normalizedFeed(mergeEnrichedFeed(current: feed, processed: processed))
         guard feed != merged else { return }
         ensureKnownSectionKinds(from: merged.rows)
         feed = merged
@@ -404,23 +404,23 @@ final class HomeViewModel: ObservableObject {
         return preserved + missing
     }
 
-    private func normalizedFeed(_ feed: HomeFeed) async -> HomeFeed {
+    private func normalizedFeed(_ feed: HomeFeed) -> HomeFeed {
         var normalizedRows: [HomeRow] = []
         normalizedRows.reserveCapacity(feed.rows.count)
 
         for row in feed.rows {
             var normalizedRow = row
-            normalizedRow.items = await deduplicatedItems(row.items)
+            normalizedRow.items = deduplicatedItems(row.items)
             normalizedRows.append(normalizedRow)
         }
 
         return HomeFeed(
-            featured: await deduplicatedItems(feed.featured),
+            featured: deduplicatedItems(feed.featured),
             rows: normalizedRows
         )
     }
 
-    private func deduplicatedItems(_ items: [MediaItem]) async -> [MediaItem] {
+    private func deduplicatedItems(_ items: [MediaItem]) -> [MediaItem] {
         let uniqueByID = Self.deduplicatedItemsByID(items)
         var grouped: [String: MediaItem] = [:]
         var orderedKeys: [String] = []
@@ -428,7 +428,7 @@ final class HomeViewModel: ObservableObject {
         for item in uniqueByID {
             let key = Self.canonicalKey(for: item)
             if let existing = grouped[key] {
-                grouped[key] = await preferredDuplicate(between: existing, and: item)
+                grouped[key] = Self.preferredDuplicate(between: existing, and: item)
             } else {
                 grouped[key] = item
                 orderedKeys.append(key)
@@ -443,13 +443,7 @@ final class HomeViewModel: ObservableObject {
         return items.filter { seen.insert($0.id).inserted }
     }
 
-    private func preferredDuplicate(between lhs: MediaItem, and rhs: MediaItem) async -> MediaItem {
-        let lhsOptimization = await optimizationPreferenceScore(for: lhs)
-        let rhsOptimization = await optimizationPreferenceScore(for: rhs)
-        if lhsOptimization != rhsOptimization {
-            return lhsOptimization > rhsOptimization ? lhs : rhs
-        }
-
+    private static func preferredDuplicate(between lhs: MediaItem, and rhs: MediaItem) -> MediaItem {
         let lhsQuality = Self.qualityScore(for: lhs)
         let rhsQuality = Self.qualityScore(for: rhs)
         if lhsQuality == rhsQuality {
@@ -457,36 +451,6 @@ final class HomeViewModel: ObservableObject {
         }
 
         return lhsQuality > rhsQuality ? lhs : rhs
-    }
-
-    private func optimizationPreferenceScore(for item: MediaItem) async -> Int {
-        guard let playbackItem = await optimizationPlaybackItem(for: item) else {
-            return 0
-        }
-
-        await dependencies.playbackWarmupManager.warm(itemID: playbackItem.id)
-        let selection = await dependencies.playbackWarmupManager.selection(for: playbackItem.id)
-
-        switch ApplePlaybackOptimizationStatus(selection: selection) {
-        case .optimized?:
-            return 2
-        case .needsServerPrep?:
-            return 1
-        case nil:
-            return 0
-        }
-    }
-
-    private func optimizationPlaybackItem(for item: MediaItem) async -> MediaItem? {
-        guard item.mediaType == .series else {
-            return item
-        }
-
-        do {
-            return try await dependencies.detailRepository.loadNextUpEpisode(seriesID: item.id)
-        } catch {
-            return nil
-        }
     }
 
     private static func canonicalKey(for item: MediaItem) -> String {
@@ -521,11 +485,14 @@ final class HomeViewModel: ObservableObject {
 
     private static func qualityScore(for item: MediaItem) -> Int {
         var score = 0
+        score += item.hasDolbyVision ? 60 : 0
+        score += item.has4K ? 40 : 0
         score += item.overview?.isEmpty == false ? 5 : 0
         score += item.posterTag == nil ? 0 : 4
         score += item.backdropTag == nil ? 0 : 3
         score += item.communityRating == nil ? 0 : 2
         score += item.playbackPositionTicks == nil ? 0 : 2
+        score += item.hasClosedCaptions ? 1 : 0
         score += item.isFavorite ? 1 : 0
         score += item.isPlayed ? 1 : 0
         score += min(item.genres.count, 3)

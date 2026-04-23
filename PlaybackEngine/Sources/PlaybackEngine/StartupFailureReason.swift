@@ -16,7 +16,9 @@ public enum StartupFailureReason: String, Sendable, Equatable {
     case playerItemFailedTransient = "player_item_failed_transient"
     case startupReadinessTimeout = "startup_readiness_timeout"
     case startupVideoPrerollTimeout = "startup_video_preroll_timeout"
+    case directPlayPreflightInsufficient = "directplay_preflight_insufficient"
     case directPlayStall = "directplay_stall"
+    case directPlayPostStartStall = "directplay_poststart_stall"
     case startupWatchdogExpired = "startup_watchdog"
     case nativeBridgePackagingFailure = "nativebridge_packaging_failure"
     case unknownStartupFailure = "unknown_startup_failure"
@@ -25,11 +27,14 @@ public enum StartupFailureReason: String, Sendable, Equatable {
     public var shouldTriggerRecovery: Bool {
         switch self {
         case .decodedFrameWatchdog, .readyButNoVideoFrame, .decoderStall, .presentationSizeZero,
-             .startupReadinessTimeout, .startupVideoPrerollTimeout, .directPlayStall,
+             .startupReadinessTimeout, .startupVideoPrerollTimeout,
+             .directPlayPostStartStall,
              .startupWatchdogExpired, .playerItemFailed, .firstSegmentTimeout:
             return true
         case .manifestLoadFailed, .networkTimeout, .playerItemFailedTransient:
             return false // handled by transient retry path
+        case .directPlayPreflightInsufficient, .directPlayStall:
+            return false // Direct Play is preserved; controller handles same-route retry/logging.
         case .subtitlePipelineFailure, .audioPipelineFailure:
             return true
         case .nativeBridgePackagingFailure:

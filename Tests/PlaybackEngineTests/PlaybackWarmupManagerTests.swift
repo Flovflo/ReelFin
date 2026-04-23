@@ -68,7 +68,7 @@ final class PlaybackWarmupManagerTests: XCTestCase {
         let manager = PlaybackWarmupManager(
             ttl: 120,
             resolver: { itemID in
-                makeWarmSelection(itemID: itemID)
+                makeWarmPlaylistSelection(itemID: itemID)
             },
             startupPreheater: { selection, resumeSeconds, runtimeSeconds, isTVOS in
                 await preheater.preheat(
@@ -172,6 +172,41 @@ private func makeWarmSelection(itemID: String) -> PlaybackAssetSelection {
             hdrMode: .sdr,
             audioMode: "aac",
             bitrate: nil,
+            playMethod: "DirectPlay"
+        )
+    )
+}
+
+private func makeWarmPlaylistSelection(itemID: String) -> PlaybackAssetSelection {
+    let url = URL(string: "https://example.com/\(itemID).m3u8")!
+    return PlaybackAssetSelection(
+        source: MediaSource(
+            id: itemID,
+            itemID: itemID,
+            name: itemID,
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            bitrate: 12_000_000,
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: url,
+            directPlayURL: url,
+            transcodeURL: URL(string: "https://example.com/\(itemID)-transcode.m3u8")
+        ),
+        decision: PlaybackDecision(
+            sourceID: itemID,
+            route: .directPlay(url)
+        ),
+        assetURL: url,
+        headers: [:],
+        debugInfo: PlaybackDebugInfo(
+            container: "mp4",
+            videoCodec: "h264",
+            videoBitDepth: nil,
+            hdrMode: .sdr,
+            audioMode: "aac",
+            bitrate: 12_000_000,
             playMethod: "DirectPlay"
         )
     )

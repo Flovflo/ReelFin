@@ -166,6 +166,26 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertFalse(shouldResume)
     }
 
+    func testControllerReattachPausesAudioDuringDetachWhenPlaybackIsActive() {
+        let intent = PlaybackResumePolicy.controllerReattachPlaybackIntent(
+            playerRate: 1,
+            timeControlStatus: .playing
+        )
+
+        XCTAssertTrue(intent.pauseDuringDetach)
+        XCTAssertTrue(intent.resumeAfterAttach)
+    }
+
+    func testControllerReattachDoesNotPauseExplicitlyPausedPlayback() {
+        let intent = PlaybackResumePolicy.controllerReattachPlaybackIntent(
+            playerRate: 0,
+            timeControlStatus: .paused
+        )
+
+        XCTAssertFalse(intent.pauseDuringDetach)
+        XCTAssertFalse(intent.resumeAfterAttach)
+    }
+
     func testResumeSecondsPrefersServerPositionWhenLocalProgressIsEarlier() {
         let item = MediaItem(
             id: "movie-1",
@@ -294,6 +314,34 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertEqual(policy.reason, "ios_no_stall_directplay_guard")
     }
 
+    func testHighBitrateProgressiveDirectPlayUsesNoStallBufferingOnTvOS() {
+        let source = MediaSource(
+            id: "high-bitrate-source",
+            itemID: "item-high-bitrate",
+            name: "High bitrate stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let policy = PlaybackSessionController.directPlayStabilityPolicy(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-high-bitrate/stream?static=true&MediaSourceId=high-bitrate-source")!),
+            source: source,
+            defaultForwardBufferDuration: 2,
+            defaultWaitsToMinimizeStalling: false,
+            isTVOS: true
+        )
+
+        XCTAssertEqual(policy.forwardBufferDuration, 24)
+        XCTAssertTrue(policy.waitsToMinimizeStalling)
+        XCTAssertEqual(policy.reason, "tvos_no_stall_directplay_guard")
+    }
+
     func testPresentationSizeAloneDoesNotCountAsRenderedFrameWhenOutputIsAttached() {
         XCTAssertFalse(
             PlaybackSessionController.hasRenderableVideoFrame(
@@ -338,7 +386,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
-    func testTvOSDirectPlayDoesNotUseIPhoneVideoPrerollGate() {
+    func testTvOSPremiumDirectPlaySkipsBlockingVideoPreroll() {
         let source = MediaSource(
             id: "high-bitrate-source",
             itemID: "item-high-bitrate",
@@ -362,7 +410,31 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
-    func testPremiumProgressiveDirectPlayUsesStallResistantBufferingOnTvOS() {
+    func testTvOSOrdinaryDirectPlaySkipsVideoPrerollGate() {
+        let source = MediaSource(
+            id: "ordinary-source",
+            itemID: "item-ordinary",
+            name: "Ordinary stream",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            bitrate: 6_000_000,
+            videoBitDepth: 8,
+            videoRangeType: "SDR",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertFalse(
+            PlaybackSessionController.shouldPrerollVideoBeforeAudioStart(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-ordinary/stream?static=true")!),
+                source: source,
+                isTVOS: true
+            )
+        )
+    }
+
+    func testPremiumProgressiveDirectPlayUsesNoStallBufferingOnTvOS() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -385,9 +457,9 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             isTVOS: true
         )
 
-        XCTAssertEqual(policy.forwardBufferDuration, 12)
+        XCTAssertEqual(policy.forwardBufferDuration, 24)
         XCTAssertTrue(policy.waitsToMinimizeStalling)
-        XCTAssertEqual(policy.reason, "premium_direct_play_stability")
+        XCTAssertEqual(policy.reason, "tvos_no_stall_directplay_guard")
     }
 
     func testPremiumDirectPlayPrefersProvidedStableURLAndPreservesQueryItems() {
@@ -508,7 +580,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertEqual(preferredURL, currentURL)
     }
 
-    func testRepeatedPremiumDirectPlayStallsTriggerRecovery() {
+    func testRepeatedPremiumDirectPlayStallsBeforeFirstFrameTriggerRecovery() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -534,7 +606,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertTrue(shouldRecover)
     }
 
-    func testLateFirstFrameStallsStillTriggerRecovery() {
+    func testEarlyPostFirstFrameDirectPlayStallsTriggerRecovery() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -560,7 +632,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertTrue(shouldRecover)
     }
 
-    func testSingleDirectPlayStallDoesNotTriggerRecovery() {
+    func testSingleDirectPlayStallBeforeFirstFrameDoesNotTriggerRecovery() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -586,6 +658,341 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertFalse(shouldRecover)
     }
 
+    func testSingleDirectPlayStallRightAfterFirstFrameTriggersRecovery() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 14_885_349,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let shouldRecover = PlaybackSessionController.shouldAttemptDirectPlayStallRecovery(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            source: source,
+            recentStallCount: 1,
+            elapsedSecondsSinceLoad: 18,
+            elapsedSecondsSinceFirstFrame: 10
+        )
+
+        XCTAssertTrue(shouldRecover)
+    }
+
+    func testPostStartDirectPlayStallDisablesDirectRouteRecovery() {
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.directPlayPostStartStall.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldSuspendCurrentItemBeforeProfileRecovery(
+                reason: StartupFailureReason.directPlayPostStartStall.rawValue
+            )
+        )
+        XCTAssertTrue(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
+    }
+
+    func testTvOSHighBitrateDirectPlayBlocksAutoplayOnSparseBufferTelemetry() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let shouldBlock = PlaybackSessionController.shouldBlockAutoplayAfterUnsafeStartup(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            source: source,
+            runtimeSeconds: 7_200,
+            resumeSeconds: 1_102,
+            isTVOS: true
+        )
+
+        XCTAssertTrue(shouldBlock)
+    }
+
+    func testTvOSHighBitrateWithinBudgetDirectPlayKeepsNativePath() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mov",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let shouldPreempt = PlaybackSessionController.shouldPreemptivelyUseStableTVOSHLS(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            source: source,
+            playbackPolicy: .auto,
+            allowSDRFallback: true,
+            usesDirectRemuxOnly: false,
+            maxStreamingBitrate: 120_000_000,
+            isTVOS: true
+        )
+
+        XCTAssertFalse(shouldPreempt)
+    }
+
+    func testTvOSHighBitrateOverBudgetDirectPlayUsesStableHLSPreemption() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mov",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let shouldPreempt = PlaybackSessionController.shouldPreemptivelyUseStableTVOSHLS(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            source: source,
+            playbackPolicy: .auto,
+            allowSDRFallback: true,
+            usesDirectRemuxOnly: false,
+            maxStreamingBitrate: 12_000_000,
+            isTVOS: true
+        )
+
+        XCTAssertTrue(shouldPreempt)
+    }
+
+    func testTvOSHighBitrateStrictQualityDirectPlayKeepsNativePath() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mov",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let shouldPreempt = PlaybackSessionController.shouldPreemptivelyUseStableTVOSHLS(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            source: source,
+            playbackPolicy: .auto,
+            allowSDRFallback: false,
+            usesDirectRemuxOnly: false,
+            maxStreamingBitrate: 40_000_000,
+            isTVOS: true
+        )
+
+        XCTAssertFalse(shouldPreempt)
+    }
+
+    func testTvOSHighBitrateDirectPlayWithNetworkHeadroomUsesFastStartupPolicy() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mov",
+            videoCodec: "hevc",
+            audioCodec: "aac",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let policy = PlaybackSessionController.directPlayStabilityPolicy(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            source: source,
+            defaultForwardBufferDuration: 2,
+            defaultWaitsToMinimizeStalling: false,
+            maxStreamingBitrate: 120_000_000,
+            isTVOS: true
+        )
+
+        XCTAssertEqual(policy.forwardBufferDuration, 2)
+        XCTAssertFalse(policy.waitsToMinimizeStalling)
+        XCTAssertNil(policy.reason)
+    }
+
+    func testStartupDirectPlayFailuresSkipSameRouteRecovery() {
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.startupReadinessTimeout.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.directPlayPostStartStall.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.directPlayPreflightInsufficient.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.directPlayStall.rawValue
+            )
+        )
+    }
+
+    func testTvOSHighBitrateDirectPlayPrestartGuardRejectsLowHeadroomPreheat() {
+        let preheat = PlaybackStartupPreheater.Result(
+            byteCount: 4 * 1_024 * 1_024,
+            elapsedSeconds: 2.368,
+            observedBitrate: 14_170_226,
+            rangeStart: 6_333_399_040,
+            reason: "directplay_range"
+        )
+
+        let reason = PlaybackSessionController.directPlayPrestartRecoveryReason(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            sourceBitrate: 21_868_794,
+            preheatResult: preheat,
+            isTVOS: true
+        )
+
+        XCTAssertEqual(reason, .directPlayPreflightInsufficient)
+    }
+
+    func testTvOSHighBitrateDirectPlayPrestartGuardAcceptsHealthyHeadroom() {
+        let preheat = PlaybackStartupPreheater.Result(
+            byteCount: 4 * 1_024 * 1_024,
+            elapsedSeconds: 0.8,
+            observedBitrate: 48_000_000,
+            rangeStart: 6_333_399_040,
+            reason: "directplay_range"
+        )
+
+        let reason = PlaybackSessionController.directPlayPrestartRecoveryReason(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            sourceBitrate: 21_868_794,
+            preheatResult: preheat,
+            isTVOS: true
+        )
+
+        XCTAssertNil(reason)
+    }
+
+    func testTvOSHighBitrateDirectPlayPrestartGuardRejectsMissingPreheat() {
+        let reason = PlaybackSessionController.directPlayPrestartRecoveryReason(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+            sourceBitrate: 21_868_794,
+            preheatResult: nil,
+            isTVOS: true
+        )
+
+        XCTAssertEqual(reason, .directPlayPreflightInsufficient)
+    }
+
+    func testDirectPlayResumePositionToleranceAcceptsLandedSeek() {
+        XCTAssertTrue(
+            PlaybackSessionController.isResumePositionSatisfied(
+                currentTime: 2_325.49,
+                resumeSeconds: 2_325.5
+            )
+        )
+    }
+
+    func testDirectPlayResumePositionToleranceRejectsWrongStart() {
+        XCTAssertFalse(
+            PlaybackSessionController.isResumePositionSatisfied(
+                currentTime: 0.16,
+                resumeSeconds: 2_325.5
+            )
+        )
+    }
+
+    func testResumeOffsetDoesNotTripDecodedFrameWatchdogBeforeHLSTimeAdvances() {
+        XCTAssertFalse(
+            PlaybackSessionController.decodedFrameWatchdogPlaybackHasStarted(
+                playerSeconds: 0.08,
+                absolutePlaybackSeconds: 1_119.08,
+                transcodeStartOffset: 1_119
+            )
+        )
+    }
+
+    func testHLSTimeAdvanceTripsDecodedFrameWatchdogAfterResumeOffset() {
+        XCTAssertTrue(
+            PlaybackSessionController.decodedFrameWatchdogPlaybackHasStarted(
+                playerSeconds: 1.0,
+                absolutePlaybackSeconds: 1_120,
+                transcodeStartOffset: 1_119
+            )
+        )
+    }
+
+    func testPremiumDirectPlayGetsExtendedStartupWatchdogs() {
+        XCTAssertEqual(
+            PlaybackSessionController.decodedFrameWatchdogDelayNanoseconds(
+                activeProfile: .serverDefault,
+                isHEVCStreamCopyTranscode: false,
+                isStallResistantDirectPlay: true
+            ),
+            30_000_000_000
+        )
+        XCTAssertEqual(
+            PlaybackSessionController.startupWatchdogDelayNanoseconds(
+                activeProfile: .serverDefault,
+                currentItemHasDolbyVision: false,
+                isHEVCStreamCopyTranscode: false,
+                isStallResistantDirectPlay: true
+            ),
+            30_000_000_000
+        )
+    }
+
+    func testPermissiveLowBitrateTvOSDirectPlayDoesNotBlockAutoplayAfterTimeout() {
+        let source = MediaSource(
+            id: "ordinary-source",
+            itemID: "item-ordinary",
+            name: "Ordinary stream",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            bitrate: 3_500_000,
+            videoBitDepth: 8,
+            videoRangeType: "SDR",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let shouldBlock = PlaybackSessionController.shouldBlockAutoplayAfterUnsafeStartup(
+            route: .directPlay(URL(string: "https://example.com/Videos/item-ordinary/stream?static=true&MediaSourceId=ordinary-source")!),
+            source: source,
+            runtimeSeconds: 7_200,
+            resumeSeconds: 0,
+            isTVOS: true
+        )
+
+        XCTAssertFalse(shouldBlock)
+    }
+
     func testLatePlaybackStallsDoNotTriggerStartupRecovery() {
         let source = MediaSource(
             id: "premium-source",
@@ -606,7 +1013,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             source: source,
             recentStallCount: 2,
             elapsedSecondsSinceLoad: 30,
-            elapsedSecondsSinceFirstFrame: 12
+            elapsedSecondsSinceFirstFrame: 24
         )
 
         XCTAssertFalse(shouldRecover)

@@ -47,7 +47,7 @@
 3. Medium: playback observer work still has lifecycle-owned-task gaps.
    Files: `PlaybackEngine/Sources/PlaybackEngine/PlaybackSessionController.swift`, `ReelFinUI/Sources/ReelFinUI/Player/NativePlayerViewController.swift`
    Impact: stale observer mutations after stop/reload remain possible.
-   Fix: keep pushing delayed validation, seek invalidation, and hot observer work into cancelable or session-scoped ownership.
+   Fix: item-scoped observer guards and delayed validation ownership landed; keep pushing synthetic seek invalidation and remaining hot observer work into cancelable or session-scoped ownership.
 
 4. Low: repo cleanup drift left obviously stale operational files behind.
    Files: `tasks/todo.md`, `scripts/export_marketing_screenshots.sh`
@@ -98,9 +98,59 @@
 - Detail-page playback warmup now passes resume/runtime/platform context into `PlaybackWarmupManager`, which deduplicates startup media-byte preheats by route, platform, and resume bucket; playback startup uses the same preheater path so a warmed detail page can avoid repeating untracked probes.
 - Series detail warmup now resolves Jellyfin Next Up before loading episodes, selects the matching season when the next episode is in a later season, and only falls back to first unplayed/first episode when the server has no Next Up target.
 - tvOS Home, Detail, Library, Search, and top navigation now use native no-chrome `Button` activation for selectable focus surfaces instead of custom focusable views with tap gestures; Detail row-up navigation also scrolls the target section into view before applying the focus handoff.
+- The earlier strict sparse-buffer fallback path is superseded because it caused false tvOS progressive Direct Play startup timeouts and transcode restarts before the first frame.
+- Detail-page warmup no longer marks progressive Direct Play as fully ready from disposable URLSession range-probe bytes; the UI signal is reserved for startup paths with cache/readiness evidence AVPlayer can actually consume.
+- Earlier Direct Play startup tuning prioritized sparse telemetry and skipped blocking tvOS video-preroll recovery; the post-first-frame stall suppression from that pass is superseded by the latest cut-after-start fix below.
+- The previous tvOS Direct Play no-cut rule favored a single uninterrupted progressive item; the latest `MEDIA_PLAYBACK_STALL` log showed that a bounded post-start fallback is safer for visible playback continuity.
+- Detail-page background playback warmup no longer drives the blocking `Preparing` state or disables tvOS Play focus; Direct Play preheat timeouts can fail silently without trapping the Detail page.
+- The tvOS Direct Play startup gate no longer treats sparse `loadedTimeRanges` as unsafe for progressive streams; high-bitrate Direct Play now starts from AVPlayer `readyToPlay` instead of waiting 45s and rebuilding as transcode.
+- Direct Play remains the preferred route once selected, but it is no longer mandatory after an observed post-start stall on high-bitrate/premium tvOS progressive playback.
+- The earlier slow-start log (`resume=4655s`, `ready min=0 preferred=0`, then `readiness.timeout elapsed=17s`) was addressed by allowing zero-buffer Direct Play gates on lower-risk progressive assets; M22 keeps high-bitrate/premium tvOS Direct Play on a measured-buffer no-stall path.
+- tvOS progressive Direct Play warmup no longer performs disposable URLSession range probes, removing a competing request that was timing out against the same Jellyfin stream while AVPlayer was trying to start.
+- tvOS Direct Play no longer forces a 90s startup buffer for premium progressive files; that target made the first-frame path visibly slower and encouraged large progressive reads before playback could prove the connection was healthy.
+- tvOS cache ramp decisions now use elapsed playback time since the first frame, not the resumed movie position, so resuming at `4655s` cannot immediately jump to hot/deep/flood buffering.
+- Resume-based HLS/transcode no longer applies an absolute deferred seek after first frame, avoiding the post-start timebase churn seen when fallback streams began at `StartTimeTicks`.
+- Progressive Direct Play warmup now skips disposable URLSession range probes on iOS as well as tvOS, so the only startup reader for remote MP4/MOV is AVPlayer itself.
+- iOS high-bitrate progressive Direct Play now gates on `readyToPlay` for preroll instead of requiring measured 5-10s buffer telemetry before playback intent, reducing avoidable first-frame delay while keeping the audio/video sync guard.
+- Home featured playback now presents the native full-screen player before session resolution completes, matching Detail startup behavior and making the user action feel immediate.
+- The latest tvOS cut-after-start log (`DirectPlay`, `bitrate=21868794`, first frame after ~6.3s, then `MEDIA_PLAYBACK_STALL`) supersedes the earlier "Direct Play mandatory" tuning: high-bitrate/premium tvOS progressive Direct Play now uses a 24s no-stall forward-buffer target with `automaticallyWaitsToMinimizeStalling`, no longer qualifies for immediate zero-buffer readiness, and a stall within 20s of first frame recovers through direct-route-disabled HLS/transcode fallback.
+- Playback item observers now guard the current `AVPlayerItem` before mutating playback state, and delayed startup subtitle selection/video validation tasks are canceled on stop, reload, replacement, and first-frame completion.
+- The follow-up tvOS stall log (`bitrate=21868794`, `MEDIA_PLAYBACK_STALL` after a slow progressive start, fallback racing while old DirectPlay still emitted proof/stall telemetry) initially exposed a bad overcorrection: preemptive HLS/transcode added multi-second resolution cost and could abandon the native route. Auto-quality tvOS Direct Play now stays Direct Play when the configured streaming budget has clear headroom over the source bitrate.
+- Compatible high-bitrate tvOS Direct Play skips the startup readiness delay and keeps the fast Direct Play buffer policy when network headroom is known. Apple still gets the native progressive file path first; fallback is reserved for explicit over-budget cases or real playback failure evidence.
+- Startup-readiness, preroll, and preflight failures no longer replay the same progressive Direct Play route; profile recovery suspends the old player item, cancels observers/prerolls/validation/proof tasks, and then loads the fallback route with the current resume position.
+- Fallback/profile re-resolution now preserves `StartTimeTicks`, and pinned HLS variant URLs carry resume query parameters from the master playlist URL so a Resume action cannot silently rebuild a zero-second playlist.
+- Home and Library duplicate enrichment now score local playback quality from existing metadata instead of resolving playback sources or warming media routes during feed/list normalization, removing the repeated `playback.selection` network storm seen before the user clicked Play.
+- Periodic playback progress still saves local position on every player tick, but remote Jellyfin `/Sessions/Playing/Progress` updates are throttled, latest-wins, and paused during route recovery so telemetry cannot compete with media startup/fallback traffic.
 
 ## Validation Results
 
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests`: passed, 123 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/HomeViewModelFeedEnrichmentTests/testLoadPrefersLocalPlaybackQualityWithoutWarmupWhenDuplicateCandidatesShareTheSameMovie -only-testing:PlaybackEngineTests/LibraryViewModelTests/testLoadInitialPrefersLocalPlaybackQualityWithoutResolvingSourcesAcrossLibraries`: passed, 2 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStopReportingTests`: passed, 125 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests`: passed, 140 tests
+- `xcodegen generate`: passed
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `git diff --check`: passed
+- `xcodegen generate`: passed
+- `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/PlaybackWarmupManagerTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackResumeSeekPlannerTests -only-testing:PlaybackEngineTests/PlaybackTVOSCachingPolicyTests`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed after rerunning sequentially
+- `git diff --check`: passed
+- `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed
+- `xcodegen generate`: passed
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/PlaybackWarmupManagerTests -only-testing:PlaybackEngineTests/DetailViewModelActionTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed, 82 tests
+- `git diff --check`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
+- `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackResumeSeekPlannerTests -only-testing:PlaybackEngineTests/PlaybackTVOSCachingPolicyTests`: passed
+- `xcodegen generate`: passed for build `1.0 (6)`
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild archive -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'generic/platform=tvOS' -archivePath .artifacts/testflight/ReelFin-tvOS-b6.xcarchive DEVELOPMENT_TEAM=WZ4CHJH7TA CODE_SIGN_STYLE=Automatic`: passed
+- `xcodebuild -exportArchive -archivePath .artifacts/testflight/ReelFin-tvOS-b6.xcarchive -exportPath .artifacts/testflight/export-b6 -exportOptionsPlist .artifacts/testflight/export-b5/ExportOptions.plist`: passed
+- `codesign -dv --verbose=2 /tmp/reelfin-ipa-b6/Payload/ReelFin.app` plus `Info.plist` checks: passed, `com.reelfin.app`, version `1.0`, build `6`
+- `asc publish testflight --app 6762079357 --ipa .artifacts/testflight/export-b6/ReelFin.ipa --platform TV_OS --version 1.0 --build-number 6 --group "Internal Testers" --wait`: passed, build `e5c4d93a-7592-4a81-bf6e-8b1496a16238`, processing state `VALID`
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackTVOSCachingPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackResumeSeekPlannerTests`: passed, 136 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackStartupPreheaterTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests -only-testing:PlaybackEngineTests/PlaybackResumeSeekPlannerTests`: passed, 128 tests
 - `xcodegen generate`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/RootViewModelAuthPersistenceTests`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/HomeViewModelActionTests`: passed
@@ -114,6 +164,14 @@
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/MediaGatewayCacheKeyTests -only-testing:PlaybackEngineTests/MediaGatewayIndexTests -only-testing:PlaybackEngineTests/HLSSegmentDiskCacheTests`: passed, 13 tests
 - `bash -n scripts/run_zero_stall_validation.sh`: passed
 - `scripts/run_zero_stall_validation.sh`: passed, artifacts in `.artifacts/zero-stall/20260419-160313`
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed, 57 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: not runnable because `PlaybackEngineTests` is not a member of the `ReelFinTV` scheme/test plan
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed, 2 tests
+- `xcodegen generate`: passed for build `1.0 (5)`
+- `xcodebuild archive -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'generic/platform=tvOS' -archivePath .artifacts/testflight/ReelFin-tvOS-b5.xcarchive DEVELOPMENT_TEAM=WZ4CHJH7TA CODE_SIGN_STYLE=Automatic`: passed
+- `xcodebuild -exportArchive -archivePath .artifacts/testflight/ReelFin-tvOS-b5.xcarchive -exportPath .artifacts/testflight/export-b5 -exportOptionsPlist .artifacts/testflight/ExportOptions-tvOS-manual.plist`: passed
+- `codesign -dv --verbose=2 /tmp/reelfin-ipa-b5/Payload/ReelFin.app` plus `Info.plist` checks: passed, `com.reelfin.app`, version `1.0`, build `5`
+- `asc publish testflight --app 6762079357 --ipa .artifacts/testflight/export-b5/ReelFin.ipa --platform TV_OS --version 1.0 --build-number 5 --group "Internal Testers" --wait`: passed, build `0974cb76-e710-4f90-922f-0d5731d765c7`, processing state `VALID`
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed, 42 tests
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinZeroStallDerivedData -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackDecisionEngineTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests -only-testing:PlaybackEngineTests/PlaybackPolicyTests`: passed, 124 tests
 - `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
@@ -123,6 +181,26 @@
 - `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 - `xcodebuild test -quiet -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
 - `xcodebuild build -quiet -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'`: passed
+- `xcodegen generate`: passed
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed, 57 tests
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodegen generate`: passed for build `1.0 (3)`
+- `xcodebuild archive -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'generic/platform=tvOS'`: passed
+- `xcodebuild -exportArchive` with `.artifacts/testflight/ExportOptions-tvOS-manual.plist`: passed
+- `asc publish testflight --platform TV_OS --group "Internal Testers"`: passed, build `1.0 (3)` processing state `VALID`
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/DetailViewModelActionTests`: passed, 9 tests
+- `git diff --check`: passed
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodegen generate`: passed for build `1.0 (4)`
+- `xcodebuild archive -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'generic/platform=tvOS'`: passed
+- `xcodebuild -exportArchive` with `.artifacts/testflight/ExportOptions-tvOS-manual.plist`: passed
+- `codesign` and `Info.plist` IPA verification: passed, distribution signed, `CFBundleVersion=4`
+- `asc publish testflight --platform TV_OS --group "Internal Testers"`: passed, build `1.0 (4)` processing state `VALID`, build ID `d5efc767-d12f-4aa3-b6ba-67c89b43c964`
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: passed, 57 tests
+- `git diff --check`: passed
+- `xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'`: passed, 2 tests
+- `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2' -only-testing:PlaybackEngineTests/PlaybackStartupReadinessPolicyTests -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests`: not runnable because `PlaybackEngineTests` is not a member of the `ReelFinTV` scheme/test plan
 
 ## Remaining High-Value Follow-Ups
 
