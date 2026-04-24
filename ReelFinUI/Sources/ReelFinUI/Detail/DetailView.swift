@@ -2891,32 +2891,7 @@ private struct PrimaryActionsRow: View {
 
     var body: some View {
 #if os(tvOS)
-        HStack(spacing: 16) {
-            HeroPrimaryButton(
-                title: playButtonLabel,
-                isLoading: isLoadingPlayback,
-                action: onPlay
-            )
-            .focused(focusedAction, equals: .play)
-
-            HeroSecondaryButton(
-                title: isInWatchlist ? "In Watchlist" : "Watchlist",
-                systemImage: isInWatchlist ? "checkmark" : "plus",
-                isActive: isInWatchlist,
-                action: onToggleWatchlist
-            )
-            .focused(focusedAction, equals: .watchlist)
-
-            HeroSecondaryButton(
-                title: isWatched ? "Watched" : "Mark Watched",
-                systemImage: isWatched ? "eye.fill" : "eye",
-                isActive: isWatched,
-                action: onToggleWatched
-            )
-            .focused(focusedAction, equals: .watched)
-        }
-        .defaultFocus(focusedAction, .play)
-        .accessibilityElement(children: .contain)
+        tvActionsRow
 #else
         HStack(spacing: 18) {
             HeroPrimaryButton(
@@ -2946,6 +2921,37 @@ private struct PrimaryActionsRow: View {
         .accessibilityElement(children: .contain)
 #endif
     }
+
+#if os(tvOS)
+    private var tvActionsRow: some View {
+        HStack(spacing: 16) {
+            HeroPrimaryButton(
+                title: playButtonLabel,
+                isLoading: isLoadingPlayback,
+                action: onPlay
+            )
+            .focused(focusedAction, equals: .play)
+
+            HeroSecondaryButton(
+                title: isInWatchlist ? "In Watchlist" : "Watchlist",
+                systemImage: isInWatchlist ? "checkmark" : "plus",
+                isActive: isInWatchlist,
+                action: onToggleWatchlist
+            )
+            .focused(focusedAction, equals: .watchlist)
+
+            HeroSecondaryButton(
+                title: isWatched ? "Watched" : "Mark Watched",
+                systemImage: isWatched ? "eye.fill" : "eye",
+                isActive: isWatched,
+                action: onToggleWatched
+            )
+            .focused(focusedAction, equals: .watched)
+        }
+        .defaultFocus(focusedAction, .play)
+        .accessibilityElement(children: .contain)
+    }
+#endif
 }
 
 private struct HeroPrimaryButton: View {
@@ -2961,27 +2967,45 @@ private struct HeroPrimaryButton: View {
 
     var body: some View {
 #if os(tvOS)
+        if #available(tvOS 26.0, *) {
+            tvOS26Button
+        } else {
+            legacyTVButton
+        }
+#else
+        buttonContent
+#endif
+    }
+
+    #if os(tvOS)
+    @available(tvOS 26.0, *)
+    private var tvOS26Button: some View {
         Button {
             guard !isLoading else { return }
             action()
         } label: {
-            HStack(spacing: 12) {
-                if isLoading {
-                    ProgressView()
-                    Text("Preparing")
-                } else {
-                    Image(systemName: "play.fill")
-                    Text(title)
-                }
-            }
-            .font(.system(size: 24, weight: .semibold, design: .rounded))
-            .foregroundStyle(primaryButtonForeground)
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            .frame(minWidth: 318, minHeight: 78)
-            .padding(.horizontal, 26)
-            .background { primaryButtonBackground }
-            .contentShape(Capsule(style: .continuous))
+            primaryLabel
+                .frame(width: 318, height: 78)
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.glass(Glass.clear.tint(Color.white.opacity(0.025))))
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
+        .focused($isFocused)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var legacyTVButton: some View {
+        Button {
+            guard !isLoading else { return }
+            action()
+        } label: {
+            primaryLabel
+                .foregroundStyle(primaryButtonForeground)
+                .frame(minWidth: 318, minHeight: 78)
+                .padding(.horizontal, 26)
+                .background { primaryButtonBackground }
+                .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(TVNoChromeButtonStyle())
         .focused($isFocused)
@@ -2991,14 +3015,25 @@ private struct HeroPrimaryButton: View {
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 24 : 12, x: 0, y: isFocused ? 14 : 8)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
-#else
-        buttonContent
-#endif
     }
 
-    #if os(tvOS)
+    private var primaryLabel: some View {
+        HStack(spacing: 12) {
+            if isLoading {
+                ProgressView()
+                Text("Preparing")
+            } else {
+                Image(systemName: "play.fill")
+                Text(title)
+            }
+        }
+        .font(.system(size: 19, weight: .semibold, design: .rounded))
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+    }
+
     private var primaryButtonForeground: Color {
-        isFocused ? Color.black.opacity(0.90) : .white
+        .white.opacity(isFocused ? 0.98 : 0.92)
     }
 
     private var primaryButtonBackground: some View {
@@ -3108,25 +3143,11 @@ private struct HeroSecondaryButton: View {
 
     var body: some View {
 #if os(tvOS)
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
-                .foregroundStyle(buttonForeground)
-                .lineLimit(1)
-                .minimumScaleFactor(0.86)
-                .frame(minWidth: 196, minHeight: 72)
-                .padding(.horizontal, 20)
-                .background { buttonBackground }
-                .contentShape(Capsule(style: .continuous))
+        if #available(tvOS 26.0, *) {
+            tvOS26Button
+        } else {
+            legacyTVButton
         }
-        .buttonStyle(TVNoChromeButtonStyle())
-        .scaleEffect(isFocused ? 1.03 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
-        .focused($isFocused)
-        .focusEffectDisabled(true)
-        .hoverEffectDisabled(true)
-        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
-        .accessibilityAddTraits(.isButton)
 #else
         Button(action: action) {
             HStack(spacing: 10) {
@@ -3150,14 +3171,64 @@ private struct HeroSecondaryButton: View {
 #endif
     }
 
-
-
     #if os(tvOS)
-    private var buttonForeground: Color {
-        if isFocused {
-            return Color.black.opacity(0.90)
+    @available(tvOS 26.0, *)
+    private var tvOS26Button: some View {
+        Button(action: action) {
+            buttonLabel
+                .foregroundStyle(.white.opacity(isFocused ? 0.98 : 0.90))
+                .frame(width: 206, height: 72)
+                .background { secondaryGlassBackground }
+                .contentShape(Capsule(style: .continuous))
         }
-        return .white.opacity(0.92)
+        .buttonStyle(TVNoChromeButtonStyle())
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
+        .scaleEffect(isFocused ? 1.035 : 1)
+        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isFocused)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    @available(tvOS 26.0, *)
+    private var secondaryGlassBackground: some View {
+        Color.clear
+            .glassEffect(
+                Glass.regular
+                    .tint(Color.white.opacity(isActive ? 0.045 : 0.032))
+                    .interactive(),
+                in: .capsule
+            )
+    }
+
+    private var legacyTVButton: some View {
+        Button(action: action) {
+            buttonLabel
+                .foregroundStyle(buttonForeground)
+                .frame(minWidth: 196, minHeight: 72)
+                .padding(.horizontal, 20)
+                .background { buttonBackground }
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(TVNoChromeButtonStyle())
+        .scaleEffect(isFocused ? 1.03 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
+        .focused($isFocused)
+        .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
+        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var buttonLabel: some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .lineLimit(1)
+            .minimumScaleFactor(0.86)
+    }
+
+    private var buttonForeground: Color {
+        .white.opacity(isFocused ? 0.98 : 0.90)
     }
 
     private var buttonBackground: some View {
