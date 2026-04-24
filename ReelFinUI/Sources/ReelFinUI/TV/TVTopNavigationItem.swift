@@ -1,3 +1,4 @@
+#if os(tvOS)
 import SwiftUI
 
 struct TVTopNavigationItem: View {
@@ -9,6 +10,7 @@ struct TVTopNavigationItem: View {
     let appearance: TVTopNavigationAppearance
     let highlightNamespace: Namespace.ID
     let focusedDestination: FocusState<TVRootDestination?>.Binding
+    let onMoveCommand: (TVRootDestination, MoveCommandDirection) -> Void
     let action: () -> Void
 
     var body: some View {
@@ -32,6 +34,10 @@ struct TVTopNavigationItem: View {
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
+        .onMoveCommand { direction in
+            guard direction == .up else { return }
+            onMoveCommand(destination, direction)
+        }
         .animation(ReelFinTheme.tvFocusSpring, value: isHighlighted)
         .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -86,3 +92,4 @@ struct TVTopNavigationItem: View {
             .matchedGeometryEffect(id: "tv-top-nav-highlight", in: highlightNamespace)
     }
 }
+#endif

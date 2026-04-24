@@ -80,6 +80,18 @@ struct ServerSettingsView: View {
                         }
                         .tint(.white)
 
+                        Toggle(
+                            isOn: Binding(
+                                get: { viewModel.nativeVLCClassPlayerEnabled },
+                                set: { viewModel.setNativeVLCClassPlayerEnabled($0) }
+                            )
+                        ) {
+                            Text("Use native local player")
+                                .font(.system(size: 14, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white)
+                        }
+                        .tint(.white)
+
                         Toggle(isOn: $viewModel.forceH264FallbackWhenNotDirectPlay) {
                             Text("Use H.264 compatibility fallback")
                                 .font(.system(size: 14, weight: .medium, design: .rounded))
@@ -260,6 +272,43 @@ struct ServerSettingsView: View {
                 Text("Server")
             } footer: {
                 Text(serverFooterText)
+            }
+
+            Section {
+                Toggle(
+                    isOn: Binding(
+                        get: { viewModel.nativeVLCClassPlayerEnabled },
+                        set: { viewModel.setNativeVLCClassPlayerEnabled($0) }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Native Local Player")
+                        Text("Experimental original-file path. Server transcoding is blocked while this is on.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Toggle(isOn: $viewModel.forceH264FallbackWhenNotDirectPlay) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("H.264 Compatibility Fallback")
+                        Text("Only applies to the legacy player path.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(viewModel.nativeVLCClassPlayerEnabled)
+
+                Button {
+                    persistSettings()
+                } label: {
+                    Label(viewModel.saveButtonTitle, systemImage: "checkmark.circle")
+                }
+                .disabled(!viewModel.canSave || !viewModel.hasPendingChanges)
+            } header: {
+                Text("Playback")
+            } footer: {
+                Text("Native mode asks Jellyfin for the original file and refuses HLS transcode URLs.")
             }
 
             Section {

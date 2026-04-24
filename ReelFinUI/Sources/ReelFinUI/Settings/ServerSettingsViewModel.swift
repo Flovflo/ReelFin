@@ -26,6 +26,7 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var preferredAudioLanguage = ""
     @Published var preferredSubtitleLanguage = ""
     @Published var forceH264FallbackWhenNotDirectPlay = true
+    @Published var nativeVLCClassPlayerEnabled = false
     @Published var episodeReleaseNotificationsEnabled = false
     @Published var homeOrderedSectionKinds: [HomeSectionKind] = HomeViewModel.defaultSectionOrder
     @Published var homeHiddenSectionKinds: Set<HomeSectionKind> = []
@@ -63,9 +64,16 @@ final class ServerSettingsViewModel: ObservableObject {
             allowSDRFallback = config.allowSDRFallback
             preferAudioTranscodeOnly = config.preferAudioTranscodeOnly
             forceH264FallbackWhenNotDirectPlay = config.forceH264FallbackWhenNotDirectPlay
+            nativeVLCClassPlayerEnabled = config.nativeVLCClassPlayerConfig
+                .applyingRuntimeOverride(userDefaults: defaults)
+                .enabled
             preferredAudioLanguage = config.preferredAudioLanguage ?? ""
             preferredSubtitleLanguage = config.preferredSubtitleLanguage ?? ""
             customBitrateMbpsText = Self.formatBitrateInput(from: config.maxStreamingBitrateOverride)
+        } else {
+            nativeVLCClassPlayerEnabled = NativeVLCClassPlayerConfig()
+                .applyingRuntimeOverride(userDefaults: defaults)
+                .enabled
         }
 
         let storedHomePreferences = HomeSectionPreferencesStore.load(defaults: defaults)
@@ -134,7 +142,8 @@ final class ServerSettingsViewModel: ObservableObject {
     var advancedPlaybackSummary: String {
         let bridge = localPlaybackBridgeEnabled ? "Local bridge on" : "Server-only playback"
         let startup = fasterVideoOnlyStartupEnabled ? "fast startup" : "full startup"
-        return "\(bridge) | \(startup) | \(Self.dolbyVisionLabel(for: dolbyVisionPackagingMode))"
+        let native = nativeVLCClassPlayerEnabled ? "Native VLC on" : "Native VLC off"
+        return "\(native) | \(bridge) | \(startup) | \(Self.dolbyVisionLabel(for: dolbyVisionPackagingMode))"
     }
 
     var canSave: Bool {
@@ -169,6 +178,7 @@ final class ServerSettingsViewModel: ObservableObject {
             || effectiveAllowSDRFallback != (saved?.allowSDRFallback ?? true)
             || preferAudioTranscodeOnly != (saved?.preferAudioTranscodeOnly ?? true)
             || forceH264FallbackWhenNotDirectPlay != (saved?.forceH264FallbackWhenNotDirectPlay ?? false)
+            || nativeVLCClassPlayerEnabled != (saved?.nativeVLCClassPlayerConfig.enabled ?? false)
             || normalizedLanguageCode(from: preferredAudioLanguage) != saved?.preferredAudioLanguage
             || normalizedLanguageCode(from: preferredSubtitleLanguage) != saved?.preferredSubtitleLanguage
             || parsedCustomBitrateOverride() != saved?.maxStreamingBitrateOverride
@@ -219,8 +229,15 @@ final class ServerSettingsViewModel: ObservableObject {
 
         do {
             let url = try normalizedServerURL(from: serverURLText)
-            let previousURL = dependencies.settingsStore.serverConfiguration?.serverURL
-            let savedAllowCellularStreaming = dependencies.settingsStore.serverConfiguration?.allowCellularStreaming ?? true
+            let saved = dependencies.settingsStore.serverConfiguration
+            let previousURL = saved?.serverURL
+            let savedAllowCellularStreaming = saved?.allowCellularStreaming ?? true
+            var nativeConfig = saved?.nativeVLCClassPlayerConfig ?? NativeVLCClassPlayerConfig()
+            nativeConfig.enabled = nativeVLCClassPlayerEnabled
+            nativeConfig.alwaysRequestOriginalFile = true
+            nativeConfig.allowServerTranscodeFallback = false
+            defaults.set(nativeVLCClassPlayerEnabled, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
+            defaults.set(true, forKey: NativeVLCClassPlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
 
             let configuration = ServerConfiguration(
                 serverURL: url,
@@ -232,6 +249,7 @@ final class ServerSettingsViewModel: ObservableObject {
                 preferAudioTranscodeOnly: preferAudioTranscodeOnly,
                 maxStreamingBitrateOverride: parsedCustomBitrateOverride(),
                 forceH264FallbackWhenNotDirectPlay: forceH264FallbackWhenNotDirectPlay,
+                nativeVLCClassPlayerConfig: nativeConfig,
                 preferredAudioLanguage: effectivePreferredAudioLanguage,
                 preferredSubtitleLanguage: effectivePreferredSubtitleLanguage
             )
@@ -296,6 +314,15 @@ final class ServerSettingsViewModel: ObservableObject {
             errorMessage = "Episode alerts could not be enabled."
         case .unsupported:
             errorMessage = "Episode alerts are not available on this device."
+        }
+    }
+
+    func setNativeVLCClassPlayerEnabled(_ enabled: Bool) {
+        nativeVLCClassPlayerEnabled = enabled
+        defaults.set(enabled, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
+        defaults.set(true, forKey: NativeVLCClassPlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
+        if enabled {
+            forceH264FallbackWhenNotDirectPlay = false
         }
     }
 

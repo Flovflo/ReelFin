@@ -32,9 +32,55 @@ final class HomeViewModelActionTests: XCTestCase {
         XCTAssertEqual(favoriteCalls.first?.isFavorite, true)
     }
 
+    func testManualRefreshRunsManualSyncAndReloadsCache() async throws {
+        let apiClient = HomeActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let refreshedItem = MediaItem(id: "fresh-1", name: "Fresh Item", mediaType: .movie, libraryID: "movies")
+        let refreshedFeed = HomeFeed(
+            featured: [refreshedItem],
+            rows: [HomeRow(kind: .recentlyAddedMovies, title: "Recently Added Movies", items: [refreshedItem])]
+        )
+        let syncEngine = HomeRecordingSyncEngine(repository: repository, feedAfterSync: refreshedFeed)
+
+        let viewModel = HomeViewModel(
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: repository,
+                syncEngine: syncEngine
+            )
+        )
+        await viewModel.manualRefresh()
+
+        let reasons = await syncEngine.recordedReasons()
+        XCTAssertEqual(reasons, [.manualRefresh])
+        XCTAssertEqual(viewModel.feed.featured.first?.id, "fresh-1")
+        XCTAssertEqual(viewModel.visibleRows.first?.items.first?.id, "fresh-1")
+    }
+
+    func testManualRefreshSkipsWhenRefreshAlreadyRunning() async {
+        let apiClient = HomeActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let syncEngine = HomeRecordingSyncEngine(repository: repository, feedAfterSync: .empty)
+        let viewModel = HomeViewModel(
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: repository,
+                syncEngine: syncEngine
+            )
+        )
+        viewModel.isRefreshing = true
+
+        await viewModel.manualRefresh()
+
+        let reasons = await syncEngine.recordedReasons()
+        XCTAssertEqual(reasons, [])
+        XCTAssertTrue(viewModel.isRefreshing)
+    }
+
     private func makeDependencies(
         apiClient: HomeActionSpyAPIClient,
-        repository: MockMetadataRepository
+        repository: MockMetadataRepository,
+        syncEngine: any SyncEngineProtocol = MockSyncEngine()
     ) -> ReelFinDependencies {
         let detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
@@ -51,7 +97,7 @@ final class HomeViewModelActionTests: XCTestCase {
             repository: repository,
             detailRepository: detailRepository,
             imagePipeline: MockImagePipeline(),
-            syncEngine: MockSyncEngine(),
+            syncEngine: syncEngine,
             settingsStore: MockSettingsStore(),
             episodeReleaseNotificationManager: notifications,
             seriesCache: SeriesLookupCache(apiClient: apiClient),
@@ -83,6 +129,26 @@ final class HomeViewModelActionTests: XCTestCase {
         }
 
         return await apiClient.favoriteCalls().count == expectedCount
+    }
+}
+
+private actor HomeRecordingSyncEngine: SyncEngineProtocol {
+    private let repository: MockMetadataRepository
+    private let feedAfterSync: HomeFeed
+    private var reasons: [SyncReason] = []
+
+    init(repository: MockMetadataRepository, feedAfterSync: HomeFeed) {
+        self.repository = repository
+        self.feedAfterSync = feedAfterSync
+    }
+
+    func sync(reason: SyncReason) async {
+        reasons.append(reason)
+        try? await repository.saveHomeFeed(feedAfterSync)
+    }
+
+    func recordedReasons() -> [SyncReason] {
+        reasons
     }
 }
 

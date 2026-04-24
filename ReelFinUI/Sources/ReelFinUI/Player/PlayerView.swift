@@ -15,14 +15,26 @@ struct PlayerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            NativePlayerViewController(
-                player: session.player,
-                transportState: session.transportState,
-                apiClient: apiClient,
-                imagePipeline: imagePipeline,
-                onSkipSuggestion: { session.skipCurrentSegment() }
-            )
-            .ignoresSafeArea()
+            if session.isNativeVLCClassPlayerActive {
+                NativeVLCPlayerView(
+                    playbackURL: session.nativeVLCPlaybackURL,
+                    playbackHeaders: session.nativeVLCPlaybackHeaders,
+                    startTimeSeconds: session.nativeVLCStartTimeSeconds,
+                    item: item,
+                    diagnostics: session.nativeVLCDiagnosticsOverlayLines,
+                    errorMessage: session.playbackErrorMessage,
+                    onPlaybackTime: { session.updateNativeVLCPlaybackTime($0) }
+                )
+            } else {
+                NativePlayerViewController(
+                    player: session.player,
+                    transportState: session.transportState,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline,
+                    onSkipSuggestion: { session.skipCurrentSegment() }
+                )
+                .ignoresSafeArea()
+            }
         }
         .accessibilityIdentifier("native_player_screen")
         .onDisappear {

@@ -197,6 +197,7 @@ final class HomeViewModel: ObservableObject {
     }
 
     private func refresh(reason: SyncReason) async {
+        guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
 

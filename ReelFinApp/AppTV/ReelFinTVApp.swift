@@ -1,3 +1,4 @@
+import PlaybackEngine
 import ReelFinUI
 import Shared
 import SwiftUI
@@ -9,6 +10,11 @@ struct ReelFinTVApp: App {
     private let dependencies: ReelFinDependencies
 
     init() {
+        NativeVLCClassPlayerRuntimeDefaults.registerExperimentalBranchDefaults()
+        if NativeVLCClassPlayerConfig.runtimeOverrideEnabled() {
+            PlaybackSessionController.clearStoredPreferredTranscodeProfiles()
+            AppLog.playback.notice("nativevlc.runtime.enabled — platform=tvOS branch=feature/vlc-class-native-swift-player storedTranscodePinsCleared=true")
+        }
         let metadata = AppMetadata.current
         self.metadata = metadata
         self.dependencies = TVAppBootstrap.makeDependencies(metadata: metadata)

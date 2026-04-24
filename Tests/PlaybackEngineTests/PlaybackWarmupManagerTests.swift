@@ -96,6 +96,36 @@ final class PlaybackWarmupManagerTests: XCTestCase {
         XCTAssertEqual(calls.map(\.isTVOS), [false, false])
         XCTAssertEqual(result?.reason, "test_preheat")
     }
+
+    func test_nativeModeClearsWarmupCacheAndSkipsLegacyResolution() async {
+        let nativeGate = WarmNativeModeGate()
+        let recorder = WarmResolverRecorder()
+        let manager = PlaybackWarmupManager(
+            ttl: 120,
+            resolver: { itemID in
+                try await recorder.resolve(itemID: itemID)
+            },
+            startupPreheater: { _, _, _, _ in nil },
+            nativeModeEnabled: {
+                await nativeGate.isEnabled
+            }
+        )
+
+        await manager.warm(itemID: "movie-1")
+        let cachedBeforeNativeMode = await manager.selection(for: "movie-1")
+        XCTAssertNotNil(cachedBeforeNativeMode)
+
+        await nativeGate.setEnabled(true)
+        await manager.warm(itemID: "movie-2")
+
+        let firstSelectionAfterNativeMode = await manager.selection(for: "movie-1")
+        let secondSelectionAfterNativeMode = await manager.selection(for: "movie-2")
+        let callCount = await recorder.callCount
+
+        XCTAssertNil(firstSelectionAfterNativeMode)
+        XCTAssertNil(secondSelectionAfterNativeMode)
+        XCTAssertEqual(callCount, 1)
+    }
 }
 
 private actor WarmResolverRecorder {
@@ -104,6 +134,14 @@ private actor WarmResolverRecorder {
     func resolve(itemID: String) async throws -> PlaybackAssetSelection {
         callCount += 1
         return makeWarmSelection(itemID: itemID)
+    }
+}
+
+private actor WarmNativeModeGate {
+    private(set) var isEnabled = false
+
+    func setEnabled(_ enabled: Bool) {
+        isEnabled = enabled
     }
 }
 

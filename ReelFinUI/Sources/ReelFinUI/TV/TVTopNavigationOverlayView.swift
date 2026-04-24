@@ -1,3 +1,4 @@
+#if os(tvOS)
 import SwiftUI
 
 struct TVTopNavigationOverlayView: View {
@@ -5,6 +6,7 @@ struct TVTopNavigationOverlayView: View {
     let focusedDestination: FocusState<TVRootDestination?>.Binding
     let isVisible: Bool
     let appearance: TVTopNavigationAppearance
+    let onMoveCommand: (TVRootDestination, MoveCommandDirection) -> Void
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -15,7 +17,8 @@ struct TVTopNavigationOverlayView: View {
                 TVTopNavigationBar(
                     selectedDestination: $selectedDestination,
                     focusedDestination: focusedDestination,
-                    appearance: appearance
+                    appearance: appearance,
+                    onMoveCommand: onMoveCommand
                 )
                 .padding(.top, 22)
                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -23,3 +26,4 @@ struct TVTopNavigationOverlayView: View {
         }
     }
 }
+#endif

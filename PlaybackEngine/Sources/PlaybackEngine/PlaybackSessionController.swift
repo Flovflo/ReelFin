@@ -246,11 +246,16 @@ public final class PlaybackSessionController {
     }
     public private(set) var routeDescription: String = ""
     public private(set) var debugInfo: PlaybackDebugInfo?
+    public private(set) var isNativeVLCClassPlayerActive = false
+    public private(set) var nativeVLCDiagnosticsOverlayLines: [String] = []
+    public private(set) var nativeVLCPlaybackURL: URL?
+    public private(set) var nativeVLCPlaybackHeaders: [String: String] = [:]
+    public private(set) var nativeVLCStartTimeSeconds: Double?
     public private(set) var currentPlaybackPlan: PlaybackPlan?
     public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
     public private(set) var metrics = PlaybackPerformanceMetrics()
     public private(set) var isExternalPlaybackActive = false
-    var playbackErrorMessage: String?
+    public internal(set) var playbackErrorMessage: String?
     public internal(set) var activeSkipSuggestion: PlaybackSkipSuggestion? {
         didSet { scheduleTransportStateSnapshotUpdate() }
     }
@@ -269,6 +274,7 @@ public final class PlaybackSessionController {
     private let repository: MetadataRepositoryProtocol
     private let episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)?
     private let coordinator: PlaybackCoordinator
+    private let nativeVLCClassController: NativeVLCClassPlaybackController
     private let warmupManager: (any PlaybackWarmupManaging)?
     private let playbackDiagnostics = PlaybackDiagnostics()
     private let fallbackPlanner = FallbackPlanner()
@@ -405,12 +411,16 @@ public final class PlaybackSessionController {
     private var ttffResolveMs: Double = 0
     private var ttffFirstBytesMs: Double = 0
     private var ttffReadyMs: Double = 0
-    private static let preferredProfileStorageKey = "reelfin.playback.preferredTranscodeProfileByItemID.v2"
+    public static let preferredProfileStorageKey = "reelfin.playback.preferredTranscodeProfileByItemID.v2"
     private static let localhostHLSMaxStartupAttempts = 2
     private static let remoteProgressMinimumInterval: TimeInterval = 10
     private static let remoteProgressRecoveryPollInterval: TimeInterval = 1
     private var startupSubtitleSelectionTask: Task<Void, Never>?
     private var videoValidationTask: Task<Void, Never>?
+
+    public static func clearStoredPreferredTranscodeProfiles(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: preferredProfileStorageKey)
+    }
 
     private static var isTvOSPlatform: Bool {
         #if os(tvOS)
@@ -468,6 +478,7 @@ public final class PlaybackSessionController {
         self.repository = repository
         self.episodeReleaseTracker = episodeReleaseTracker
         self.coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
+        self.nativeVLCClassController = NativeVLCClassPlaybackController(apiClient: apiClient)
         self.warmupManager = warmupManager
         self.preferredProfilesByItemID = Self.loadStoredPreferredProfiles()
         configurePlayerBase()
@@ -571,6 +582,11 @@ public final class PlaybackSessionController {
         recoveryAttemptCount = 0
         metrics = PlaybackPerformanceMetrics()
         playbackErrorMessage = nil
+        isNativeVLCClassPlayerActive = false
+        nativeVLCDiagnosticsOverlayLines = []
+        nativeVLCPlaybackURL = nil
+        nativeVLCPlaybackHeaders = [:]
+        nativeVLCStartTimeSeconds = nil
         currentPlaybackPlan = nil
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
@@ -612,7 +628,9 @@ public final class PlaybackSessionController {
         } else {
             playbackQualityMode = allowSDRFallback ? .compatibility : .strictQuality
         }
-        activeTranscodeProfile = initialProfileForItem(itemID: item.id, itemHasDolbyVision: item.hasDolbyVision)
+        activeTranscodeProfile = playbackConfig.nativeVLCClassPlayerConfig.enabled
+            ? .serverDefault
+            : initialProfileForItem(itemID: item.id, itemHasDolbyVision: item.hasDolbyVision)
         playbackStrategy = await currentPlaybackStrategy()
         AppLog.playback.notice(
             "playback.session.start — \(Self.playbackLogScope(sessionID: self.playbackLogSessionID, itemID: item.id), privacy: .public) autoplay=\(autoPlay, privacy: .public) strategy=\(self.playbackStrategy.rawValue, privacy: .public) policy=\(self.playbackPolicy.rawValue, privacy: .public) quality=\(self.playbackQualityMode.rawValue, privacy: .public) profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)"
@@ -648,6 +666,22 @@ public final class PlaybackSessionController {
             let initialResumeSecs = (try? await resumeSeconds(for: item)) ?? 0
             sessionInitialResumeSeconds = initialResumeSecs
             let resumeTimeTicks: Int64? = initialResumeSecs > 0 ? Int64(initialResumeSecs * 10_000_000) : nil
+
+            if playbackConfig.nativeVLCClassPlayerConfig.enabled {
+                AppLog.playback.notice(
+                    "nativevlc.route.selected — \(self.playbackLogScope(), privacy: .public) legacyCoordinator=false avPlayerItem=false avPlayerViewController=false profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)"
+                )
+                try await prepareNativeVLCClassPlayback(
+                    item: item,
+                    nativeConfig: playbackConfig.nativeVLCClassPlayerConfig,
+                    startTimeTicks: resumeTimeTicks
+                )
+                ttffInfoInterval?.end(name: "ttff_playback_info", message: "native_vlc_info_received")
+                ttffInfoInterval = nil
+                ttffResolveInterval?.end(name: "ttff_url_resolution", message: "native_vlc_prepared")
+                ttffResolveInterval = nil
+                return
+            }
 
             let warmedSelectionStart = Date()
             var selection: PlaybackAssetSelection
@@ -1249,7 +1283,93 @@ public final class PlaybackSessionController {
         return configuration.playbackStrategy
     }
 
+    private func prepareNativeVLCClassPlayback(
+        item: MediaItem,
+        nativeConfig: NativeVLCClassPlayerConfig,
+        startTimeTicks: Int64?
+    ) async throws {
+        guard
+            let configuration = await apiClient.currentConfiguration(),
+            let session = await apiClient.currentSession()
+        else {
+            throw AppError.unauthenticated
+        }
+
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        await nativeBridgeSession?.invalidate()
+        nativeBridgeSession = nil
+        syntheticHLSSession = nil
+        localHLSServer?.stop(reason: "native_vlc_class_route")
+        localHLSServer = nil
+        localHLSStartupSummary = nil
+        videoOutput = nil
+
+        do {
+            let snapshot = try await nativeVLCClassController.prepare(
+                itemID: item.id,
+                configuration: configuration,
+                session: session,
+                nativeConfig: nativeConfig,
+                startTimeTicks: startTimeTicks
+            )
+            applyNativeVLCClassSnapshot(snapshot)
+        } catch {
+            let message = error.localizedDescription
+            applyNativeVLCClassSnapshot(
+                NativeVLCPlaybackSnapshot(
+                    overlayLines: [
+                        "originalMediaRequested=true",
+                        "serverTranscodeUsed=false",
+                        "failure=\(message)"
+                    ],
+                    routeDescription: "NativeVLCClass(failed)",
+                    playbackErrorMessage: message
+                )
+            )
+        }
+    }
+
+    private func applyNativeVLCClassSnapshot(_ snapshot: NativeVLCPlaybackSnapshot) {
+        isNativeVLCClassPlayerActive = true
+        nativeVLCDiagnosticsOverlayLines = snapshot.overlayLines
+        nativeVLCPlaybackURL = snapshot.playbackURL
+        nativeVLCPlaybackHeaders = snapshot.playbackHeaders
+        nativeVLCStartTimeSeconds = snapshot.startTimeSeconds
+        routeDescription = snapshot.routeDescription
+        playbackErrorMessage = snapshot.playbackErrorMessage
+        availableAudioTracks = snapshot.audioTracks
+        availableSubtitleTracks = snapshot.subtitleTracks
+        selectedAudioTrackID = snapshot.selectedAudioTrackID
+        selectedSubtitleTrackID = snapshot.selectedSubtitleTrackID
+        playMethodForReporting = "NativeVLCClass"
+        debugInfo = PlaybackDebugInfo(
+            container: "local-original",
+            videoCodec: "see diagnostics",
+            videoBitDepth: nil,
+            hdrMode: .unknown,
+            audioMode: "see diagnostics",
+            bitrate: nil,
+            playMethod: "NativeVLCClass"
+        )
+        endTransportStateSnapshotBatch(commitNow: true)
+    }
+
     private func prepareAndLoadSelection(_ selection: PlaybackAssetSelection, resumeSeconds: Double?) {
+        if isNativeVLCClassPlayerActive {
+            let proof = NativeVLCClassRouteProof(
+                usedLegacyPlaybackCoordinator: true,
+                createdAVPlayerItem: true,
+                usedAVPlayerViewController: true,
+                transcodeProfile: activeTranscodeProfile.rawValue,
+                selectedURL: selection.assetURL
+            )
+            let reason = NativeVLCClassRouteGuard.firstViolationDescription(for: proof)
+                ?? "Native VLC-class route guard blocked a legacy playback selection."
+            AppLog.playback.error("nativevlc.route.guard.blocked — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public)")
+            playbackErrorMessage = reason
+            return
+        }
         guard isActivePlaybackTarget(itemID: selection.source.itemID) else {
             AppLog.playback.warning(
                 "playback.asset.stale_prepare_skipped — \(Self.playbackLogScope(sessionID: self.playbackLogSessionID, itemID: selection.source.itemID), privacy: .public) activeItem=\(self.currentItemID.map { AppLogFormat.shortIdentifier($0) } ?? "none", privacy: .public)"
@@ -1615,6 +1735,11 @@ public final class PlaybackSessionController {
         metrics = PlaybackPerformanceMetrics()
         isExternalPlaybackActive = false
         playbackErrorMessage = nil
+        isNativeVLCClassPlayerActive = false
+        nativeVLCDiagnosticsOverlayLines = []
+        nativeVLCPlaybackURL = nil
+        nativeVLCPlaybackHeaders = [:]
+        nativeVLCStartTimeSeconds = nil
         playbackProof = PlaybackProofSnapshot()
         currentMediaItem = nil
         nextEpisodeQueue = []
@@ -1704,6 +1829,11 @@ public final class PlaybackSessionController {
 
     public func play() {
         player.play()
+    }
+
+    public func updateNativeVLCPlaybackTime(_ seconds: Double) {
+        guard seconds.isFinite else { return }
+        currentTime = max(0, seconds)
     }
 
     public func pause() {
@@ -3024,6 +3154,14 @@ public final class PlaybackSessionController {
         userMessage: String,
         retryDelayNanoseconds: UInt64 = 0
     ) async -> Bool {
+        if isNativeVLCClassPlayerActive {
+            let message = NativeVLCClassRouteViolation.serverTranscodeBlockedByConfig.localizedDescription
+            AppLog.playback.error(
+                "nativevlc.route.guard.blocked — \(self.playbackLogScope(), privacy: .public) reason=\(message, privacy: .public) trigger=\(reason, privacy: .public)"
+            )
+            playbackErrorMessage = message
+            return false
+        }
         if isRecoveryInProgress {
             return true
         }
@@ -3704,18 +3842,21 @@ public final class PlaybackSessionController {
         preferAudioTranscodeOnly: Bool,
         preferredAudioLanguage: String?,
         preferredSubtitleLanguage: String?,
-        maxStreamingBitrate: Int
+        maxStreamingBitrate: Int,
+        nativeVLCClassPlayerConfig: NativeVLCClassPlayerConfig
     ) {
         guard let configuration = await apiClient.currentConfiguration() else {
-            return (.auto, true, true, nil, nil, QualityPreference.auto.maxStreamingBitrate)
+            return (.auto, true, true, nil, nil, QualityPreference.auto.maxStreamingBitrate, NativeVLCClassPlayerConfig())
         }
+        let nativeConfig = configuration.nativeVLCClassPlayerConfig.applyingRuntimeOverride()
         return (
             configuration.playbackPolicy,
             configuration.allowSDRFallback,
             configuration.preferAudioTranscodeOnly,
             configuration.preferredAudioLanguage,
             configuration.preferredSubtitleLanguage,
-            configuration.effectiveMaxStreamingBitrate
+            configuration.effectiveMaxStreamingBitrate,
+            nativeConfig
         )
     }
 
@@ -3929,6 +4070,14 @@ public final class PlaybackSessionController {
     }
 
     private func reloadRecoveryTranscode(reason: String, attempt: Int) async -> Bool {
+        if isNativeVLCClassPlayerActive {
+            let message = NativeVLCClassRouteViolation.serverTranscodeBlockedByConfig.localizedDescription
+            AppLog.playback.error(
+                "nativevlc.route.guard.blocked — \(self.playbackLogScope(attempt: attempt), privacy: .public) reason=\(message, privacy: .public) trigger=\(reason, privacy: .public)"
+            )
+            playbackErrorMessage = message
+            return false
+        }
         // Compute resume position in movie-absolute time.
         // If we've decoded at least one frame, use current player position + offset.
         // Otherwise, preserve the original start offset (retry from same position).
@@ -4619,8 +4768,14 @@ public final class PlaybackSessionController {
     ) -> (local: PlaybackProgress, remote: PlaybackProgressUpdate)? {
         guard let itemID = currentItemID else { return nil }
 
-        let positionSeconds = max(0, player.currentTime().seconds) + transcodeStartOffset
-        let totalSeconds = max(positionSeconds, (player.currentItem?.duration.seconds ?? 0) + transcodeStartOffset)
+        let nativePositionSeconds = isNativeVLCClassPlayerActive ? currentTime : nil
+        let playerPositionSeconds = player.currentTime().seconds
+        let positionBaseSeconds = nativePositionSeconds
+            ?? (playerPositionSeconds.isFinite ? playerPositionSeconds : 0)
+        let positionSeconds = max(0, positionBaseSeconds) + transcodeStartOffset
+        let itemDurationSeconds = player.currentItem?.duration.seconds ?? 0
+        let nativeTotalSeconds = isNativeVLCClassPlayerActive ? max(positionSeconds, duration) : nil
+        let totalSeconds = nativeTotalSeconds ?? max(positionSeconds, itemDurationSeconds + transcodeStartOffset)
         let positionTicks = Int64(positionSeconds * 10_000_000)
         let totalTicks = Int64(totalSeconds * 10_000_000)
 

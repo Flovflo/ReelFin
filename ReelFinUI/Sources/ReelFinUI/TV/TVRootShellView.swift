@@ -5,6 +5,7 @@ struct TVRootShellView: View {
     @State private var selectedDestination: TVRootDestination = .watchNow
     @State private var isTopNavigationVisible = true
     @State private var topNavigationAppearance = TVTopNavigationAppearance.neutral
+    @State private var homeRefreshRequest = 0
     @FocusState private var focusedDestination: TVRootDestination?
 
     let dependencies: ReelFinDependencies
@@ -13,6 +14,7 @@ struct TVRootShellView: View {
         ZStack(alignment: .top) {
             TVRootContentView(
                 selectedDestination: selectedDestination,
+                homeRefreshRequest: homeRefreshRequest,
                 dependencies: dependencies
             )
 
@@ -20,7 +22,8 @@ struct TVRootShellView: View {
                 selectedDestination: $selectedDestination,
                 focusedDestination: $focusedDestination,
                 isVisible: isTopNavigationVisible,
-                appearance: topNavigationAppearance
+                appearance: topNavigationAppearance,
+                onMoveCommand: handleTopNavigationMove
             )
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
@@ -45,10 +48,24 @@ struct TVRootShellView: View {
         guard isTopNavigationVisible else { return }
         focusedDestination = destination
     }
+
+    private func handleTopNavigationMove(_ destination: TVRootDestination, direction: MoveCommandDirection) {
+        guard
+            direction == .up,
+            selectedDestination == .watchNow,
+            focusedDestination == .watchNow,
+            destination == .watchNow
+        else {
+            return
+        }
+
+        homeRefreshRequest += 1
+    }
 }
 
 private struct TVRootContentView: View {
     let selectedDestination: TVRootDestination
+    let homeRefreshRequest: Int
     let dependencies: ReelFinDependencies
 
     var body: some View {
@@ -61,7 +78,7 @@ private struct TVRootContentView: View {
     private var content: some View {
         switch selectedDestination {
         case .watchNow:
-            HomeView(dependencies: dependencies)
+            HomeView(dependencies: dependencies, tvRefreshRequest: homeRefreshRequest)
         case .search:
             TVSearchView(dependencies: dependencies)
                 .safeAreaPadding(.top, navigationBarReservedHeight)

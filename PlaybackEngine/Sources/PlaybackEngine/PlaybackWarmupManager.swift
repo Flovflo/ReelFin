@@ -113,6 +113,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         Double?,
         Bool
     ) async -> PlaybackStartupPreheater.Result?
+    private let nativeModeEnabled: @Sendable () async -> Bool
 
     private var cache: [String: WarmEntry] = [:]
     private var inFlight: [String: Task<PlaybackAssetSelection, Error>] = [:]
@@ -126,7 +127,8 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         self.init(
             ttl: ttl,
             resolver: resolver,
-            startupPreheater: Self.makeDefaultStartupPreheater()
+            startupPreheater: Self.makeDefaultStartupPreheater(),
+            nativeModeEnabled: { false }
         )
     }
 
@@ -138,11 +140,13 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             Double,
             Double?,
             Bool
-        ) async -> PlaybackStartupPreheater.Result?
+        ) async -> PlaybackStartupPreheater.Result?,
+        nativeModeEnabled: @escaping @Sendable () async -> Bool = { false }
     ) {
         self.ttl = ttl
         self.resolver = resolver
         self.startupPreheater = startupPreheater
+        self.nativeModeEnabled = nativeModeEnabled
     }
 
     public init(
@@ -152,8 +156,16 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     ) {
         let coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
         self.ttl = ttl
+        self.nativeModeEnabled = {
+            guard let configuration = await apiClient.currentConfiguration() else { return false }
+            return configuration.nativeVLCClassPlayerConfig.applyingRuntimeOverride().enabled
+        }
         self.resolver = { itemID in
-            try await coordinator.resolvePlayback(
+            if let configuration = await apiClient.currentConfiguration(),
+               configuration.nativeVLCClassPlayerConfig.applyingRuntimeOverride().enabled {
+                throw AppError.nativeBridge("Native VLC-class mode disables legacy playback warmup.")
+            }
+            return try await coordinator.resolvePlayback(
                 itemID: itemID,
                 mode: .balanced,
                 allowTranscodingFallbackInPerformance: true
@@ -163,10 +175,12 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     }
 
     public func warm(itemID: String) async {
+        guard await canUseLegacyWarmup() else { return }
         _ = try? await resolveWarmSelection(itemID: itemID)
     }
 
     public func warm(itemID: String, resumeSeconds: Double, runtimeSeconds: Double?, isTVOS: Bool) async {
+        guard await canUseLegacyWarmup() else { return }
         guard let selection = try? await resolveWarmSelection(itemID: itemID) else {
             return
         }
@@ -185,6 +199,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
+        guard await canUseLegacyWarmup() else { return nil }
         guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
@@ -213,6 +228,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     }
 
     public func selection(for itemID: String) async -> PlaybackAssetSelection? {
+        guard await canUseLegacyWarmup() else { return nil }
         let now = Date()
         if let entry = cache[itemID], entry.isValid(at: now) {
             cache[itemID] = WarmEntry(
@@ -235,6 +251,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
+        guard await canUseLegacyWarmup() else { return nil }
         guard let selection = await selection(for: itemID) else {
             return nil
         }
@@ -276,6 +293,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
+        guard await canUseLegacyWarmup() else { return nil }
         guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
@@ -344,6 +362,24 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             startupPreheatInFlight[key]?.cancel()
             startupPreheatInFlight[key] = nil
         }
+    }
+
+    private func canUseLegacyWarmup() async -> Bool {
+        guard !(await nativeModeEnabled()) else {
+            clearLegacyWarmupState()
+            AppLog.playback.notice("nativevlc.legacyWarmup.disabled — cleared=true")
+            return false
+        }
+        return true
+    }
+
+    private func clearLegacyWarmupState() {
+        cache.removeAll()
+        inFlight.values.forEach { $0.cancel() }
+        inFlight.removeAll()
+        startupPreheatCache.removeAll()
+        startupPreheatInFlight.values.forEach { $0.cancel() }
+        startupPreheatInFlight.removeAll()
     }
 
     private func resolveWarmSelection(itemID: String) async throws -> PlaybackAssetSelection {

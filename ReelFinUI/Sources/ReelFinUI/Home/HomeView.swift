@@ -1000,6 +1000,7 @@ struct HomeView: View {
 #endif
 
     private let dependencies: ReelFinDependencies
+    private let tvRefreshRequest: Int
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
@@ -1027,7 +1028,7 @@ struct HomeView: View {
     @StateObject private var tvScreenState: TVHomeScreenState
 #endif
 
-    init(dependencies: ReelFinDependencies) {
+    init(dependencies: ReelFinDependencies, tvRefreshRequest: Int = 0) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
 #if os(tvOS)
         _tvScreenState = StateObject(
@@ -1038,6 +1039,7 @@ struct HomeView: View {
         )
 #endif
         self.dependencies = dependencies
+        self.tvRefreshRequest = tvRefreshRequest
     }
 
     var body: some View {
@@ -1089,6 +1091,12 @@ struct HomeView: View {
             }
 #endif
         }
+#if os(tvOS)
+        .onChange(of: tvRefreshRequest) { _, newValue in
+            guard newValue > 0 else { return }
+            triggerTVHomeRefresh()
+        }
+#endif
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession, let playerItem {
                 PlayerView(
@@ -1135,7 +1143,13 @@ struct HomeView: View {
     ) -> some View {
 #if os(tvOS)
         TVHomeScreen(navigationAppearance: tvScreenState.navigationAppearance) {
-            homeScrollContent(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+            ZStack(alignment: .top) {
+                homeScrollContent(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+
+                TVHomeRefreshStatusView(isRefreshing: viewModel.isRefreshing && !viewModel.isInitialLoading)
+                    .padding(.top, ReelFinTheme.tvTopNavigationBarHeight + 42)
+                    .zIndex(2)
+            }
         }
 #else
         ZStack(alignment: .bottom) {
@@ -1758,6 +1772,11 @@ struct HomeView: View {
     }
 
 #if os(tvOS)
+    private func triggerTVHomeRefresh() {
+        guard !viewModel.isRefreshing else { return }
+        Task { await viewModel.manualRefresh() }
+    }
+
     private func restoreHomeSelection(using proxy: ScrollViewProxy) {
         guard let homeReturnTarget else { return }
 
@@ -1845,6 +1864,56 @@ private final class TVHomeScreenState: ObservableObject {
 
     func cancel() {
         appearanceTask?.cancel()
+    }
+}
+
+private struct TVHomeRefreshStatusView: View {
+    let isRefreshing: Bool
+
+    var body: some View {
+        Group {
+            if isRefreshing {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.regular)
+                        .tint(.white)
+
+                    Text("Refreshing")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.94))
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .background { background }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Refreshing Home")
+                .accessibilityIdentifier("home_tv_refresh_status")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(.easeInOut(duration: 0.18), value: isRefreshing)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        if #available(tvOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .glassEffect(
+                    Glass.regular.tint(Color.white.opacity(0.12)),
+                    in: .capsule
+                )
+        } else {
+            Capsule(style: .continuous)
+                .fill(Color.black.opacity(0.46))
+        }
     }
 }
 

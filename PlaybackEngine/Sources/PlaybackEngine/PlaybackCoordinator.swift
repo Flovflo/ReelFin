@@ -97,6 +97,20 @@ public actor PlaybackCoordinator {
             throw AppError.unauthenticated
         }
 
+        let nativeConfig = configuration.nativeVLCClassPlayerConfig.applyingRuntimeOverride()
+        if nativeConfig.enabled {
+            let proof = NativeVLCClassRouteProof(
+                usedLegacyPlaybackCoordinator: true,
+                transcodeProfile: transcodeProfile.rawValue
+            )
+            let reason = NativeVLCClassRouteGuard.firstViolationDescription(for: proof)
+                ?? NativeVLCClassRouteViolation.legacyPlaybackCoordinator.localizedDescription
+            AppLog.playback.error(
+                "nativevlc.route.guard.blocked — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) reason=\(reason, privacy: .public)"
+            )
+            throw NativeVLCClassRouteViolation.legacyPlaybackCoordinator
+        }
+
         let maxBitrate = configuration.effectiveMaxStreamingBitrate
         var initialOptions = playbackOptions(
             mode: mode,

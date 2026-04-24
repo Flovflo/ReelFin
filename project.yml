@@ -14,7 +14,7 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: 26.0
     TARGETED_DEVICE_FAMILY: "1,2"
     GENERATE_INFOPLIST_FILE: YES
-    CURRENT_PROJECT_VERSION: 6
+    CURRENT_PROJECT_VERSION: 7
     MARKETING_VERSION: 1.0
     CLANG_WARN_DOCUMENTATION_COMMENTS: YES
 packages:
@@ -73,6 +73,7 @@ targets:
       - target: DataStore
       - target: ImageCache
       - target: PlaybackEngine
+      - target: NativeMediaCore
       - package: Sentry
         product: Sentry
     settings:
@@ -167,9 +168,20 @@ targets:
       - target: Shared
       - target: JellyfinAPI
       - target: DataStore
+      - target: NativeMediaCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback
+  NativeMediaCore:
+    type: framework
+    platform: iOS
+    sources:
+      - path: NativeMediaCore/Sources/NativeMediaCore
+    dependencies:
+      - target: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.nativemediacore
   ReelFinUI:
     type: framework
     platform: iOS
@@ -182,6 +194,7 @@ targets:
       - target: ImageCache
       - target: SyncEngine
       - target: PlaybackEngine
+      - target: NativeMediaCore
       - package: VariableBlur
         product: VariableBlur
     settings:
@@ -210,6 +223,7 @@ targets:
       - target: DataStoreTV
       - target: ImageCacheTV
       - target: PlaybackEngineTV
+      - target: NativeMediaCoreTV
       - package: Sentry
         product: Sentry
     settings:
@@ -312,10 +326,23 @@ targets:
       - target: SharedTV
       - target: JellyfinAPITV
       - target: DataStoreTV
+      - target: NativeMediaCoreTV
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback.tv
         PRODUCT_NAME: PlaybackEngine
+  NativeMediaCoreTV:
+    type: framework
+    platform: tvOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: NativeMediaCore/Sources/NativeMediaCore
+    dependencies:
+      - target: SharedTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.nativemediacore.tv
+        PRODUCT_NAME: NativeMediaCore
   ReelFinUITV:
     type: framework
     platform: tvOS
@@ -329,6 +356,7 @@ targets:
       - target: ImageCacheTV
       - target: SyncEngineTV
       - target: PlaybackEngineTV
+      - target: NativeMediaCoreTV
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.ui.tv
@@ -355,6 +383,7 @@ targets:
       - path: Tests/PlaybackEngineTests
     dependencies:
       - target: PlaybackEngine
+      - target: NativeMediaCore
       - target: JellyfinAPI
       - target: ReelFinUI
       - target: SyncEngine
