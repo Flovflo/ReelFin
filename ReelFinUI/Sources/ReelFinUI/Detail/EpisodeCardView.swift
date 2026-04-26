@@ -14,6 +14,7 @@ public struct EpisodeCardView: View {
     let width: CGFloat
     let isSelected: Bool
     let onSelect: () -> Void
+    let onSetWatched: ((Bool) -> Void)?
     let onMoveUp: (() -> Void)?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
@@ -23,6 +24,7 @@ public struct EpisodeCardView: View {
         width: CGFloat,
         isSelected: Bool = false,
         onSelect: @escaping () -> Void,
+        onSetWatched: ((Bool) -> Void)? = nil,
         onMoveUp: (() -> Void)? = nil,
         apiClient: any JellyfinAPIClientProtocol,
         imagePipeline: any ImagePipelineProtocol
@@ -31,6 +33,7 @@ public struct EpisodeCardView: View {
         self.width = width
         self.isSelected = isSelected
         self.onSelect = onSelect
+        self.onSetWatched = onSetWatched
         self.onMoveUp = onMoveUp
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
@@ -216,6 +219,7 @@ public struct EpisodeCardView: View {
                 )
                 .frame(width: width, height: iosCardHeight)
                 .clipped()
+                .saturation(episode.isPlayed ? 0.78 : 1)
 
                 LinearGradient(
                     stops: [
@@ -228,6 +232,12 @@ public struct EpisodeCardView: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
+
+                if episode.isPlayed {
+                    Color.black.opacity(0.24)
+                }
+
+                topStatusOverlay
 
                 if let progress = episode.playbackProgress, progress > 0, !episode.isPlayed {
                     VStack {
@@ -254,8 +264,6 @@ public struct EpisodeCardView: View {
                             .foregroundStyle(.white.opacity(0.76))
 
                         Spacer(minLength: 0)
-
-                        playbackStatusBadge
                     }
 
                     Text(episode.name)
@@ -307,6 +315,9 @@ public struct EpisodeCardView: View {
         .animation(.easeOut(duration: 0.16), value: isFocused)
         .accessibilityHint("Play episode")
         .accessibilityValue(episodeAccessibilityStatus)
+        .contextMenu {
+            episodeWatchedAction
+        }
     }
 
     private var iosEpisodeLabel: String {
@@ -330,6 +341,34 @@ public struct EpisodeCardView: View {
                 systemImage: "play.circle.fill",
                 tint: Color.white.opacity(0.92)
             )
+        }
+    }
+
+    @ViewBuilder
+    private var topStatusOverlay: some View {
+        if episode.isPlayed || episode.playbackPositionDisplayText != nil {
+            VStack {
+                HStack {
+                    Spacer(minLength: 0)
+                    playbackStatusBadge
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+        }
+    }
+
+    @ViewBuilder
+    private var episodeWatchedAction: some View {
+        if let onSetWatched {
+            Button {
+                onSetWatched(!episode.isPlayed)
+            } label: {
+                Label(
+                    episode.isPlayed ? "Mark Unwatched" : "Mark Watched",
+                    systemImage: episode.isPlayed ? "eye.slash" : "checkmark.circle"
+                )
+            }
         }
     }
 

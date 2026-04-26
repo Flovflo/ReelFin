@@ -29,12 +29,11 @@ public enum StartupFailureReason: String, Sendable, Equatable {
         switch self {
         case .decodedFrameWatchdog, .audioOnlyNoVideo, .readyButNoVideoFrame, .decoderStall, .presentationSizeZero,
              .startupReadinessTimeout, .startupVideoPrerollTimeout,
-             .directPlayPostStartStall,
              .startupWatchdogExpired, .playerItemFailed, .firstSegmentTimeout:
             return true
         case .manifestLoadFailed, .networkTimeout, .playerItemFailedTransient:
             return false // handled by transient retry path
-        case .directPlayPreflightInsufficient, .directPlayStall:
+        case .directPlayPreflightInsufficient, .directPlayStall, .directPlayPostStartStall:
             return false // Direct Play is preserved; controller handles same-route retry/logging.
         case .subtitlePipelineFailure, .audioPipelineFailure:
             return true

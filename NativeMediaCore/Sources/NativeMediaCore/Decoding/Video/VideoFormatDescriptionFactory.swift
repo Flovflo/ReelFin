@@ -7,7 +7,7 @@ public enum VideoFormatDescriptionFactory {
         case "h264", "avc1":
             return try makeH264Description(privateData: track.codecPrivateData)
         case "hevc", "h265", "hvc1", "hev1":
-            return try makeHEVCDescription(privateData: track.codecPrivateData)
+            return try makeHEVCDescription(privateData: track.codecPrivateData, hdrMetadata: track.hdrMetadata)
         default:
             throw FallbackReason.decoderBackendMissing(codec: track.codec)
         }
@@ -37,7 +37,10 @@ public enum VideoFormatDescriptionFactory {
         return typed
     }
 
-    public static func makeHEVCDescription(config: HEVCDecoderConfiguration) throws -> CMVideoFormatDescription {
+    public static func makeHEVCDescription(
+        config: HEVCDecoderConfiguration,
+        hdrMetadata: HDRMetadata? = nil
+    ) throws -> CMVideoFormatDescription {
         let parameterSets = config.vps + config.sps + config.pps
         guard !parameterSets.isEmpty else {
             throw FallbackReason.videoToolboxFormatDescriptionFailed(codecPrivateReason: "hvcC has no VPS/SPS/PPS")
@@ -50,7 +53,7 @@ public enum VideoFormatDescriptionFactory {
                 parameterSetPointers: pointers,
                 parameterSetSizes: sizes,
                 nalUnitHeaderLength: Int32(config.nalUnitLengthSize),
-                extensions: nil,
+                extensions: HDRCoreMediaMapper.formatDescriptionExtensions(for: hdrMetadata),
                 formatDescriptionOut: &description
             )
         }
@@ -70,12 +73,12 @@ public enum VideoFormatDescriptionFactory {
         return try makeH264Description(config: config)
     }
 
-    private static func makeHEVCDescription(privateData: Data?) throws -> CMVideoFormatDescription {
+    private static func makeHEVCDescription(privateData: Data?, hdrMetadata: HDRMetadata?) throws -> CMVideoFormatDescription {
         guard let privateData else {
             throw FallbackReason.videoToolboxFormatDescriptionFailed(codecPrivateReason: "missing hvcC")
         }
         let config = try VideoCodecPrivateDataParser.parseHEVCDecoderConfigurationRecord(privateData)
-        return try makeHEVCDescription(config: config)
+        return try makeHEVCDescription(config: config, hdrMetadata: hdrMetadata)
     }
 }
 

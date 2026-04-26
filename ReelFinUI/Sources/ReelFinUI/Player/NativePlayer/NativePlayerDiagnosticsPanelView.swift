@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct NativeVLCDiagnosticsPanelView: View {
+struct NativePlayerDiagnosticsPanelView: View {
     let rows: [String]
     let errorMessage: String?
 

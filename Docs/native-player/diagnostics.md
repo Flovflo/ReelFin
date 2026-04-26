@@ -1,6 +1,6 @@
 # Diagnostics
 
-`NativePlayerDiagnostics` is rendered by `NativeVLCPlayerView` when the new feature flag path is active.
+`NativePlayerDiagnostics` is rendered by `NativePlayerView` when the new feature flag path is active.
 
 Overlay fields include:
 

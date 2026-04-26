@@ -35,6 +35,52 @@ final class PlaybackStopReportingTests: XCTestCase {
         XCTAssertEqual(stoppedUpdates.first?.itemID, "episode-1")
     }
 
+    func testStopReportsObservedDirectPlayTimeWhenAVPlayerTimeIsStillZero() async {
+        let stoppedExpectation = expectation(description: "direct play stopped playback reported")
+        let progressExpectation = expectation(description: "direct play progress playback reported")
+        let apiClient = StopReportingAPIClient(
+            stoppedExpectation: stoppedExpectation,
+            progressExpectation: progressExpectation
+        )
+        let repository = StopReportingRepository()
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: repository)
+
+        controller.currentItemID = "movie-1"
+        controller.currentTime = 549.35
+        controller.player.replaceCurrentItem(with: AVPlayerItem(url: URL(string: "https://example.com/video.mp4")!))
+
+        controller.stop()
+
+        await fulfillment(of: [progressExpectation, stoppedExpectation], timeout: 1.0)
+        let stoppedUpdates = await apiClient.stoppedUpdates
+        let progressUpdates = await apiClient.progressUpdates
+
+        XCTAssertEqual(stoppedUpdates.first?.positionTicks, 5_493_500_000)
+        XCTAssertEqual(progressUpdates.first?.positionTicks, 5_493_500_000)
+    }
+
+    func testStopReportsPendingSeekTimeBeforePeriodicObserverRuns() async {
+        let stoppedExpectation = expectation(description: "pending seek stopped playback reported")
+        let progressExpectation = expectation(description: "pending seek progress playback reported")
+        let apiClient = StopReportingAPIClient(
+            stoppedExpectation: stoppedExpectation,
+            progressExpectation: progressExpectation
+        )
+        let repository = StopReportingRepository()
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: repository)
+
+        controller.currentItemID = "movie-1"
+        controller.player.replaceCurrentItem(with: AVPlayerItem(url: URL(string: "https://example.com/video.mp4")!))
+
+        controller.seek(to: 612.4)
+        controller.stop()
+
+        await fulfillment(of: [progressExpectation, stoppedExpectation], timeout: 1.0)
+        let stoppedUpdates = await apiClient.stoppedUpdates
+
+        XCTAssertEqual(stoppedUpdates.first?.positionTicks, 6_124_000_000)
+    }
+
     func testFinishPlaybackMarksEpisodeSeriesAsFollowed() async {
         let apiClient = FinishPlaybackAPIClient()
         let repository = StopReportingRepository()

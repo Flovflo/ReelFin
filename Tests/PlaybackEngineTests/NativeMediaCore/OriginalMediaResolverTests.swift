@@ -20,7 +20,7 @@ final class OriginalMediaResolverTests: XCTestCase {
             sources: [source],
             configuration: config,
             session: UserSession(userID: "u", username: "user", token: "secret"),
-            nativeConfig: NativeVLCClassPlayerConfig(enabled: true)
+            nativeConfig: NativePlayerConfig(enabled: true)
         )
 
         XCTAssertTrue(result.originalMediaRequested)

@@ -1,6 +1,8 @@
 import CoreGraphics
 
 enum IOSDetailCarouselLayout {
+    static let verticalScrollLockThreshold: CGFloat = 0.01
+
     static func cardWidth(
         for availableWidth: CGFloat,
         minimumPadding: CGFloat,
@@ -28,6 +30,25 @@ enum IOSDetailCarouselLayout {
         }
 
         return max(centeredInset, minimumPadding)
+    }
+
+    static func allowsHorizontalSelection(topInsetProgress: CGFloat) -> Bool {
+        topInsetProgress <= verticalScrollLockThreshold
+    }
+
+    static func neighborPreviewOpacity(topInsetProgress: CGFloat) -> Double {
+        let normalizedProgress = min(max(topInsetProgress / verticalScrollLockThreshold, 0), 1)
+        return Double(1 - normalizedProgress)
+    }
+
+    static func acceptedSelectionID(
+        currentItemID: String,
+        proposedItemID: String?,
+        topInsetProgress: CGFloat
+    ) -> String? {
+        guard allowsHorizontalSelection(topInsetProgress: topInsetProgress) else { return nil }
+        guard let proposedItemID, proposedItemID != currentItemID else { return nil }
+        return proposedItemID
     }
 
     private static func usesCompactLayout(for viewportWidth: CGFloat) -> Bool {

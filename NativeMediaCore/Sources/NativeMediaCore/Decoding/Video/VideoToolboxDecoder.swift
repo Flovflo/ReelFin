@@ -36,7 +36,8 @@ public actor VideoToolboxDecoder: VideoDecoder {
         return DecodedVideoFrame(
             sampleBuffer: sampleBuffer,
             presentationTime: packet.timestamp.pts,
-            duration: packet.timestamp.duration
+            duration: packet.timestamp.duration,
+            hdrMetadata: track?.hdrMetadata
         )
     }
 

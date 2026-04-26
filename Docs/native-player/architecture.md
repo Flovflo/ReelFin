@@ -1,6 +1,6 @@
-# Native VLC-Class Player Architecture
+# Native Player Player Architecture
 
-This branch adds a separate, feature-flagged local media engine path. The existing AVPlayer path remains the production default when `NativeVLCClassPlayerConfig.enabled == false`.
+This branch adds a separate, feature-flagged local media engine path. The existing AVPlayer path remains the production default when `NativePlayerConfig.enabled == false`.
 
 ```mermaid
 flowchart TD
@@ -21,6 +21,6 @@ flowchart TD
   Clock --> Diag["NativePlayerDiagnostics Overlay"]
 ```
 
-Implemented code lives in `NativeMediaCore/Sources/NativeMediaCore` with integration in `PlaybackEngine/Sources/PlaybackEngine/NativeVLC`.
+Implemented code lives in `NativeMediaCore/Sources/NativeMediaCore` with integration in `PlaybackEngine/Sources/PlaybackEngine/NativePlayer`.
 
-Current reality: this is an engine foundation, not VLC-level playback. It requests original media, probes bytes, parses basic Matroska metadata/packets, plans local decode backends, and displays diagnostics. Full packet decode/render playback is still incomplete.
+Current reality: this is an engine foundation, not native-player playback. It requests original media, probes bytes, parses basic Matroska metadata/packets, plans local decode backends, and displays diagnostics. Full packet decode/render playback is still incomplete.

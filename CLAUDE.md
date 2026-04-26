@@ -10,7 +10,7 @@
 
 ## Engineering Priorities
 
-1. Keep playback Apple-native. No VLC, FFmpeg, or private playback APIs.
+1. Keep playback Apple-native. Do not add third-party media engines or private playback APIs.
 2. Preserve deterministic playback behavior and documented fallback profiles.
 3. Avoid broad rewrites when a module-scoped fix is enough.
 4. Keep docs, package versions, and supported platforms aligned with `project.yml`.

@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import NativeMediaCore
 import Shared
 import SwiftUI
@@ -7,6 +8,7 @@ import UIKit
 struct NativeMP4SampleBufferPlayerView: UIViewControllerRepresentable {
     let url: URL
     let startTimeSeconds: Double
+    let seekRequest: NativePlayerSeekRequest?
     let baseDiagnostics: [String]
     @Binding var isPaused: Bool
     let onDiagnostics: ([String]) -> Void
@@ -17,6 +19,7 @@ struct NativeMP4SampleBufferPlayerView: UIViewControllerRepresentable {
         controller.configure(
             url: url,
             startTimeSeconds: startTimeSeconds,
+            seekRequest: seekRequest,
             baseDiagnostics: baseDiagnostics,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
@@ -29,6 +32,7 @@ struct NativeMP4SampleBufferPlayerView: UIViewControllerRepresentable {
         controller.configure(
             url: url,
             startTimeSeconds: startTimeSeconds,
+            seekRequest: seekRequest,
             baseDiagnostics: baseDiagnostics,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
@@ -45,12 +49,13 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
     private let displayLayer = AVSampleBufferDisplayLayer()
     private let audioRenderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
-    private let videoQueue = DispatchQueue(label: "reelfin.nativevlc.mp4.video", qos: .userInitiated)
-    private let audioQueue = DispatchQueue(label: "reelfin.nativevlc.mp4.audio", qos: .userInitiated)
+    private let videoQueue = DispatchQueue(label: "reelfin.nativeplayer.mp4.video", qos: .userInitiated)
+    private let audioQueue = DispatchQueue(label: "reelfin.nativeplayer.mp4.audio", qos: .userInitiated)
     private let metricsLock = NSLock()
 
     private var currentURL: URL?
     private var currentStartTimeSeconds: Double = 0
+    private var appliedSeekRequestID: Int?
     private var baseDiagnostics: [String] = []
     private var onDiagnostics: (([String]) -> Void)?
     private var onPlaybackTime: ((Double) -> Void)?
@@ -63,6 +68,10 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
     private var metrics = NativeMP4SampleBufferMetrics()
     private var pendingPause = false
     private var pauseStateGate = NativePauseStateGate()
+    private var isTornDown = false
+#if os(tvOS)
+    private lazy var displayCriteriaCoordinator = NativeDisplayCriteriaCoordinator(viewController: self)
+#endif
     private(set) var playbackGeneration = 0
     private(set) var pauseStateApplicationCount = 0
 
@@ -83,20 +92,24 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        resetPreferredDisplayCriteria()
         stopPlayback()
     }
 
     deinit {
-        stopPlayback()
+        resetPreferredDisplayCriteria()
+        stopPlayback(publishFinalPlaybackTime: false)
     }
 
     func stopForDismantle() {
-        stopPlayback()
+        isTornDown = true
+        stopPlayback(publishFinalPlaybackTime: false)
     }
 
     func configure(
         url: URL,
         startTimeSeconds: Double,
+        seekRequest: NativePlayerSeekRequest?,
         baseDiagnostics: [String],
         isPaused: Bool,
         onDiagnostics: @escaping ([String]) -> Void,
@@ -106,17 +119,22 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
         self.onDiagnostics = onDiagnostics
         self.onPlaybackTime = onPlaybackTime
         pendingPause = isPaused
+        isTornDown = false
         if currentURL != url {
             currentURL = url
             currentStartTimeSeconds = startTimeSeconds
+            appliedSeekRequestID = seekRequest?.id
             startPlayback(url: url, startTimeSeconds: startTimeSeconds)
+        } else if let seekRequest, appliedSeekRequestID != seekRequest.id {
+            appliedSeekRequestID = seekRequest.id
+            startPlayback(url: url, startTimeSeconds: seekRequest.targetSeconds)
         }
         setPaused(isPaused)
         publishDiagnostics()
     }
 
     private func startPlayback(url: URL, startTimeSeconds: Double) {
-        stopPlayback()
+        stopPlayback(publishFinalPlaybackTime: false)
         playbackGeneration += 1
         pauseStateGate.reset()
         currentURL = url
@@ -131,15 +149,11 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
         }
     }
 
-    private func stopPlayback() {
+    private func stopPlayback(publishFinalPlaybackTime: Bool = true) {
         let finalPlaybackTime = synchronizer.currentTime().safeSeconds
-        if let onPlaybackTime {
-            if Thread.isMainThread {
+        if publishFinalPlaybackTime, !isTornDown, let onPlaybackTime {
+            DispatchQueue.main.async {
                 onPlaybackTime(finalPlaybackTime)
-            } else {
-                DispatchQueue.main.async {
-                    onPlaybackTime(finalPlaybackTime)
-                }
             }
         }
         openTask?.cancel()
@@ -155,17 +169,24 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
         videoOutput = nil
         audioOutput = nil
         readableURL = nil
+        resetPreferredDisplayCriteria()
         pauseStateGate.reset()
     }
 
     private func openAssetAndStart(url: URL, startTimeSeconds: Double) async {
         do {
-            AppLog.playback.notice("nativevlc.sampleReader.start — backend=AVAssetReader")
+            AppLog.playback.notice("nativeplayer.sampleReader.start — backend=AVAssetReader")
             let readableURL = try AVFoundationReadableMediaURL(originalURL: url, format: .mp4)
             self.readableURL = readableURL
             let asset = AVURLAsset(url: readableURL.assetURL)
             let tracks = try await asset.load(.tracks)
             let duration = try await asset.load(.duration)
+            let videoHDRMetadata: HDRMetadata?
+            do {
+                videoHDRMetadata = try await Self.hdrMetadata(from: tracks.first(where: { $0.mediaType == .video }))
+            } catch {
+                videoHDRMetadata = nil
+            }
             let reader = try AVAssetReader(asset: asset)
             applyStartTime(startTimeSeconds, duration: duration, to: reader)
             try addOutputs(to: reader, tracks: tracks)
@@ -178,6 +199,8 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
                 metrics.videoDecoderBackend = "AVAssetReader compressed samples"
                 metrics.audioDecoderBackend = "AVSampleBufferAudioRenderer"
                 metrics.startTime = startTimeSeconds
+                metrics.hdrFormat = videoHDRMetadata?.format.rawValue ?? "unknown"
+                metrics.dolbyVisionProfile = videoHDRMetadata?.dolbyVision?.profile.map(String.init) ?? "none"
             }
             startClock(at: startTimeSeconds, paused: pendingPause)
             startVideoPump()
@@ -221,7 +244,7 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
 
     private func startVideoPump() {
         guard let videoOutput else { return }
-        AppLog.playback.notice("nativevlc.videoRenderer.start — backend=AVSampleBufferDisplayLayer")
+        AppLog.playback.notice("nativeplayer.videoRenderer.start — backend=AVSampleBufferDisplayLayer")
         displayLayer.requestMediaDataWhenReady(on: videoQueue) { [weak self] in
             guard let self else { return }
             while self.displayLayer.isReadyForMoreMediaData {
@@ -231,6 +254,7 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
                     return
                 }
                 let start = CACurrentMediaTime()
+                self.applyPreferredDisplayCriteriaIfNeeded(from: sample)
                 self.displayLayer.enqueue(sample)
                 self.recordVideoSample(sample, renderLatencyMs: (CACurrentMediaTime() - start) * 1000)
             }
@@ -239,7 +263,7 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
 
     private func startAudioPump() {
         guard let audioOutput else { return }
-        AppLog.playback.notice("nativevlc.audioRenderer.start — backend=AVSampleBufferAudioRenderer")
+        AppLog.playback.notice("nativeplayer.audioRenderer.start — backend=AVSampleBufferAudioRenderer")
         audioRenderer.requestMediaDataWhenReady(on: audioQueue) { [weak self] in
             guard let self else { return }
             while self.audioRenderer.isReadyForMoreMediaData {
@@ -271,12 +295,51 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
 
     private func recordVideoSample(_ sample: CMSampleBuffer, renderLatencyMs: Double) {
         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+        let metadata = HDRCoreMediaMapper.metadata(from: CMSampleBufferGetFormatDescription(sample))
         updateMetrics {
             $0.videoPacketCount += 1
             $0.currentPTS = pts.safeSeconds
             $0.renderLatencyMs = renderLatencyMs
             $0.droppedFrames = displayLayer.status == .failed ? $0.droppedFrames + 1 : $0.droppedFrames
+            if let metadata {
+                $0.hdrFormat = metadata.format.rawValue
+                $0.dolbyVisionProfile = metadata.dolbyVision?.profile.map(String.init) ?? "none"
+            }
         }
+    }
+
+    private static func hdrMetadata(from track: AVAssetTrack?) async throws -> HDRMetadata? {
+        guard
+            let track,
+            let formatDescription = try await track.load(.formatDescriptions).first
+        else { return nil }
+        let codec = CMFormatDescriptionGetMediaSubType(formatDescription)
+        return HDRCoreMediaMapper.metadata(
+            from: formatDescription,
+            codecFourCC: fourCC(codec)
+        )
+    }
+
+    private static func fourCC(_ value: FourCharCode) -> String {
+        let bytes = [
+            UInt8((value >> 24) & 0xff),
+            UInt8((value >> 16) & 0xff),
+            UInt8((value >> 8) & 0xff),
+            UInt8(value & 0xff)
+        ]
+        return String(bytes: bytes, encoding: .macOSRoman) ?? "\(value)"
+    }
+
+    private func applyPreferredDisplayCriteriaIfNeeded(from sample: CMSampleBuffer) {
+#if os(tvOS)
+        displayCriteriaCoordinator.scheduleApply(from: sample)
+#endif
+    }
+
+    private func resetPreferredDisplayCriteria() {
+#if os(tvOS)
+        displayCriteriaCoordinator.reset()
+#endif
     }
 
     private func recordAudioSample(_ sample: CMSampleBuffer) {
@@ -344,6 +407,8 @@ private struct NativeMP4SampleBufferMetrics {
     var startTime: Double = 0
     var videoDecoderBackend = "none"
     var audioDecoderBackend = "none"
+    var hdrFormat = "unknown"
+    var dolbyVisionProfile = "none"
     var failure: String?
 
     func overlayLines(base: [String]) -> [String] {
@@ -354,6 +419,7 @@ private struct NativeMP4SampleBufferMetrics {
         lines.append("audioDecoderBackend=\(audioDecoderBackend)")
         lines.append("rendererBackend=AVSampleBufferDisplayLayer")
         lines.append("audioRendererBackend=AVSampleBufferAudioRenderer")
+        lines.append("hdr=\(hdrFormat) dvProfile=\(dolbyVisionProfile)")
         lines.append("masterClock=AVSampleBufferRenderSynchronizer")
         lines.append("startTime=\(String(format: "%.3f", startTime))")
         lines.append("currentPTS=\(String(format: "%.3f", currentPTS)) playbackTime=\(String(format: "%.3f", playbackTime))")

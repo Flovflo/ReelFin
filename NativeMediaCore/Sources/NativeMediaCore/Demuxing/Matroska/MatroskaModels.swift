@@ -81,6 +81,7 @@ public struct MatroskaParsedBlock: Sendable, Equatable {
 public struct MatroskaSegment: Sendable, Equatable {
     public var info: MatroskaInfo
     public var tracks: [MatroskaParsedTrack]
+    public var seekHead: [UInt32: UInt64]
     public var cues: [MatroskaCuePoint]
     public var firstClusterOffset: Int?
     public var segmentPayloadOffset: Int?
@@ -92,6 +93,7 @@ public struct MatroskaSegment: Sendable, Equatable {
     public init(
         info: MatroskaInfo = MatroskaInfo(),
         tracks: [MatroskaParsedTrack] = [],
+        seekHead: [UInt32: UInt64] = [:],
         cues: [MatroskaCuePoint] = [],
         firstClusterOffset: Int? = nil,
         segmentPayloadOffset: Int? = nil,
@@ -102,6 +104,7 @@ public struct MatroskaSegment: Sendable, Equatable {
     ) {
         self.info = info
         self.tracks = tracks
+        self.seekHead = seekHead
         self.cues = cues
         self.firstClusterOffset = firstClusterOffset
         self.segmentPayloadOffset = segmentPayloadOffset

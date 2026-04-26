@@ -8,7 +8,7 @@ Implemented:
 - `MatroskaTrackParser`
 - `MatroskaClusterParser`
 - `MatroskaCueParser`
-- `MatroskaSeekHeadParser` placeholder
+- `MatroskaSeekHeadParser`
 
 Parsed elements:
 
@@ -23,9 +23,13 @@ Parsed elements:
 - DefaultDuration
 - Video width/height and Colour HDR metadata
 - Audio channels/sample rate/bit depth
+- SeekHead entries for late-file Cues lookup
 - Cues
 - Cluster `Timecode`
 - `SimpleBlock`
 - `BlockGroup` with `Block` and `ReferenceBlock`
 
-Packet extraction supports non-laced blocks only. Xiph/fixed/EBML lacing is intentionally not hidden; it reports an explicit incomplete packet extraction reason.
+Packet extraction supports non-laced blocks plus Xiph, fixed-size, and EBML laced
+blocks. Resume and interactive seek prefer parsed Cues, can load Cues through
+SeekHead even when they sit outside the initial probe window, and fall back to a
+bounded cluster scan only when no usable Cues exist.

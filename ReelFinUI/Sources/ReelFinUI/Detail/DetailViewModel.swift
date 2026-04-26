@@ -215,6 +215,24 @@ final class DetailViewModel: ObservableObject {
         }
     }
 
+    func setEpisodeWatched(_ episode: MediaItem, isPlayed targetValue: Bool) {
+        let targetItemID = episode.id
+        let snapshot = watchedMutationSnapshot(for: targetItemID)
+
+        applyWatchedState(targetValue, to: targetItemID)
+
+        Task {
+            do {
+                try await dependencies.apiClient.setPlayedState(itemID: targetItemID, isPlayed: targetValue)
+            } catch {
+                await MainActor.run {
+                    self.restoreWatchedSnapshot(snapshot)
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func buildLoadTasks(itemID: String, loadToken: UUID) -> [Task<Void, Never>] {
         var tasks: [Task<Void, Never>] = []
 
@@ -614,7 +632,9 @@ final class DetailViewModel: ObservableObject {
             }
         }
 
-        if nextUpEpisode?.id == itemID {
+        if detail.item.mediaType == .series, !isPlayed, let updatedEpisode = episodes.first(where: { $0.id == itemID }) {
+            nextUpEpisode = updatedEpisode
+        } else if nextUpEpisode?.id == itemID {
             if isPlayed, detail.item.mediaType == .series {
                 nextUpEpisode = nextUnplayedEpisode(after: itemID)
                     ?? episodes.first(where: { !$0.isPlayed })

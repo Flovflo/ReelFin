@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -46,6 +47,20 @@ class ProbeCandidate:
 
 class ProbeError(Exception):
     pass
+
+
+def normalized_item_id(raw: str) -> str:
+    value = raw.strip()
+    uuid_match = re.search(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        value,
+    )
+    if uuid_match:
+        return uuid_match.group(0)
+    hex_match = re.search(r"\b[0-9a-fA-F]{32}\b", value)
+    if hex_match:
+        return hex_match.group(0)
+    return value
 
 
 def emby_authorization(token: Optional[str]) -> str:
@@ -302,11 +317,47 @@ def probe_hls(master_url: str, token: str, required_headers: Dict[str, str]) -> 
 
 
 def iterate_candidates(server_url: str, session: Session, sample_size: int) -> Iterable[ProbeCandidate]:
-    items = fetch_items(server_url, session, sample_size)
-    for item in items:
+    seen: set[str] = set()
+    for item in explicit_probe_items():
+        item_id = item["Id"]
+        if item_id in seen:
+            continue
+        seen.add(item_id)
         candidate = fetch_candidate(server_url, session, item)
         if candidate:
             yield candidate
+
+    items = fetch_items(server_url, session, sample_size)
+    for item in items:
+        item_id = item.get("Id")
+        if item_id in seen:
+            continue
+        if item_id:
+            seen.add(item_id)
+        candidate = fetch_candidate(server_url, session, item)
+        if candidate:
+            yield candidate
+
+
+def explicit_probe_items() -> list[dict]:
+    values = [
+        ("directplay_mp4", os.environ.get("TEST_DIRECTPLAY_MP4_ITEM_ID", "")),
+        ("mkv_original", os.environ.get("TEST_MKV_ITEM_ID", "") or os.environ.get("TEST_MKV_DOLBY_VISION_ITEM_ID", "")),
+        (
+            "dolby_vision_original",
+            os.environ.get("TEST_DOLBY_VISION_ITEM_ID", "")
+            or os.environ.get("TEST_DIRECTPLAY_DOLBY_VISION_ITEM_ID", "")
+            or os.environ.get("TEST_MKV_DOLBY_VISION_ITEM_ID", ""),
+        ),
+    ]
+    items: list[dict] = []
+    for name, raw in values:
+        if not raw or raw == "...":
+            continue
+        item_id = normalized_item_id(raw)
+        if item_id and item_id != "...":
+            items.append({"Id": item_id, "Name": name})
+    return items
 
 
 def run_loop(
@@ -361,7 +412,7 @@ def run_loop(
                     f"(default={reason_default}, conservative={reason_conservative})"
                 )
 
-    passed = total - failures
+    passed = max(0, total - failures)
     print(f"\nSummary: {passed}/{total} passed, {failures} failed (budget: {max_failures}).")
 
     return 0 if failures <= max_failures else 1

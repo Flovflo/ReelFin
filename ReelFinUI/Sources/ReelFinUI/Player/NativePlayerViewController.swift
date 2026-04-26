@@ -2,16 +2,20 @@ import AVKit
 import PlaybackEngine
 import Shared
 import SwiftUI
-#if os(iOS)
+#if canImport(UIKit)
 import UIKit
 #endif
 
 struct NativePlayerViewController: UIViewControllerRepresentable {
+    private static let playerScreenAccessibilityIdentifier = "native_player_screen"
+    private static let playerScreenMarkerTag = 0x5246_504C
+
     let player: AVPlayer
     var transportState: PlaybackTransportState = .empty
     let apiClient: JellyfinAPIClientProtocol
     let imagePipeline: ImagePipelineProtocol
     var onSkipSuggestion: (() -> Void)?
+    var onReadyForDisplay: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -19,7 +23,9 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
+        installPlayerScreenAccessibilityMarker(in: controller)
         controller.player = player
+        configureHDRRendering(on: controller)
         controller.showsPlaybackControls = true
 #if os(iOS)
         // Already presented full-screen by SwiftUI; avoid nested full-screen transitions.
@@ -44,11 +50,17 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
         // playback URL and applies subtitles only after the first video frame.
         controller.player?.appliesMediaSelectionCriteriaAutomatically = false
 
-        context.coordinator.startObserving(player: player, controller: controller)
+        context.coordinator.startObserving(
+            player: player,
+            controller: controller,
+            onReadyForDisplay: onReadyForDisplay
+        )
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        installPlayerScreenAccessibilityMarker(in: controller)
+
         let shouldAssignPlayer: Bool
 #if os(iOS)
         shouldAssignPlayer = !context.coordinator.shouldDeferPlayerAssignment(
@@ -61,9 +73,17 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
         if shouldAssignPlayer, controller.player !== player {
             controller.player = player
+            configureHDRRendering(on: controller)
             controller.player?.appliesMediaSelectionCriteriaAutomatically = false
-            context.coordinator.startObserving(player: player, controller: controller)
+            context.coordinator.startObserving(
+                player: player,
+                controller: controller,
+                onReadyForDisplay: onReadyForDisplay
+            )
+        } else {
+            context.coordinator.updateReadyForDisplayCallback(onReadyForDisplay)
         }
+        configureHDRRendering(on: controller)
 #if os(iOS)
         context.coordinator.installSkipOverlayIfNeeded(in: controller)
         context.coordinator.installTrickplayOverlayIfNeeded(in: controller)
@@ -78,6 +98,66 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             imagePipeline: imagePipeline
         )
 #endif
+    }
+
+    private func installPlayerScreenAccessibilityMarker(in controller: AVPlayerViewController) {
+#if canImport(UIKit)
+        controller.view.accessibilityIdentifier = Self.playerScreenAccessibilityIdentifier
+        guard controller.view.viewWithTag(Self.playerScreenMarkerTag) == nil else { return }
+
+        let marker = UIView()
+        marker.tag = Self.playerScreenMarkerTag
+        marker.isAccessibilityElement = true
+        marker.accessibilityIdentifier = Self.playerScreenAccessibilityIdentifier
+        marker.accessibilityLabel = "Player"
+        marker.backgroundColor = .clear
+        marker.isUserInteractionEnabled = false
+        marker.translatesAutoresizingMaskIntoConstraints = false
+
+        controller.view.addSubview(marker)
+        NSLayoutConstraint.activate([
+            marker.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+            marker.topAnchor.constraint(equalTo: controller.view.topAnchor),
+            marker.widthAnchor.constraint(equalToConstant: 1),
+            marker.heightAnchor.constraint(equalToConstant: 1)
+        ])
+#endif
+    }
+
+    @MainActor
+    private func configureHDRRendering(on controller: AVPlayerViewController) {
+        Self.configureHDRRendering(on: controller)
+    }
+
+    @MainActor
+    private static func configureHDRRendering(on controller: AVPlayerViewController) {
+#if os(iOS)
+        controller.preferredDisplayDynamicRange = .high
+#elseif os(tvOS)
+        if Self.shouldApplyPreferredDisplayCriteriaAutomatically(
+            isTVOS: true,
+            isSimulator: Self.isRunningInSimulator
+        ) {
+            if !controller.appliesPreferredDisplayCriteriaAutomatically {
+                controller.appliesPreferredDisplayCriteriaAutomatically = true
+            }
+        }
+#endif
+    }
+
+    nonisolated static var isRunningInSimulator: Bool {
+#if targetEnvironment(simulator)
+        true
+#else
+        false
+#endif
+    }
+
+    nonisolated static func shouldApplyPreferredDisplayCriteriaAutomatically(
+        isTVOS: Bool,
+        isSimulator: Bool
+    ) -> Bool {
+        isTVOS && !isSimulator
     }
 
     // MARK: - Coordinator
@@ -95,15 +175,17 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
     final class Coordinator: NSObject {
         private var itemObservation: NSKeyValueObservation?
         private var statusObservation: NSKeyValueObservation?
+        private var readyForDisplayObservation: NSKeyValueObservation?
         private weak var controller: AVPlayerViewController?
         private weak var observedPlayer: AVPlayer?
+        private var onReadyForDisplay: (() -> Void)?
 #if os(iOS)
-        private var timeJumpObserver: NSObjectProtocol?
         private var didReattachForCurrentItem = false
         private var isTemporarilyDetachedForReattach = false
         private var observedItemIdentifier: ObjectIdentifier?
         private var reattachGeneration: UInt = 0
         private var reattachWorkItem: DispatchWorkItem?
+        private var timeJumpObserver: NSObjectProtocol?
         private var previewTimeObserver: Any?
         private let skipOverlayView = PlaybackSkipOverlayView()
         private let trickplayPreviewView = PlaybackTrickplayPreviewView()
@@ -121,14 +203,21 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 #endif
         }
 
-        func startObserving(player: AVPlayer, controller: AVPlayerViewController) {
+        func startObserving(
+            player: AVPlayer,
+            controller: AVPlayerViewController,
+            onReadyForDisplay: (() -> Void)?
+        ) {
             self.controller = controller
-            #if os(iOS)
+            self.onReadyForDisplay = onReadyForDisplay
+            observeReadyForDisplay(on: controller)
+#if os(iOS)
             reattachWorkItem?.cancel()
             isTemporarilyDetachedForReattach = false
             didReattachForCurrentItem = false
             observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
             statusObservation = nil
+            self.observedPlayer = player
             if let timeJumpObserver {
                 NotificationCenter.default.removeObserver(timeJumpObserver)
                 self.timeJumpObserver = nil
@@ -137,7 +226,6 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 observedPlayer.removeTimeObserver(previewTimeObserver)
                 self.previewTimeObserver = nil
             }
-            self.observedPlayer = player
 
             itemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] player, _ in
                 Task { @MainActor in
@@ -171,7 +259,28 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                     )
                 }
             }
-            #endif
+#endif
+        }
+
+        func updateReadyForDisplayCallback(_ callback: (() -> Void)?) {
+            onReadyForDisplay = callback
+        }
+
+        private func observeReadyForDisplay(on controller: AVPlayerViewController) {
+            readyForDisplayObservation = nil
+            if controller.isReadyForDisplay {
+                onReadyForDisplay?()
+            }
+            readyForDisplayObservation = controller.observe(\.isReadyForDisplay, options: [.new]) { [weak self] controller, _ in
+                guard controller.isReadyForDisplay else { return }
+                Task { @MainActor in
+                    self?.onReadyForDisplay?()
+                }
+            }
+        }
+
+        nonisolated static func shouldReattachRenderSurfaceAfterReady(isTVOS: Bool) -> Bool {
+            !isTVOS
         }
 
 #if os(iOS)
@@ -273,6 +382,7 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
                 // Detach and re-attach the player to force AVPlayerViewController
                 // to fully re-initialize its internal video rendering pipeline (XPC).
+                AppLog.playback.notice("playback.avkit.render_surface.reattach — reason=item_ready_to_play")
                 self.isTemporarilyDetachedForReattach = true
                 controller.player = nil
                 let workItem = DispatchWorkItem { [weak self, weak controller, weak item] in
@@ -285,6 +395,7 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                     guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
                     guard player.currentItem === item else { return }
                     controller.player = player
+                    NativePlayerViewController.configureHDRRendering(on: controller)
                     controller.player?.appliesMediaSelectionCriteriaAutomatically = false
                     if playbackIntent.resumeAfterAttach {
                         player.play()
@@ -294,7 +405,9 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
             }
         }
+#endif
 
+#if os(iOS)
         func installSkipOverlayIfNeeded(in controller: AVPlayerViewController) {
             guard skipOverlayView.superview == nil else { return }
             let overlayView = controller.contentOverlayView ?? controller.view!

@@ -106,6 +106,37 @@ final class VideoCodecPrivateDataParserTests: XCTestCase {
         XCTAssertEqual(CMFormatDescriptionGetMediaSubType(CMSampleBufferGetFormatDescription(sample)!), kCMVideoCodecType_H264)
     }
 
+    func testVideoToolboxDecoderPropagatesTrackHDRMetadata() async throws {
+        let metadata = HDRMetadata(
+            format: .hdr10,
+            colorPrimaries: .bt2020,
+            transferFunction: .pq,
+            matrixCoefficients: .bt2020NonConstant,
+            bitDepth: 10
+        )
+        let track = MediaTrack(
+            id: "1",
+            trackId: 1,
+            kind: .video,
+            codec: "h264",
+            codecID: "V_MPEG4/ISO/AVC",
+            codecPrivateData: Self.avcC,
+            hdrMetadata: metadata
+        )
+        let packet = MediaPacket(
+            trackID: 1,
+            timestamp: PacketTimestamp(pts: CMTime(value: 2, timescale: 24)),
+            isKeyframe: true,
+            data: Data([0x00, 0x00, 0x00, 0x01, 0x65, 0x88])
+        )
+        let decoder = VideoToolboxDecoder()
+
+        try await decoder.configure(track: track)
+        let frame = try await decoder.decode(packet: packet)
+
+        XCTAssertEqual(frame?.hdrMetadata, metadata)
+    }
+
     func testParsesHEVCHVCCParameterSets() throws {
         let config = try VideoCodecPrivateDataParser.parseHEVCDecoderConfigurationRecord(Self.hvcC)
 

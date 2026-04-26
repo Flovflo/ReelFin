@@ -1,5 +1,6 @@
 import JellyfinAPI
 import PlaybackEngine
+import Foundation
 import Shared
 import XCTest
 
@@ -70,7 +71,7 @@ private final class MockTokenStore: TokenStoreProtocol, @unchecked Sendable {
 
 final class PlaybackIntegrationProbeTests: XCTestCase {
     func testLiveServerPlaybackProbeLoop() async throws {
-        let environment = ProcessInfo.processInfo.environment
+        let environment = liveEnvironment()
         guard
             let serverURLString = environment["REELFIN_TEST_SERVER_URL"],
             let serverURL = URL(string: serverURLString),
@@ -83,6 +84,7 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
         let loops = max(1, Int(environment["REELFIN_TEST_LOOPS"] ?? "2") ?? 2)
         let sampleSize = max(1, Int(environment["REELFIN_TEST_SAMPLE_SIZE"] ?? "8") ?? 8)
         let maxFailures = max(0, Int(environment["REELFIN_TEST_MAX_FAILURES"] ?? "0") ?? 0)
+        let explicitOnly = isEnabled(environment["REELFIN_TEST_EXPLICIT_ONLY"])
 
         let settings = MockSettingsStore(
             serverConfiguration: nil,
@@ -99,9 +101,16 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
         var failures = 0
         var failureLines: [String] = []
 
+        let explicitItems = explicitLiveItems(environment: environment)
+
         for loopIndex in 1 ... loops {
             let feed = try await client.fetchHomeFeed(since: nil)
-            let items = collectItems(feed: feed, maxItems: sampleSize)
+            let items = collectItems(
+                feed: feed,
+                explicitItems: explicitItems,
+                maxItems: sampleSize,
+                explicitOnly: explicitOnly
+            )
 
             for item in items {
                 total += 1
@@ -135,9 +144,18 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
         XCTAssertLessThanOrEqual(failures, maxFailures, summary)
     }
 
-    private func collectItems(feed: HomeFeed, maxItems: Int) -> [MediaItem] {
-        var ordered: [MediaItem] = []
-        var seen = Set<String>()
+    private func collectItems(
+        feed: HomeFeed,
+        explicitItems: [MediaItem],
+        maxItems: Int,
+        explicitOnly: Bool
+    ) -> [MediaItem] {
+        if explicitOnly {
+            return Array(explicitItems.prefix(maxItems))
+        }
+
+        var ordered = explicitItems
+        var seen = Set(explicitItems.map(\.id))
 
         for item in feed.featured where seen.insert(item.id).inserted {
             ordered.append(item)
@@ -152,6 +170,117 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
         }
 
         return ordered
+    }
+
+    private func explicitLiveItems(environment: [String: String]) -> [MediaItem] {
+        let directPlayPair = ("directplay_mp4", environment["TEST_DIRECTPLAY_MP4_ITEM_ID"])
+        let pairs = isEnabled(environment["REELFIN_TEST_DIRECTPLAY_ONLY"]) ? [
+            directPlayPair,
+        ] : [
+            directPlayPair,
+            ("mkv_original", environment["TEST_MKV_ITEM_ID"] ?? environment["TEST_MKV_DOLBY_VISION_ITEM_ID"]),
+            (
+                "dolby_vision_original",
+                environment["TEST_DOLBY_VISION_ITEM_ID"]
+                    ?? environment["TEST_DIRECTPLAY_DOLBY_VISION_ITEM_ID"]
+                    ?? environment["TEST_MKV_DOLBY_VISION_ITEM_ID"]
+            ),
+        ]
+        var seen = Set<String>()
+        return pairs.compactMap { name, rawValue in
+            guard
+                let id = normalizedJellyfinID(rawValue),
+                seen.insert(id).inserted
+            else { return nil }
+            return MediaItem(id: id, name: name)
+        }
+    }
+
+    private func normalizedJellyfinID(_ rawValue: String?) -> String? {
+        guard let rawValue, !rawValue.isEmpty, rawValue != "..." else { return nil }
+        let patterns = [
+            #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
+            #"[0-9a-fA-F]{32}"#,
+        ]
+        for pattern in patterns {
+            if let range = rawValue.range(of: pattern, options: .regularExpression) {
+                return String(rawValue[range])
+            }
+        }
+        return rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func liveEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        loadEnvFile().forEach { key, value in
+            environment[key] = environment[key] ?? value
+        }
+        let simulatorChildKeys = [
+            "REELFIN_TEST_SERVER_URL",
+            "REELFIN_TEST_USERNAME",
+            "REELFIN_TEST_PASSWORD",
+            "REELFIN_TEST_LOOPS",
+            "REELFIN_TEST_SAMPLE_SIZE",
+            "REELFIN_TEST_MAX_FAILURES",
+            "REELFIN_TEST_EXPLICIT_ONLY",
+            "REELFIN_TEST_DIRECTPLAY_ONLY",
+            "TEST_DIRECTPLAY_MP4_ITEM_ID",
+            "TEST_MKV_ITEM_ID",
+            "TEST_HDR_ITEM_ID",
+            "TEST_DOLBY_VISION_ITEM_ID",
+        ]
+        for key in simulatorChildKeys {
+            environment[key] = environment[key] ?? environment["SIMCTL_CHILD_\(key)"]
+        }
+        environment["REELFIN_TEST_SERVER_URL"] = environment["REELFIN_TEST_SERVER_URL"] ?? environment["JELLYFIN_BASE_URL"]
+        environment["REELFIN_TEST_USERNAME"] = environment["REELFIN_TEST_USERNAME"] ?? environment["JELLYFIN_USERNAME"]
+        environment["REELFIN_TEST_PASSWORD"] = environment["REELFIN_TEST_PASSWORD"] ?? environment["JELLYFIN_PASSWORD"]
+        environment["TEST_MKV_ITEM_ID"] = environment["TEST_MKV_ITEM_ID"] ?? environment["TEST_MKV_DOLBY_VISION_ITEM_ID"]
+        environment["TEST_DOLBY_VISION_ITEM_ID"] = environment["TEST_DOLBY_VISION_ITEM_ID"]
+            ?? environment["TEST_DIRECTPLAY_DOLBY_VISION_ITEM_ID"]
+            ?? environment["TEST_MKV_DOLBY_VISION_ITEM_ID"]
+        environment["REELFIN_TEST_LOOPS"] = environment["REELFIN_TEST_LOOPS"] ?? "1"
+        environment["REELFIN_TEST_SAMPLE_SIZE"] = environment["REELFIN_TEST_SAMPLE_SIZE"] ?? "1"
+        environment["REELFIN_TEST_EXPLICIT_ONLY"] = environment["REELFIN_TEST_EXPLICIT_ONLY"] ?? "1"
+        environment["REELFIN_TEST_DIRECTPLAY_ONLY"] = environment["REELFIN_TEST_DIRECTPLAY_ONLY"] ?? "1"
+        return environment
+    }
+
+    private func isEnabled(_ value: String?) -> Bool {
+        guard let value else { return false }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "y", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func loadEnvFile() -> [String: String] {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let envURL = repoRoot.appendingPathComponent(".artifacts/secrets/reelfin-e2e.env")
+        guard let content = try? String(contentsOf: envURL, encoding: .utf8) else { return [:] }
+
+        var values: [String: String] = [:]
+        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=") else { continue }
+            let key = line[..<separator].trimmingCharacters(in: .whitespaces)
+            guard key.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil else { continue }
+            var value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2,
+               let quote = value.first,
+               quote == value.last,
+               quote == "\"" || quote == "'" {
+                value.removeFirst()
+                value.removeLast()
+            }
+            values[key] = String(value)
+        }
+        return values
     }
 
     private func probeSelection(_ selection: PlaybackAssetSelection) async throws -> Bool {
@@ -207,9 +336,13 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { return false }
-        return (200 ..< 300).contains(http.statusCode) || http.statusCode == 206
+        guard (200 ..< 300).contains(http.statusCode) || http.statusCode == 206 else { return false }
+        for try await _ in bytes {
+            return true
+        }
+        return false
     }
 
     private func firstMediaLine(in manifest: String) -> String? {

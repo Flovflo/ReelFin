@@ -7,6 +7,11 @@ enum PlaybackControlSelection {
     case subtitle(String?)
 }
 
+enum PlaybackTrackMenuKind: Equatable {
+    case audio
+    case subtitles
+}
+
 struct PlaybackTrackOption: Identifiable, Equatable {
     let trackID: String?
     let title: String
@@ -38,6 +43,15 @@ struct PlaybackControlsModel: Equatable {
         !audioOptions.isEmpty || !subtitleOptions.isEmpty
     }
 
+    func options(for menu: PlaybackTrackMenuKind) -> [PlaybackTrackOption] {
+        switch menu {
+        case .audio:
+            return audioOptions
+        case .subtitles:
+            return subtitleOptions
+        }
+    }
+
     static func make(
         audioTracks: [MediaTrack],
         subtitleTracks: [MediaTrack],
@@ -67,7 +81,7 @@ struct PlaybackControlsModel: Equatable {
             subtitleOptions = [
                 PlaybackTrackOption(
                     trackID: nil,
-                    title: "Aucun",
+                    title: "Off",
                     badge: nil,
                     iconName: "minus.circle",
                     isSelected: selectedSubtitleID == nil
@@ -151,6 +165,254 @@ enum PlaybackTrackPresentation {
         default:
             return codec.uppercased()
         }
+    }
+}
+
+struct NativePlayerTrackSelectionMenuView: View {
+    let mode: PlaybackTrackMenuKind
+    let controls: PlaybackControlsModel
+    let onSelect: (PlaybackControlSelection) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
+            Text(primaryTitle)
+                .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.58))
+                .padding(.horizontal, metrics.horizontalPadding)
+
+            ScrollView {
+                if mode == .audio {
+                    audioTrackSection
+                } else {
+                    subtitlesSection
+                }
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: metrics.contentMaxHeight)
+        }
+        .padding(.vertical, metrics.verticalPadding)
+        .frame(width: metrics.panelWidth, alignment: .leading)
+        .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var audioTrackSection: some View {
+        VStack(alignment: .leading, spacing: metrics.rowSpacing) {
+            if controls.audioOptions.isEmpty {
+                NativePlayerTrackMenuEmptyRow(title: "No alternate audio")
+            } else {
+                sectionLabel("Audio Track")
+                ForEach(controls.audioOptions) { option in
+                    NativePlayerTrackMenuRow(option: option) {
+                        guard let trackID = option.trackID else { return }
+                        onSelect(.audio(trackID))
+                    }
+                }
+            }
+        }
+    }
+
+    private var subtitlesSection: some View {
+        VStack(alignment: .leading, spacing: metrics.rowSpacing) {
+            if controls.subtitleOptions.isEmpty {
+                NativePlayerTrackMenuEmptyRow(title: "No subtitles")
+            } else {
+                ForEach(controls.subtitleOptions) { option in
+                    NativePlayerTrackMenuRow(option: option) {
+                        onSelect(.subtitle(option.trackID))
+                    }
+                }
+            }
+        }
+    }
+
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: metrics.sectionTitleSize, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.46))
+            .padding(.horizontal, metrics.horizontalPadding)
+            .padding(.top, mode == .audio ? 4 : 0)
+    }
+
+    private var primaryTitle: String {
+        switch mode {
+        case .audio:
+            return "Audio Adjustments"
+        case .subtitles:
+            return "Subtitles"
+        }
+    }
+
+    private var accessibilityIdentifier: String {
+        switch mode {
+        case .audio:
+            return "native_player_audio_menu"
+        case .subtitles:
+            return "native_player_subtitles_menu"
+        }
+    }
+
+    private var metrics: NativePlayerTrackMenuMetrics {
+        NativePlayerTrackMenuMetrics.current
+    }
+}
+
+private struct NativePlayerTrackMenuRow: View {
+    let option: PlaybackTrackOption
+    let onSelect: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 18) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: metrics.checkSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(option.isSelected ? foreground : .clear)
+                    .frame(width: metrics.checkColumnWidth)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.title)
+                        .font(.system(size: metrics.rowTitleSize, weight: .semibold, design: .rounded))
+                        .foregroundStyle(foreground)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+
+                    if let badge = option.badge {
+                        Text(badge)
+                            .font(.system(size: metrics.badgeSize, weight: .medium, design: .rounded))
+                            .foregroundStyle(foreground.opacity(isHighlighted ? 0.62 : 0.46))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, metrics.rowHorizontalPadding)
+            .frame(height: metrics.rowHeight)
+            .contentShape(Capsule(style: .continuous))
+            .background {
+                Capsule(style: .continuous)
+                    .fill(isHighlighted ? Color.white.opacity(0.96) : Color.clear)
+            }
+        }
+        .buttonStyle(TVNoChromeButtonStyle())
+        .focused($isFocused)
+        .nativePlayerTrackMenuFocusDisabled()
+        .padding(.horizontal, metrics.rowOuterPadding)
+        .accessibilityLabel(option.title)
+    }
+
+    private var isHighlighted: Bool {
+        isFocused || option.isSelected
+    }
+
+    private var foreground: Color {
+        isHighlighted ? .black : .white
+    }
+
+    private var metrics: NativePlayerTrackMenuMetrics {
+        NativePlayerTrackMenuMetrics.current
+    }
+}
+
+private struct NativePlayerTrackMenuEmptyRow: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: NativePlayerTrackMenuMetrics.current.rowTitleSize, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.5))
+            .padding(.horizontal, NativePlayerTrackMenuMetrics.current.horizontalPadding)
+            .frame(height: NativePlayerTrackMenuMetrics.current.rowHeight)
+            .accessibilityLabel(title)
+    }
+}
+
+private struct NativePlayerTrackMenuMetrics {
+    let panelWidth: CGFloat
+    let cornerRadius: CGFloat
+    let horizontalPadding: CGFloat
+    let verticalPadding: CGFloat
+    let sectionSpacing: CGFloat
+    let rowSpacing: CGFloat
+    let rowHeight: CGFloat
+    let rowOuterPadding: CGFloat
+    let rowHorizontalPadding: CGFloat
+    let checkColumnWidth: CGFloat
+    let titleSize: CGFloat
+    let sectionTitleSize: CGFloat
+    let rowTitleSize: CGFloat
+    let badgeSize: CGFloat
+    let checkSize: CGFloat
+    let contentMaxHeight: CGFloat
+
+    static var current: NativePlayerTrackMenuMetrics {
+#if os(tvOS)
+        NativePlayerTrackMenuMetrics(
+            panelWidth: 690,
+            cornerRadius: 58,
+            horizontalPadding: 58,
+            verticalPadding: 42,
+            sectionSpacing: 36,
+            rowSpacing: 14,
+            rowHeight: 88,
+            rowOuterPadding: 28,
+            rowHorizontalPadding: 34,
+            checkColumnWidth: 48,
+            titleSize: 38,
+            sectionTitleSize: 34,
+            rowTitleSize: 38,
+            badgeSize: 21,
+            checkSize: 34,
+            contentMaxHeight: 560
+        )
+#else
+        NativePlayerTrackMenuMetrics(
+            panelWidth: 320,
+            cornerRadius: 30,
+            horizontalPadding: 24,
+            verticalPadding: 20,
+            sectionSpacing: 16,
+            rowSpacing: 6,
+            rowHeight: 50,
+            rowOuterPadding: 10,
+            rowHorizontalPadding: 18,
+            checkColumnWidth: 28,
+            titleSize: 21,
+            sectionTitleSize: 18,
+            rowTitleSize: 21,
+            badgeSize: 12,
+            checkSize: 18,
+            contentMaxHeight: 250
+        )
+#endif
+    }
+}
+
+private extension View {
+    func nativePlayerTrackMenuGlass(cornerRadius: CGFloat) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(.black.opacity(0.72))
+                .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 1.2)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 16, x: 0, y: 8)
+    }
+
+    @ViewBuilder
+    func nativePlayerTrackMenuFocusDisabled() -> some View {
+#if os(tvOS)
+        self
+            .focusEffectDisabled(true)
+            .hoverEffectDisabled(true)
+#else
+        self
+#endif
     }
 }
 

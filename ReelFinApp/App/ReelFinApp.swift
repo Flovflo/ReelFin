@@ -16,10 +16,10 @@ struct ReelFinApp: App {
     private let dependencies: ReelFinDependencies
 
     init() {
-        NativeVLCClassPlayerRuntimeDefaults.registerExperimentalBranchDefaults()
-        if NativeVLCClassPlayerConfig.runtimeOverrideEnabled() {
+        NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults()
+        if NativePlayerConfig.runtimeOverrideEnabled() {
             PlaybackSessionController.clearStoredPreferredTranscodeProfiles()
-            AppLog.playback.notice("nativevlc.runtime.enabled — platform=iOS branch=feature/vlc-class-native-swift-player storedTranscodePinsCleared=true")
+            AppLog.playback.notice("nativeplayer.runtime.enabled — platform=iOS branch=feature/native-swift-player storedTranscodePinsCleared=true")
         }
         let metadata = AppMetadata.current
         self.metadata = metadata

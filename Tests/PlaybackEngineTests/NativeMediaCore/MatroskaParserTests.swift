@@ -261,11 +261,11 @@ final class MatroskaParserTests: XCTestCase {
         ))
         let firstCluster = cluster(track: 1, payload: [0x01])
         let secondCluster = cluster(track: 1, payload: [0x02])
-        let placeholderCue = cues(timecode: 10, track: 1, clusterPosition: 0)
+        let placeholderCue = cues(timecode: 10, track: 1, clusterPosition: UInt64(0))
         let secondClusterPosition = track.count + placeholderCue.count + firstCluster.count
         let data = mkv([
             track,
-            cues(timecode: 10, track: 1, clusterPosition: UInt8(secondClusterPosition)),
+            cues(timecode: 10, track: 1, clusterPosition: UInt64(secondClusterPosition)),
             firstCluster,
             secondCluster
         ])
@@ -278,26 +278,103 @@ final class MatroskaParserTests: XCTestCase {
         XCTAssertEqual(packet?.data, Data([0x02]))
     }
 
+    func testDemuxerLoadsSeekHeadCuesOutsideInitialWindowForResume() async throws {
+        let info = element([0x15, 0x49, 0xA9, 0x66], payload:
+            element([0x44, 0x89], payload: doublePayload(200))
+        )
+        let track = element([0x16, 0x54, 0xAE, 0x6B], payload: element([0xAE], payload:
+            element([0xD7], payload: [0x01]) +
+            element([0x83], payload: [0x01]) +
+            element([0x86], payload: Array("V_MPEG4/ISO/AVC".utf8))
+        ))
+        let firstCluster = cluster(timecode: 0, track: 1, payload: [0x01])
+        let filler = element([0xEC], payload: Array(repeating: 0, count: 8 * 1024 * 1024))
+        let resumeCluster = cluster(timecode: 100, track: 1, payload: [0x02])
+        let seekHeadPlaceholder = seekHead(cuesPosition: 0)
+        let cuesPlaceholder = cues(timecode: 100, track: 1, clusterPosition: UInt64(0))
+        let cuesPosition = info.count + seekHeadPlaceholder.count + track.count + firstCluster.count + filler.count
+        let resumeClusterPosition = cuesPosition + cuesPlaceholder.count
+        let seekHead = seekHead(cuesPosition: UInt64(cuesPosition))
+        let cues = cues(timecode: 100, track: 1, clusterPosition: UInt64(resumeClusterPosition))
+        let data = mkv([info, seekHead, track, firstCluster, filler, cues, resumeCluster])
+        let source = DataBackedByteSource(data: data)
+        let demuxer = MatroskaDemuxer(source: source)
+
+        let stream = try await demuxer.open()
+        XCTAssertTrue(stream.seekMap.isSeekable)
+        try await demuxer.seek(to: CMTime(seconds: 0.100, preferredTimescale: 1000))
+        let packet = try await demuxer.readNextPacket()
+
+        XCTAssertEqual(packet?.data, Data([0x02]))
+        let metrics = await source.metrics()
+        XCTAssertTrue(metrics.bufferedRanges.contains { $0.offset >= Int64(cuesPosition) })
+    }
+
+    func testDemuxerApproximateSeekSkipsInitialClustersWhenCuesAreMissing() async throws {
+        let info = element([0x15, 0x49, 0xA9, 0x66], payload:
+            element([0x44, 0x89], payload: doublePayload(200))
+        )
+        let track = element([0x16, 0x54, 0xAE, 0x6B], payload: element([0xAE], payload:
+            element([0xD7], payload: [0x01]) +
+            element([0x83], payload: [0x01]) +
+            element([0x86], payload: Array("V_MPEG4/ISO/AVC".utf8))
+        ))
+        let firstCluster = cluster(timecode: 0, track: 1, payload: [0x01])
+        let filler = element([0xEC], payload: Array(repeating: 0, count: 8 * 1024 * 1024))
+        let resumeCluster = cluster(timecode: 100, track: 1, payload: [0x02])
+        let data = mkv([info, track, firstCluster, filler, resumeCluster])
+        let source = DataBackedByteSource(data: data)
+        let demuxer = MatroskaDemuxer(source: source)
+
+        _ = try await demuxer.open()
+        try await demuxer.seek(to: CMTime(seconds: 0.100, preferredTimescale: 1000))
+        let packet = try await demuxer.readNextPacket()
+
+        XCTAssertEqual(packet?.data, Data([0x02]))
+        let metrics = await source.metrics()
+        XCTAssertTrue(metrics.bufferedRanges.contains { $0.offset > Int64(1024 * 1024) })
+    }
+
     private func mkv(_ children: [[UInt8]]) -> Data {
         Data(element([0x1A, 0x45, 0xDF, 0xA3], payload: []))
             + Data(element([0x18, 0x53, 0x80, 0x67], payload: children.flatMap { $0 }))
     }
 
     private func cluster(track: UInt8, payload: [UInt8]) -> [UInt8] {
-        let simpleBlock = element([0xA3], payload: [0x80 | track, 0x00, 0x00, 0x80] + payload)
-        return element([0x1F, 0x43, 0xB6, 0x75], payload: element([0xE7], payload: [0x00]) + simpleBlock)
+        cluster(timecode: 0, track: track, payload: payload)
     }
 
-    private func cues(timecode: UInt8, track: UInt8, clusterPosition: UInt8) -> [UInt8] {
+    private func cluster(timecode: UInt8, track: UInt8, payload: [UInt8]) -> [UInt8] {
+        let simpleBlock = element([0xA3], payload: [0x80 | track, 0x00, 0x00, 0x80] + payload)
+        return element([0x1F, 0x43, 0xB6, 0x75], payload: element([0xE7], payload: [timecode]) + simpleBlock)
+    }
+
+    private func cues(timecode: UInt8, track: UInt8, clusterPosition: UInt64) -> [UInt8] {
         let positions = element([0xB7], payload:
             element([0xF7], payload: [track]) +
-            element([0xF1], payload: [clusterPosition])
+            element([0xF1], payload: uintPayload(clusterPosition, fixedLength: 8))
         )
         let point = element([0xBB], payload:
             element([0xB3], payload: [timecode]) +
             positions
         )
         return element([0x1C, 0x53, 0xBB, 0x6B], payload: point)
+    }
+
+    private func seekHead(cuesPosition: UInt64) -> [UInt8] {
+        let seek = element([0x4D, 0xBB], payload:
+            element([0x53, 0xAB], payload: [0x1C, 0x53, 0xBB, 0x6B]) +
+            element([0x53, 0xAC], payload: uintPayload(cuesPosition, fixedLength: 8))
+        )
+        return element([0x11, 0x4D, 0x9B, 0x74], payload: seek)
+    }
+
+    private func uintPayload(_ value: UInt64, fixedLength: Int? = nil) -> [UInt8] {
+        let length = fixedLength ?? max(1, (8 - value.leadingZeroBitCount / 8))
+        return (0..<length).map { index in
+            let shift = UInt64((length - index - 1) * 8)
+            return UInt8((value >> shift) & 0xFF)
+        }
     }
 
     private func element(_ id: [UInt8], payload: [UInt8]) -> [UInt8] {

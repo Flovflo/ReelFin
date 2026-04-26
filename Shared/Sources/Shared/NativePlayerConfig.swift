@@ -1,6 +1,6 @@
 import Foundation
 
-public struct NativeVLCClassPlayerConfig: Codable, Hashable, Sendable {
+public struct NativePlayerConfig: Codable, Hashable, Sendable {
     public var enabled: Bool
     public var alwaysRequestOriginalFile: Bool
     public var allowServerTranscodeFallback: Bool
@@ -49,26 +49,26 @@ public struct NativeVLCClassPlayerConfig: Codable, Hashable, Sendable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         userDefaults: UserDefaults = .standard
     ) -> Bool {
-        if environment["REELFIN_NATIVE_VLC_CLASS_PLAYER"] == "0" {
+        if environment["REELFIN_NATIVE_PLAYER"] == "0" {
             return false
         }
-        if environment["REELFIN_NATIVE_VLC_CLASS_PLAYER"] == "1" {
+        if environment["REELFIN_NATIVE_PLAYER"] == "1" {
             return true
         }
         #if DEBUG
         if environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil {
-            return userDefaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
+            return userDefaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey)
         }
         return true
         #else
-        return userDefaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
+        return userDefaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey)
         #endif
     }
 
     public func applyingRuntimeOverride(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         userDefaults: UserDefaults = .standard
-    ) -> NativeVLCClassPlayerConfig {
+    ) -> NativePlayerConfig {
         guard Self.runtimeOverrideEnabled(environment: environment, userDefaults: userDefaults) else {
             return self
         }
@@ -80,20 +80,20 @@ public struct NativeVLCClassPlayerConfig: Codable, Hashable, Sendable {
     }
 }
 
-public enum NativeVLCClassPlayerRuntimeDefaults {
-    public static let enabledKey = "reelfin.nativeVlcClassPlayer.enabled"
-    public static let experimentalBranchDefaultAppliedKey = "reelfin.nativeVlcClassPlayer.experimentalBranchDefaultApplied.v2"
+public enum NativePlayerRuntimeDefaults {
+    public static let enabledKey = "reelfin.nativePlayer.enabled"
+    public static let experimentalBranchDefaultAppliedKey = "reelfin.nativePlayer.experimentalBranchDefaultApplied.v2"
 
     public static func registerExperimentalBranchDefaults(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         userDefaults: UserDefaults = .standard
     ) {
         #if DEBUG
-        guard environment["REELFIN_NATIVE_VLC_CLASS_PLAYER"] != "0" else {
+        guard environment["REELFIN_NATIVE_PLAYER"] != "0" else {
             userDefaults.set(false, forKey: enabledKey)
             return
         }
-        if environment["REELFIN_NATIVE_VLC_CLASS_PLAYER"] == "1" {
+        if environment["REELFIN_NATIVE_PLAYER"] == "1" {
             userDefaults.set(true, forKey: enabledKey)
             userDefaults.set(true, forKey: experimentalBranchDefaultAppliedKey)
             return

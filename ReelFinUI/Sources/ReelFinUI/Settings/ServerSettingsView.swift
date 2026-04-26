@@ -82,8 +82,8 @@ struct ServerSettingsView: View {
 
                         Toggle(
                             isOn: Binding(
-                                get: { viewModel.nativeVLCClassPlayerEnabled },
-                                set: { viewModel.setNativeVLCClassPlayerEnabled($0) }
+                                get: { viewModel.nativePlayerEnabled },
+                                set: { viewModel.setNativePlayerEnabled($0) }
                             )
                         ) {
                             Text("Use native local player")
@@ -277,8 +277,8 @@ struct ServerSettingsView: View {
             Section {
                 Toggle(
                     isOn: Binding(
-                        get: { viewModel.nativeVLCClassPlayerEnabled },
-                        set: { viewModel.setNativeVLCClassPlayerEnabled($0) }
+                        get: { viewModel.nativePlayerEnabled },
+                        set: { viewModel.setNativePlayerEnabled($0) }
                     )
                 ) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -297,7 +297,7 @@ struct ServerSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .disabled(viewModel.nativeVLCClassPlayerEnabled)
+                .disabled(viewModel.nativePlayerEnabled)
 
                 Button {
                     persistSettings()

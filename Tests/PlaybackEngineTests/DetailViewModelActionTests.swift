@@ -326,6 +326,84 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(warmupRequests.last?.runtimeSeconds, 1_800)
     }
 
+    func testSetEpisodeWatchedMarksOnlyTargetEpisodeAndAdvancesNextUp() async {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let episode1 = MediaItem(
+            id: "episode-1",
+            name: "Episode 1",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 1,
+            parentIndexNumber: 1
+        )
+        let episode2 = MediaItem(
+            id: "episode-2",
+            name: "Episode 2",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 2,
+            parentIndexNumber: 1
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(id: "series-1", name: "Series", mediaType: .series),
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+        viewModel.episodes = [episode1, episode2]
+        viewModel.nextUpEpisode = episode1
+
+        viewModel.setEpisodeWatched(episode1, isPlayed: true)
+
+        XCTAssertTrue(viewModel.episodes[0].isPlayed)
+        XCTAssertFalse(viewModel.episodes[1].isPlayed)
+        XCTAssertEqual(viewModel.nextUpEpisode?.id, "episode-2")
+        let didRecordPlayedCall = await waitForPlayedCallCount(1, in: apiClient, timeout: 2)
+        XCTAssertTrue(didRecordPlayedCall)
+
+        let playedCalls = await apiClient.playedCalls()
+        XCTAssertEqual(playedCalls.first?.itemID, "episode-1")
+        XCTAssertEqual(playedCalls.first?.isPlayed, true)
+    }
+
+    func testSetEpisodeUnwatchedPromotesTargetEpisodeToNextUp() async {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let episode1 = MediaItem(
+            id: "episode-1",
+            name: "Episode 1",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 1,
+            parentIndexNumber: 1,
+            isPlayed: true
+        )
+        let episode2 = MediaItem(
+            id: "episode-2",
+            name: "Episode 2",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 2,
+            parentIndexNumber: 1
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(id: "series-1", name: "Series", mediaType: .series),
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+        viewModel.episodes = [episode1, episode2]
+        viewModel.nextUpEpisode = episode2
+
+        viewModel.setEpisodeWatched(episode1, isPlayed: false)
+
+        XCTAssertFalse(viewModel.episodes[0].isPlayed)
+        XCTAssertEqual(viewModel.nextUpEpisode?.id, "episode-1")
+        let didRecordPlayedCall = await waitForPlayedCallCount(1, in: apiClient, timeout: 2)
+        XCTAssertTrue(didRecordPlayedCall)
+
+        let playedCalls = await apiClient.playedCalls()
+        XCTAssertEqual(playedCalls.first?.itemID, "episode-1")
+        XCTAssertEqual(playedCalls.first?.isPlayed, false)
+    }
+
     private func makeDependencies(
         apiClient: DetailActionSpyAPIClient,
         repository: any MetadataRepositoryProtocol,

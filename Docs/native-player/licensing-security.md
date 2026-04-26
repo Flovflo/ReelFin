@@ -1,6 +1,6 @@
 # Licensing / Security
 
-No VLC, libVLC, FFmpeg, or GPL code was added.
+No third-party media engine or GPL playback code was added.
 
 Dependencies added: none.
 

@@ -4,6 +4,9 @@ public enum EBMLElementID {
     public static let ebml: UInt32 = 0x1A45DFA3
     public static let segment: UInt32 = 0x18538067
     public static let seekHead: UInt32 = 0x114D9B74
+    public static let seek: UInt32 = 0x4DBB
+    public static let seekID: UInt32 = 0x53AB
+    public static let seekPosition: UInt32 = 0x53AC
     public static let info: UInt32 = 0x1549A966
     public static let tracks: UInt32 = 0x1654AE6B
     public static let cluster: UInt32 = 0x1F43B675

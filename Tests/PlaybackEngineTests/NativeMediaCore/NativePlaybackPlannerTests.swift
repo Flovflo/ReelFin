@@ -20,6 +20,27 @@ final class NativePlaybackPlannerTests: XCTestCase {
         XCTAssertEqual(plan.diagnostics.audioRendererBackend, "AVSampleBufferAudioRenderer")
     }
 
+    func testDiagnosticsReportVideoHDRMetadata() {
+        let hdr = HDRMetadata(
+            format: .hdr10,
+            colorPrimaries: .bt2020,
+            transferFunction: .pq,
+            matrixCoefficients: .bt2020NonConstant,
+            bitDepth: 10
+        )
+        let tracks = [
+            MediaTrack(id: "1", trackId: 1, kind: .video, codec: "hevc", codecID: "hvc1", hdrMetadata: hdr),
+            MediaTrack(id: "2", trackId: 2, kind: .audio, codec: "eac3", codecID: "ec-3")
+        ]
+        let stream = DemuxerStreamInfo(container: .mp4, tracks: tracks)
+        let probe = ProbeResult(format: .mp4, confidence: .exactSignature, byteSignature: "ftyp", reason: "MP4")
+
+        let plan = NativePlaybackPlanner().makePlan(probe: probe, stream: stream, access: MediaAccessMetrics())
+
+        XCTAssertEqual(plan.diagnostics.hdrFormat, .hdr10)
+        XCTAssertNil(plan.diagnostics.dolbyVisionProfile)
+    }
+
     func testRoutesMatroskaH264AACToLocalBackends() {
         let tracks = [
             MediaTrack(id: "1", trackId: 1, kind: .video, codec: "h264", codecID: "V_MPEG4/ISO/AVC"),

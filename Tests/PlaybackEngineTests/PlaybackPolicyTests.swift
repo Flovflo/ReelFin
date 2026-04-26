@@ -103,6 +103,11 @@ final class PlaybackPolicyTests: XCTestCase {
         )
         XCTAssertFalse(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.directPlayPostStartStall.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.directPlayStall.rawValue
             )
         )
@@ -728,6 +733,7 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertTrue(StartupFailureReason.startupVideoPrerollTimeout.shouldTriggerRecovery)
         XCTAssertFalse(StartupFailureReason.directPlayPreflightInsufficient.shouldTriggerRecovery)
         XCTAssertFalse(StartupFailureReason.directPlayStall.shouldTriggerRecovery)
+        XCTAssertFalse(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
     }
 
     func testStartupFailureReasonTransientDoesNotTriggerRecovery() {
@@ -752,6 +758,7 @@ final class PlaybackPolicyTests: XCTestCase {
             .startupVideoPrerollTimeout,
             .directPlayPreflightInsufficient,
             .directPlayStall,
+            .directPlayPostStartStall,
             .startupWatchdogExpired,
             .nativeBridgePackagingFailure,
             .unknownStartupFailure

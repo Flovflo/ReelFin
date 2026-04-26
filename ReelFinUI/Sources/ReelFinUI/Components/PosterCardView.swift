@@ -176,18 +176,30 @@ public struct PosterCardArtworkView: View {
                     .stroke(isFocused ? focusedStrokeColor : ReelFinTheme.glassStrokeColor, lineWidth: isFocused ? focusedStrokeWidth : ReelFinTheme.glassStrokeWidth)
             }
             #endif
+            .overlay {
+                if item.isPlayed {
+                    RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous)
+                        .fill(Color.black.opacity(0.18))
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if showsTopTrailingBadges {
                     VStack(alignment: .trailing, spacing: 8) {
                         if item.isPlayed {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 28, height: 28)
-                                .background(.ultraThinMaterial, in: Circle())
-                                .overlay {
-                                    Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-                                }
+                            PosterPlaybackStatusBadge(
+                                text: "Watched",
+                                systemImage: "checkmark.circle.fill",
+                                tint: Color(red: 0.78, green: 0.95, blue: 0.82),
+                                compact: layoutStyle != .landscape
+                            )
+                        } else if let positionText = item.playbackPositionDisplayText {
+                            PosterPlaybackStatusBadge(
+                                text: positionText,
+                                systemImage: "play.circle.fill",
+                                tint: Color.white.opacity(0.94),
+                                compact: layoutStyle != .landscape
+                            )
                         }
 
                         if let optimizationStatus {
@@ -501,6 +513,41 @@ public struct PosterCardMetadataView: View {
         #else
         return 34
         #endif
+    }
+}
+
+private struct PosterPlaybackStatusBadge: View {
+    let text: String
+    let systemImage: String
+    let tint: Color
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: compact ? 4 : 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: compact ? 10 : 12, weight: .bold))
+
+            if !compact {
+                Text(text)
+                    .lineLimit(1)
+            } else {
+                Text(shortText)
+                    .lineLimit(1)
+            }
+        }
+        .font(.system(size: compact ? 10 : 12, weight: .bold, design: .rounded))
+        .foregroundStyle(tint)
+        .padding(.horizontal, compact ? 7 : 9)
+        .padding(.vertical, compact ? 5 : 6)
+        .background(Color.black.opacity(0.42), in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(0.20), lineWidth: 0.6)
+        }
+    }
+
+    private var shortText: String {
+        text == "Watched" ? "Seen" : text
     }
 }
 

@@ -30,6 +30,8 @@ struct NativeMatroskaSampleBufferMetrics {
     var audioStarvationSeconds: Double = 0
     var videoDecoderBackend = "none"
     var audioDecoderBackend = "none"
+    var hdrFormat = "unknown"
+    var dolbyVisionProfile = "none"
     var activeSubtitleText: String?
     var unsupportedModules: [String] = []
     var failure: String?
@@ -47,6 +49,7 @@ struct NativeMatroskaSampleBufferMetrics {
         lines.append("audioDecoderBackend=\(audioDecoderBackend)")
         lines.append("rendererBackend=AVSampleBufferDisplayLayer(compressed)")
         lines.append("audioRendererBackend=AVSampleBufferAudioRenderer(compressed)")
+        lines.append("hdr=\(hdrFormat) dvProfile=\(dolbyVisionProfile)")
         lines.append("masterClock=AVSampleBufferRenderSynchronizer")
         lines.append("startTime=\(String(format: "%.3f", startTime))")
         lines.append("currentPTS=\(String(format: "%.3f", currentPTS)) playbackTime=\(String(format: "%.3f", playbackTime))")

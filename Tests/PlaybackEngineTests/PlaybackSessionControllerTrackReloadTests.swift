@@ -27,8 +27,11 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
 
         XCTAssertTrue(model.hasSelectableTracks)
         XCTAssertEqual(model.audioOptions.map(\.trackID), ["audio-en", "audio-fr"])
+        XCTAssertEqual(model.options(for: .audio).map(\.trackID), ["audio-en", "audio-fr"])
         XCTAssertTrue(model.audioOptions.first { $0.trackID == "audio-fr" }?.isSelected == true)
         XCTAssertEqual(model.subtitleOptions.map(\.trackID), [nil, "sub-fr", "sub-en"])
+        XCTAssertEqual(model.options(for: .subtitles).map(\.trackID), [nil, "sub-fr", "sub-en"])
+        XCTAssertEqual(model.subtitleOptions.first?.title, "Off")
         XCTAssertTrue(model.subtitleOptions.first?.isSelected == true)
     }
 
@@ -76,6 +79,144 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
 
         XCTAssertEqual(action, .none)
+    }
+
+    func testTvOSHDRDirectPlaySkipsVideoOutputProbe() {
+        let source = MediaSource(
+            id: "dolby-vision-source",
+            itemID: "item-dv",
+            name: "Dolby Vision stream",
+            container: "mp4",
+            videoCodec: "dvh1",
+            audioCodec: "eac3",
+            bitrate: 21_000_000,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAttachVideoOutputProbe(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-dv/stream?static=true")!),
+                source: source,
+                isTVOS: true
+            )
+        )
+    }
+
+    func testIOSHDRDirectPlayKeepsVideoOutputProbe() {
+        let source = MediaSource(
+            id: "dolby-vision-source",
+            itemID: "item-dv",
+            name: "Dolby Vision stream",
+            container: "mp4",
+            videoCodec: "dvh1",
+            audioCodec: "eac3",
+            bitrate: 21_000_000,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAttachVideoOutputProbe(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-dv/stream?static=true")!),
+                source: source,
+                isTVOS: false
+            )
+        )
+    }
+
+    func testTvOSSDRDirectPlayKeepsVideoOutputProbe() {
+        let source = MediaSource(
+            id: "sdr-source",
+            itemID: "item-sdr",
+            name: "SDR stream",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            bitrate: 5_000_000,
+            videoBitDepth: 8,
+            videoRangeType: "SDR",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAttachVideoOutputProbe(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-sdr/stream?static=true")!),
+                source: source,
+                isTVOS: true
+            )
+        )
+    }
+
+    func testTvOSHDRDirectPlayDoesNotAutoSelectDefaultNonForcedSubtitle() {
+        let source = MediaSource(
+            id: "dolby-vision-source",
+            itemID: "item-dv",
+            name: "Dolby Vision stream",
+            container: "mp4",
+            videoCodec: "dvh1",
+            audioCodec: "eac3",
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let track = MediaTrack(
+            id: "sub-fr-default",
+            title: "French - Default - MOV_TEXT",
+            language: "fra",
+            codec: "mov_text",
+            isDefault: true,
+            isForced: false,
+            index: 3
+        )
+
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAutoSelectDefaultSubtitleAtStartup(
+                track: track,
+                route: .directPlay(URL(string: "https://example.com/Videos/item-dv/stream?static=true")!),
+                source: source,
+                isTVOS: true
+            )
+        )
+    }
+
+    func testTvOSHDRDirectPlayStillAutoSelectsForcedSubtitle() {
+        let source = MediaSource(
+            id: "dolby-vision-source",
+            itemID: "item-dv",
+            name: "Dolby Vision stream",
+            container: "mp4",
+            videoCodec: "dvh1",
+            audioCodec: "eac3",
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let track = MediaTrack(
+            id: "sub-fr-forced",
+            title: "French Forced - MOV_TEXT",
+            language: "fra",
+            codec: "mov_text",
+            isDefault: true,
+            isForced: true,
+            index: 3
+        )
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAutoSelectDefaultSubtitleAtStartup(
+                track: track,
+                route: .directPlay(URL(string: "https://example.com/Videos/item-dv/stream?static=true")!),
+                source: source,
+                isTVOS: true
+            )
+        )
     }
 
     func testVideoFormatSnapshotDetectsDolbyVisionFromCodec() {
@@ -347,7 +488,9 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             PlaybackSessionController.hasRenderableVideoFrame(
                 copiedPixelBuffer: false,
                 presentationSize: CGSize(width: 3840, height: 1608),
-                videoOutputAttached: true
+                videoOutputAttached: true,
+                avkitReadyForDisplay: false,
+                requiresDisplayReadyWhenVideoOutputDetached: false
             )
         )
     }
@@ -357,9 +500,58 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             PlaybackSessionController.hasRenderableVideoFrame(
                 copiedPixelBuffer: true,
                 presentationSize: CGSize(width: 3840, height: 1608),
-                videoOutputAttached: true
+                videoOutputAttached: true,
+                avkitReadyForDisplay: false,
+                requiresDisplayReadyWhenVideoOutputDetached: false
             )
         )
+    }
+
+    func testTvOSHDRDirectPlayCannotUsePresentationSizeAsRenderedFrameProof() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium HDR stream",
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let route = PlaybackRoute.directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!)
+
+        XCTAssertTrue(PlaybackSessionController.requiresAVKitReadyForDisplayProof(
+            route: route,
+            source: source,
+            isTVOS: true
+        ))
+        XCTAssertFalse(
+            PlaybackSessionController.hasRenderableVideoFrame(
+                copiedPixelBuffer: false,
+                presentationSize: CGSize(width: 3840, height: 1608),
+                videoOutputAttached: false,
+                avkitReadyForDisplay: false,
+                requiresDisplayReadyWhenVideoOutputDetached: true
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.hasRenderableVideoFrame(
+                copiedPixelBuffer: false,
+                presentationSize: CGSize(width: 3840, height: 1608),
+                videoOutputAttached: false,
+                avkitReadyForDisplay: true,
+                requiresDisplayReadyWhenVideoOutputDetached: true
+            )
+        )
+    }
+
+    func testAVKitReadyForDisplayIsAcceptedOnlyAfterPlayerItemReady() {
+        XCTAssertFalse(PlaybackSessionController.shouldAcceptAVKitReadyForDisplay(itemStatus: .unknown))
+        XCTAssertTrue(PlaybackSessionController.shouldAcceptAVKitReadyForDisplay(itemStatus: .readyToPlay))
+        XCTAssertFalse(PlaybackSessionController.shouldAcceptAVKitReadyForDisplay(itemStatus: .failed))
     }
 
     func testHighBitrateIPhoneDirectPlayPrerollsVideoBeforeAudioStart() {
@@ -499,6 +691,60 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertEqual(queryMap["api_key"], "token-1")
         XCTAssertEqual(queryMap["mediasourceid"], "premium-source")
         XCTAssertNil(queryMap["static"])
+    }
+
+    func testPremiumDirectPlayBuildsStaticStreamExtensionAliasWhenServerURLHasNoExtension() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hvc1",
+            audioCodec: "eac3",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let currentURL = URL(
+            string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source&api_key=token-1"
+        )!
+
+        let preferredURL = PlaybackSessionController.preferredDirectPlayAssetURL(
+            route: .directPlay(currentURL),
+            source: source,
+            currentAssetURL: currentURL
+        )
+
+        XCTAssertEqual(preferredURL.path, "/Videos/item-premium/stream.mp4")
+        let queryItems = URLComponents(url: preferredURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(queryItems.first { $0.name.caseInsensitiveCompare("api_key") == .orderedSame }?.value, "token-1")
+        XCTAssertEqual(queryItems.first { $0.name.caseInsensitiveCompare("MediaSourceId") == .orderedSame }?.value, "premium-source")
+    }
+
+    func testPremiumDirectPlayExtensionAliasPrefersRealFileExtension() {
+        let source = MediaSource(
+            id: "premium-source",
+            itemID: "item-premium",
+            name: "Premium stream",
+            filePath: "/media/Premium Movie.mov",
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hvc1",
+            audioCodec: "eac3",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let currentURL = URL(
+            string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source&api_key=token-1"
+        )!
+
+        let aliasURL = PlaybackSessionController.extensionAliasURL(for: currentURL, source: source)
+
+        XCTAssertEqual(aliasURL?.path, "/Videos/item-premium/stream.mov")
     }
 
     func testPremiumDirectPlayKeepsCurrentURLWhenNoBetterServerURLExists() {
@@ -684,21 +930,26 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertTrue(shouldRecover)
     }
 
-    func testPostStartDirectPlayStallDisablesDirectRouteRecovery() {
-        XCTAssertTrue(
+    func testPostStartDirectPlayStallPreservesDirectRouteRecovery() {
+        XCTAssertFalse(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             PlaybackSessionController.shouldSuspendCurrentItemBeforeProfileRecovery(
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
         )
-        XCTAssertTrue(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.directPlayPostStartStall.rawValue
+            )
+        )
+        XCTAssertFalse(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
     }
 
-    func testVideoDecodeFailuresDisableDirectRouteRecovery() {
+    func testDirectPlayVideoDecodeFailuresUseSameRouteRecovery() {
         for reason in [
             StartupFailureReason.audioOnlyNoVideo,
             .decodedFrameWatchdog,
@@ -707,7 +958,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             .playerItemFailed
         ] {
             XCTAssertTrue(
-                PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                     reason: reason.rawValue
                 ),
                 reason.rawValue
@@ -776,7 +1027,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertFalse(shouldPreempt)
     }
 
-    func testTvOSHighBitrateOverBudgetDirectPlayUsesStableHLSPreemption() {
+    func testTvOSHighBitrateOverBudgetDirectPlayStillKeepsNativePath() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -801,7 +1052,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             isTVOS: true
         )
 
-        XCTAssertTrue(shouldPreempt)
+        XCTAssertFalse(shouldPreempt)
     }
 
     func testTvOSHighBitrateStrictQualityDirectPlayKeepsNativePath() {
@@ -861,7 +1112,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertNil(policy.reason)
     }
 
-    func testStartupDirectPlayFailuresSkipSameRouteRecovery() {
+    func testStartupDirectPlayFailuresUseSameRouteForRenderFailuresAndStalls() {
         XCTAssertFalse(
             PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                 reason: StartupFailureReason.startupReadinessTimeout.rawValue
@@ -869,25 +1120,20 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
         XCTAssertFalse(
             PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
-                reason: StartupFailureReason.directPlayPostStartStall.rawValue
-            )
-        )
-        XCTAssertFalse(
-            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                 reason: StartupFailureReason.directPlayPreflightInsufficient.rawValue
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                 reason: StartupFailureReason.audioOnlyNoVideo.rawValue
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                 reason: StartupFailureReason.playerItemFailed.rawValue
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                 reason: StartupFailureReason.readyButNoVideoFrame.rawValue
             )
@@ -895,6 +1141,11 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertTrue(
             PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
                 reason: StartupFailureReason.directPlayStall.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAttemptSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
         )
     }

@@ -4,6 +4,7 @@ import Foundation
 public struct MatroskaSegmentParser: Sendable {
     private let reader = EBMLReader()
     private let trackParser = MatroskaTrackParser()
+    private let seekHeadParser = MatroskaSeekHeadParser()
     private let cueParser = MatroskaCueParser()
     private let clusterParser = MatroskaClusterParser()
 
@@ -41,7 +42,9 @@ public struct MatroskaSegmentParser: Sendable {
                 segment.parsedUntilOffset = offset
                 break
             }
-            if child.id == EBMLElementID.info {
+            if child.id == EBMLElementID.seekHead {
+                segment.seekHead = seekHeadParser.parse(data: Data(data[child.payloadOffset..<childEnd]))
+            } else if child.id == EBMLElementID.info {
                 segment.info = try parseInfo(data: data, header: child)
             } else if child.id == EBMLElementID.tracks {
                 segment.tracks = try trackParser.parseTracks(data: Data(data[child.payloadOffset..<childEnd]))

@@ -32,6 +32,7 @@ final class NativeMP4SampleBufferPlayerRuntimeTests: XCTestCase {
         controller.configure(
             url: url,
             startTimeSeconds: 0,
+            seekRequest: nil,
             baseDiagnostics: [],
             isPaused: false,
             onDiagnostics: { lines in

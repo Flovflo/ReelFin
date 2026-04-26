@@ -544,6 +544,9 @@ struct DetailView: View {
                                     viewModel.prepareEpisodePlayback(episode)
                                     startPlayback(item: episode)
                                 },
+                                onSetWatched: { isPlayed in
+                                    viewModel.setEpisodeWatched(episode, isPlayed: isPlayed)
+                                },
                                 onMoveUp: focusAboveEpisodes,
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline
@@ -580,6 +583,9 @@ struct DetailView: View {
                                 onSelect: {
                                     viewModel.prepareEpisodePlayback(episode)
                                     startPlayback(item: episode)
+                                },
+                                onSetWatched: { isPlayed in
+                                    viewModel.setEpisodeWatched(episode, isPlayed: isPlayed)
                                 },
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline
@@ -870,9 +876,12 @@ struct DetailView: View {
         let targetItem = item ?? viewModel.itemToPlay
         let nextEpisodeQueue = targetItem.mediaType == .episode ? viewModel.nextEpisodes(after: targetItem) : []
 
+#if os(iOS)
+        OrientationManager.shared.lockLandscapeForPlayerPresentation()
+#endif
         isLoadingPlayback = true
         playerSession = session
-        showPlayer = true
+        setPlayerCoverPresented(true)
 
         Task { @MainActor in
             await Task.yield()
@@ -883,7 +892,7 @@ struct DetailView: View {
                 isLoadingPlayback = false
                 playerSession = nil
                 viewModel.errorMessage = error.localizedDescription
-                showPlayer = false
+                setPlayerCoverPresented(false)
             }
         }
     }
@@ -900,8 +909,20 @@ struct DetailView: View {
     private func handlePlayerDismissal() {
         playerSession?.stop()
         playerSession = nil
-        showPlayer = false
+        setPlayerCoverPresented(false)
         isLoadingPlayback = false
+    }
+
+    private func setPlayerCoverPresented(_ isPresented: Bool) {
+#if os(iOS)
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            showPlayer = isPresented
+        }
+#else
+        showPlayer = isPresented
+#endif
     }
 
     private var shouldShowSeasonPicker: Bool {
@@ -1277,6 +1298,7 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
 
     @State private var scrollSnapshot = IOSDetailScrollSnapshot()
     @State private var lastAlignedCarouselItemID: String?
+    @State private var carouselScrollPositionID: String?
 
     var body: some View {
         let metrics = IOSDetailStageMetrics(
@@ -1317,13 +1339,25 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
             if selectedItemID == nil {
                 selectedItemID = currentItemID
             }
+            if carouselScrollPositionID == nil {
+                carouselScrollPositionID = currentItemID
+            }
         }
         .onChange(of: currentItemID) { _, newValue in
             selectedItemID = newValue
+            carouselScrollPositionID = newValue
         }
-        .onChange(of: selectedItemID) { _, newValue in
-            guard let newValue, newValue != currentItemID else { return }
-            guard let entry = entries.first(where: { $0.id == newValue }) else { return }
+        .onChange(of: carouselScrollPositionID) { _, newValue in
+            guard let acceptedID = IOSDetailCarouselLayout.acceptedSelectionID(
+                currentItemID: currentItemID,
+                proposedItemID: newValue,
+                topInsetProgress: metrics.topInsetProgress
+            ) else {
+                carouselScrollPositionID = currentItemID
+                return
+            }
+            guard let entry = entries.first(where: { $0.id == acceptedID }) else { return }
+            selectedItemID = acceptedID
             onSelectItem(entry)
         }
     }
@@ -1336,6 +1370,12 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
             let expandedCardWidth = min(
                 cardWidth + ((proxy.size.width - cardWidth) * metrics.topInsetProgress),
                 proxy.size.width
+            )
+            let allowsHorizontalSelection = IOSDetailCarouselLayout.allowsHorizontalSelection(
+                topInsetProgress: metrics.topInsetProgress
+            )
+            let neighborPreviewOpacity = IOSDetailCarouselLayout.neighborPreviewOpacity(
+                topInsetProgress: metrics.topInsetProgress
             )
 
             ScrollViewReader { proxy in
@@ -1350,6 +1390,7 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
                                 expandedCardWidth: expandedCardWidth,
                                 metrics: metrics,
                                 topInsetProgress: metrics.topInsetProgress,
+                                neighborPreviewOpacity: neighborPreviewOpacity,
                                 apiClient: apiClient,
                                 imagePipeline: imagePipeline
                             ) {
@@ -1379,9 +1420,9 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
                     )
                 }
                 .scrollClipDisabled()
-                .scrollDisabled(metrics.topInsetProgress > 0.08)
+                .scrollDisabled(!allowsHorizontalSelection)
                 .scrollTargetBehavior(.viewAligned)
-                .scrollPosition(id: $selectedItemID)
+                .scrollPosition(id: $carouselScrollPositionID)
             }
             .accessibilityIdentifier("detail_ios_top_carousel")
         }
@@ -1467,6 +1508,7 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
     let expandedCardWidth: CGFloat
     let metrics: IOSDetailStageMetrics
     let topInsetProgress: CGFloat
+    let neighborPreviewOpacity: Double
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     @ViewBuilder let selectedContent: () -> SelectedContent
@@ -1525,7 +1567,8 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
             y: selected ? metrics.selectedCardScaleY : 0.94,
             anchor: .top
         )
-        .opacity(selected ? 1 : 1 - Double(topInsetProgress * 0.45))
+        .opacity(selected ? 1 : neighborPreviewOpacity)
+        .allowsHitTesting(selected || neighborPreviewOpacity > 0.98)
         .offset(y: selected ? metrics.heroLift : 18 + (topInsetProgress * 12))
         .accessibilityIdentifier("detail_top_card_\(entry.id)")
         .accessibilityElement(children: .contain)
@@ -1675,6 +1718,12 @@ private struct IOSDetailHeroContent: View {
         } message: {
             Text("Offline downloads are not available yet. This feature will arrive in a future update.")
         }
+        .onChange(of: item.id) { _, _ in
+            resetSynopsisExpansion()
+        }
+        .onChange(of: playbackItem.id) { _, _ in
+            resetSynopsisExpansion()
+        }
     }
 
     private var topBar: some View {
@@ -1813,13 +1862,19 @@ private struct IOSDetailHeroContent: View {
     private var detailBlock: some View {
         VStack(alignment: .leading, spacing: detailBlockSpacing) {
             if let synopsisText, !synopsisText.isEmpty {
-                HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
                     summaryText(synopsisText)
-                        .font(.system(size: 17, weight: .regular, design: .rounded))
+                        .font(.system(size: synopsisFontSize, weight: .regular, design: .rounded))
                         .foregroundStyle(.white.opacity(0.82))
-                        .lineLimit(isSynopsisExpanded ? nil : 2)
+                        .lineLimit(synopsisLineLimit)
+                        .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: synopsisMaximumHeight,
+                            alignment: .topLeading
+                        )
+                        .clipped()
 
                     if synopsisNeedsExpansion {
                         Button(isSynopsisExpanded ? "LESS" : "MORE") {
@@ -1837,9 +1892,9 @@ private struct IOSDetailHeroContent: View {
                             Capsule(style: .continuous)
                                 .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
                         }
-                        .padding(.bottom, isSynopsisExpanded ? 0 : 2)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             footerRow
@@ -1974,7 +2029,7 @@ private struct IOSDetailHeroContent: View {
 
     private var synopsisNeedsExpansion: Bool {
         guard let synopsisText else { return false }
-        return synopsisText.count > 120
+        return IOSDetailSynopsisLayout.needsExpansion(synopsisText, contentWidth: resolvedSynopsisContentWidth)
     }
 
     private var hasResumeProgressInfo: Bool {
@@ -2049,6 +2104,32 @@ private struct IOSDetailHeroContent: View {
     private var detailBlockSpacing: CGFloat {
         max(14, 18 - (collapseProgress * 4))
     }
+
+    private var synopsisFontSize: CGFloat {
+        17
+    }
+
+    private var synopsisLineLimit: Int {
+        IOSDetailSynopsisLayout.lineLimit(
+            isExpanded: isSynopsisExpanded,
+            contentWidth: resolvedSynopsisContentWidth
+        )
+    }
+
+    private var synopsisMaximumHeight: CGFloat {
+        IOSDetailSynopsisLayout.maximumHeight(
+            fontSize: synopsisFontSize,
+            lineLimit: synopsisLineLimit
+        )
+    }
+
+    private var resolvedSynopsisContentWidth: CGFloat {
+        min(contentWidth, 720)
+    }
+
+    private func resetSynopsisExpansion() {
+        isSynopsisExpanded = false
+    }
 }
 
 private struct IOSDetailHeroTitleView: View {
@@ -2059,7 +2140,10 @@ private struct IOSDetailHeroTitleView: View {
     @State private var logoImage: UIImage?
 
     var body: some View {
-        Group {
+        ZStack {
+            titleText
+                .opacity(logoImage == nil ? 1 : 0)
+
             if let logoImage {
                 Image(uiImage: logoImage)
                     .resizable()
@@ -2067,42 +2151,47 @@ private struct IOSDetailHeroTitleView: View {
                     .frame(maxWidth: 320, maxHeight: 94)
                     .shadow(color: .black.opacity(0.42), radius: 18, x: 0, y: 8)
                     .transition(.opacity)
-            } else {
-                Text(item.name)
-                    .font(.system(size: item.name.count > 16 ? 42 : 48, weight: .black, design: .rounded))
-                    .tracking(item.name.count <= 8 ? 6 : 2)
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.82)
-                    .allowsTightening(true)
-                    .multilineTextAlignment(.center)
-                    .shadow(color: .black.opacity(0.44), radius: 18, x: 0, y: 8)
             }
         }
+        .frame(maxWidth: 540, minHeight: 74)
+        .transaction { transaction in
+            transaction.animation = nil
+        }
         .task(id: item.id) {
-            await loadLogo()
+            await loadLogo(for: item.id)
         }
     }
 
-    private func loadLogo() async {
+    private var titleText: some View {
+        Text(item.name)
+            .font(.system(size: item.name.count > 16 ? 42 : 48, weight: .black, design: .rounded))
+            .tracking(item.name.count <= 8 ? 6 : 2)
+            .foregroundStyle(.white)
+            .lineLimit(2)
+            .minimumScaleFactor(0.82)
+            .allowsTightening(true)
+            .multilineTextAlignment(.center)
+            .shadow(color: .black.opacity(0.44), radius: 18, x: 0, y: 8)
+    }
+
+    private func loadLogo(for itemID: String) async {
         logoImage = nil
 
-        guard let url = await apiClient.imageURL(for: item.id, type: .logo, width: 900, quality: 92) else {
+        guard let url = await apiClient.imageURL(for: itemID, type: .logo, width: 900, quality: 92) else {
             return
         }
+        guard !Task.isCancelled else { return }
 
         if let cached = await imagePipeline.cachedImage(for: url) {
-            withAnimation(.easeIn(duration: 0.24)) {
-                logoImage = cached
-            }
+            guard !Task.isCancelled else { return }
+            logoImage = TransparentImageCropper.readableLogoImage(from: cached)
             return
         }
 
         do {
             let downloaded = try await imagePipeline.image(for: url)
-            withAnimation(.easeIn(duration: 0.24)) {
-                logoImage = downloaded
-            }
+            guard !Task.isCancelled else { return }
+            logoImage = TransparentImageCropper.readableLogoImage(from: downloaded)
         } catch {}
     }
 }

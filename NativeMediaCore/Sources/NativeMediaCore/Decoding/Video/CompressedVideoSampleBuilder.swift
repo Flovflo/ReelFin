@@ -19,7 +19,10 @@ public struct CompressedVideoSampleBuilder: @unchecked Sendable {
                 throw FallbackReason.videoToolboxFormatDescriptionFailed(codecPrivateReason: "missing hvcC")
             }
             let config = try VideoCodecPrivateDataParser.parseHEVCDecoderConfigurationRecord(privateData)
-            self.formatDescription = try VideoFormatDescriptionFactory.makeHEVCDescription(config: config)
+            self.formatDescription = try VideoFormatDescriptionFactory.makeHEVCDescription(
+                config: config,
+                hdrMetadata: track.hdrMetadata
+            )
             self.nalUnitLengthSize = config.nalUnitLengthSize
         default:
             self.formatDescription = try VideoFormatDescriptionFactory.make(track: track)

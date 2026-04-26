@@ -4,9 +4,9 @@ import Shared
 import XCTest
 
 @MainActor
-final class NativeVLCClassSessionRoutingTests: XCTestCase {
+final class NativePlayerSessionRoutingTests: XCTestCase {
     func testNativeModeMigrationClearsStoredForceH264ProfilePins() {
-        let suiteName = "NativeVLCClassSessionRoutingTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerSessionRoutingTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(
@@ -19,8 +19,8 @@ final class NativeVLCClassSessionRoutingTests: XCTestCase {
         XCTAssertNil(defaults.dictionary(forKey: PlaybackSessionController.preferredProfileStorageKey))
     }
 
-    func testDebugRuntimeNativeModeBypassesLegacyAVPlayerAndTranscodeSelection() async throws {
-        let defaultsKey = NativeVLCClassPlayerRuntimeDefaults.enabledKey
+    func testDebugRuntimeNativeModeUsesAppleNativePlayerForCompatibleMP4Original() async throws {
+        let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
         let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
         UserDefaults.standard.set(true, forKey: defaultsKey)
         defer {
@@ -38,9 +38,9 @@ final class NativeVLCClassSessionRoutingTests: XCTestCase {
         try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let config = NativeVLCClassPlayerConfig(enabled: false, allowServerTranscodeFallback: true)
+        let config = NativePlayerConfig(enabled: false, allowServerTranscodeFallback: true)
         let apiClient = NativeSessionRoutingAPIClient(
-            configuration: ServerConfiguration(serverURL: root, nativeVLCClassPlayerConfig: config),
+            configuration: ServerConfiguration(serverURL: root, nativePlayerConfig: config),
             source: MediaSource(
                 id: "source-1",
                 itemID: itemID,
@@ -58,19 +58,16 @@ final class NativeVLCClassSessionRoutingTests: XCTestCase {
 
         try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: false)
 
-        XCTAssertTrue(controller.isNativeVLCClassPlayerActive)
-        XCTAssertEqual(controller.nativeVLCPlaybackURL?.path, streamURL.path)
-        XCTAssertNil(controller.player.currentItem)
+        XCTAssertFalse(controller.isNativePlayerActive)
+        XCTAssertNil(controller.nativePlayerPlaybackURL)
+        XCTAssertNotNil(controller.player.currentItem)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
-        XCTAssertFalse(controller.nativeVLCDiagnosticsOverlayLines.joined().contains(".m3u8"))
-        XCTAssertTrue(controller.nativeVLCDiagnosticsOverlayLines.contains("originalMediaRequested=true"))
-        XCTAssertTrue(controller.nativeVLCDiagnosticsOverlayLines.contains("serverTranscodeUsed=false"))
-        XCTAssertTrue(controller.nativeVLCDiagnosticsOverlayLines.contains { $0.contains("demuxer=MP4Demuxer") })
+        XCTAssertEqual(controller.routeDescription, "Direct Play")
     }
 
     func testNativeModeStopReportsNativePlaybackTime() async throws {
-        let defaultsKey = NativeVLCClassPlayerRuntimeDefaults.enabledKey
+        let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
         let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
         UserDefaults.standard.set(true, forKey: defaultsKey)
         defer {
@@ -85,18 +82,18 @@ final class NativeVLCClassSessionRoutingTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream")
         try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
+        try makeTinyMatroskaH264AAC().write(to: streamURL)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let stoppedExpectation = expectation(description: "native stopped progress reported")
         let apiClient = NativeSessionRoutingAPIClient(
-            configuration: ServerConfiguration(serverURL: root, nativeVLCClassPlayerConfig: NativeVLCClassPlayerConfig(enabled: true)),
+            configuration: ServerConfiguration(serverURL: root, nativePlayerConfig: NativePlayerConfig(enabled: true)),
             source: MediaSource(
                 id: "source-progress",
                 itemID: itemID,
                 name: "Original",
                 fileSize: Int64((try? FileManager.default.attributesOfItem(atPath: streamURL.path)[.size] as? NSNumber)?.intValue ?? 0),
-                container: "mp4",
+                container: "mkv",
                 videoCodec: "h264",
                 audioCodec: "aac",
                 supportsDirectPlay: false,
@@ -108,7 +105,7 @@ final class NativeVLCClassSessionRoutingTests: XCTestCase {
         let controller = PlaybackSessionController(apiClient: apiClient, repository: repository)
 
         try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: false)
-        controller.updateNativeVLCPlaybackTime(42.25)
+        controller.updateNativePlayerPlaybackTime(42.25)
         controller.stop()
 
         await fulfillment(of: [stoppedExpectation], timeout: 1.0)
@@ -117,6 +114,44 @@ final class NativeVLCClassSessionRoutingTests: XCTestCase {
 
         XCTAssertEqual(stopped.first?.positionTicks, 422_500_000)
         XCTAssertEqual(saved.first?.positionTicks, 422_500_000)
+    }
+
+    private func makeTinyMatroskaH264AAC() -> Data {
+        let videoTrack = element([0xAE], payload:
+            element([0xD7], payload: [0x01]) +
+            element([0x83], payload: [0x01]) +
+            element([0x86], payload: Array("V_MPEG4/ISO/AVC".utf8))
+        )
+        let audioTrack = element([0xAE], payload:
+            element([0xD7], payload: [0x02]) +
+            element([0x83], payload: [0x02]) +
+            element([0x86], payload: Array("A_AAC".utf8)) +
+            element([0xE1], payload:
+                element([0xB5], payload: doublePayload(48_000)) +
+                element([0x9F], payload: [0x02])
+            )
+        )
+        let tracks = element([0x16, 0x54, 0xAE, 0x6B], payload: videoTrack + audioTrack)
+        let videoBlock = element([0xA3], payload: [0x81, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x02, 0x65, 0x88])
+        let audioBlock = element([0xA3], payload: [0x82, 0x00, 0x00, 0x80, 0x21, 0x10, 0x04, 0x60])
+        let cluster = element([0x1F, 0x43, 0xB6, 0x75], payload: element([0xE7], payload: [0x00]) + videoBlock + audioBlock)
+        return Data(element([0x1A, 0x45, 0xDF, 0xA3], payload: []))
+            + Data(element([0x18, 0x53, 0x80, 0x67], payload: tracks + cluster))
+    }
+
+    private func element(_ id: [UInt8], payload: [UInt8]) -> [UInt8] {
+        id + vintSize(payload.count) + payload
+    }
+
+    private func vintSize(_ size: Int) -> [UInt8] {
+        precondition(size < 16_383)
+        return size < 127
+            ? [UInt8(0x80 | size)]
+            : [UInt8(0x40 | ((size >> 8) & 0x3F)), UInt8(size & 0xFF)]
+    }
+
+    private func doublePayload(_ value: Double) -> [UInt8] {
+        withUnsafeBytes(of: value.bitPattern.bigEndian, Array.init)
     }
 }
 

@@ -64,7 +64,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
     public var preferAudioTranscodeOnly: Bool
     public var maxStreamingBitrateOverride: Int?
     public var forceH264FallbackWhenNotDirectPlay: Bool
-    public var nativeVLCClassPlayerConfig: NativeVLCClassPlayerConfig
+    public var nativePlayerConfig: NativePlayerConfig
     /// BCP-47 / ISO 639 language tag for preferred audio track selection (e.g. "fr", "en", "de").
     /// When set this is the primary signal for audio track choice — it beats codec prestige.
     /// nil means "use the track flagged as default, or the first native-compatible track".
@@ -83,7 +83,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         preferAudioTranscodeOnly: Bool = true,
         maxStreamingBitrateOverride: Int? = nil,
         forceH264FallbackWhenNotDirectPlay: Bool = false,
-        nativeVLCClassPlayerConfig: NativeVLCClassPlayerConfig = NativeVLCClassPlayerConfig(),
+        nativePlayerConfig: NativePlayerConfig = NativePlayerConfig(),
         preferredAudioLanguage: String? = nil,
         preferredSubtitleLanguage: String? = nil
     ) {
@@ -96,7 +96,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         self.preferAudioTranscodeOnly = preferAudioTranscodeOnly
         self.maxStreamingBitrateOverride = maxStreamingBitrateOverride
         self.forceH264FallbackWhenNotDirectPlay = forceH264FallbackWhenNotDirectPlay
-        self.nativeVLCClassPlayerConfig = nativeVLCClassPlayerConfig
+        self.nativePlayerConfig = nativePlayerConfig
         self.preferredAudioLanguage = preferredAudioLanguage
         self.preferredSubtitleLanguage = preferredSubtitleLanguage
     }
@@ -111,7 +111,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         case preferAudioTranscodeOnly
         case maxStreamingBitrateOverride
         case forceH264FallbackWhenNotDirectPlay
-        case nativeVLCClassPlayerConfig
+        case nativePlayerConfig
         case preferredAudioLanguage
         case preferredSubtitleLanguage
     }
@@ -128,10 +128,10 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         preferAudioTranscodeOnly = try container.decodeIfPresent(Bool.self, forKey: .preferAudioTranscodeOnly) ?? true
         maxStreamingBitrateOverride = try container.decodeIfPresent(Int.self, forKey: .maxStreamingBitrateOverride)
         forceH264FallbackWhenNotDirectPlay = try container.decodeIfPresent(Bool.self, forKey: .forceH264FallbackWhenNotDirectPlay) ?? false
-        nativeVLCClassPlayerConfig = try container.decodeIfPresent(
-            NativeVLCClassPlayerConfig.self,
-            forKey: .nativeVLCClassPlayerConfig
-        ) ?? NativeVLCClassPlayerConfig()
+        nativePlayerConfig = try container.decodeIfPresent(
+            NativePlayerConfig.self,
+            forKey: .nativePlayerConfig
+        ) ?? NativePlayerConfig()
         preferredAudioLanguage = try container.decodeIfPresent(String.self, forKey: .preferredAudioLanguage)
         preferredSubtitleLanguage = try container.decodeIfPresent(String.self, forKey: .preferredSubtitleLanguage)
     }
@@ -147,7 +147,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         try container.encode(preferAudioTranscodeOnly, forKey: .preferAudioTranscodeOnly)
         try container.encodeIfPresent(maxStreamingBitrateOverride, forKey: .maxStreamingBitrateOverride)
         try container.encode(forceH264FallbackWhenNotDirectPlay, forKey: .forceH264FallbackWhenNotDirectPlay)
-        try container.encode(nativeVLCClassPlayerConfig, forKey: .nativeVLCClassPlayerConfig)
+        try container.encode(nativePlayerConfig, forKey: .nativePlayerConfig)
         try container.encodeIfPresent(preferredAudioLanguage, forKey: .preferredAudioLanguage)
         try container.encodeIfPresent(preferredSubtitleLanguage, forKey: .preferredSubtitleLanguage)
     }

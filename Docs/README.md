@@ -11,6 +11,7 @@ This folder keeps the repo-level documentation tied to the app, release process,
 ## Engineering
 
 - [Playback-Architecture-Current.md](Playback-Architecture-Current.md): current playback stack, ownership, startup path, and diagnostics model
+- [Player-Routing-Overview.md](Player-Routing-Overview.md): visual GitHub-friendly guide to Apple Native, native SampleBuffer, remux, and transcode routing
 
 ## Media Assets
 

@@ -94,7 +94,7 @@ public struct OriginalMediaResolver: Sendable {
         sources: [MediaSource],
         configuration: ServerConfiguration,
         session: UserSession,
-        nativeConfig: NativeVLCClassPlayerConfig
+        nativeConfig: NativePlayerConfig
     ) throws -> OriginalMediaResolution {
         guard nativeConfig.alwaysRequestOriginalFile else {
             throw OriginalMediaResolverError.originalFirstDisabled
@@ -133,7 +133,7 @@ public enum OriginalMediaResolverError: LocalizedError, Sendable, Equatable {
         case .noMediaSource:
             return "Jellyfin did not return a media source for original-file playback."
         case .originalFirstDisabled:
-            return "Native VLC-class playback requires alwaysRequestOriginalFile=true."
+            return "Native engine playback requires alwaysRequestOriginalFile=true."
         }
     }
 }

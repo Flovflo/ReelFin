@@ -2,11 +2,11 @@
 import Shared
 import XCTest
 
-final class NativeVLCClassRouteGuardTests: XCTestCase {
+final class NativePlayerRouteGuardTests: XCTestCase {
     func testAllowsStaticOriginalStreamURL() throws {
         let url = try XCTUnwrap(URL(string: "https://jellyfin.example/Videos/item/stream?static=true&MediaSourceId=source&api_key=secret"))
 
-        let violations = NativeVLCClassRouteGuard.validateOriginalPlaybackURL(url)
+        let violations = NativePlayerRouteGuard.validateOriginalPlaybackURL(url)
 
         XCTAssertTrue(violations.isEmpty)
     }
@@ -16,19 +16,27 @@ final class NativeVLCClassRouteGuardTests: XCTestCase {
         let main = try XCTUnwrap(URL(string: "https://jellyfin.example/videos/item/main.m3u8"))
 
         XCTAssertEqual(
-            NativeVLCClassRouteGuard.validateOriginalPlaybackURL(master),
+            NativePlayerRouteGuard.validateOriginalPlaybackURL(master),
             [.hlsPlaylistURL("/videos/item/master.m3u8")]
         )
         XCTAssertEqual(
-            NativeVLCClassRouteGuard.validateOriginalPlaybackURL(main),
+            NativePlayerRouteGuard.validateOriginalPlaybackURL(main),
             [.hlsPlaylistURL("/videos/item/main.m3u8")]
         )
+    }
+
+    func testBlocksLoopbackLocalHLSInStrictNativeMode() throws {
+        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:49152/master.m3u8"))
+
+        let violations = NativePlayerRouteGuard.validateOriginalPlaybackURL(url)
+
+        XCTAssertEqual(violations, [.hlsPlaylistURL("/master.m3u8")])
     }
 
     func testBlocksAllKnownJellyfinTranscodeQueryItems() throws {
         let url = try XCTUnwrap(URL(string: "https://jellyfin.example/videos/item/main.m3u8?VideoCodec=h264&AudioCodec=aac&TranscodeReasons=ContainerNotSupported&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&RequireAvc=true"))
 
-        let violations = NativeVLCClassRouteGuard.validateOriginalPlaybackURL(url)
+        let violations = NativePlayerRouteGuard.validateOriginalPlaybackURL(url)
 
         XCTAssertTrue(violations.contains(.hlsPlaylistURL("/videos/item/main.m3u8")))
         XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "VideoCodec", value: "h264")))
@@ -42,14 +50,14 @@ final class NativeVLCClassRouteGuardTests: XCTestCase {
     func testBlocksCodecListsThatContainForcedH264OrAAC() throws {
         let url = try XCTUnwrap(URL(string: "https://jellyfin.example/Videos/item/stream?static=true&VideoCodec=hevc,h264&AudioCodec=eac3,aac"))
 
-        let violations = NativeVLCClassRouteGuard.validateOriginalPlaybackURL(url)
+        let violations = NativePlayerRouteGuard.validateOriginalPlaybackURL(url)
 
         XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "VideoCodec", value: "hevc,h264")))
         XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "AudioCodec", value: "eac3,aac")))
     }
 
     func testBlocksLegacyPlaybackSurfacesForNativeRoute() throws {
-        let proof = NativeVLCClassRouteProof(
+        let proof = NativePlayerRouteProof(
             usedLegacyPlaybackCoordinator: true,
             createdAVPlayerItem: true,
             usedAVPlayerViewController: true,
@@ -57,7 +65,7 @@ final class NativeVLCClassRouteGuardTests: XCTestCase {
             selectedURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
         )
 
-        let violations = NativeVLCClassRouteGuard.validate(proof)
+        let violations = NativePlayerRouteGuard.validate(proof)
 
         XCTAssertTrue(violations.contains(.legacyPlaybackCoordinator))
         XCTAssertTrue(violations.contains(.avPlayerItemCreation))
@@ -69,19 +77,19 @@ final class NativeVLCClassRouteGuardTests: XCTestCase {
 
     func testServerTranscodeBlockedReasonIsExplicit() {
         XCTAssertEqual(
-            NativeVLCClassRouteViolation.serverTranscodeBlockedByConfig.localizedDescription,
-            "Native VLC-class mode blocks Jellyfin server transcode because allowServerTranscodeFallback=false."
+            NativePlayerRouteViolation.serverTranscodeBlockedByConfig.localizedDescription,
+            "Native engine mode blocks Jellyfin server transcode because allowServerTranscodeFallback=false."
         )
     }
 
     func testRuntimeOverrideForcesOriginalOnlyNativeMode() {
-        let config = NativeVLCClassPlayerConfig(
+        let config = NativePlayerConfig(
             enabled: false,
             alwaysRequestOriginalFile: false,
             allowServerTranscodeFallback: true
         )
 
-        let overridden = config.applyingRuntimeOverride(environment: ["REELFIN_NATIVE_VLC_CLASS_PLAYER": "1"])
+        let overridden = config.applyingRuntimeOverride(environment: ["REELFIN_NATIVE_PLAYER": "1"])
 
         XCTAssertTrue(overridden.enabled)
         XCTAssertTrue(overridden.alwaysRequestOriginalFile)
@@ -92,7 +100,7 @@ final class NativeVLCClassRouteGuardTests: XCTestCase {
         let apiClient = NativeWarmupGuardAPIClient(
             configuration: ServerConfiguration(
                 serverURL: URL(string: "https://jellyfin.example")!,
-                nativeVLCClassPlayerConfig: NativeVLCClassPlayerConfig(enabled: true)
+                nativePlayerConfig: NativePlayerConfig(enabled: true)
             )
         )
         let warmup = PlaybackWarmupManager(apiClient: apiClient, ttl: 0)
@@ -106,7 +114,7 @@ final class NativeVLCClassRouteGuardTests: XCTestCase {
         let apiClient = NativeWarmupGuardAPIClient(
             configuration: ServerConfiguration(
                 serverURL: URL(string: "https://jellyfin.example")!,
-                nativeVLCClassPlayerConfig: NativeVLCClassPlayerConfig(enabled: true)
+                nativePlayerConfig: NativePlayerConfig(enabled: true)
             )
         )
         let coordinator = PlaybackCoordinator(apiClient: apiClient)
@@ -117,7 +125,7 @@ final class NativeVLCClassRouteGuardTests: XCTestCase {
                 transcodeProfile: .forceH264Transcode
             )
             XCTFail("Expected native route guard to block legacy PlaybackCoordinator.")
-        } catch let violation as NativeVLCClassRouteViolation {
+        } catch let violation as NativePlayerRouteViolation {
             XCTAssertEqual(violation, .legacyPlaybackCoordinator)
         }
 

@@ -1,9 +1,9 @@
 import Shared
 import XCTest
 
-final class NativeVLCClassPlayerConfigTests: XCTestCase {
+final class NativePlayerConfigTests: XCTestCase {
     func testDefaultsAreExperimentalButFeatureFlagOff() {
-        let config = NativeVLCClassPlayerConfig()
+        let config = NativePlayerConfig()
 
         XCTAssertFalse(config.enabled)
         XCTAssertTrue(config.alwaysRequestOriginalFile)
@@ -25,20 +25,20 @@ final class NativeVLCClassPlayerConfigTests: XCTestCase {
 
         let config = try JSONDecoder().decode(ServerConfiguration.self, from: json)
 
-        XCTAssertFalse(config.nativeVLCClassPlayerConfig.enabled)
-        XCTAssertTrue(config.nativeVLCClassPlayerConfig.alwaysRequestOriginalFile)
+        XCTAssertFalse(config.nativePlayerConfig.enabled)
+        XCTAssertTrue(config.nativePlayerConfig.alwaysRequestOriginalFile)
     }
 
     func testRuntimeDefaultsCanEnableNativeModeWithoutChangingPersistedConfig() throws {
-        let suiteName = "NativeVLCClassPlayerConfigTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        NativeVLCClassPlayerRuntimeDefaults.registerExperimentalBranchDefaults(
+        NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults(
             environment: [:],
             userDefaults: defaults
         )
-        let effective = NativeVLCClassPlayerConfig().applyingRuntimeOverride(
+        let effective = NativePlayerConfig().applyingRuntimeOverride(
             environment: [:],
             userDefaults: defaults
         )
@@ -53,70 +53,70 @@ final class NativeVLCClassPlayerConfigTests: XCTestCase {
     }
 
     func testRuntimeDefaultsMigrateStaleDebugFalseOnce() throws {
-        let suiteName = "NativeVLCClassPlayerConfigTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(false, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
+        defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
 
-        NativeVLCClassPlayerRuntimeDefaults.registerExperimentalBranchDefaults(
+        NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults(
             environment: [:],
             userDefaults: defaults
         )
 
         #if DEBUG
-        XCTAssertTrue(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey))
-        XCTAssertTrue(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey))
+        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
+        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey))
         #else
-        XCTAssertFalse(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey))
+        XCTAssertFalse(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
         #endif
     }
 
     func testRuntimeDefaultsMigrateOldV1BranchMarkerToCurrentNativeDefault() throws {
-        let suiteName = "NativeVLCClassPlayerConfigTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(false, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
-        defaults.set(true, forKey: "reelfin.nativeVlcClassPlayer.experimentalBranchDefaultApplied.v1")
+        defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
+        defaults.set(true, forKey: "reelfin.nativePlayer.experimentalBranchDefaultApplied.v1")
 
-        NativeVLCClassPlayerRuntimeDefaults.registerExperimentalBranchDefaults(
+        NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults(
             environment: [:],
             userDefaults: defaults
         )
 
         #if DEBUG
-        XCTAssertTrue(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey))
-        XCTAssertTrue(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey))
+        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
+        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey))
         #else
-        XCTAssertFalse(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey))
+        XCTAssertFalse(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
         #endif
     }
 
     func testRuntimeDefaultsForceNativeModeOnDebugBranchAfterMigration() throws {
-        let suiteName = "NativeVLCClassPlayerConfigTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(false, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
-        defaults.set(true, forKey: NativeVLCClassPlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
+        defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
+        defaults.set(true, forKey: NativePlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
 
-        NativeVLCClassPlayerRuntimeDefaults.registerExperimentalBranchDefaults(
+        NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults(
             environment: [:],
             userDefaults: defaults
         )
 
         #if DEBUG
-        XCTAssertTrue(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey))
+        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
         #else
-        XCTAssertFalse(defaults.bool(forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey))
+        XCTAssertFalse(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
         #endif
     }
 
     func testDebugRuntimeOverrideIgnoresSettingsToggleUnlessEnvironmentOptsOut() throws {
-        let suiteName = "NativeVLCClassPlayerConfigTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(false, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
+        defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
 
-        let effective = NativeVLCClassPlayerConfig(enabled: false).applyingRuntimeOverride(
+        let effective = NativePlayerConfig(enabled: false).applyingRuntimeOverride(
             environment: [:],
             userDefaults: defaults
         )
@@ -131,19 +131,19 @@ final class NativeVLCClassPlayerConfigTests: XCTestCase {
     }
 
     func testRuntimeOverrideLetsXCTestControlNativeModeWithDefaults() throws {
-        let suiteName = "NativeVLCClassPlayerConfigTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let xctestEnvironment = ["XCTestConfigurationFilePath": "/tmp/ReelFin.xctestconfiguration"]
-        var effective = NativeVLCClassPlayerConfig(enabled: false).applyingRuntimeOverride(
+        var effective = NativePlayerConfig(enabled: false).applyingRuntimeOverride(
             environment: xctestEnvironment,
             userDefaults: defaults
         )
         XCTAssertFalse(effective.enabled)
 
-        defaults.set(true, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
-        effective = NativeVLCClassPlayerConfig(enabled: false).applyingRuntimeOverride(
+        defaults.set(true, forKey: NativePlayerRuntimeDefaults.enabledKey)
+        effective = NativePlayerConfig(enabled: false).applyingRuntimeOverride(
             environment: xctestEnvironment,
             userDefaults: defaults
         )
@@ -152,17 +152,17 @@ final class NativeVLCClassPlayerConfigTests: XCTestCase {
     }
 
     func testRuntimeDefaultsRespectExplicitDebugOptOut() throws {
-        let suiteName = "NativeVLCClassPlayerConfigTests.\(UUID().uuidString)"
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(true, forKey: NativeVLCClassPlayerRuntimeDefaults.enabledKey)
+        defaults.set(true, forKey: NativePlayerRuntimeDefaults.enabledKey)
 
-        NativeVLCClassPlayerRuntimeDefaults.registerExperimentalBranchDefaults(
-            environment: ["REELFIN_NATIVE_VLC_CLASS_PLAYER": "0"],
+        NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults(
+            environment: ["REELFIN_NATIVE_PLAYER": "0"],
             userDefaults: defaults
         )
-        let effective = NativeVLCClassPlayerConfig(enabled: false).applyingRuntimeOverride(
-            environment: ["REELFIN_NATIVE_VLC_CLASS_PLAYER": "0"],
+        let effective = NativePlayerConfig(enabled: false).applyingRuntimeOverride(
+            environment: ["REELFIN_NATIVE_PLAYER": "0"],
             userDefaults: defaults
         )
 

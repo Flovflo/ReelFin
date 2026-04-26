@@ -158,12 +158,12 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         self.ttl = ttl
         self.nativeModeEnabled = {
             guard let configuration = await apiClient.currentConfiguration() else { return false }
-            return configuration.nativeVLCClassPlayerConfig.applyingRuntimeOverride().enabled
+            return configuration.nativePlayerConfig.applyingRuntimeOverride().enabled
         }
         self.resolver = { itemID in
             if let configuration = await apiClient.currentConfiguration(),
-               configuration.nativeVLCClassPlayerConfig.applyingRuntimeOverride().enabled {
-                throw AppError.nativeBridge("Native VLC-class mode disables legacy playback warmup.")
+               configuration.nativePlayerConfig.applyingRuntimeOverride().enabled {
+                throw AppError.nativeBridge("Native engine mode disables legacy playback warmup.")
             }
             return try await coordinator.resolvePlayback(
                 itemID: itemID,
@@ -367,7 +367,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     private func canUseLegacyWarmup() async -> Bool {
         guard !(await nativeModeEnabled()) else {
             clearLegacyWarmupState()
-            AppLog.playback.notice("nativevlc.legacyWarmup.disabled — cleared=true")
+            AppLog.playback.notice("nativeplayer.legacyWarmup.disabled — cleared=true")
             return false
         }
         return true

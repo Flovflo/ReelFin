@@ -94,6 +94,8 @@ public struct NativePlaybackPlanner: Sendable {
         diagnostics.videoCodec = video?.codec
         diagnostics.videoDecoderBackend = video?.backend
         diagnostics.hardwareDecode = video?.hardwareAccelerated ?? false
+        diagnostics.hdrFormat = videoTrack?.hdrMetadata?.format ?? .unknown
+        diagnostics.dolbyVisionProfile = videoTrack?.hdrMetadata?.dolbyVision?.profile
         diagnostics.audioCodec = audio?.codec
         diagnostics.audioDecoderBackend = audio?.backend
         if probe.format == .mp4 || probe.format == .mov {
@@ -226,7 +228,6 @@ public struct NativePlaybackPlanner: Sendable {
         diagnostics.byteSourceType = "HTTPRangeByteSource"
         diagnostics.bufferedRanges = access.bufferedRanges
         diagnostics.networkMbps = access.readThroughputMbps
-        diagnostics.hdrFormat = .unknown
         return diagnostics
     }
 }

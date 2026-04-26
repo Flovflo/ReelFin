@@ -1,6 +1,6 @@
 import Foundation
 
-public enum NativeVLCClassRouteViolation: Equatable, LocalizedError, Sendable {
+public enum NativePlayerRouteViolation: Equatable, LocalizedError, Sendable {
     case legacyPlaybackCoordinator
     case avPlayerItemCreation
     case avPlayerViewControllerSurface
@@ -12,27 +12,27 @@ public enum NativeVLCClassRouteViolation: Equatable, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .legacyPlaybackCoordinator:
-            return "Native VLC-class mode must not route through the legacy playback coordinator."
+            return "Native engine mode must not route through the legacy playback coordinator."
         case .avPlayerItemCreation:
-            return "Native VLC-class mode must not create AVPlayerItem."
+            return "Native engine mode must not create AVPlayerItem."
         case .avPlayerViewControllerSurface:
-            return "Native VLC-class mode must not use AVPlayerViewController."
+            return "Native engine mode must not use AVPlayerViewController."
         case .forceH264TranscodeProfile:
-            return "Native VLC-class mode must not select forceH264Transcode."
+            return "Native engine mode must not select forceH264Transcode."
         case .serverTranscodeBlockedByConfig:
-            return "Native VLC-class mode blocks Jellyfin server transcode because allowServerTranscodeFallback=false."
+            return "Native engine mode blocks Jellyfin server transcode because allowServerTranscodeFallback=false."
         case .hlsPlaylistURL(let path):
-            return "Native VLC-class mode must not use Jellyfin HLS playlist URL: \(path)"
+            return "Native engine mode must not use Jellyfin HLS playlist URL: \(path)"
         case .forbiddenTranscodeQueryItem(let name, let value):
             if let value {
-                return "Native VLC-class mode must not use transcode query item \(name)=\(value)."
+                return "Native engine mode must not use transcode query item \(name)=\(value)."
             }
-            return "Native VLC-class mode must not use transcode query item \(name)."
+            return "Native engine mode must not use transcode query item \(name)."
         }
     }
 }
 
-public struct NativeVLCClassRouteProof: Equatable, Sendable {
+public struct NativePlayerRouteProof: Equatable, Sendable {
     public var usedLegacyPlaybackCoordinator: Bool
     public var createdAVPlayerItem: Bool
     public var usedAVPlayerViewController: Bool
@@ -54,9 +54,9 @@ public struct NativeVLCClassRouteProof: Equatable, Sendable {
     }
 }
 
-public enum NativeVLCClassRouteGuard {
-    public static func validate(_ proof: NativeVLCClassRouteProof) -> [NativeVLCClassRouteViolation] {
-        var violations: [NativeVLCClassRouteViolation] = []
+public enum NativePlayerRouteGuard {
+    public static func validate(_ proof: NativePlayerRouteProof) -> [NativePlayerRouteViolation] {
+        var violations: [NativePlayerRouteViolation] = []
         if proof.usedLegacyPlaybackCoordinator { violations.append(.legacyPlaybackCoordinator) }
         if proof.createdAVPlayerItem { violations.append(.avPlayerItemCreation) }
         if proof.usedAVPlayerViewController { violations.append(.avPlayerViewControllerSurface) }
@@ -69,12 +69,14 @@ public enum NativeVLCClassRouteGuard {
         return violations
     }
 
-    public static func validateOriginalPlaybackURL(_ url: URL) -> [NativeVLCClassRouteViolation] {
-        var violations: [NativeVLCClassRouteViolation] = []
+    public static func validateOriginalPlaybackURL(_ url: URL) -> [NativePlayerRouteViolation] {
+        var violations: [NativePlayerRouteViolation] = []
         let lowerPath = url.path.lowercased()
-        if lowerPath.hasSuffix(".m3u8")
+        let isHLSPlaylist =
+            lowerPath.hasSuffix(".m3u8")
             || lowerPath.contains("/master.m3u8")
-            || lowerPath.contains("/main.m3u8") {
+            || lowerPath.contains("/main.m3u8")
+        if isHLSPlaylist {
             violations.append(.hlsPlaylistURL(url.path))
         }
 
@@ -89,11 +91,11 @@ public enum NativeVLCClassRouteGuard {
         return violations
     }
 
-    public static func firstViolationDescription(for proof: NativeVLCClassRouteProof) -> String? {
+    public static func firstViolationDescription(for proof: NativePlayerRouteProof) -> String? {
         validate(proof).first?.localizedDescription
     }
 
-    private static func violation(forQueryName name: String, value: String?) -> NativeVLCClassRouteViolation? {
+    private static func violation(forQueryName name: String, value: String?) -> NativePlayerRouteViolation? {
         let loweredName = name.lowercased()
         let loweredValue = value?.lowercased()
         switch loweredName {
@@ -121,4 +123,5 @@ public enum NativeVLCClassRouteGuard {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .contains { $0.caseInsensitiveCompare(token) == .orderedSame }
     }
+
 }

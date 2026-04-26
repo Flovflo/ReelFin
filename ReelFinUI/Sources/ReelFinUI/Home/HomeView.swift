@@ -1623,16 +1623,19 @@ struct HomeView: View {
     @MainActor
     private func launchPlayback(for item: MediaItem) async {
         let session = dependencies.makePlaybackSession()
+#if os(iOS)
+        OrientationManager.shared.lockLandscapeForPlayerPresentation()
+#endif
         playerSession = session
         playerItem = item
-        showPlayer = true
+        setPlayerCoverPresented(true)
 
         do {
             try await session.load(item: item)
         } catch {
             playerSession = nil
             playerItem = nil
-            showPlayer = false
+            setPlayerCoverPresented(false)
             playbackErrorMessage = error.localizedDescription
         }
     }
@@ -1767,8 +1770,20 @@ struct HomeView: View {
         playerSession?.stop()
         playerSession = nil
         playerItem = nil
-        showPlayer = false
+        setPlayerCoverPresented(false)
         isPreparingPlayback = false
+    }
+
+    private func setPlayerCoverPresented(_ isPresented: Bool) {
+#if os(iOS)
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            showPlayer = isPresented
+        }
+#else
+        showPlayer = isPresented
+#endif
     }
 
 #if os(tvOS)

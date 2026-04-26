@@ -53,7 +53,7 @@ python3 scripts/test_tvos_profile.py
 
 ## Guardrails
 
-- Keep the playback path Apple-native. Do not add VLC, FFmpeg, or private playback APIs.
+- Keep the playback path Apple-native. Do not add third-party media engines or private playback APIs.
 - Prefer changes in the smallest relevant module instead of cross-cutting edits.
 - Preserve async/await and actor isolation patterns in API and playback code.
 - Treat `build/`, `.artifacts/`, `.claude/`, logs, and user-state files as local-only artifacts.

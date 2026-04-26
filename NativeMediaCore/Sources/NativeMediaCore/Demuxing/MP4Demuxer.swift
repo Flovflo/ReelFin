@@ -80,6 +80,9 @@ public actor MP4Demuxer: MediaDemuxer {
         let bitrate = estimatedRate.map { Int($0) }
         let id = Int(track.trackID)
         let audio = audioMetadata(from: formatDescription)
+        let hdr = mediaType == .video
+            ? HDRCoreMediaMapper.metadata(from: formatDescription, codecFourCC: codec)
+            : nil
         return MediaTrack(
             id: "\(id == 0 ? fallbackID : id)",
             trackId: id == 0 ? fallbackID : id,
@@ -94,7 +97,8 @@ public actor MP4Demuxer: MediaDemuxer {
             bitrate: bitrate,
             audioSampleRate: audio.sampleRate,
             audioChannels: audio.channels,
-            audioBitDepth: audio.bitDepth
+            audioBitDepth: audio.bitDepth,
+            hdrMetadata: hdr
         )
     }
 
@@ -196,9 +200,7 @@ public actor MP4Demuxer: MediaDemuxer {
     private func outputSettings(for mediaType: AVMediaType) -> [String: Any]? {
         switch mediaType {
         case .video:
-            return [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-            ]
+            return nil
         case .audio:
             return [
                 AVFormatIDKey: kAudioFormatLinearPCM,

@@ -2,8 +2,8 @@
 import Shared
 import XCTest
 
-final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
-    func testPrepareRoutesOriginalMP4ToNativePlaybackWithoutTranscodeURL() async throws {
+final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
+    func testPrepareRoutesOriginalMP4ToAppleNativePlaybackWithoutTranscodeURL() async throws {
         let itemID = "item-1"
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream")
@@ -11,8 +11,8 @@ final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
         try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let nativeConfig = NativeVLCClassPlayerConfig(enabled: true)
-        let configuration = ServerConfiguration(serverURL: root, nativeVLCClassPlayerConfig: nativeConfig)
+        let nativeConfig = NativePlayerConfig(enabled: true)
+        let configuration = ServerConfiguration(serverURL: root, nativePlayerConfig: nativeConfig)
         let apiClient = NativePlaybackControllerAPIClient(source: MediaSource(
             id: "source-1",
             itemID: itemID,
@@ -25,7 +25,7 @@ final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
             supportsDirectStream: false,
             transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
         ))
-        let controller = NativeVLCClassPlaybackController(apiClient: apiClient)
+        let controller = NativePlayerPlaybackController(apiClient: apiClient)
 
         let snapshot = try await controller.prepare(
             itemID: itemID,
@@ -35,19 +35,104 @@ final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
             startTimeTicks: 1_500_000
         )
 
-        XCTAssertEqual(snapshot.playbackURL?.path, streamURL.path)
+        XCTAssertEqual(snapshot.surface, .appleNative)
+        XCTAssertNil(snapshot.playbackURL)
+        XCTAssertEqual(snapshot.applePlaybackSelection?.assetURL.path, streamURL.path)
+        XCTAssertNil(snapshot.nativeBridgePlan)
         XCTAssertEqual(try XCTUnwrap(snapshot.startTimeSeconds), 0.15, accuracy: 0.001)
-        XCTAssertNil(NativeVLCClassRouteGuard.firstViolationDescription(for: NativeVLCClassRouteProof(selectedURL: snapshot.playbackURL)))
         XCTAssertTrue(snapshot.overlayLines.contains("originalMediaRequested=true"))
         XCTAssertTrue(snapshot.overlayLines.contains("serverTranscodeUsed=false"))
-        XCTAssertTrue(snapshot.overlayLines.contains("byteSource=HTTPRangeByteSource"))
-        XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("demuxer=MP4Demuxer(AVAssetReader)") })
-        XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("renderer=AVSampleBufferDisplayLayer") })
-        XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("audioRenderer=AVSampleBufferAudioRenderer") })
-        XCTAssertGreaterThan(snapshot.overlayLines.videoPacketCount, 0)
-        XCTAssertGreaterThan(snapshot.overlayLines.audioPacketCount, 0)
+        XCTAssertTrue(snapshot.overlayLines.contains("nativeProbe=false"))
+        XCTAssertTrue(snapshot.overlayLines.contains("renderer=AVPlayerViewController"))
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("byteSource=HTTPRangeByteSource"))
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("MP4Demuxer"))
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
+    }
+
+    func testCompatibleCommaSeparatedMOVSourceUsesAppleNativeWithoutProbe() {
+        let source = MediaSource(
+            id: "source-dv",
+            itemID: "item-dv",
+            name: "Dolby Vision Original",
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hvc1",
+            audioCodec: "eac3",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertTrue(NativePlayerPlaybackController.shouldUseAppleNativeSurface(
+            source: source,
+            url: URL(string: "https://example.com/Videos/item-dv/stream?static=true")!
+        ))
+    }
+
+    func testPrepareRoutesDolbyVisionMOVToAppleNativePlaybackWithoutProbe() async throws {
+        let itemID = "item-dv"
+        let nativeConfig = NativePlayerConfig(enabled: true)
+        let configuration = ServerConfiguration(
+            serverURL: URL(string: "https://jellyfin.example")!,
+            nativePlayerConfig: nativeConfig
+        )
+        let apiClient = NativePlaybackControllerAPIClient(source: MediaSource(
+            id: "source-dv",
+            itemID: itemID,
+            name: "Dolby Vision Original",
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hvc1",
+            audioCodec: "eac3",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
+        ))
+        let controller = NativePlayerPlaybackController(apiClient: apiClient)
+
+        let snapshot = try await controller.prepare(
+            itemID: itemID,
+            configuration: configuration,
+            session: UserSession(userID: "user", username: "user", token: "secret"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: 12_000_000_000
+        )
+
+        XCTAssertEqual(snapshot.surface, .appleNative)
+        XCTAssertEqual(snapshot.routeDescription, "Direct Play (Apple Native)")
+        XCTAssertEqual(snapshot.applePlaybackSelection?.debugInfo.playMethod, "DirectPlay")
+        XCTAssertNil(snapshot.playbackURL)
+        XCTAssertNil(snapshot.nativeBridgePlan)
+        XCTAssertEqual(try XCTUnwrap(snapshot.startTimeSeconds), 1200, accuracy: 0.001)
+        XCTAssertTrue(snapshot.overlayLines.contains("originalMediaRequested=true"))
+        XCTAssertTrue(snapshot.overlayLines.contains("serverTranscodeUsed=false"))
+        XCTAssertTrue(snapshot.overlayLines.contains("nativeProbe=false"))
+        XCTAssertTrue(snapshot.overlayLines.contains("renderer=AVPlayerViewController"))
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("HTTPRangeByteSource"))
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("MP4Demuxer"))
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
+    }
+
+    func testMatroskaSourceDoesNotUseAppleNativeByMetadataOnly() {
+        let source = MediaSource(
+            id: "source-mkv",
+            itemID: "item-mkv",
+            name: "Matroska Original",
+            container: "mkv",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertFalse(NativePlayerPlaybackController.shouldUseAppleNativeSurface(
+            source: source,
+            url: URL(string: "https://example.com/Videos/item-mkv/stream?static=true")!
+        ))
     }
 
     func testPrepareRoutesOriginalMatroskaToNativePlaybackWithoutTranscodeURL() async throws {
@@ -58,8 +143,8 @@ final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
         try makeTinyMatroskaH264AAC().write(to: streamURL)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let nativeConfig = NativeVLCClassPlayerConfig(enabled: true)
-        let configuration = ServerConfiguration(serverURL: root, nativeVLCClassPlayerConfig: nativeConfig)
+        let nativeConfig = NativePlayerConfig(enabled: true)
+        let configuration = ServerConfiguration(serverURL: root, nativePlayerConfig: nativeConfig)
         let apiClient = NativePlaybackControllerAPIClient(source: MediaSource(
             id: "source-mkv",
             itemID: itemID,
@@ -72,7 +157,7 @@ final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
             supportsDirectStream: false,
             transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
         ))
-        let controller = NativeVLCClassPlaybackController(apiClient: apiClient)
+        let controller = NativePlayerPlaybackController(apiClient: apiClient)
 
         let snapshot = try await controller.prepare(
             itemID: itemID,
@@ -82,19 +167,69 @@ final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
             startTimeTicks: nil
         )
 
+        XCTAssertEqual(snapshot.surface, .sampleBuffer)
         XCTAssertEqual(snapshot.playbackURL?.path, streamURL.path)
-        XCTAssertNil(NativeVLCClassRouteGuard.firstViolationDescription(for: NativeVLCClassRouteProof(selectedURL: snapshot.playbackURL)))
+        XCTAssertNil(snapshot.applePlaybackSelection)
+        XCTAssertNil(snapshot.nativeBridgePlan)
+        XCTAssertNil(NativePlayerRouteGuard.firstViolationDescription(for: NativePlayerRouteProof(selectedURL: snapshot.playbackURL)))
         XCTAssertTrue(snapshot.overlayLines.contains("serverTranscodeUsed=false"))
         XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("container=matroska") })
         XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("demuxer=MatroskaDemuxer(EBML)") })
         XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("renderer=AVSampleBufferDisplayLayer") })
         XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("audioRenderer=AVSampleBufferAudioRenderer") })
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("AVPlayerViewController"))
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("LocalFMP4HLS"))
         XCTAssertGreaterThan(snapshot.overlayLines.videoPacketCount, 0)
         XCTAssertGreaterThan(snapshot.overlayLines.audioPacketCount, 0)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
     }
 
+    func testPrepareRoutesMatroskaUnsupportedAudioToCustomNativePath() async throws {
+        let itemID = "item-mkv-truehd"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream")
+        try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try makeTinyMatroskaH264(audioCodecID: "A_TRUEHD").write(to: streamURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let nativeConfig = NativePlayerConfig(enabled: true)
+        let configuration = ServerConfiguration(serverURL: root, nativePlayerConfig: nativeConfig)
+        let apiClient = NativePlaybackControllerAPIClient(source: MediaSource(
+            id: "source-mkv-truehd",
+            itemID: itemID,
+            name: "Original MKV TrueHD",
+            fileSize: Int64((try? Data(contentsOf: streamURL).count) ?? 0),
+            container: "mkv",
+            videoCodec: "h264",
+            audioCodec: "truehd",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?AudioCodec=aac")
+        ))
+        let controller = NativePlayerPlaybackController(apiClient: apiClient)
+
+        let snapshot = try await controller.prepare(
+            itemID: itemID,
+            configuration: configuration,
+            session: UserSession(userID: "user", username: "user", token: "secret"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: nil
+        )
+
+        XCTAssertEqual(snapshot.surface, .sampleBuffer)
+        XCTAssertNil(snapshot.applePlaybackSelection)
+        XCTAssertNil(snapshot.nativeBridgePlan)
+        XCTAssertTrue(snapshot.overlayLines.contains("serverTranscodeUsed=false"))
+        XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("audio=truehd decoder=software-module-planned") })
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("AVPlayerViewController"))
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
+    }
+
     private func makeTinyMatroskaH264AAC() -> Data {
+        makeTinyMatroskaH264(audioCodecID: "A_AAC")
+    }
+
+    private func makeTinyMatroskaH264(audioCodecID: String) -> Data {
         let videoTrack = element([0xAE], payload:
             element([0xD7], payload: [0x01]) +
             element([0x83], payload: [0x01]) +
@@ -103,7 +238,7 @@ final class NativeVLCClassPlaybackControllerEndToEndTests: XCTestCase {
         let audioTrack = element([0xAE], payload:
             element([0xD7], payload: [0x02]) +
             element([0x83], payload: [0x02]) +
-            element([0x86], payload: Array("A_AAC".utf8)) +
+            element([0x86], payload: Array(audioCodecID.utf8)) +
             element([0xE1], payload:
                 element([0xB5], payload: doublePayload(48_000)) +
                 element([0x9F], payload: [0x02])

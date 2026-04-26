@@ -52,6 +52,7 @@ public struct MediaTrack: Identifiable, Hashable, Sendable {
     public var audioSampleRate: Double?
     public var audioChannels: Int?
     public var audioBitDepth: Int?
+    public var hdrMetadata: HDRMetadata?
 
     public init(
         id: String,
@@ -69,7 +70,8 @@ public struct MediaTrack: Identifiable, Hashable, Sendable {
         timebase: TimeBase = .nanoseconds,
         audioSampleRate: Double? = nil,
         audioChannels: Int? = nil,
-        audioBitDepth: Int? = nil
+        audioBitDepth: Int? = nil,
+        hdrMetadata: HDRMetadata? = nil
     ) {
         self.id = id
         self.trackId = trackId
@@ -87,6 +89,7 @@ public struct MediaTrack: Identifiable, Hashable, Sendable {
         self.audioSampleRate = audioSampleRate
         self.audioChannels = audioChannels
         self.audioBitDepth = audioBitDepth
+        self.hdrMetadata = hdrMetadata
     }
 }
 

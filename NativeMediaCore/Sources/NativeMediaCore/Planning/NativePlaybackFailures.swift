@@ -20,7 +20,7 @@ public enum FallbackReason: LocalizedError, Sendable, Equatable {
         case .hdrMetadataDetectedButNotPreserved(let reason):
             return "HDR metadata was detected but not preserved: \(reason)."
         case .serverTranscodeBlockedByConfig:
-            return "Server transcode fallback exists but is disabled by NativeVLCClassPlayerConfig."
+            return "Server transcode fallback exists but is disabled by NativePlayerConfig."
         case .demuxerUnavailable(let container):
             return "No local demuxer is available for \(container.rawValue)."
         case .rendererUnavailable(let reason):
