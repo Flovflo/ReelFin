@@ -28,67 +28,37 @@ enum ReelFinOnboardingContent {
         .init(
             id: 0,
             eyebrow: "APPLE-FIRST SPEED",
-            title: "Feels fast the second it opens",
-            subtitle: "ReelFin is built for iPhone and iPad first, with a richer home screen, faster resume, and no generic web-shell feel.",
-            screenshot: UIImage(named: "reelfin-onboarding-home.png"),
-            highlights: ["Native UI", "Fast resume", "Continue Watching"],
-            footnote: "Built on Apple playback frameworks from browse to first frame."
+            title: "Your Jellyfin, faster",
+            subtitle: "ReelFin turns your server into a native iPhone and iPad app tuned for quick launch, fast resume, and smooth browsing.",
+            screenshot: UIImage(named: "reelfin-onboarding-home.png")
         ),
         .init(
             id: 1,
-            eyebrow: "DISCOVERY",
-            title: "Browse without the usual friction",
-            subtitle: "Move through movies and shows with cleaner art, quick search, and controls that feel made for touch.",
+            eyebrow: "CLEAN BROWSING",
+            title: "Find what to watch",
+            subtitle: "Posters, rails, search, and touch controls stay focused on getting you to the next movie or episode.",
             screenshot: UIImage(named: "reelfin-onboarding-library.png"),
-            highlights: ["Movies + Shows", "Quick search", "Touch-first"],
-            footnote: "Your library stays lightweight before you even hit play.",
             zoomScale: 1.14,
             zoomAnchor: .init(x: 0.5, y: 0.36)
         ),
         .init(
             id: 2,
-            eyebrow: "PLAYBACK SIGNAL",
-            title: "See the bolt, press play",
-            subtitle: "The lightning badge means the title is already ready for the Apple playback path, so ReelFin can skip extra server prep.",
+            eyebrow: "DIRECT PLAY",
+            title: "Spot the fastest path",
+            subtitle: "The lightning badge tells you when ReelFin can play the original file through Apple's native player.",
             screenshot: UIImage(named: "reelfin-onboarding-detail.png"),
-            highlights: ["Bolt = ready", "Direct Play", "Apple-safe path"],
-            footnote: "That is the fastest path ReelFin can give you on Apple devices.",
             zoomScale: 1.16,
             zoomAnchor: .init(x: 0.5, y: 0.34)
         ),
         .init(
             id: 3,
-            eyebrow: "SMART FALLBACK",
-            title: "Hard files still get an Apple-first route",
-            subtitle: "When a title needs help, ReelFin asks Jellyfin for an Apple-optimized stream instead of leaving you with a generic fallback.",
+            eyebrow: "SMART STREAMS",
+            title: "Optimized when needed",
+            subtitle: "If a file is not Apple-ready, ReelFin asks Jellyfin for a compatible HLS stream instead of leaving playback to chance.",
             screenshot: UIImage(named: "reelfin-onboarding-detail.png"),
-            highlights: ["Apple-optimized HLS", "HEVC / fMP4", "Predictable startup"],
-            footnote: "This is how ReelFin keeps difficult media feeling more reliable on iPhone and iPad.",
+            buttonTitle: "Connect My Server",
             zoomScale: 1.08,
             zoomAnchor: .init(x: 0.5, y: 0.26)
-        ),
-        .init(
-            id: 4,
-            eyebrow: "EPISODE ALERTS",
-            title: "Know when the next episode lands",
-            subtitle: "Turn on New Episode Alerts and ReelFin only pings you for shows you already follow, so notifications stay useful.",
-            screenshot: UIImage(named: "reelfin-onboarding-settings.png"),
-            highlights: ["Followed shows only", "Local alerts", "No noisy spam"],
-            footnote: "You stay in sync without checking your server every night.",
-            zoomScale: 1.12,
-            zoomAnchor: .init(x: 0.5, y: 0.56)
-        ),
-        .init(
-            id: 5,
-            eyebrow: "READY TO WATCH",
-            title: "Connect once. Start watching.",
-            subtitle: "Save your server, keep your playback preferences, and jump into a Jellyfin experience tuned for Apple devices.",
-            screenshot: UIImage(named: "reelfin-onboarding-settings.png"),
-            highlights: ["Server saved", "Playback presets", "Start faster"],
-            footnote: "If the bolt is there, hit play. If not, ReelFin prepares the best Apple route it can.",
-            buttonTitle: "Connect My Server",
-            zoomScale: 1.02,
-            zoomAnchor: .init(x: 0.5, y: 0.58)
         )
     ]
 }

@@ -32,12 +32,12 @@ struct ConnectionLandingShowcaseView: View {
                     OnboardingEyebrowChip(title: "REELFIN", tint: ReelFinShowcaseContent.accent)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Connect to Jellyfin")
+                        Text("Connect your server")
                             .font(.system(size: compact ? 30 : 36, weight: .bold))
                             .tracking(-0.6)
                             .foregroundStyle(OnboardingPalette.primaryText)
 
-                        Text("Add your server and let ReelFin handle the rest with a more native playback experience.")
+                        Text("Add Jellyfin once, then jump into a native library built for fast browsing.")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(OnboardingPalette.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)

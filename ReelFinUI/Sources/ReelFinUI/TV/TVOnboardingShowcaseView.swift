@@ -217,7 +217,7 @@ private struct TVOnboardingScreenOverlay: View {
         case .library:
             TVOnboardingGlassNote(
                 eyebrow: "Remote First",
-                title: "Less scrolling, bigger art",
+                title: "Bigger art. Less scrolling.",
                 icon: "sparkles"
             )
         case .detail:
@@ -251,25 +251,25 @@ private struct TVOnboardingScreenOverlay: View {
         case .home:
             TVOnboardingGlassNote(
                 eyebrow: "Native Jellyfin",
-                title: "Jump back in instantly",
+                title: "Resume in seconds",
                 icon: "play.tv.fill"
             )
         case .library:
             TVOnboardingGlassNote(
                 eyebrow: "Focus Navigation",
-                title: "Browse faster on the couch",
+                title: "Fast browsing from the couch",
                 icon: "hand.tap.fill"
             )
         case .detail:
             TVOnboardingGlassNote(
                 eyebrow: "Playback Clarity",
-                title: "See the lightning badge before you press play",
+                title: "Know the route before play",
                 icon: "bolt.fill"
             )
         case .connect:
             TVOnboardingGlassNote(
                 eyebrow: "Quick Connect",
-                title: "Link ReelFin in seconds",
+                title: "Pair ReelFin in seconds",
                 icon: "qrcode"
             )
         }

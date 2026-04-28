@@ -24,8 +24,8 @@ enum TVOnboardingContent {
     static let items: [TVOnboardingItem] = [
         .init(
             id: 0,
-            title: "Native Jellyfin",
-            subtitle: "See the real tvOS home screen, jump back in fast, and keep your watch queue one click away.",
+            title: "Native on Apple TV",
+            subtitle: "See your Jellyfin library in a true big-screen app with clean focus and fast resume.",
             accent: Color(red: 0.34, green: 0.52, blue: 0.96),
             secondaryAccent: Color(red: 0.68, green: 0.78, blue: 0.98),
             screenshotName: "reelfin-tv-onboarding-home.png",
@@ -35,8 +35,8 @@ enum TVOnboardingContent {
         ),
         .init(
             id: 1,
-            title: "Fluid Library",
-            subtitle: "Bigger art, cleaner rails, and a layout that feels fast with the Apple TV remote.",
+            title: "Browse without friction",
+            subtitle: "Move through posters, seasons, and episodes with large artwork and remote-first rails.",
             accent: Color(red: 0.22, green: 0.74, blue: 0.88),
             secondaryAccent: Color(red: 0.56, green: 0.90, blue: 0.86),
             screenshotName: "reelfin-tv-onboarding-home.png",
@@ -46,8 +46,8 @@ enum TVOnboardingContent {
         ),
         .init(
             id: 2,
-            title: "Direct Play Clarity",
-            subtitle: "Playback badges and the lightning icon tell you instantly when the file is ready without server prep.",
+            title: "Spot Direct Play",
+            subtitle: "The lightning badge shows when a video can play unchanged through the native path.",
             accent: Color(red: 1.00, green: 0.62, blue: 0.28),
             secondaryAccent: Color(red: 0.94, green: 0.44, blue: 0.36),
             screenshotName: "reelfin-tv-onboarding-detail.png",
@@ -57,8 +57,8 @@ enum TVOnboardingContent {
         ),
         .init(
             id: 3,
-            title: "Ready to Connect",
-            subtitle: "Approve from your phone or sign in directly, then drop straight into the full tvOS app.",
+            title: "Connect your way",
+            subtitle: "Use Quick Connect from your phone or sign in with your Jellyfin password.",
             accent: Color(red: 0.28, green: 0.84, blue: 0.66),
             secondaryAccent: Color(red: 0.58, green: 0.92, blue: 0.90),
             screenshotName: "reelfin-tv-onboarding-connect.png",

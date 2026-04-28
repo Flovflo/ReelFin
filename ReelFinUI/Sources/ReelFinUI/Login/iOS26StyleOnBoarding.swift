@@ -172,28 +172,6 @@ struct iOS26StyleOnBoarding: View {
                                 .lineLimit(3)
                                 .multilineTextAlignment(.center)
                                 .foregroundStyle(.white.opacity(0.8))
-
-                            if !item.highlights.isEmpty {
-                                ViewThatFits {
-                                    HStack(spacing: 8) {
-                                        highlightChips(for: item)
-                                    }
-
-                                    VStack(spacing: 8) {
-                                        highlightChips(for: item)
-                                    }
-                                }
-                                .padding(.top, 4)
-                            }
-
-                            if let footnote = item.footnote {
-                                Text(footnote)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .lineLimit(3)
-                                    .multilineTextAlignment(.center)
-                                    .foregroundStyle(.white.opacity(0.62))
-                                    .padding(.top, 2)
-                            }
                         }
                         .frame(width: size.width)
                         .compositingGroup()
@@ -211,23 +189,6 @@ struct iOS26StyleOnBoarding: View {
             .scrollPosition(id: .init(get: {
                 return currentIndex
             }, set: { _ in }))
-        }
-    }
-
-    @ViewBuilder
-    private func highlightChips(for item: Item) -> some View {
-        ForEach(item.highlights, id: \.self) { highlight in
-            Text(highlight)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.94))
-                .lineLimit(1)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(.white.opacity(0.10), in: Capsule(style: .continuous))
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
         }
     }
 
@@ -352,8 +313,6 @@ struct iOS26StyleOnBoarding: View {
         var title: String
         var subtitle: String
         var screenshot: UIImage?
-        var highlights: [String] = []
-        var footnote: String? = nil
         var buttonTitle: String? = nil
         var zoomScale: CGFloat = 1
         var zoomAnchor: UnitPoint = .center

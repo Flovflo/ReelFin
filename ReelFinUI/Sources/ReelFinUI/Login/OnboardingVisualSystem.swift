@@ -157,48 +157,6 @@ struct OnboardingEyebrowChip: View {
     }
 }
 
-struct OnboardingHighlightsRow: View {
-    let highlights: [String]
-    let accent: Color
-
-    var body: some View {
-        ViewThatFits {
-            HStack(spacing: 8) {
-                chips
-            }
-
-            VStack(spacing: 8) {
-                chips
-            }
-        }
-    }
-
-    private var chips: some View {
-        ForEach(highlights, id: \.self) { highlight in
-            Text(highlight)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(OnboardingPalette.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background {
-                    if #available(iOS 26.0, *) {
-                        Color.clear
-                            .glassEffect(.regular.tint(accent.opacity(0.05)), in: .capsule)
-                    } else {
-                        Capsule(style: .continuous)
-                            .fill(Color.white.opacity(0.06))
-                    }
-                }
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
-    }
-}
-
 struct PremiumCTAButton: View {
     let title: String
     let isLoading: Bool

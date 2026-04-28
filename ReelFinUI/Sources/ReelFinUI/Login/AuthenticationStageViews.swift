@@ -24,8 +24,8 @@ struct ServerEntryStageView: View {
         GlassPanel(cornerRadius: 34, tint: OnboardingPalette.panelTint, padding: 28) {
             VStack(alignment: .leading, spacing: 20) {
                 StageHeader(
-                    title: "Add your Jellyfin server",
-                    subtitle: "Enter the address you already use. ReelFin checks it before loading your library.",
+                    title: "Connect your Jellyfin server",
+                    subtitle: "Enter the address you already use. ReelFin verifies it before opening your library.",
                     titleSize: titleSize,
                     bodySize: bodySize
                 )

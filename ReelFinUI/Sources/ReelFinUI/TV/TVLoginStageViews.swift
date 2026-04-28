@@ -15,8 +15,8 @@ struct TVLandingStageView: View {
         HStack(alignment: .center, spacing: 56) {
             VStack(alignment: .leading, spacing: 22) {
                 TVLoginStageHeading(
-                    title: "Connect to Jellyfin",
-                    subtitle: "Native for Apple TV, with clean focus and a fast path into your library.",
+                    title: "Connect your server",
+                    subtitle: "Pair ReelFin with Jellyfin for a fast, native Apple TV library.",
                     titleSize: 56
                 )
 
@@ -68,8 +68,8 @@ struct TVServerStageView: View {
             TVLoginStageHeading(
                 title: signInPath == .quickConnect ? "Enter your server" : "Server address",
                 subtitle: signInPath == .quickConnect
-                    ? "Use your Jellyfin address to fetch a Quick Connect code."
-                    : "Use your Jellyfin address before entering your account."
+                    ? "Use your Jellyfin address to get a Quick Connect code."
+                    : "Enter your Jellyfin address before signing in."
             )
 
             TextField(
