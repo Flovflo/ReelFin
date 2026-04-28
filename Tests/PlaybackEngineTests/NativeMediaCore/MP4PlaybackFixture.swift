@@ -6,6 +6,14 @@ import XCTest
 
 enum MP4PlaybackFixture {
     static func makeTinyH264AACMP4(at url: URL) async throws {
+        try await makeH264AACMP4(at: url, videoFrameCount: 4, audioFrameCount: 4_096)
+    }
+
+    static func makeH264AACMP4(
+        at url: URL,
+        videoFrameCount: Int,
+        audioFrameCount: Int
+    ) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
@@ -33,19 +41,23 @@ enum MP4PlaybackFixture {
         XCTAssertTrue(writer.startWriting())
         writer.startSession(atSourceTime: .zero)
 
-        for frame in 0..<4 {
+        let audioDurationSeconds = max(0.001, Double(audioFrameCount) / 44_100)
+        for frame in 0..<videoFrameCount {
             while !videoInput.isReadyForMoreMediaData {
                 try await Task.sleep(nanoseconds: 1_000_000)
             }
-            let buffer = try makePixelBuffer(gray: UInt8(frame * 40))
-            XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30)))
+            let buffer = try makePixelBuffer(gray: UInt8((frame * 40) % 255))
+            let frameSeconds = videoFrameCount > 1
+                ? audioDurationSeconds * Double(frame) / Double(videoFrameCount - 1)
+                : 0
+            XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(seconds: frameSeconds, preferredTimescale: 600)))
         }
         videoInput.markAsFinished()
 
         while !audioInput.isReadyForMoreMediaData {
             try await Task.sleep(nanoseconds: 1_000_000)
         }
-        XCTAssertTrue(audioInput.append(try makeSilentPCMSampleBuffer(frameCount: 4_096)))
+        XCTAssertTrue(audioInput.append(try makeSilentPCMSampleBuffer(frameCount: audioFrameCount)))
         audioInput.markAsFinished()
 
         await withCheckedContinuation { continuation in

@@ -138,13 +138,26 @@ final class DetailViewModel: ObservableObject {
         return shouldShowResume ? "Resume" : "Play"
     }
 
-    var playbackStatusText: String? {
-        if shouldShowResume, let displayText = playbackProgressDisplayText ?? itemToPlay.playbackPositionDisplayText {
-            return "Stopped at \(displayText)"
-        }
+    var primaryPlayButtonLabel: String {
+        primaryPlaybackItemIsWatched ? "Play Again" : playButtonLabel
+    }
 
+    var primaryPlaybackItemIsWatched: Bool {
+        guard !shouldShowResume else { return false }
+        return itemToPlay.isPlayed || detail.item.isPlayed || isWatched
+    }
+
+    var primaryPlaybackStartPosition: PlaybackStartPosition {
+        shouldShowResume ? .resumeIfAvailable : .beginning
+    }
+
+    var playbackStatusText: String? {
         if isPlaybackWarm {
             return "Ready to play"
+        }
+
+        if shouldShowResume, let displayText = playbackProgressDisplayText ?? itemToPlay.playbackPositionDisplayText {
+            return "Stopped at \(displayText)"
         }
 
         if itemToPlay.isPlayed || detail.item.isPlayed || isWatched {
@@ -231,6 +244,27 @@ final class DetailViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    func applyStoppedPlaybackProgress(_ progress: PlaybackProgress) {
+        guard progress.itemID == itemToPlay.id
+            || progress.itemID == detail.item.id
+            || episodes.contains(where: { $0.id == progress.itemID })
+        else { return }
+
+        var normalizedProgress = progress
+        normalizedProgress.totalTicks = max(normalizedProgress.totalTicks, normalizedProgress.positionTicks)
+
+        guard normalizedProgress.positionTicks > 0, normalizedProgress.progressRatio < 0.97 else {
+            if playbackProgress?.itemID == progress.itemID {
+                playbackProgress = nil
+            }
+            return
+        }
+
+        markItemInProgress(itemID: normalizedProgress.itemID, progress: normalizedProgress)
+        playbackProgress = normalizedProgress
+        syncDerivedFlags()
     }
 
     private func buildLoadTasks(itemID: String, loadToken: UUID) -> [Task<Void, Never>] {
@@ -457,7 +491,6 @@ final class DetailViewModel: ObservableObject {
                     isTVOS: Self.isTVOSPlatform
                 )
                 startupPreheatReady = preheatResult != nil
-                    && !Self.usesDisposableProgressiveDirectPlayPreheat(selection)
             } else {
                 startupPreheatReady = !Self.usesDisposableProgressiveDirectPlayPreheat(selection)
             }
@@ -620,6 +653,11 @@ final class DetailViewModel: ObservableObject {
     }
 
     private func applyWatchedState(_ isPlayed: Bool, to itemID: String) {
+        let localProgressTotalTicks = playbackProgress?.itemID == itemID ? playbackProgress?.totalTicks : nil
+        let itemRuntimeTicks = detail.item.id == itemID
+            ? detail.item.runtimeTicks
+            : episodes.first(where: { $0.id == itemID })?.runtimeTicks
+
         updateEpisode(itemID: itemID) { item in
             item.isPlayed = isPlayed
             item.playbackPositionTicks = isPlayed ? nil : item.playbackPositionTicks
@@ -647,7 +685,44 @@ final class DetailViewModel: ObservableObject {
 
         preferredEpisode = nextUpEpisode
         playbackProgress = nil
+        if isPlayed {
+            clearLocalPlaybackProgress(itemID: itemID, totalTicks: localProgressTotalTicks ?? itemRuntimeTicks ?? 0)
+        }
         syncDerivedFlags()
+    }
+
+    private func clearLocalPlaybackProgress(itemID: String, totalTicks: Int64) {
+        let repository = dependencies.repository
+        let progress = PlaybackProgress(
+            itemID: itemID,
+            positionTicks: 0,
+            totalTicks: max(0, totalTicks),
+            updatedAt: Date()
+        )
+
+        Task {
+            try? await repository.savePlaybackProgress(progress)
+        }
+    }
+
+    private func markItemInProgress(itemID: String, progress: PlaybackProgress) {
+        updateEpisode(itemID: itemID) { item in
+            item.isPlayed = false
+            item.playbackPositionTicks = progress.positionTicks
+            item.runtimeTicks = max(item.runtimeTicks ?? 0, progress.totalTicks)
+        }
+
+        if detail.item.id == itemID {
+            detail.item.isPlayed = false
+            detail.item.playbackPositionTicks = progress.positionTicks
+            detail.item.runtimeTicks = max(detail.item.runtimeTicks ?? 0, progress.totalTicks)
+        }
+
+        if nextUpEpisode?.id == itemID {
+            nextUpEpisode?.isPlayed = false
+            nextUpEpisode?.playbackPositionTicks = progress.positionTicks
+            nextUpEpisode?.runtimeTicks = max(nextUpEpisode?.runtimeTicks ?? 0, progress.totalTicks)
+        }
     }
 
     private func updateEpisode(itemID: String, transform: (inout MediaItem) -> Void) {

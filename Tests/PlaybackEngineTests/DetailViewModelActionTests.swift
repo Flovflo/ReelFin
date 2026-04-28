@@ -36,6 +36,40 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(playedCalls.first?.isPlayed, true)
     }
 
+    func testToggleWatchedClearsLocalStoppedProgress() async {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = DetailActionMetadataRepository(
+            localProgress: PlaybackProgress(
+                itemID: "movie-progress",
+                positionTicks: Int64(19 * 60 * 10_000_000),
+                totalTicks: Int64(90 * 60 * 10_000_000),
+                updatedAt: Date()
+            )
+        )
+        let item = MediaItem(
+            id: "movie-progress",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            libraryID: "movies",
+            isPlayed: false
+        )
+        let viewModel = DetailViewModel(
+            item: item,
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        viewModel.toggleWatched()
+
+        let didClearProgress = await waitForStoredProgressPosition(
+            0,
+            itemID: "movie-progress",
+            in: repository,
+            timeout: 2
+        )
+        XCTAssertTrue(didClearProgress)
+    }
+
     func testToggleWatchlistMarksMovieAsLikedAndCallsAPI() async {
         let apiClient = DetailActionSpyAPIClient()
         let repository = MockMetadataRepository()
@@ -94,6 +128,95 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.playbackProgress?.positionTicks, serverPositionTicks)
         XCTAssertEqual(viewModel.playbackStatusText, "Stopped at 10m")
         XCTAssertEqual(viewModel.playButtonLabel, "Resume")
+    }
+
+    func testPrimaryPlayActionStartsFromBeginningWhenResumeIsHidden() async {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let item = MediaItem(
+            id: "movie-play",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            isPlayed: true,
+            playbackPositionTicks: Int64(26 * 60 * 10_000_000)
+        )
+        let viewModel = DetailViewModel(
+            item: item,
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.shouldShowResume)
+        XCTAssertEqual(viewModel.playButtonLabel, "Play")
+        XCTAssertEqual(viewModel.primaryPlayButtonLabel, "Play Again")
+        XCTAssertEqual(viewModel.primaryPlaybackStartPosition, .beginning)
+    }
+
+    func testLoadUsesLocalStoppedProgressForPlayedItem() async {
+        let localPositionTicks = Int64(17 * 60 * 10_000_000)
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = DetailActionMetadataRepository(
+            localProgress: PlaybackProgress(
+                itemID: "movie-rewatch",
+                positionTicks: localPositionTicks,
+                totalTicks: Int64(90 * 60 * 10_000_000),
+                updatedAt: Date()
+            )
+        )
+        let item = MediaItem(
+            id: "movie-rewatch",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            isPlayed: true,
+            playbackPositionTicks: nil
+        )
+        let viewModel = DetailViewModel(
+            item: item,
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.shouldShowResume)
+        XCTAssertEqual(viewModel.playbackProgress?.positionTicks, localPositionTicks)
+        XCTAssertEqual(viewModel.playbackStatusText, "Stopped at 17m")
+        XCTAssertEqual(viewModel.playButtonLabel, "Resume")
+        XCTAssertEqual(viewModel.primaryPlayButtonLabel, "Resume")
+        XCTAssertFalse(viewModel.primaryPlaybackItemIsWatched)
+        XCTAssertEqual(viewModel.primaryPlaybackStartPosition, .resumeIfAvailable)
+    }
+
+    func testStoppedPlaybackProgressUpdatesPrimaryActionWithoutReload() {
+        let apiClient = DetailActionSpyAPIClient()
+        let repository = MockMetadataRepository()
+        let item = MediaItem(
+            id: "movie-return",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            isPlayed: true
+        )
+        let viewModel = DetailViewModel(
+            item: item,
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        viewModel.applyStoppedPlaybackProgress(
+            PlaybackProgress(
+                itemID: "movie-return",
+                positionTicks: Int64(21 * 60 * 10_000_000),
+                totalTicks: Int64(90 * 60 * 10_000_000),
+                updatedAt: Date()
+            )
+        )
+
+        XCTAssertTrue(viewModel.shouldShowResume)
+        XCTAssertEqual(viewModel.playbackStatusText, "Stopped at 21m")
+        XCTAssertEqual(viewModel.primaryPlayButtonLabel, "Resume")
+        XCTAssertFalse(viewModel.primaryPlaybackItemIsWatched)
     }
 
     func testBackgroundWarmupDoesNotShowBlockingPlaybackPreparation() {
@@ -155,7 +278,7 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertNotEqual(viewModel.playbackStatusText, "Ready to play")
     }
 
-    func testHighBitrateProgressiveDirectPlayWarmupDoesNotMarkReadyFromDisposablePreheat() async {
+    func testHighBitrateProgressiveDirectPlayWarmupMarksReadyFromRangePreheat() async {
         let apiClient = DetailActionSpyAPIClient()
         let repository = MockMetadataRepository()
         let warmupManager = EpisodeWarmupManager(
@@ -201,9 +324,9 @@ final class DetailViewModelActionTests: XCTestCase {
         }
 
         XCTAssertTrue(didResolveSelection)
-        XCTAssertFalse(viewModel.isPlaybackWarm)
-        XCTAssertNotEqual(viewModel.loadPhase, .playbackWarm)
-        XCTAssertEqual(viewModel.playbackStatusText, "Stopped at 10m")
+        XCTAssertTrue(viewModel.isPlaybackWarm)
+        XCTAssertEqual(viewModel.loadPhase, .playbackWarm)
+        XCTAssertEqual(viewModel.playbackStatusText, "Ready to play")
     }
 
     func testPrepareEpisodePlaybackLatestWinsAcrossWarmupSignals() async {
@@ -527,6 +650,27 @@ final class DetailViewModelActionTests: XCTestCase {
         }
 
         return await apiClient.favoriteCalls().count == expectedCount
+    }
+
+    private func waitForStoredProgressPosition(
+        _ expectedPositionTicks: Int64,
+        itemID: String,
+        in repository: DetailActionMetadataRepository,
+        timeout: TimeInterval
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            let progress = try? await repository.fetchPlaybackProgress(itemID: itemID)
+            if progress?.positionTicks == expectedPositionTicks {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let progress = try? await repository.fetchPlaybackProgress(itemID: itemID)
+        return progress?.positionTicks == expectedPositionTicks
     }
 }
 

@@ -2,6 +2,9 @@ import Foundation
 import Shared
 
 public enum PlaybackStartupPreheater {
+    private static let mebibyte = 1_024 * 1_024
+    private static let highBitrateDirectPlayThreshold = 18_000_000
+
     public struct Result: Sendable, Equatable {
         public let byteCount: Int
         public let elapsedSeconds: Double
@@ -69,6 +72,8 @@ public enum PlaybackStartupPreheater {
                 "playback.startup.preheat.done — item=\(selection.source.itemID.prefix(8), privacy: .public) bytes=\(result.byteCount, privacy: .public) elapsed=\(result.elapsedSeconds, format: .fixed(precision: 3)) bitrate=\(Int(result.observedBitrate), privacy: .public) rangeStart=\(rangeStart, privacy: .public) reason=\(result.reason, privacy: .public)"
             )
             return result
+        } catch where isCancellation(error) {
+            return nil
         } catch {
             AppLog.playback.debug(
                 "playback.startup.preheat.skipped — item=\(selection.source.itemID.prefix(8), privacy: .public) reason=\(requestPlan.reason, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
@@ -97,24 +102,74 @@ public enum PlaybackStartupPreheater {
                 return playlistProbePlan(url: selection.assetURL, isTVOS: isTVOS)
             }
 
-            let length = isTVOS ? 4 * 1_024 * 1_024 : 2 * 1_024 * 1_024
+            let plannedLength = directPlayRangeLength(
+                sourceBitrate: selection.source.bitrate,
+                isTVOS: isTVOS
+            )
             let offset = estimatedByteOffset(
                 fileSize: selection.source.fileSize,
                 runtimeSeconds: runtimeSeconds,
                 resumeSeconds: resumeSeconds,
-                alignment: Int64(length)
+                alignment: Int64(plannedLength)
+            )
+            let length = cappedRangeLength(
+                plannedLength,
+                fileSize: selection.source.fileSize,
+                offset: offset
             )
             return RequestPlan(
                 url: selection.assetURL,
                 rangeStart: offset,
                 rangeLength: length,
-                timeout: isTVOS ? 2.5 : 1.25,
-                reason: "directplay_range"
+                timeout: directPlayRangeTimeout(rangeLength: plannedLength, isTVOS: isTVOS),
+                reason: directPlayRangeReason(rangeLength: plannedLength, isTVOS: isTVOS)
             )
 
         case .nativeBridge, .remux, .transcode:
             return playlistProbePlan(url: selection.assetURL, isTVOS: isTVOS)
         }
+    }
+
+    private static func directPlayRangeLength(
+        sourceBitrate: Int?,
+        isTVOS: Bool
+    ) -> Int {
+        let baseLength = isTVOS ? 4 * mebibyte : 2 * mebibyte
+        guard
+            !isTVOS,
+            let sourceBitrate,
+            sourceBitrate >= highBitrateDirectPlayThreshold
+        else {
+            return baseLength
+        }
+
+        let targetSeconds = 4.5
+        let targetBytes = Double(sourceBitrate) / 8 * targetSeconds
+        let roundedBytes = Int(ceil(targetBytes / Double(mebibyte))) * mebibyte
+        return min(max(roundedBytes, 8 * mebibyte), 12 * mebibyte)
+    }
+
+    private static func cappedRangeLength(
+        _ rangeLength: Int,
+        fileSize: Int64?,
+        offset: Int64
+    ) -> Int {
+        guard let fileSize, fileSize > offset else {
+            return rangeLength
+        }
+
+        let remainingBytes = fileSize - offset
+        return max(1, Int(min(Int64(rangeLength), remainingBytes)))
+    }
+
+    private static func directPlayRangeTimeout(rangeLength: Int, isTVOS: Bool) -> TimeInterval {
+        guard !isTVOS else { return 2.5 }
+        return rangeLength > 2 * mebibyte ? 4 : 1.25
+    }
+
+    private static func directPlayRangeReason(rangeLength: Int, isTVOS: Bool) -> String {
+        let baseLength = isTVOS ? 4 * mebibyte : 2 * mebibyte
+        return rangeLength > baseLength ? "directplay_range_deep" : "directplay_range"
     }
 
     private static func playlistProbePlan(url: URL, isTVOS: Bool) -> RequestPlan {
@@ -200,5 +255,18 @@ public enum PlaybackStartupPreheater {
     private static func isPlaylistURL(_ url: URL) -> Bool {
         let pathExtension = url.pathExtension.lowercased()
         return pathExtension == "m3u8" || pathExtension == "m3u"
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return true
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 }

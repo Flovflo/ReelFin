@@ -23,6 +23,28 @@ enum PlaybackResumeSeekPlanner {
             return false
         }
 
+        return !streamLooksServerOffset(
+            pendingResumeSeconds: pendingResumeSeconds,
+            currentPlayerTime: currentPlayerTime,
+            currentItemDuration: currentItemDuration,
+            currentMediaRuntimeSeconds: currentMediaRuntimeSeconds
+        )
+    }
+
+    static func streamLooksServerOffset(
+        pendingResumeSeconds: Double?,
+        currentPlayerTime: Double,
+        currentItemDuration: Double?,
+        currentMediaRuntimeSeconds: Double?
+    ) -> Bool {
+        guard let pendingResumeSeconds, pendingResumeSeconds > 0 else {
+            return false
+        }
+
+        if currentPlayerTime.isFinite, abs(currentPlayerTime - pendingResumeSeconds) < currentTimeToleranceSeconds {
+            return false
+        }
+
         guard
             let currentItemDuration,
             currentItemDuration.isFinite,
@@ -30,10 +52,10 @@ enum PlaybackResumeSeekPlanner {
             let currentMediaRuntimeSeconds,
             currentMediaRuntimeSeconds > 0
         else {
-            return true
+            return false
         }
 
         let expectedRemainingSeconds = max(0, currentMediaRuntimeSeconds - pendingResumeSeconds)
-        return abs(currentItemDuration - expectedRemainingSeconds) >= durationToleranceSeconds
+        return abs(currentItemDuration - expectedRemainingSeconds) < durationToleranceSeconds
     }
 }

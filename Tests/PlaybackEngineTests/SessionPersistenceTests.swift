@@ -95,7 +95,9 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
         let coordinator = PlaybackCoordinator(apiClient: client)
 
         try await client.configure(server: ServerConfiguration(serverURL: serverURL))
-        _ = try await client.authenticate(credentials: UserCredentials(username: username, password: password))
+        let session = try await client.authenticate(credentials: UserCredentials(username: username, password: password))
+        let nativeConfig = (await client.currentConfiguration())?.nativePlayerConfig.applyingRuntimeOverride()
+            ?? NativePlayerConfig().applyingRuntimeOverride()
 
         var total = 0
         var failures = 0
@@ -116,16 +118,29 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
                 total += 1
 
                 do {
-                    let selection = try await coordinator.resolvePlayback(
-                        itemID: item.id,
-                        mode: .balanced,
-                        allowTranscodingFallbackInPerformance: true
-                    )
-
-                    let reachable = try await probeSelection(selection)
+                    let reachable: Bool
+                    if nativeConfig.enabled {
+                        let controller = NativePlayerPlaybackController(apiClient: client)
+                        let snapshot = try await controller.prepare(
+                            itemID: item.id,
+                            configuration: ServerConfiguration(serverURL: serverURL, nativePlayerConfig: nativeConfig),
+                            session: session,
+                            nativeConfig: nativeConfig,
+                            startTimeTicks: nil
+                        )
+                        reachable = try await probeNativeSnapshot(snapshot)
+                    } else {
+                        let selection = try await coordinator.resolvePlayback(
+                            itemID: item.id,
+                            mode: .balanced,
+                            allowTranscodingFallbackInPerformance: true
+                        )
+                        reachable = try await probeSelection(selection)
+                    }
                     if !reachable {
                         failures += 1
-                        failureLines.append("loop=\(loopIndex) item=\(item.name) method=\(selection.debugInfo.playMethod) reason=probe_failed")
+                        let method = nativeConfig.enabled ? "NativeDirectPlay" : "Coordinator"
+                        failureLines.append("loop=\(loopIndex) item=\(item.name) method=\(method) reason=probe_failed")
                     }
                 } catch {
                     failures += 1
@@ -142,6 +157,17 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
         }
 
         XCTAssertLessThanOrEqual(failures, maxFailures, summary)
+    }
+
+    private func probeNativeSnapshot(_ snapshot: NativePlayerPlaybackSnapshot) async throws -> Bool {
+        if let selection = snapshot.applePlaybackSelection {
+            return try await probeSelection(selection)
+        }
+
+        guard let playbackURL = snapshot.playbackURL else {
+            return false
+        }
+        return try await probeBinary(url: playbackURL, headers: snapshot.playbackHeaders)
     }
 
     private func collectItems(

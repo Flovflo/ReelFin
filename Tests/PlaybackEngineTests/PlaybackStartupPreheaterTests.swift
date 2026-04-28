@@ -59,13 +59,13 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
     }
 
-    func testPreheatSkipsIPhoneProgressiveDirectPlayRangeProbe() async {
+    func testPreheatUsesIPhoneProgressiveDirectPlayRangeProbe() async throws {
         let selection = makeDirectPlaySelection(
-            sourceFileSize: 10 * 1_048_576,
+            sourceFileSize: 100 * 1_048_576,
             sourceBitrate: 22_000_000,
             headers: ["X-Auth-Token": "token-123"]
         )
-        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 4 * 1_048_576))
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 24 * 1_048_576))
 
         let result = await PlaybackStartupPreheater.preheat(
             selection: selection,
@@ -75,11 +75,17 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
             urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
         )
 
-        XCTAssertNil(result)
-        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
+        XCTAssertEqual(result?.byteCount, 12 * 1_048_576)
+        XCTAssertEqual(result?.rangeStart, 12 * 1_048_576)
+        XCTAssertEqual(result?.reason, "directplay_range_deep")
+        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 1)
+
+        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=12582912-25165823")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
     }
 
-    func testPreheatSkipsTvOSProgressiveDirectPlayRangeProbe() async {
+    func testPreheatUsesTvOSProgressiveDirectPlayRangeProbe() async throws {
         let selection = makeDirectPlaySelection(
             sourceFileSize: 10 * 1_048_576,
             sourceBitrate: 12_000_000,
@@ -95,11 +101,40 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
             urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
         )
 
-        XCTAssertNil(result)
-        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
+        XCTAssertEqual(result?.byteCount, 4 * 1_048_576)
+        XCTAssertEqual(result?.rangeStart, 0)
+        XCTAssertEqual(result?.reason, "directplay_range")
+        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 1)
+
+        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=0-4194303")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
     }
 
-    func testPreheatTreatsDirectPlayPlaylistAsProbeWithoutRangeRequest() async throws {
+    func testPreheatCapsDeepIPhoneDirectPlayRangeAtKnownFileEnd() async throws {
+        let selection = makeDirectPlaySelection(
+            sourceFileSize: 14 * 1_048_576,
+            sourceBitrate: 22_000_000
+        )
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 14 * 1_048_576))
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 95,
+            runtimeSeconds: 100,
+            isTVOS: false,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
+        )
+
+        XCTAssertEqual(result?.byteCount, 2 * 1_048_576)
+        XCTAssertEqual(result?.rangeStart, 12 * 1_048_576)
+        XCTAssertEqual(result?.reason, "directplay_range_deep")
+
+        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=12582912-14680063")
+    }
+
+    func testPreheatSkipsIPhoneHLSPlaylistProbe() async {
         let selection = makeDirectPlaySelection(
             assetURL: URL(string: "https://fixture.local/master.m3u8")!,
             sourceFileSize: 10 * 1_048_576,
@@ -115,7 +150,27 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
             urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
         )
 
-        XCTAssertEqual(result?.byteCount, 256 * 1024)
+        XCTAssertNil(result)
+        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 0)
+    }
+
+    func testPreheatKeepsTvOSHLSPlaylistProbeWithoutRangeRequest() async throws {
+        let selection = makeDirectPlaySelection(
+            assetURL: URL(string: "https://fixture.local/master.m3u8")!,
+            sourceFileSize: 10 * 1_048_576,
+            sourceBitrate: 12_000_000
+        )
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xEE, count: 600 * 1024))
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 20,
+            runtimeSeconds: 100,
+            isTVOS: true,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
+        )
+
+        XCTAssertEqual(result?.byteCount, 512 * 1024)
         XCTAssertNil(result?.rangeStart)
         XCTAssertEqual(result?.reason, "playlist_probe")
 

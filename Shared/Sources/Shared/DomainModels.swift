@@ -881,9 +881,11 @@ public struct PlaybackProgress: Codable, Hashable, Sendable {
         localProgress: PlaybackProgress?,
         referenceDate: Date = Date()
     ) -> PlaybackProgress? {
-        guard !item.isPlayed else { return nil }
-
         let local = normalizedLocalProgress(localProgress, matching: item.id)
+        if item.isPlayed {
+            return local.flatMap { $0.progressRatio < 0.97 ? $0 : nil }
+        }
+
         let server = serverProgress(for: item, referenceDate: referenceDate)
 
         switch (local, server) {

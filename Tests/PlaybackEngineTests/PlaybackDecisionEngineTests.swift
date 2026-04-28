@@ -4,6 +4,28 @@ import XCTest
 
 final class PlaybackDecisionEngineTests: XCTestCase {
     private let server = ServerConfiguration(serverURL: URL(string: "https://example.com")!)
+    private var previousNativePlayerRuntimeOverride: Any?
+
+    override func setUp() {
+        super.setUp()
+        previousNativePlayerRuntimeOverride = UserDefaults.standard.object(
+            forKey: NativePlayerRuntimeDefaults.enabledKey
+        )
+        UserDefaults.standard.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
+    }
+
+    override func tearDown() {
+        if let previousNativePlayerRuntimeOverride {
+            UserDefaults.standard.set(
+                previousNativePlayerRuntimeOverride,
+                forKey: NativePlayerRuntimeDefaults.enabledKey
+            )
+        } else {
+            UserDefaults.standard.removeObject(forKey: NativePlayerRuntimeDefaults.enabledKey)
+        }
+        previousNativePlayerRuntimeOverride = nil
+        super.tearDown()
+    }
 
     func testDirectPlayPreferredWhenCompatible() {
         let engine = PlaybackDecisionEngine()
@@ -312,6 +334,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(apiClient.optionsHistory.first?.enableDirectPlay, false)
         XCTAssertEqual(apiClient.optionsHistory.first?.enableDirectStream, false)
         XCTAssertEqual(selection.assetURL.path, "/videos/item-recovery/master.m3u8")
+        XCTAssertNil(queryMap["StartTimeTicks"])
         XCTAssertEqual(queryMap["VideoCodec"], "h264")
         XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
         XCTAssertEqual(queryMap["Container"], "ts")
@@ -742,6 +765,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
 
         let queryMap = queryMap(from: selection.assetURL)
         XCTAssertEqual(client.optionsHistory.map(\.startTimeTicks), [resumeTicks, resumeTicks])
+        XCTAssertNil(queryMap["StartTimeTicks"])
         XCTAssertEqual(queryMap["PlaySessionId"], "session-1")
         XCTAssertEqual(queryMap["DeviceProfileId"], "profile-1")
         XCTAssertEqual(queryMap["VideoCodec"], "h264")

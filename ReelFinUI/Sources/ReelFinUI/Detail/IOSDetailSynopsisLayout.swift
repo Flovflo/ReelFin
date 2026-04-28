@@ -3,10 +3,10 @@ import CoreGraphics
 #if os(iOS)
 enum IOSDetailSynopsisLayout {
     static func lineLimit(isExpanded: Bool, contentWidth: CGFloat) -> Int {
-        let isCompact = contentWidth < 370
+        let isCompact = contentWidth < compactContentWidthThreshold
 
         if isExpanded {
-            return isCompact ? 6 : 8
+            return isCompact ? 4 : 6
         }
 
         return isCompact ? 2 : 3
@@ -21,5 +21,7 @@ enum IOSDetailSynopsisLayout {
         let approximateCharactersPerLine = max(Int(contentWidth / 8.8), 24)
         return text.count > approximateCharactersPerLine * collapsedLimit
     }
+
+    static let compactContentWidthThreshold: CGFloat = 430
 }
 #endif

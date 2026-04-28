@@ -30,4 +30,31 @@ final class OriginalMediaResolverTests: XCTestCase {
         XCTAssertTrue(result.url.absoluteString.contains("MediaSourceId=source-1"))
         XCTAssertFalse(result.redactedURLDescription.contains("secret"))
     }
+
+    func testBuildsAppleStableStaticMP4StreamURLWithoutTranscode() throws {
+        let resolver = OriginalMediaResolver()
+        let config = ServerConfiguration(serverURL: URL(string: "https://jellyfin.example")!)
+        let source = MediaSource(
+            id: "source-1",
+            itemID: "item-1",
+            name: "Original",
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        let result = try resolver.resolve(
+            request: OriginalMediaRequest(itemID: "item-1"),
+            sources: [source],
+            configuration: config,
+            session: UserSession(userID: "u", username: "user", token: "secret"),
+            nativeConfig: NativePlayerConfig(enabled: true)
+        )
+
+        XCTAssertTrue(result.originalMediaRequested)
+        XCTAssertFalse(result.serverTranscodeUsed)
+        XCTAssertEqual(result.url.path, "/Videos/item-1/stream.mp4")
+        XCTAssertTrue(result.url.absoluteString.contains("static=true"))
+        XCTAssertTrue(result.url.absoluteString.contains("MediaSourceId=source-1"))
+    }
 }

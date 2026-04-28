@@ -33,8 +33,10 @@ public enum StartupFailureReason: String, Sendable, Equatable {
             return true
         case .manifestLoadFailed, .networkTimeout, .playerItemFailedTransient:
             return false // handled by transient retry path
-        case .directPlayPreflightInsufficient, .directPlayStall, .directPlayPostStartStall:
+        case .directPlayPreflightInsufficient, .directPlayStall:
             return false // Direct Play is preserved; controller handles same-route retry/logging.
+        case .directPlayPostStartStall:
+            return true
         case .subtitlePipelineFailure, .audioPipelineFailure:
             return true
         case .nativeBridgePackagingFailure:

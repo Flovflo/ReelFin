@@ -113,7 +113,6 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         Double?,
         Bool
     ) async -> PlaybackStartupPreheater.Result?
-    private let nativeModeEnabled: @Sendable () async -> Bool
 
     private var cache: [String: WarmEntry] = [:]
     private var inFlight: [String: Task<PlaybackAssetSelection, Error>] = [:]
@@ -127,8 +126,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         self.init(
             ttl: ttl,
             resolver: resolver,
-            startupPreheater: Self.makeDefaultStartupPreheater(),
-            nativeModeEnabled: { false }
+            startupPreheater: Self.makeDefaultStartupPreheater()
         )
     }
 
@@ -140,13 +138,11 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             Double,
             Double?,
             Bool
-        ) async -> PlaybackStartupPreheater.Result?,
-        nativeModeEnabled: @escaping @Sendable () async -> Bool = { false }
+        ) async -> PlaybackStartupPreheater.Result?
     ) {
         self.ttl = ttl
         self.resolver = resolver
         self.startupPreheater = startupPreheater
-        self.nativeModeEnabled = nativeModeEnabled
     }
 
     public init(
@@ -156,14 +152,33 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     ) {
         let coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
         self.ttl = ttl
-        self.nativeModeEnabled = {
-            guard let configuration = await apiClient.currentConfiguration() else { return false }
-            return configuration.nativePlayerConfig.applyingRuntimeOverride().enabled
-        }
         self.resolver = { itemID in
-            if let configuration = await apiClient.currentConfiguration(),
-               configuration.nativePlayerConfig.applyingRuntimeOverride().enabled {
-                throw AppError.nativeBridge("Native engine mode disables legacy playback warmup.")
+            if let configuration = await apiClient.currentConfiguration() {
+                let nativeConfig = configuration.nativePlayerConfig.applyingRuntimeOverride()
+                if nativeConfig.enabled {
+                    guard let session = await apiClient.currentSession() else {
+                        throw AppError.unauthenticated
+                    }
+                    let options = NativePlayerPlaybackController.originalPlaybackInfoOptions(
+                        nativeConfig: nativeConfig,
+                        startTimeTicks: nil
+                    )
+                    let sources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: options)
+                    let resolution = try OriginalMediaResolver().resolve(
+                        request: OriginalMediaRequest(itemID: itemID),
+                        sources: sources,
+                        configuration: configuration,
+                        session: session,
+                        nativeConfig: nativeConfig
+                    )
+                    if let violation = NativePlayerRouteGuard.validateOriginalPlaybackURL(resolution.url).first {
+                        throw violation
+                    }
+                    return NativePlayerPlaybackController.makeAppleNativeSelection(
+                        resolution: resolution,
+                        session: session
+                    )
+                }
             }
             return try await coordinator.resolvePlayback(
                 itemID: itemID,
@@ -175,12 +190,10 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     }
 
     public func warm(itemID: String) async {
-        guard await canUseLegacyWarmup() else { return }
         _ = try? await resolveWarmSelection(itemID: itemID)
     }
 
     public func warm(itemID: String, resumeSeconds: Double, runtimeSeconds: Double?, isTVOS: Bool) async {
-        guard await canUseLegacyWarmup() else { return }
         guard let selection = try? await resolveWarmSelection(itemID: itemID) else {
             return
         }
@@ -199,12 +212,10 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
-        guard await canUseLegacyWarmup() else { return nil }
-        guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
-            route: selection.decision.route,
-            sourceBitrate: selection.source.bitrate,
-            runtimeSeconds: runtimeSeconds,
+        guard shouldAttemptStartupPreheat(
+            selection: selection,
             resumeSeconds: resumeSeconds,
+            runtimeSeconds: runtimeSeconds,
             isTVOS: isTVOS
         ) else {
             return nil
@@ -228,7 +239,6 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
     }
 
     public func selection(for itemID: String) async -> PlaybackAssetSelection? {
-        guard await canUseLegacyWarmup() else { return nil }
         let now = Date()
         if let entry = cache[itemID], entry.isValid(at: now) {
             cache[itemID] = WarmEntry(
@@ -251,16 +261,14 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
-        guard await canUseLegacyWarmup() else { return nil }
         guard let selection = await selection(for: itemID) else {
             return nil
         }
 
-        guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
-            route: selection.decision.route,
-            sourceBitrate: selection.source.bitrate,
-            runtimeSeconds: runtimeSeconds,
+        guard shouldAttemptStartupPreheat(
+            selection: selection,
             resumeSeconds: resumeSeconds,
+            runtimeSeconds: runtimeSeconds,
             isTVOS: isTVOS
         ) else {
             return nil
@@ -293,12 +301,10 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result? {
-        guard await canUseLegacyWarmup() else { return nil }
-        guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
-            route: selection.decision.route,
-            sourceBitrate: selection.source.bitrate,
-            runtimeSeconds: runtimeSeconds,
+        guard shouldAttemptStartupPreheat(
+            selection: selection,
             resumeSeconds: resumeSeconds,
+            runtimeSeconds: runtimeSeconds,
             isTVOS: isTVOS
         ) else {
             return nil
@@ -364,24 +370,6 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         }
     }
 
-    private func canUseLegacyWarmup() async -> Bool {
-        guard !(await nativeModeEnabled()) else {
-            clearLegacyWarmupState()
-            AppLog.playback.notice("nativeplayer.legacyWarmup.disabled — cleared=true")
-            return false
-        }
-        return true
-    }
-
-    private func clearLegacyWarmupState() {
-        cache.removeAll()
-        inFlight.values.forEach { $0.cancel() }
-        inFlight.removeAll()
-        startupPreheatCache.removeAll()
-        startupPreheatInFlight.values.forEach { $0.cancel() }
-        startupPreheatInFlight.removeAll()
-    }
-
     private func resolveWarmSelection(itemID: String) async throws -> PlaybackAssetSelection {
         let now = Date()
         if let entry = cache[itemID], entry.isValid(at: now) {
@@ -410,6 +398,44 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             inFlight[itemID] = nil
             throw error
         }
+    }
+
+    private func shouldAttemptStartupPreheat(
+        selection: PlaybackAssetSelection,
+        resumeSeconds: Double,
+        runtimeSeconds: Double?,
+        isTVOS: Bool
+    ) -> Bool {
+        guard !shouldSkipIPhoneHighRiskProgressiveDirectPlayWarmup(
+            selection: selection,
+            isTVOS: isTVOS
+        ) else {
+            return false
+        }
+
+        return PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+            route: selection.decision.route,
+            sourceBitrate: selection.source.bitrate,
+            runtimeSeconds: runtimeSeconds,
+            resumeSeconds: resumeSeconds,
+            isTVOS: isTVOS
+        )
+    }
+
+    private func shouldSkipIPhoneHighRiskProgressiveDirectPlayWarmup(
+        selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) -> Bool {
+        guard !isTVOS else { return false }
+        guard case let .directPlay(url) = selection.decision.route else { return false }
+        guard url.pathExtension.lowercased() != "m3u8" else { return false }
+        guard (selection.source.bitrate ?? 0) >= 18_000_000 else { return false }
+        guard selection.source.isPremiumVideoSource || selection.source.isLikelyHDRorDV else { return false }
+
+        let audio = selection.source.normalizedAudioCodec
+        return audio.contains("eac3")
+            || audio.contains("truehd")
+            || audio.contains("dts")
     }
 
     private func resolveStartupPreheat(

@@ -42,13 +42,17 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments += [
             "-reelfin-force-onboarding",
+            "-reelfin-onboarding-page",
+            "5",
             "-reelfin-ui-reset-auth-state"
         ]
         app.launch()
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
 
-        authenticate(in: app, credentials: credentials)
+        if !waitForHome(in: app) {
+            authenticate(in: app, credentials: credentials)
+        }
         try runPlaybackScenario(
             in: app,
             scenario: "live-login",
@@ -108,12 +112,12 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
 
         let targetCard = try selectCard(in: app, preferredKinds: preferredKinds, scenario: scenario)
         logTap("open_\(scenario)_card:\(targetCard.identifier)")
-        targetCard.tap()
+        XCTAssertTrue(openCardAndWaitForDetail(targetCard, in: app))
 
         let actionButton = try playbackActionButton(in: app)
         captureScreenshot(of: app, name: "\(scenario)-detail-before-play")
         logTap("tap_\(scenario)_\(actionButton.label.lowercased())")
-        actionButton.tap()
+        tapElement(actionButton)
 
         let playerScreen = app.otherElements["native_player_screen"].firstMatch
         XCTAssertTrue(playerScreen.waitForExistence(timeout: 15))
@@ -126,6 +130,15 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         preferredKinds: [String],
         scenario: String
     ) throws -> XCUIElement {
+        if let explicitItemID = explicitDirectPlayItemID() {
+            let explicitCandidate = app.buttons.matching(
+                NSPredicate(format: "identifier CONTAINS %@", explicitItemID)
+            ).firstMatch
+            if explicitCandidate.waitForExistence(timeout: 8) {
+                return explicitCandidate
+            }
+        }
+
         for kind in preferredKinds {
             let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_\(kind)_")
             let candidate = app.buttons.matching(predicate).firstMatch
@@ -142,6 +155,59 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         }
 
         throw XCTSkip("No playable media card found for \(scenario).")
+    }
+
+    private func openCardAndWaitForDetail(_ card: XCUIElement, in app: XCUIApplication) -> Bool {
+        for attempt in 0 ..< 3 {
+            tapElement(card)
+            if waitForDetail(in: app, timeout: attempt == 0 ? 5 : 7) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func waitForDetail(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        let carousel = app.scrollViews["detail_ios_top_carousel"].firstMatch
+        let favoriteButton = app.buttons["detail_favorite_button"].firstMatch
+        let watchedButton = app.buttons["detail_watched_button"].firstMatch
+
+        while Date() < deadline {
+            if carousel.exists || favoriteButton.exists || watchedButton.exists {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+
+        return carousel.exists || favoriteButton.exists || watchedButton.exists
+    }
+
+    private func explicitDirectPlayItemID() -> String? {
+        var environment = ProcessInfo.processInfo.environment
+        loadEnvFile().forEach { key, value in
+            environment[key] = environment[key] ?? value
+        }
+        guard let raw = environment["TEST_DIRECTPLAY_MP4_ITEM_ID"], !raw.isEmpty else { return nil }
+        let patterns = [
+            #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
+            #"[0-9a-fA-F]{32}"#
+        ]
+        for pattern in patterns {
+            if let range = raw.range(of: pattern, options: .regularExpression) {
+                return raw[range].filter { $0 != "-" }.lowercased()
+            }
+        }
+        return nil
+    }
+
+    private func tapElement(_ element: XCUIElement) {
+        if element.isHittable {
+            element.tap()
+            return
+        }
+
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
     private func playbackActionButton(in app: XCUIApplication) throws -> XCUIElement {
@@ -169,16 +235,17 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
 
     private func advanceThroughOnboardingIfNeeded(_ app: XCUIApplication) {
         let serverField = app.textFields["login_server_field"].firstMatch
-        if serverField.exists {
+        if serverField.waitForExistence(timeout: 3) {
             return
         }
 
         for _ in 0 ..< 6 {
             let onboardingButton = app.buttons["onboarding_primary_cta"].firstMatch
-            XCTAssertTrue(onboardingButton.waitForExistence(timeout: 5))
-            onboardingButton.tap()
+            if onboardingButton.waitForExistence(timeout: 3) {
+                tapElement(onboardingButton)
+            }
 
-            if serverField.waitForExistence(timeout: 1.5) {
+            if serverField.waitForExistence(timeout: 2) {
                 return
             }
         }
@@ -233,11 +300,14 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     }
 
     private func loadLiveCredentials() -> LiveCredentials? {
-        let environment = ProcessInfo.processInfo.environment
+        var environment = ProcessInfo.processInfo.environment
+        loadEnvFile().forEach { key, value in
+            environment[key] = environment[key] ?? value
+        }
         guard
-            let serverURL = environment["REELFIN_TEST_SERVER_URL"],
-            let username = environment["REELFIN_TEST_USERNAME"],
-            let password = environment["REELFIN_TEST_PASSWORD"],
+            let serverURL = environment["REELFIN_TEST_SERVER_URL"] ?? environment["JELLYFIN_BASE_URL"],
+            let username = environment["REELFIN_TEST_USERNAME"] ?? environment["JELLYFIN_USERNAME"],
+            let password = environment["REELFIN_TEST_PASSWORD"] ?? environment["JELLYFIN_PASSWORD"],
             !serverURL.isEmpty,
             !username.isEmpty,
             !password.isEmpty
@@ -250,6 +320,33 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             username: username,
             password: password
         )
+    }
+
+    private func loadEnvFile() -> [String: String] {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let envURL = repoRoot.appendingPathComponent(".artifacts/secrets/reelfin-e2e.env")
+        guard let content = try? String(contentsOf: envURL, encoding: .utf8) else { return [:] }
+
+        var values: [String: String] = [:]
+        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=") else { continue }
+            let key = line[..<separator].trimmingCharacters(in: .whitespaces)
+            guard key.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil else { continue }
+            var value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2,
+               let quote = value.first,
+               quote == value.last,
+               quote == "\"" || quote == "'" {
+                value.removeFirst()
+                value.removeLast()
+            }
+            values[String(key)] = String(value)
+        }
+        return values
     }
 
     private func requireLiveCredentials() throws -> LiveCredentials {

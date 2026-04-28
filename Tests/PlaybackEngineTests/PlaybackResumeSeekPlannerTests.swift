@@ -46,4 +46,26 @@ final class PlaybackResumeSeekPlannerTests: XCTestCase {
             )
         )
     }
+
+    func testDetectsServerOffsetStreamWhenDurationMatchesRemainingRuntime() {
+        XCTAssertTrue(
+            PlaybackResumeSeekPlanner.streamLooksServerOffset(
+                pendingResumeSeconds: 180,
+                currentPlayerTime: 0.4,
+                currentItemDuration: 1_620,
+                currentMediaRuntimeSeconds: 1_800
+            )
+        )
+    }
+
+    func testDoesNotTreatFullRuntimeStreamAsServerOffset() {
+        XCTAssertFalse(
+            PlaybackResumeSeekPlanner.streamLooksServerOffset(
+                pendingResumeSeconds: 180,
+                currentPlayerTime: 0.4,
+                currentItemDuration: 1_800,
+                currentMediaRuntimeSeconds: 1_800
+            )
+        )
+    }
 }

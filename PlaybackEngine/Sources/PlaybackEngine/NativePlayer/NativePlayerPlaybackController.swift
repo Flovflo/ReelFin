@@ -76,16 +76,9 @@ public actor NativePlayerPlaybackController {
     ) async throws -> NativePlayerPlaybackSnapshot {
         AppLog.playback.notice("nativeplayer.original.resolve.start — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public)")
         stateMachine.apply(.beginResolve)
-        let options = PlaybackInfoOptions(
-            mode: .performance,
-            enableDirectPlay: true,
-            enableDirectStream: false,
-            allowTranscoding: nativeConfig.allowServerTranscodeFallback,
-            maxStreamingBitrate: nil,
-            startTimeTicks: startTimeTicks,
-            allowVideoStreamCopy: true,
-            allowAudioStreamCopy: true,
-            deviceProfile: nil
+        let options = Self.originalPlaybackInfoOptions(
+            nativeConfig: nativeConfig,
+            startTimeTicks: startTimeTicks
         )
         let sources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: options)
         let resolution = try resolver.resolve(
@@ -322,6 +315,72 @@ public actor NativePlayerPlaybackController {
         return sourceAudioSupported || anyTrackSupported
     }
 
+    public nonisolated static func originalPlaybackInfoOptions(
+        nativeConfig: NativePlayerConfig,
+        startTimeTicks: Int64?
+    ) -> PlaybackInfoOptions {
+        PlaybackInfoOptions(
+            mode: .performance,
+            enableDirectPlay: true,
+            enableDirectStream: false,
+            allowTranscoding: nativeConfig.allowServerTranscodeFallback,
+            maxStreamingBitrate: nil,
+            startTimeTicks: startTimeTicks,
+            allowVideoStreamCopy: true,
+            allowAudioStreamCopy: true,
+            deviceProfile: nil
+        )
+    }
+
+    public nonisolated static func makeAppleNativeSelection(
+        resolution: OriginalMediaResolution,
+        session: UserSession
+    ) -> PlaybackAssetSelection {
+        var headers = resolution.headers
+        headers["X-Emby-Token"] = session.token
+        let source = resolution.mediaSource
+        let debugInfo = PlaybackDebugInfo(
+            container: source.container ?? resolution.url.pathExtension,
+            videoCodec: source.videoCodec ?? "unknown",
+            videoBitDepth: source.videoBitDepth,
+            hdrMode: hdrMode(for: source),
+            audioMode: source.audioCodec ?? "unknown",
+            bitrate: source.bitrate,
+            playMethod: "DirectPlay"
+        )
+        return PlaybackAssetSelection(
+            source: source,
+            decision: PlaybackDecision(sourceID: source.id, route: .directPlay(resolution.url)),
+            assetURL: resolution.url,
+            headers: headers,
+            debugInfo: debugInfo
+        )
+    }
+
+    public nonisolated static func makeAppleNativeSnapshot(
+        selection: PlaybackAssetSelection,
+        session: UserSession,
+        startTimeTicks: Int64?
+    ) -> NativePlayerPlaybackSnapshot {
+        var preparedSelection = selection
+        preparedSelection.headers["X-Emby-Token"] = session.token
+        let audio = preparedSelection.source.audioTracks
+        let subtitles = preparedSelection.source.subtitleTracks
+        return NativePlayerPlaybackSnapshot(
+            overlayLines: appleNativeOverlayLines(for: preparedSelection),
+            routeDescription: "Direct Play (Apple Native)",
+            surface: .appleNative,
+            playbackURL: nil,
+            playbackHeaders: [:],
+            startTimeSeconds: startTimeTicks.map { Double($0) / 10_000_000 },
+            applePlaybackSelection: preparedSelection,
+            audioTracks: audio,
+            subtitleTracks: subtitles,
+            selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
+            selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
+        )
+    }
+
     private nonisolated static func isAppleNativeVideoCodec(
         _ codec: String,
         capabilities: DeviceCapabilities
@@ -358,25 +417,22 @@ public actor NativePlayerPlaybackController {
         resolution: OriginalMediaResolution,
         session: UserSession
     ) -> PlaybackAssetSelection {
-        var headers = resolution.headers
-        headers["X-Emby-Token"] = session.token
-        let source = resolution.mediaSource
-        let debugInfo = PlaybackDebugInfo(
-            container: source.container ?? resolution.url.pathExtension,
-            videoCodec: source.videoCodec ?? "unknown",
-            videoBitDepth: source.videoBitDepth,
-            hdrMode: hdrMode(for: source),
-            audioMode: source.audioCodec ?? "unknown",
-            bitrate: source.bitrate,
-            playMethod: "DirectPlay"
-        )
-        return PlaybackAssetSelection(
-            source: source,
-            decision: PlaybackDecision(sourceID: source.id, route: .directPlay(resolution.url)),
-            assetURL: resolution.url,
-            headers: headers,
-            debugInfo: debugInfo
-        )
+        Self.makeAppleNativeSelection(resolution: resolution, session: session)
+    }
+
+    private nonisolated static func appleNativeOverlayLines(for selection: PlaybackAssetSelection) -> [String] {
+        let source = selection.source
+        return [
+            "state=apple-native-directplay",
+            "mediaSource=\(source.id)",
+            "container=\(source.container ?? "unknown")",
+            "video=\(source.videoCodec ?? "unknown")",
+            "audio=\(source.audioCodec ?? "unknown")",
+            "originalMediaRequested=true",
+            "serverTranscodeUsed=false",
+            "nativeProbe=false",
+            "renderer=AVPlayerViewController"
+        ]
     }
 
     private func appleNativeOverlayLines(for resolution: OriginalMediaResolution) -> [String] {
@@ -394,7 +450,7 @@ public actor NativePlayerPlaybackController {
         ]
     }
 
-    private func hdrMode(for source: MediaSource) -> HDRPlaybackMode {
+    private nonisolated static func hdrMode(for source: MediaSource) -> HDRPlaybackMode {
         let rangeType = (source.videoRangeType ?? "").lowercased()
         let range = (source.videoRange ?? "").lowercased()
         let codec = source.normalizedVideoCodec

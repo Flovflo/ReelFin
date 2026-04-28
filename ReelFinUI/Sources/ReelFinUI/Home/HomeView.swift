@@ -1624,7 +1624,7 @@ struct HomeView: View {
     private func launchPlayback(for item: MediaItem) async {
         let session = dependencies.makePlaybackSession()
 #if os(iOS)
-        OrientationManager.shared.lockLandscapeForPlayerPresentation()
+        OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
 #endif
         playerSession = session
         playerItem = item

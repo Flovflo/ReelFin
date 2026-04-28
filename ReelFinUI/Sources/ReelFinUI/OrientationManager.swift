@@ -5,18 +5,20 @@ import UIKit
 public final class OrientationManager {
     public static let shared = OrientationManager()
     public var lock: UIInterfaceOrientationMask = .portrait
+    var geometryUpdateHandler: ((UIInterfaceOrientationMask) -> Void)?
 
     private init() {}
+
+    public func prepareLandscapeForPlayerCoverPresentation() {
+        // Keep the current scene stable; PlayerView requests landscape after it is mounted.
+    }
 
     public func lockLandscapeForPlayerPresentation(requestGeometryUpdate: Bool = true) {
         lock = .landscape
         updateSupportedOrientations()
 
         guard requestGeometryUpdate else { return }
-
-        for windowScene in foregroundWindowScenes {
-            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
-        }
+        requestSceneGeometryUpdate(.landscapeRight)
     }
 
     public func restorePortraitAfterPlayerDismissal(requestGeometryUpdate: Bool = true) {
@@ -24,9 +26,16 @@ public final class OrientationManager {
         updateSupportedOrientations()
 
         guard requestGeometryUpdate else { return }
+        requestSceneGeometryUpdate(.portrait)
+    }
 
+    private func requestSceneGeometryUpdate(_ orientation: UIInterfaceOrientationMask) {
+        if let geometryUpdateHandler {
+            geometryUpdateHandler(orientation)
+            return
+        }
         for windowScene in foregroundWindowScenes {
-            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: orientation))
         }
     }
 

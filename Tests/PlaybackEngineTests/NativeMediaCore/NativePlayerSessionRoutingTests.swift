@@ -1,4 +1,5 @@
 @testable import PlaybackEngine
+import AVFoundation
 import Foundation
 import Shared
 import XCTest
@@ -33,7 +34,7 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
 
         let itemID = "item-1"
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream")
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream.mp4")
         try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -61,9 +62,74 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
         XCTAssertFalse(controller.isNativePlayerActive)
         XCTAssertNil(controller.nativePlayerPlaybackURL)
         XCTAssertNotNil(controller.player.currentItem)
+        let asset = try XCTUnwrap(controller.player.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(asset.url, streamURL)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
         XCTAssertEqual(controller.routeDescription, "Direct Play")
+    }
+
+    func testNativeDirectPlayResumeSeeksWhenItemBecomesReadyBeforeAutoplay() async throws {
+        let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
+        let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
+        UserDefaults.standard.set(true, forKey: defaultsKey)
+        defer {
+            if let previousOverride {
+                UserDefaults.standard.set(previousOverride, forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let itemID = "item-resume"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream.mp4")
+        try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await MP4PlaybackFixture.makeH264AACMP4(
+            at: streamURL,
+            videoFrameCount: 4,
+            audioFrameCount: 264_600
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let resumeSeconds = 4.0
+        let apiClient = NativeSessionRoutingAPIClient(
+            configuration: ServerConfiguration(serverURL: root, nativePlayerConfig: NativePlayerConfig(enabled: false)),
+            source: MediaSource(
+                id: "source-resume",
+                itemID: itemID,
+                name: "Original",
+                fileSize: Int64((try? FileManager.default.attributesOfItem(atPath: streamURL.path)[.size] as? NSNumber)?.intValue ?? 0),
+                container: "mp4",
+                videoCodec: "h264",
+                audioCodec: "aac",
+                supportsDirectPlay: false,
+                supportsDirectStream: false
+            )
+        )
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: NativeSessionRoutingRepository())
+
+        try await controller.load(
+            item: MediaItem(
+                id: itemID,
+                name: "Fixture",
+                mediaType: .movie,
+                runtimeTicks: 5 * 10_000_000,
+                playbackPositionTicks: Int64(resumeSeconds * 10_000_000)
+            ),
+            autoPlay: false
+        )
+
+        let didSeekToResume = await waitUntil(timeout: 3) {
+            guard controller.player.currentItem?.status == .readyToPlay else { return false }
+            return PlaybackSessionController.isResumePositionSatisfied(
+                currentTime: controller.player.currentTime().seconds,
+                resumeSeconds: resumeSeconds,
+                toleranceSeconds: 0.5
+            )
+        }
+        XCTAssertTrue(didSeekToResume)
+        XCTAssertEqual(controller.player.rate, 0)
     }
 
     func testNativeModeStopReportsNativePlaybackTime() async throws {
@@ -152,6 +218,20 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
 
     private func doublePayload(_ value: Double) -> [UInt8] {
         withUnsafeBytes(of: value.bitPattern.bigEndian, Array.init)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return condition()
     }
 }
 

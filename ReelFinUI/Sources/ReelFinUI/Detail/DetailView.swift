@@ -270,7 +270,7 @@ struct DetailView: View {
                 playbackItem: viewModel.itemToPlay,
                 preferredSource: viewModel.preferredPlaybackSource,
                 optimizationStatus: viewModel.playbackOptimizationStatus,
-                playButtonLabel: viewModel.playButtonLabel,
+                playButtonLabel: viewModel.primaryPlayButtonLabel,
                 playbackStatusText: viewModel.playbackStatusText,
                 progress: resolvedHeroProgress,
                 isLoadingPlayback: Self.showsBlockingPlaybackPreparation(
@@ -278,7 +278,7 @@ struct DetailView: View {
                     isBackgroundWarmingPlayback: viewModel.isWarmingPlayback
                 ),
                 isInWatchlist: viewModel.isInWatchlist,
-                isWatched: viewModel.isWatched || viewModel.itemToPlay.isPlayed,
+                isWatched: viewModel.primaryPlaybackItemIsWatched,
                 contentWidth: resolvedMetadataWidth(for: viewportSize),
                 horizontalPadding: horizontalPadding,
                 safeAreaTop: safeAreaTop,
@@ -392,7 +392,7 @@ struct DetailView: View {
                         item: viewModel.detail.item,
                         preferredSource: viewModel.preferredPlaybackSource,
                         optimizationStatus: viewModel.playbackOptimizationStatus,
-                        playButtonLabel: viewModel.playButtonLabel,
+                        playButtonLabel: viewModel.primaryPlayButtonLabel,
                         playbackStatusText: viewModel.playbackStatusText,
                         progress: resolvedHeroProgress,
                         isLoadingPlayback: Self.showsBlockingPlaybackPreparation(
@@ -400,7 +400,7 @@ struct DetailView: View {
                             isBackgroundWarmingPlayback: viewModel.isWarmingPlayback
                         ),
                         isInWatchlist: viewModel.isInWatchlist,
-                        isWatched: viewModel.detail.item.isPlayed || viewModel.isWatched,
+                        isWatched: viewModel.primaryPlaybackItemIsWatched,
                         horizontalPadding: 0,
                         contentWidth: max(heroContentWidth, 420),
                         animateIn: hasAnimatedIn,
@@ -874,10 +874,13 @@ struct DetailView: View {
         guard !isLoadingPlayback else { return }
         let session = dependencies.makePlaybackSession()
         let targetItem = item ?? viewModel.itemToPlay
+        let startPosition: PlaybackStartPosition = item == nil
+            ? viewModel.primaryPlaybackStartPosition
+            : .resumeIfAvailable
         let nextEpisodeQueue = targetItem.mediaType == .episode ? viewModel.nextEpisodes(after: targetItem) : []
 
 #if os(iOS)
-        OrientationManager.shared.lockLandscapeForPlayerPresentation()
+        OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
 #endif
         isLoadingPlayback = true
         playerSession = session
@@ -886,7 +889,11 @@ struct DetailView: View {
         Task { @MainActor in
             await Task.yield()
             do {
-                try await session.load(item: targetItem, upNextEpisodes: nextEpisodeQueue)
+                try await session.load(
+                    item: targetItem,
+                    upNextEpisodes: nextEpisodeQueue,
+                    startPosition: startPosition
+                )
                 isLoadingPlayback = false
             } catch {
                 isLoadingPlayback = false
@@ -907,7 +914,10 @@ struct DetailView: View {
 
     @MainActor
     private func handlePlayerDismissal() {
-        playerSession?.stop()
+        let stoppedProgress = playerSession?.stop()
+        if let stoppedProgress {
+            viewModel.applyStoppedPlaybackProgress(stoppedProgress)
+        }
         playerSession = nil
         setPlayerCoverPresented(false)
         isLoadingPlayback = false
@@ -1706,7 +1716,7 @@ private struct IOSDetailHeroContent: View {
             }
             .frame(maxWidth: min(contentWidth, 720), alignment: .center)
         }
-        .padding(.top, safeAreaTop + 12 - (collapseProgress * 6))
+        .padding(.top, safeAreaTop + topChromeOffset - (collapseProgress * 4))
         .padding(.horizontal, horizontalPadding)
         .padding(.bottom, bottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1731,7 +1741,7 @@ private struct IOSDetailHeroContent: View {
             IOSHeroChromeCircleButton(
                 systemImage: "chevron.left",
                 accessibilityLabel: "Back",
-                diameter: isCompactHeroLayout ? 46 : 50,
+                diameter: isCompactHeroLayout ? 44 : 50,
                 action: onBack
             )
 
@@ -1741,15 +1751,15 @@ private struct IOSDetailHeroContent: View {
                 IOSHeroChromeBarButton(
                     systemImage: "arrow.down",
                     accessibilityLabel: "Download",
-                    controlWidth: isCompactHeroLayout ? 40 : 44,
-                    controlHeight: isCompactHeroLayout ? 28 : 30
+                    controlWidth: isCompactHeroLayout ? 38 : 44,
+                    controlHeight: isCompactHeroLayout ? 27 : 30
                 ) {
                     isDownloadAvailabilityAlertPresented = true
                 }
 
                 Rectangle()
                     .fill(Color.white.opacity(0.18))
-                    .frame(width: 1, height: isCompactHeroLayout ? 16 : 18)
+                    .frame(width: 1, height: isCompactHeroLayout ? 15 : 18)
 
                 ShareLink(
                     item: shareText,
@@ -1758,14 +1768,14 @@ private struct IOSDetailHeroContent: View {
                     IOSHeroChromeBarGlyph(
                         systemImage: "square.and.arrow.up",
                         accessibilityLabel: "Share",
-                        controlWidth: isCompactHeroLayout ? 40 : 44,
-                        controlHeight: isCompactHeroLayout ? 28 : 30
+                        controlWidth: isCompactHeroLayout ? 38 : 44,
+                        controlHeight: isCompactHeroLayout ? 27 : 30
                     )
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, isCompactHeroLayout ? 9 : 10)
-            .padding(.vertical, isCompactHeroLayout ? 7 : 8)
+            .padding(.horizontal, isCompactHeroLayout ? 8 : 10)
+            .padding(.vertical, isCompactHeroLayout ? 6 : 8)
             .reelFinGlassCapsule(
                 interactive: true,
                 tint: Color.white.opacity(0.16),
@@ -1802,11 +1812,11 @@ private struct IOSDetailHeroContent: View {
                 IOSDetailHeroPrimaryButton(
                     title: iosPlayButtonLabel,
                     isLoading: isLoadingPlayback,
-                    minHeight: isCompactHeroLayout ? 52 : 56,
-                    fontSize: isCompactHeroLayout ? 16 : 17,
+                    minHeight: isCompactHeroLayout ? 48 : 56,
+                    fontSize: isCompactHeroLayout ? 15.5 : 17,
                     action: onPlay
                 )
-                .frame(maxWidth: isCompactHeroLayout ? 248 : 272)
+                .frame(maxWidth: isCompactHeroLayout ? 236 : 272)
 
                 IOSDetailHeroRoundActionButton(
                     systemImage: isWatched ? "eye.fill" : "eye",
@@ -1814,7 +1824,7 @@ private struct IOSDetailHeroContent: View {
                     accessibilityIdentifier: "detail_watched_button",
                     accessibilityValue: isWatched ? "watched" : "not_watched",
                     isActive: isWatched,
-                    size: isCompactHeroLayout ? 52 : 56,
+                    size: isCompactHeroLayout ? 48 : 56,
                     action: onToggleWatched
                 )
 
@@ -1824,7 +1834,7 @@ private struct IOSDetailHeroContent: View {
                     accessibilityIdentifier: "detail_favorite_button",
                     accessibilityValue: isInWatchlist ? "liked" : "not_liked",
                     isActive: isInWatchlist,
-                    size: isCompactHeroLayout ? 52 : 56,
+                    size: isCompactHeroLayout ? 48 : 56,
                     action: onToggleWatchlist
                 )
             }
@@ -1837,17 +1847,17 @@ private struct IOSDetailHeroContent: View {
     @ViewBuilder
     private var resumeProgressBlock: some View {
         if hasResumeProgressInfo {
-            VStack(spacing: 8) {
+            VStack(spacing: isCompactHeroLayout ? 5 : 8) {
                 if let playbackStatusText, !playbackStatusText.isEmpty {
                     Text(playbackStatusText)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .font(.system(size: isCompactHeroLayout ? 13.5 : 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.84))
                         .multilineTextAlignment(.center)
-                        .lineLimit(2)
+                        .lineLimit(1)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if let progress, progress > 0 {
+                if let progress, progress >= 0.01 {
                     HeroProgressView(
                         progress: min(max(progress, 0), 1),
                         centered: true
@@ -1862,7 +1872,7 @@ private struct IOSDetailHeroContent: View {
     private var detailBlock: some View {
         VStack(alignment: .leading, spacing: detailBlockSpacing) {
             if let synopsisText, !synopsisText.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: isCompactHeroLayout ? 6 : 10) {
                     summaryText(synopsisText)
                         .font(.system(size: synopsisFontSize, weight: .regular, design: .rounded))
                         .foregroundStyle(.white.opacity(0.82))
@@ -1875,6 +1885,7 @@ private struct IOSDetailHeroContent: View {
                             alignment: .topLeading
                         )
                         .clipped()
+                        .layoutPriority(0)
 
                     if synopsisNeedsExpansion {
                         Button(isSynopsisExpanded ? "LESS" : "MORE") {
@@ -1883,14 +1894,14 @@ private struct IOSDetailHeroContent: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.system(size: isCompactHeroLayout ? 12 : 13, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.92))
-                        .padding(.horizontal, 15)
-                        .padding(.vertical, 9)
-                        .background(Color.white.opacity(0.12), in: Capsule(style: .continuous))
+                        .padding(.horizontal, isCompactHeroLayout ? 13 : 15)
+                        .padding(.vertical, isCompactHeroLayout ? 7 : 9)
+                        .background(Color.white.opacity(0.14), in: Capsule(style: .continuous))
                         .overlay {
                             Capsule(style: .continuous)
-                                .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 0.6)
                         }
                     }
                 }
@@ -1898,6 +1909,7 @@ private struct IOSDetailHeroContent: View {
             }
 
             footerRow
+                .layoutPriority(2)
         }
     }
 
@@ -1921,14 +1933,15 @@ private struct IOSDetailHeroContent: View {
     }
 
     private var footerRow: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: isCompactHeroLayout ? 8 : 12) {
             if optimizationStatus != nil || !footerPrimaryText.isEmpty || !badgeLabels.isEmpty {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: isCompactHeroLayout ? 8 : 10) {
                         if !footerPrimaryText.isEmpty {
                             Text(footerPrimaryText)
-                                .font(.system(size: 15, weight: .medium, design: .rounded))
+                                .font(.system(size: isCompactHeroLayout ? 14 : 15, weight: .medium, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.78))
+                                .lineLimit(1)
                         }
 
                         if let optimizationStatus {
@@ -1946,11 +1959,12 @@ private struct IOSDetailHeroContent: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
+                        HStack(spacing: isCompactHeroLayout ? 8 : 10) {
                             if !footerPrimaryText.isEmpty {
                                 Text(footerPrimaryText)
-                                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                                    .font(.system(size: isCompactHeroLayout ? 14 : 15, weight: .medium, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.78))
+                                    .lineLimit(1)
                             }
 
                             if let optimizationStatus {
@@ -2003,9 +2017,6 @@ private struct IOSDetailHeroContent: View {
     }
 
     private var iosPlayButtonLabel: String {
-        if isWatched || playbackItem.isPlayed {
-            return "Play Again"
-        }
         return playButtonLabel
     }
 
@@ -2086,27 +2097,43 @@ private struct IOSDetailHeroContent: View {
     }
 
     private var isCompactHeroLayout: Bool {
-        contentWidth < 370
+        contentWidth < IOSDetailSynopsisLayout.compactContentWidthThreshold
     }
 
     private var heroTopSpacer: CGFloat {
-        max(24, 42 - (collapseProgress * 18))
+        if isCompactHeroLayout {
+            return max(8, 18 - (collapseProgress * 8))
+        }
+        return max(20, 36 - (collapseProgress * 16))
     }
 
     private var contentStackSpacing: CGFloat {
-        max(20, 26 - (collapseProgress * 6))
+        if isCompactHeroLayout {
+            return max(10, 16 - (collapseProgress * 4))
+        }
+        return max(18, 24 - (collapseProgress * 6))
     }
 
     private var identityBlockSpacing: CGFloat {
-        max(15, 20 - (collapseProgress * 6))
+        if isCompactHeroLayout {
+            return max(9, 13 - (collapseProgress * 4))
+        }
+        return max(14, 18 - (collapseProgress * 5))
     }
 
     private var detailBlockSpacing: CGFloat {
-        max(14, 18 - (collapseProgress * 4))
+        if isCompactHeroLayout {
+            return max(7, 10 - (collapseProgress * 3))
+        }
+        return max(12, 16 - (collapseProgress * 4))
     }
 
     private var synopsisFontSize: CGFloat {
-        17
+        isCompactHeroLayout ? 15.5 : 17
+    }
+
+    private var topChromeOffset: CGFloat {
+        isCompactHeroLayout ? 22 : 18
     }
 
     private var synopsisLineLimit: Int {

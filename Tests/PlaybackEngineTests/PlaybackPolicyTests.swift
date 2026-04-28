@@ -3,6 +3,29 @@ import Shared
 import XCTest
 
 final class PlaybackPolicyTests: XCTestCase {
+    private var previousNativePlayerRuntimeOverride: Any?
+
+    override func setUp() {
+        super.setUp()
+        previousNativePlayerRuntimeOverride = UserDefaults.standard.object(
+            forKey: NativePlayerRuntimeDefaults.enabledKey
+        )
+        UserDefaults.standard.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
+    }
+
+    override func tearDown() {
+        if let previousNativePlayerRuntimeOverride {
+            UserDefaults.standard.set(
+                previousNativePlayerRuntimeOverride,
+                forKey: NativePlayerRuntimeDefaults.enabledKey
+            )
+        } else {
+            UserDefaults.standard.removeObject(forKey: NativePlayerRuntimeDefaults.enabledKey)
+        }
+        previousNativePlayerRuntimeOverride = nil
+        super.tearDown()
+    }
+
     func testRecoveryPlanOriginalLockNeverFallsBackToH264WhenDisabled() {
         let profiles = PlaybackSessionController.recoveryPlan(
             after: .serverDefault,
@@ -101,7 +124,7 @@ final class PlaybackPolicyTests: XCTestCase {
                 reason: StartupFailureReason.directPlayPreflightInsufficient.rawValue
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
@@ -276,11 +299,11 @@ final class PlaybackPolicyTests: XCTestCase {
         )
     }
 
-    func testPinnedHLSVariantPreservesMasterResumeQuery() throws {
+    func testPinnedHLSVariantDoesNotPropagateMasterResumeQuery() throws {
         let masterURL = URL(string: "https://example.com/videos/item/master.m3u8?MediaSourceId=source&StartTimeTicks=51130000000&api_key=token")!
         let variantURL = URL(string: "https://example.com/videos/item/main.m3u8?MediaSourceId=source&api_key=token")!
 
-        let resolved = PlaybackSessionController.variantURLPreservingResumeQuery(
+        let resolved = PlaybackSessionController.variantURLStrippingResumeQuery(
             masterURL: masterURL,
             variantURL: variantURL
         )
@@ -290,7 +313,7 @@ final class PlaybackPolicyTests: XCTestCase {
                 ($0.name.lowercased(), $0.value ?? "")
             }
         )
-        XCTAssertEqual(query["starttimeticks"], "51130000000")
+        XCTAssertNil(query["starttimeticks"])
         XCTAssertEqual(query["mediasourceid"], "source")
         XCTAssertEqual(query["api_key"], "token")
     }
@@ -733,7 +756,7 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertTrue(StartupFailureReason.startupVideoPrerollTimeout.shouldTriggerRecovery)
         XCTAssertFalse(StartupFailureReason.directPlayPreflightInsufficient.shouldTriggerRecovery)
         XCTAssertFalse(StartupFailureReason.directPlayStall.shouldTriggerRecovery)
-        XCTAssertFalse(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
+        XCTAssertTrue(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
     }
 
     func testStartupFailureReasonTransientDoesNotTriggerRecovery() {

@@ -88,7 +88,8 @@ public actor PlaybackCoordinator {
         allowTranscodingFallbackInPerformance: Bool = true,
         transcodeProfile: TranscodeURLProfile = .serverDefault,
         startTimeTicks: Int64? = nil,
-        allowDirectRoutes: Bool = true
+        allowDirectRoutes: Bool = true,
+        nativeEngineFallbackReason: String? = nil
     ) async throws -> PlaybackAssetSelection {
         guard
             let configuration = await apiClient.currentConfiguration(),
@@ -98,7 +99,7 @@ public actor PlaybackCoordinator {
         }
 
         let nativeConfig = configuration.nativePlayerConfig.applyingRuntimeOverride()
-        if nativeConfig.enabled {
+        if nativeConfig.enabled, nativeEngineFallbackReason == nil {
             let proof = NativePlayerRouteProof(
                 usedLegacyPlaybackCoordinator: true,
                 transcodeProfile: transcodeProfile.rawValue
@@ -109,6 +110,11 @@ public actor PlaybackCoordinator {
                 "nativeplayer.route.guard.blocked — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) reason=\(reason, privacy: .public)"
             )
             throw NativePlayerRouteViolation.legacyPlaybackCoordinator
+        }
+        if nativeConfig.enabled, let nativeEngineFallbackReason {
+            AppLog.playback.notice(
+                "nativeplayer.route.guard.recovery_override — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) reason=\(nativeEngineFallbackReason, privacy: .public) profile=\(transcodeProfile.rawValue, privacy: .public)"
+            )
         }
 
         let maxBitrate = configuration.effectiveMaxStreamingBitrate
@@ -314,6 +320,8 @@ public actor PlaybackCoordinator {
             )
         }
 
+        assetURL = strippingServerStartTimeQuery(from: assetURL)
+
         // HLS segment/key fetches are more reliable when auth is present in URL query.
         assetURL = injectingAPIKeyIfNeeded(assetURL, token: session.token)
 
@@ -507,6 +515,18 @@ public actor PlaybackCoordinator {
         queryItems.removeAll(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
         queryItems.append(URLQueryItem(name: name, value: value))
         components.queryItems = queryItems
+        return components.url ?? url
+    }
+
+    private func strippingServerStartTimeQuery(from url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        let resumeKeys = ["StartTimeTicks", "startTimeTicks", "StartTime", "startTime"]
+        let filteredItems = (components.queryItems ?? []).filter { item in
+            !resumeKeys.contains { $0.caseInsensitiveCompare(item.name) == .orderedSame }
+        }
+        components.queryItems = filteredItems.isEmpty ? nil : filteredItems
         return components.url ?? url
     }
 

@@ -10,7 +10,11 @@ final class IOSDetailSynopsisLayoutTests: XCTestCase {
         )
         XCTAssertEqual(
             IOSDetailSynopsisLayout.lineLimit(isExpanded: true, contentWidth: 353),
-            6
+            4
+        )
+        XCTAssertEqual(
+            IOSDetailSynopsisLayout.lineLimit(isExpanded: false, contentWidth: 402),
+            2
         )
     }
 
@@ -21,14 +25,14 @@ final class IOSDetailSynopsisLayoutTests: XCTestCase {
         )
         XCTAssertEqual(
             IOSDetailSynopsisLayout.lineLimit(isExpanded: true, contentWidth: 700),
-            8
+            6
         )
     }
 
     func testMaximumHeightScalesFromFiniteLineLimit() {
-        let height = IOSDetailSynopsisLayout.maximumHeight(fontSize: 17, lineLimit: 6)
+        let height = IOSDetailSynopsisLayout.maximumHeight(fontSize: 15.5, lineLimit: 4)
 
-        XCTAssertEqual(height, 137, accuracy: 0.001)
+        XCTAssertEqual(height, 84, accuracy: 0.001)
     }
 
     func testExpansionThresholdTracksCollapsedCompactCapacity() {

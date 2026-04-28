@@ -5,18 +5,31 @@ import XCTest
 @MainActor
 final class PlayerOrientationLockTests: XCTestCase {
     override func tearDown() {
+        OrientationManager.shared.geometryUpdateHandler = nil
         OrientationManager.shared.restorePortraitAfterPlayerDismissal(requestGeometryUpdate: false)
         super.tearDown()
     }
 
-    func testPlayerPresentationLocksLandscapeOnlyBeforeCoverAppears() {
+    func testPlayerCoverPreparationKeepsCurrentOrientationStable() {
         OrientationManager.shared.lock = .portrait
+        var requestedOrientations: [UIInterfaceOrientationMask] = []
+        OrientationManager.shared.geometryUpdateHandler = { requestedOrientations.append($0) }
 
-        OrientationManager.shared.lockLandscapeForPlayerPresentation(requestGeometryUpdate: false)
+        OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
+
+        XCTAssertEqual(OrientationManager.shared.lock, .portrait)
+        XCTAssertTrue(requestedOrientations.isEmpty)
+    }
+
+    func testVisiblePlayerRequestsLandscapeGeometryUpdate() {
+        OrientationManager.shared.lock = .portrait
+        var requestedOrientations: [UIInterfaceOrientationMask] = []
+        OrientationManager.shared.geometryUpdateHandler = { requestedOrientations.append($0) }
+
+        OrientationManager.shared.lockLandscapeForPlayerPresentation()
 
         XCTAssertEqual(OrientationManager.shared.lock, .landscape)
-        XCTAssertFalse(OrientationManager.shared.lock.contains(.portrait))
-        XCTAssertFalse(OrientationManager.shared.lock.contains(.portraitUpsideDown))
+        XCTAssertEqual(requestedOrientations, [.landscapeRight])
     }
 
     func testPlayerDismissalRestoresPortraitOutsidePlayer() {

@@ -59,6 +59,27 @@ final class PlaybackStopReportingTests: XCTestCase {
         XCTAssertEqual(progressUpdates.first?.positionTicks, 5_493_500_000)
     }
 
+    func testStopReturnsLocalProgressSnapshotForImmediateUIRefresh() async {
+        let stoppedExpectation = expectation(description: "stopped playback reported")
+        let progressExpectation = expectation(description: "progress playback reported")
+        let apiClient = StopReportingAPIClient(
+            stoppedExpectation: stoppedExpectation,
+            progressExpectation: progressExpectation
+        )
+        let repository = StopReportingRepository()
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: repository)
+
+        controller.currentItemID = "movie-1"
+        controller.currentTime = 721.2
+        controller.player.replaceCurrentItem(with: AVPlayerItem(url: URL(string: "https://example.com/video.mp4")!))
+
+        let progress = controller.stop()
+
+        XCTAssertEqual(progress?.itemID, "movie-1")
+        XCTAssertEqual(progress?.positionTicks, 7_212_000_000)
+        await fulfillment(of: [progressExpectation, stoppedExpectation], timeout: 1.0)
+    }
+
     func testStopReportsPendingSeekTimeBeforePeriodicObserverRuns() async {
         let stoppedExpectation = expectation(description: "pending seek stopped playback reported")
         let progressExpectation = expectation(description: "pending seek progress playback reported")
@@ -79,6 +100,32 @@ final class PlaybackStopReportingTests: XCTestCase {
         let stoppedUpdates = await apiClient.stoppedUpdates
 
         XCTAssertEqual(stoppedUpdates.first?.positionTicks, 6_124_000_000)
+    }
+
+    func testPendingResumeWinsOverStartupTimeUntilSeekCompletes() {
+        let position = PlaybackSessionController.resolvedProgressPositionSeconds(
+            pendingPlaybackPositionOverrideSeconds: nil,
+            playerAbsoluteSeconds: 3.4,
+            observedSeconds: 3.4,
+            lastKnownPlaybackPositionSeconds: nil,
+            pendingResumeSeconds: 211.34,
+            sessionInitialResumeSeconds: 211.34
+        )
+
+        XCTAssertEqual(position, 211.34, accuracy: 0.001)
+    }
+
+    func testPendingResumeDoesNotDiscardLaterObservedPlayback() {
+        let position = PlaybackSessionController.resolvedProgressPositionSeconds(
+            pendingPlaybackPositionOverrideSeconds: nil,
+            playerAbsoluteSeconds: 260.2,
+            observedSeconds: 260.2,
+            lastKnownPlaybackPositionSeconds: 260.2,
+            pendingResumeSeconds: 211.34,
+            sessionInitialResumeSeconds: 211.34
+        )
+
+        XCTAssertEqual(position, 260.2, accuracy: 0.001)
     }
 
     func testFinishPlaybackMarksEpisodeSeriesAsFollowed() async {

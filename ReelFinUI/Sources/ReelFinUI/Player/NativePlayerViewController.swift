@@ -131,9 +131,7 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
     @MainActor
     private static func configureHDRRendering(on controller: AVPlayerViewController) {
-#if os(iOS)
-        controller.preferredDisplayDynamicRange = .high
-#elseif os(tvOS)
+#if os(tvOS)
         if Self.shouldApplyPreferredDisplayCriteriaAutomatically(
             isTVOS: true,
             isSimulator: Self.isRunningInSimulator
@@ -268,15 +266,38 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
 
         private func observeReadyForDisplay(on controller: AVPlayerViewController) {
             readyForDisplayObservation = nil
-            if controller.isReadyForDisplay {
-                onReadyForDisplay?()
-            }
+            notifyReadyForDisplayIfNeeded(on: controller)
             readyForDisplayObservation = controller.observe(\.isReadyForDisplay, options: [.new]) { [weak self] controller, _ in
-                guard controller.isReadyForDisplay else { return }
                 Task { @MainActor in
-                    self?.onReadyForDisplay?()
+                    self?.notifyReadyForDisplayIfNeeded(on: controller)
                 }
             }
+        }
+
+        private func notifyReadyForDisplayIfNeeded(on controller: AVPlayerViewController) {
+            let itemStatus = controller.player?.currentItem?.status ?? .unknown
+            let isRenderSurfaceReattaching: Bool
+#if os(iOS)
+            isRenderSurfaceReattaching = isTemporarilyDetachedForReattach
+#else
+            isRenderSurfaceReattaching = false
+#endif
+            guard Self.shouldForwardReadyForDisplay(
+                controllerIsReadyForDisplay: controller.isReadyForDisplay,
+                itemStatus: itemStatus,
+                isRenderSurfaceReattaching: isRenderSurfaceReattaching
+            ) else {
+                return
+            }
+            onReadyForDisplay?()
+        }
+
+        nonisolated static func shouldForwardReadyForDisplay(
+            controllerIsReadyForDisplay: Bool,
+            itemStatus: AVPlayerItem.Status,
+            isRenderSurfaceReattaching: Bool
+        ) -> Bool {
+            controllerIsReadyForDisplay && itemStatus == .readyToPlay && !isRenderSurfaceReattaching
         }
 
         nonisolated static func shouldReattachRenderSurfaceAfterReady(isTVOS: Bool) -> Bool {
@@ -366,12 +387,26 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
             isTemporarilyDetachedForReattach = false
             reattachGeneration &+= 1
             let generation = reattachGeneration
+            isTemporarilyDetachedForReattach = true
 
             DispatchQueue.main.async { [weak self, weak controller, weak item] in
-                guard let self, let controller, let item else { return }
-                guard self.reattachGeneration == generation else { return }
-                guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
-                guard player.currentItem === item else { return }
+                guard let self else { return }
+                guard let controller, let item else {
+                    self.isTemporarilyDetachedForReattach = false
+                    return
+                }
+                guard self.reattachGeneration == generation else {
+                    self.isTemporarilyDetachedForReattach = false
+                    return
+                }
+                guard self.observedItemIdentifier == ObjectIdentifier(item) else {
+                    self.isTemporarilyDetachedForReattach = false
+                    return
+                }
+                guard player.currentItem === item else {
+                    self.isTemporarilyDetachedForReattach = false
+                    return
+                }
                 let playbackIntent = PlaybackResumePolicy.controllerReattachPlaybackIntent(
                     playerRate: player.rate,
                     timeControlStatus: player.timeControlStatus
@@ -383,20 +418,22 @@ struct NativePlayerViewController: UIViewControllerRepresentable {
                 // Detach and re-attach the player to force AVPlayerViewController
                 // to fully re-initialize its internal video rendering pipeline (XPC).
                 AppLog.playback.notice("playback.avkit.render_surface.reattach — reason=item_ready_to_play")
-                self.isTemporarilyDetachedForReattach = true
                 controller.player = nil
                 let workItem = DispatchWorkItem { [weak self, weak controller, weak item] in
-                    guard let self, let controller, let item else { return }
+                    guard let self else { return }
                     defer {
                         self.isTemporarilyDetachedForReattach = false
                         self.reattachWorkItem = nil
                     }
+                    guard let controller, let item else { return }
                     guard self.reattachGeneration == generation else { return }
                     guard self.observedItemIdentifier == ObjectIdentifier(item) else { return }
                     guard player.currentItem === item else { return }
                     controller.player = player
                     NativePlayerViewController.configureHDRRendering(on: controller)
                     controller.player?.appliesMediaSelectionCriteriaAutomatically = false
+                    self.isTemporarilyDetachedForReattach = false
+                    self.observeReadyForDisplay(on: controller)
                     if playbackIntent.resumeAfterAttach {
                         player.play()
                     }

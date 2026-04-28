@@ -96,18 +96,31 @@ final class NativePlayerRouteGuardTests: XCTestCase {
         XCTAssertFalse(overridden.allowServerTranscodeFallback)
     }
 
-    func testWarmupDoesNotResolveLegacyPlaybackWhenNativeModeEnabled() async {
+    func testWarmupResolvesOriginalDirectPlayWhenNativeModeEnabled() async throws {
         let apiClient = NativeWarmupGuardAPIClient(
             configuration: ServerConfiguration(
                 serverURL: URL(string: "https://jellyfin.example")!,
                 nativePlayerConfig: NativePlayerConfig(enabled: true)
             )
         )
-        let warmup = PlaybackWarmupManager(apiClient: apiClient, ttl: 0)
+        let warmup = PlaybackWarmupManager(apiClient: apiClient, ttl: 60)
 
         await warmup.warm(itemID: "item-1")
+        let warmedSelection = await warmup.selection(for: "item-1")
+        let selection = try XCTUnwrap(warmedSelection)
+        let url = selection.assetURL
+        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
 
-        XCTAssertEqual(apiClient.fetchPlaybackSourcesCallCount, 0)
+        XCTAssertEqual(apiClient.fetchPlaybackSourcesCallCount, 1)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.mode, .performance)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectPlay, true)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
+        XCTAssertEqual(url.path, "/Videos/item-1/stream.mp4")
+        XCTAssertEqual(queryItems.first { $0.name == "static" }?.value, "true")
+        XCTAssertEqual(queryItems.first { $0.name == "MediaSourceId" }?.value, "source-1")
+        XCTAssertEqual(queryItems.first { $0.name == "api_key" }?.value, "secret")
+        XCTAssertTrue(NativePlayerRouteGuard.validateOriginalPlaybackURL(url).isEmpty)
     }
 
     func testPlaybackCoordinatorThrowsBeforeLegacyPlaybackInfoWhenNativeModeEnabled() async throws {
@@ -131,11 +144,41 @@ final class NativePlayerRouteGuardTests: XCTestCase {
 
         XCTAssertEqual(apiClient.fetchPlaybackSourcesCallCount, 0)
     }
+
+    func testPlaybackCoordinatorAllowsExplicitNativeRecoveryFallback() async throws {
+        let apiClient = NativeWarmupGuardAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: URL(string: "https://jellyfin.example")!,
+                nativePlayerConfig: NativePlayerConfig(enabled: true)
+            )
+        )
+        let coordinator = PlaybackCoordinator(apiClient: apiClient)
+        let startTimeTicks: Int64 = 12_340_000_000
+
+        let selection = try await coordinator.resolvePlayback(
+            itemID: "item-1",
+            mode: .balanced,
+            transcodeProfile: .appleOptimizedHEVC,
+            startTimeTicks: startTimeTicks,
+            allowDirectRoutes: false,
+            nativeEngineFallbackReason: StartupFailureReason.directPlayPostStartStall.rawValue
+        )
+
+        guard case .transcode = selection.decision.route else {
+            return XCTFail("Expected explicit native recovery fallback to select a transcode route.")
+        }
+        XCTAssertEqual(apiClient.fetchPlaybackSourcesCallCount, 1)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.startTimeTicks, startTimeTicks)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectPlay, false)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, true)
+    }
 }
 
 private final class NativeWarmupGuardAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
     private let configuration: ServerConfiguration
     private(set) var fetchPlaybackSourcesCallCount = 0
+    private(set) var lastPlaybackInfoOptions: PlaybackInfoOptions?
 
     init(configuration: ServerConfiguration) {
         self.configuration = configuration
@@ -161,7 +204,25 @@ private final class NativeWarmupGuardAPIClient: JellyfinAPIClientProtocol, @unch
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { [] }
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
         fetchPlaybackSourcesCallCount += 1
-        return []
+        return [
+            MediaSource(
+                id: "source-1",
+                itemID: itemID,
+                name: "Original",
+                fileSize: 4_000_000_000,
+                container: "mp4",
+                videoCodec: "hevc",
+                audioCodec: "eac3",
+                bitrate: 22_000_000,
+                videoBitDepth: 10,
+                supportsDirectPlay: true,
+                supportsDirectStream: true
+            )
+        ]
+    }
+    func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
+        lastPlaybackInfoOptions = options
+        return try await fetchPlaybackSources(itemID: itemID)
     }
     func fetchTrickplayManifest(itemID: String, mediaSourceID: String?) async throws -> TrickplayManifest? { nil }
     func trickplayTileBaseURL(itemID: String, mediaSourceID: String?, width: Int) async -> URL? { nil }

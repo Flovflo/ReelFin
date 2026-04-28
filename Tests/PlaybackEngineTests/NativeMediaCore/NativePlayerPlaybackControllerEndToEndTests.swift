@@ -6,7 +6,7 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
     func testPrepareRoutesOriginalMP4ToAppleNativePlaybackWithoutTranscodeURL() async throws {
         let itemID = "item-1"
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream")
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream.mp4")
         try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
         defer { try? FileManager.default.removeItem(at: root) }

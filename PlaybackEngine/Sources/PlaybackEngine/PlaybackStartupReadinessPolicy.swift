@@ -49,10 +49,6 @@ public enum PlaybackStartupReadinessPolicy {
         resumeSeconds: Double,
         isTVOS: Bool
     ) -> Bool {
-        if isProgressiveDirectPlay(route: route) {
-            return false
-        }
-
         return requirement(
             route: route,
             sourceBitrate: sourceBitrate,
@@ -116,6 +112,16 @@ public enum PlaybackStartupReadinessPolicy {
             guard bitrate >= 18_000_000 || (isResume && bitrate >= 12_000_000) else {
                 return nil
             }
+            if bitrate >= 18_000_000 {
+                return Requirement(
+                    minimumBufferDuration: 24,
+                    preferredBufferDuration: 24,
+                    timeout: 24,
+                    pollInterval: 0.15,
+                    reason: isResume ? "ios_resume_directplay_ready" : "ios_high_bitrate_directplay_ready",
+                    allowsTimeoutStart: false
+                )
+            }
             return Requirement(
                 minimumBufferDuration: 0,
                 preferredBufferDuration: 0,
@@ -176,15 +182,7 @@ public enum PlaybackStartupReadinessPolicy {
             )
         }
 
-        guard bitrate >= 12_000_000 else { return nil }
-        return Requirement(
-            minimumBufferDuration: 3,
-            preferredBufferDuration: 6,
-            timeout: 1.25,
-            pollInterval: 0.12,
-            reason: "ios_high_bitrate_hls",
-            allowsTimeoutStart: true
-        )
+        return nil
     }
 
     private static func isPlaylistURL(_ url: URL) -> Bool {

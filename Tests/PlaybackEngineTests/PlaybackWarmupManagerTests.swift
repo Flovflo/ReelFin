@@ -63,7 +63,7 @@ final class PlaybackWarmupManagerTests: XCTestCase {
         XCTAssertNil(droppedSelection)
     }
 
-    func test_warmWithResumePreheatsOncePerResumeBucket() async {
+    func test_warmWithResumeSkipsIPhoneHLSStartupPreheat() async {
         let preheater = WarmStartupPreheaterRecorder()
         let manager = PlaybackWarmupManager(
             ttl: 120,
@@ -81,33 +81,99 @@ final class PlaybackWarmupManagerTests: XCTestCase {
         )
 
         await manager.warm(itemID: "movie-1", resumeSeconds: 600, runtimeSeconds: 3_600, isTVOS: false)
-        await manager.warm(itemID: "movie-1", resumeSeconds: 610, runtimeSeconds: 3_600, isTVOS: false)
-        await manager.warm(itemID: "movie-1", resumeSeconds: 640, runtimeSeconds: 3_600, isTVOS: false)
+
+        let calls = await preheater.calls
+        let result = await manager.startupPreheatResult(
+            for: "movie-1",
+            resumeSeconds: 600,
+            runtimeSeconds: 3_600,
+            isTVOS: false
+        )
+
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertNil(result)
+    }
+
+    func test_warmWithResumePreheatsTvOSHLSOncePerResumeBucket() async {
+        let preheater = WarmStartupPreheaterRecorder()
+        let manager = PlaybackWarmupManager(
+            ttl: 120,
+            resolver: { itemID in
+                makeWarmPlaylistSelection(itemID: itemID)
+            },
+            startupPreheater: { selection, resumeSeconds, runtimeSeconds, isTVOS in
+                await preheater.preheat(
+                    selection: selection,
+                    resumeSeconds: resumeSeconds,
+                    runtimeSeconds: runtimeSeconds,
+                    isTVOS: isTVOS
+                )
+            }
+        )
+
+        await manager.warm(itemID: "movie-1", resumeSeconds: 600, runtimeSeconds: 3_600, isTVOS: true)
+        await manager.warm(itemID: "movie-1", resumeSeconds: 610, runtimeSeconds: 3_600, isTVOS: true)
+        await manager.warm(itemID: "movie-1", resumeSeconds: 640, runtimeSeconds: 3_600, isTVOS: true)
 
         let calls = await preheater.calls
         let result = await manager.startupPreheatResult(
             for: "movie-1",
             resumeSeconds: 610,
             runtimeSeconds: 3_600,
-            isTVOS: false
+            isTVOS: true
         )
 
         XCTAssertEqual(calls.map(\.resumeSeconds), [600, 640])
-        XCTAssertEqual(calls.map(\.isTVOS), [false, false])
+        XCTAssertEqual(calls.map(\.isTVOS), [true, true])
         XCTAssertEqual(result?.reason, "test_preheat")
     }
 
-    func test_nativeModeClearsWarmupCacheAndSkipsLegacyResolution() async {
-        let nativeGate = WarmNativeModeGate()
+    func test_warmWithResumeSkipsIPhoneHighRiskProgressiveDirectPlayPreheat() async {
+        let preheater = WarmStartupPreheaterRecorder()
+        let manager = PlaybackWarmupManager(
+            ttl: 120,
+            resolver: { itemID in
+                makeWarmHighRiskDirectPlaySelection(itemID: itemID)
+            },
+            startupPreheater: { selection, resumeSeconds, runtimeSeconds, isTVOS in
+                await preheater.preheat(
+                    selection: selection,
+                    resumeSeconds: resumeSeconds,
+                    runtimeSeconds: runtimeSeconds,
+                    isTVOS: isTVOS
+                )
+            }
+        )
+
+        await manager.warm(itemID: "movie-1", resumeSeconds: 600, runtimeSeconds: 3_600, isTVOS: false)
+
+        let calls = await preheater.calls
+        let result = await manager.startupPreheatResult(
+            for: "movie-1",
+            resumeSeconds: 600,
+            runtimeSeconds: 3_600,
+            isTVOS: false
+        )
+
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertNil(result)
+    }
+
+    func test_warmupCacheRunsStartupPreheatWithoutNativeDisableGate() async {
         let recorder = WarmResolverRecorder()
+        let preheater = WarmStartupPreheaterRecorder()
         let manager = PlaybackWarmupManager(
             ttl: 120,
             resolver: { itemID in
                 try await recorder.resolve(itemID: itemID)
             },
-            startupPreheater: { _, _, _, _ in nil },
-            nativeModeEnabled: {
-                await nativeGate.isEnabled
+            startupPreheater: { selection, resumeSeconds, runtimeSeconds, isTVOS in
+                await preheater.preheat(
+                    selection: selection,
+                    resumeSeconds: resumeSeconds,
+                    runtimeSeconds: runtimeSeconds,
+                    isTVOS: isTVOS
+                )
             }
         )
 
@@ -115,16 +181,18 @@ final class PlaybackWarmupManagerTests: XCTestCase {
         let cachedBeforeNativeMode = await manager.selection(for: "movie-1")
         XCTAssertNotNil(cachedBeforeNativeMode)
 
-        await nativeGate.setEnabled(true)
-        await manager.warm(itemID: "movie-2")
+        await manager.warm(itemID: "movie-2", resumeSeconds: 600, runtimeSeconds: 3_600, isTVOS: false)
 
         let firstSelectionAfterNativeMode = await manager.selection(for: "movie-1")
         let secondSelectionAfterNativeMode = await manager.selection(for: "movie-2")
         let callCount = await recorder.callCount
+        let calls = await preheater.calls
 
-        XCTAssertNil(firstSelectionAfterNativeMode)
-        XCTAssertNil(secondSelectionAfterNativeMode)
-        XCTAssertEqual(callCount, 1)
+        XCTAssertNotNil(firstSelectionAfterNativeMode)
+        XCTAssertNotNil(secondSelectionAfterNativeMode)
+        XCTAssertEqual(callCount, 2)
+        XCTAssertEqual(calls.map(\.itemID), ["movie-2"])
+        XCTAssertEqual(calls.map(\.resumeSeconds), [600])
     }
 }
 
@@ -134,14 +202,6 @@ private actor WarmResolverRecorder {
     func resolve(itemID: String) async throws -> PlaybackAssetSelection {
         callCount += 1
         return makeWarmSelection(itemID: itemID)
-    }
-}
-
-private actor WarmNativeModeGate {
-    private(set) var isEnabled = false
-
-    func setEnabled(_ enabled: Bool) {
-        isEnabled = enabled
     }
 }
 
@@ -190,7 +250,7 @@ private func makeWarmSelection(itemID: String) -> PlaybackAssetSelection {
             container: "mp4",
             videoCodec: "h264",
             audioCodec: "aac",
-            bitrate: 8_000_000,
+            bitrate: 22_000_000,
             supportsDirectPlay: true,
             supportsDirectStream: true,
             directStreamURL: URL(string: "https://example.com/\(itemID).m3u8"),
@@ -210,6 +270,43 @@ private func makeWarmSelection(itemID: String) -> PlaybackAssetSelection {
             hdrMode: .sdr,
             audioMode: "aac",
             bitrate: nil,
+            playMethod: "DirectPlay"
+        )
+    )
+}
+
+private func makeWarmHighRiskDirectPlaySelection(itemID: String) -> PlaybackAssetSelection {
+    let url = URL(string: "https://example.com/\(itemID).mp4")!
+    return PlaybackAssetSelection(
+        source: MediaSource(
+            id: itemID,
+            itemID: itemID,
+            name: itemID,
+            fileSize: 4_000_000_000,
+            container: "mp4",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 22_000_000,
+            videoRange: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/\(itemID).m3u8"),
+            directPlayURL: url,
+            transcodeURL: URL(string: "https://example.com/\(itemID)-transcode.m3u8")
+        ),
+        decision: PlaybackDecision(
+            sourceID: itemID,
+            route: .directPlay(url)
+        ),
+        assetURL: url,
+        headers: [:],
+        debugInfo: PlaybackDebugInfo(
+            container: "mp4",
+            videoCodec: "hevc",
+            videoBitDepth: 10,
+            hdrMode: .hdr10,
+            audioMode: "eac3",
+            bitrate: 22_000_000,
             playMethod: "DirectPlay"
         )
     )

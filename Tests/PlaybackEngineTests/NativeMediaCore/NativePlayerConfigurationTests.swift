@@ -1,4 +1,5 @@
 @testable import ReelFinUI
+import AVFoundation
 import CoreMedia
 import NativeMediaCore
 import Shared
@@ -427,6 +428,29 @@ final class NativePlayerConfigurationTests: XCTestCase {
         XCTAssertTrue(
             NativePlayerViewController.Coordinator.shouldReattachRenderSurfaceAfterReady(isTVOS: false)
         )
+    }
+
+    func testAppleNativePlayerForwardsReadyForDisplayOnlyAfterItemReady() {
+        XCTAssertFalse(NativePlayerViewController.Coordinator.shouldForwardReadyForDisplay(
+            controllerIsReadyForDisplay: true,
+            itemStatus: .unknown,
+            isRenderSurfaceReattaching: false
+        ))
+        XCTAssertFalse(NativePlayerViewController.Coordinator.shouldForwardReadyForDisplay(
+            controllerIsReadyForDisplay: false,
+            itemStatus: .readyToPlay,
+            isRenderSurfaceReattaching: false
+        ))
+        XCTAssertFalse(NativePlayerViewController.Coordinator.shouldForwardReadyForDisplay(
+            controllerIsReadyForDisplay: true,
+            itemStatus: .readyToPlay,
+            isRenderSurfaceReattaching: true
+        ))
+        XCTAssertTrue(NativePlayerViewController.Coordinator.shouldForwardReadyForDisplay(
+            controllerIsReadyForDisplay: true,
+            itemStatus: .readyToPlay,
+            isRenderSurfaceReattaching: false
+        ))
     }
 
     func testTVOSPreferredDisplayCriteriaIsDeviceOnly() {

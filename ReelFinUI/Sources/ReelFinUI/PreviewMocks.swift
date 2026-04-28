@@ -297,7 +297,7 @@ final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     }
 }
 
-final class MockMetadataRepository: MetadataRepositoryProtocol, @unchecked Sendable {
+actor MockMetadataRepository: MetadataRepositoryProtocol {
     private var homeFeed: HomeFeed = HomeFeed.empty
     private var itemsByID: [String: MediaItem] = [:]
 

@@ -66,7 +66,7 @@ public struct OriginalMediaURLBuilder: Sendable {
         var url = configuration.serverURL
             .appendingPathComponent("Videos")
             .appendingPathComponent(request.itemID)
-            .appendingPathComponent("stream")
+            .appendingPathComponent(staticStreamLeaf(for: source))
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
         var query = components.queryItems ?? []
         if configuration.serverURL.isFileURL {
@@ -78,6 +78,25 @@ public struct OriginalMediaURLBuilder: Sendable {
         url = components.url ?? url
         return url
     }
+
+    private func staticStreamLeaf(for source: MediaSource) -> String {
+        if let filePath = source.filePath {
+            let fileExtension = URL(fileURLWithPath: filePath).pathExtension.lowercased()
+            if Self.appleStableStreamExtensions.contains(fileExtension) {
+                return "stream.\(fileExtension)"
+            }
+        }
+
+        let containerTokens = (source.container ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        for candidate in ["mp4", "m4v", "mov"] where containerTokens.contains(candidate) {
+            return "stream.\(candidate)"
+        }
+        return "stream"
+    }
+
+    private static let appleStableStreamExtensions: Set<String> = ["mp4", "m4v", "mov"]
 }
 
 public struct OriginalMediaResolver: Sendable {
