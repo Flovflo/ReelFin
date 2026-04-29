@@ -2,8 +2,8 @@
 
 ## Release target
 
-- Initial release path: iPhone, iPad, and Apple TV through TestFlight
-- Beta 1 binary: version `0.1`, build `10`
+- Initial release path: iPhone and Apple TV through TestFlight
+- Beta 1 binary: version `0.1`, build `11`
 - Bundle ID: `com.reelfin.app`
 - Category: Entertainment
 - Support email: `florian.taffin.pro@gmail.com`
@@ -14,7 +14,7 @@
 
 ## App description
 
-Bring your Jellyfin library to life with ReelFin, a polished native way to watch on iPhone, iPad, and Apple TV. It is built around Apple playback frameworks and focuses on fast browsing, rich detail pages, reliable resume, and predictable playback on your own server.
+Bring your Jellyfin library to life with ReelFin, a polished native way to watch on iPhone and Apple TV. It is built around Apple playback frameworks and focuses on fast browsing, rich detail pages, reliable resume, and predictable playback on your own server.
 
 Why ReelFin:
 
@@ -36,11 +36,11 @@ Privacy Policy: https://flovflo.github.io/reelfin-site/privacy.html
 ## TestFlight beta information
 
 - Beta App Description:
-  ReelFin is a polished native Jellyfin client for iPhone, iPad, and Apple TV.
+  ReelFin is a polished native Jellyfin client for iPhone and Apple TV.
 - Feedback Email:
   `florian.taffin.pro@gmail.com`
 - What to Test:
-  Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone, iPad, and Apple TV.
+  Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and Apple TV.
 - Beta review notes:
   Use [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) as a worksheet, then paste live review credentials and notes into App Store Connect.
 

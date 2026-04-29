@@ -42,11 +42,9 @@
   ],
   "supported-platforms" : {
     "circles" : [
-      "watchOS"
     ],
     "squares" : [
-      "iOS",
-      "macOS"
+      "iOS"
     ]
   }
 }

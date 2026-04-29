@@ -29,7 +29,7 @@ enum ReelFinOnboardingContent {
             id: 0,
             eyebrow: "APPLE-FIRST SPEED",
             title: "Your Jellyfin, faster",
-            subtitle: "ReelFin turns your server into a native iPhone and iPad app tuned for quick launch, fast resume, and smooth browsing.",
+            subtitle: "ReelFin turns your server into a native iPhone app tuned for quick launch, fast resume, and smooth browsing.",
             screenshot: UIImage(named: "reelfin-onboarding-home.png")
         ),
         .init(

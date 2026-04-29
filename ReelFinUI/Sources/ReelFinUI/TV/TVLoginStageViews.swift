@@ -184,7 +184,7 @@ struct TVQuickConnectStageView: View {
         VStack(alignment: .leading, spacing: 24) {
             TVLoginStageHeading(
                 title: "Approve on another device",
-                subtitle: "Open Jellyfin on iPhone, iPad, or the web, then enter this code."
+                subtitle: "Open Jellyfin on iPhone or the web, then enter this code."
             )
 
             TVQuickConnectCodeView(state: state)
