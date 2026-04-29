@@ -1,0 +1,4 @@
+interface:
+  display_name: "Publish ReelFin TestFlight"
+  short_description: "Ship ReelFin beta builds to TestFlight"
+  default_prompt: "Use $publish-reelfin-testflight to prepare, upload, and distribute the next ReelFin TestFlight beta."

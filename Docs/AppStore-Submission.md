@@ -2,7 +2,8 @@
 
 ## Release target
 
-- Initial release path: iPhone on iOS and Apple TV on tvOS through TestFlight
+- Initial release path: iPhone, iPad, and Apple TV through TestFlight
+- Beta 1 binary: version `0.1`, build `10`
 - Bundle ID: `com.reelfin.app`
 - Category: Entertainment
 - Support email: `florian.taffin.pro@gmail.com`
@@ -13,7 +14,7 @@
 
 ## App description
 
-Bring your Jellyfin library to life with ReelFin, a polished native way to watch on iPhone and Apple TV. It is built around Apple playback frameworks and focuses on fast browsing, rich detail pages, reliable resume, and predictable playback on your own server.
+Bring your Jellyfin library to life with ReelFin, a polished native way to watch on iPhone, iPad, and Apple TV. It is built around Apple playback frameworks and focuses on fast browsing, rich detail pages, reliable resume, and predictable playback on your own server.
 
 Why ReelFin:
 
@@ -35,17 +36,18 @@ Privacy Policy: https://flovflo.github.io/reelfin-site/privacy.html
 ## TestFlight beta information
 
 - Beta App Description:
-  ReelFin is a polished native Jellyfin client for iPhone and Apple TV.
+  ReelFin is a polished native Jellyfin client for iPhone, iPad, and Apple TV.
 - Feedback Email:
   `florian.taffin.pro@gmail.com`
 - What to Test:
-  Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and Apple TV.
+  Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone, iPad, and Apple TV.
 - Beta review notes:
   Use [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) as a worksheet, then paste live review credentials and notes into App Store Connect.
 
 ## Visual assets
 
-- Current storefront screenshots are uploaded manually from the curated files kept in `AppStore/Screenshots/`
+- Storefront screenshots are uploaded manually from current release captures
+- Current in-repo product media lives in `Docs/Media/`; only upload screenshots that match the current UI and device family
 - The README animation asset lives at `Docs/Media/reelfin-transition.gif`
 - Keep README and App Store media aligned whenever the UI changes materially
 
@@ -82,7 +84,6 @@ Privacy Policy: https://flovflo.github.io/reelfin-site/privacy.html
 
 ## Review blockers that remain outside the repo
 
-- App Store Connect app record creation or update
 - App Privacy questionnaire answers in App Store Connect
-- Beta App Review credentials for a working Jellyfin review server
+- Beta App Review submission approval for the built-in review demo account
 - Digital Services Act trader verification if the developer account still shows it as incomplete

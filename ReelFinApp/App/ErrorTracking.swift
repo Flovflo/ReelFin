@@ -21,11 +21,19 @@ enum ErrorTracking {
             options.sendDefaultPii = false
             options.attachScreenshot = false
             options.tracesSampleRate = 0.1
-            options.environment = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String == "1" ? "release" : "debug"
+            options.environment = sentryEnvironment
             options.beforeSend = { event in
                 event.user = nil
                 return event
             }
         }
+    }
+
+    private static var sentryEnvironment: String {
+#if DEBUG
+        "debug"
+#else
+        "release"
+#endif
     }
 }

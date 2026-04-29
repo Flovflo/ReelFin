@@ -40,6 +40,7 @@ final class RootViewModelAuthPersistenceTests: XCTestCase {
         viewModel.completeLogin(session)
 
         XCTAssertTrue(viewModel.isAuthenticated)
+        XCTAssertTrue(viewModel.didBootstrap)
         XCTAssertEqual(dependencies.settingsStore.lastSession?.userID, "user-2")
         XCTAssertTrue(dependencies.settingsStore.hasCompletedOnboarding)
         XCTAssertEqual(

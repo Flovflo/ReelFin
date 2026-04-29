@@ -9,9 +9,12 @@ Do not paste this file verbatim into App Store Connect. Replace every field with
 
 ## Review account
 
-- Server URL: provide the live Jellyfin review server URL in App Store Connect
-- Username: provide the dedicated review username in App Store Connect
-- Password: provide the dedicated review password in App Store Connect
+- Server URL: `https://review.reelfin.app`
+- Username: `review`
+- Password: `ReelFin-Review-2026`
+
+The review account activates a built-in demo library with fictional media data.
+It does not require a live Jellyfin server and does not expose user content.
 
 ## Review flow
 
@@ -26,6 +29,6 @@ Do not paste this file verbatim into App Store Connect. Replace every field with
 
 - ReelFin is a native client for self-hosted Jellyfin servers.
 - The app does not sell or unlock digital content and does not use in-app purchase.
-- The app requires a reachable Jellyfin server during review, so the review server above must stay online.
 - Please use the supplied review account rather than a personal server.
+- The supplied review account opens a built-in fictional demo library for review.
 - Crash reporting is optional and disabled unless a Sentry DSN is configured for the release build.

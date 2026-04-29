@@ -93,6 +93,7 @@
 		1EF4B411C36B0D21E1C91FF1 /* NativePlayerTransportOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6020AC4866DEFBE6EFE6B480 /* NativePlayerTransportOverlayView.swift */; };
 		1FB05869AECC9B005BA6F48C /* LibraryViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099E99C93EFE70B4A41020AD /* LibraryViewModelTests.swift */; };
 		202BF388D775880160E54FED /* AuthenticationStageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63727D3EA69FA178DD5245A7 /* AuthenticationStageViews.swift */; };
+		2070C74B0A19C427AA174170 /* ReviewDemoMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C81703C9FC342D026804047 /* ReviewDemoMode.swift */; };
 		20D4EB800F1ABD77C225A691 /* ReelFinUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34165F79DE0BF2E0CD4E2B3F /* ReelFinUI.framework */; };
 		2127C0D5C54C7AD0301E7A3C /* PlaybackTrickplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5A12F748CD5AFF5B435F53 /* PlaybackTrickplayTests.swift */; };
 		214163C891BE9E258151DDD3 /* TVOnboardingShowcaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A86FC8F174C7FB47213219E /* TVOnboardingShowcaseView.swift */; };
@@ -400,6 +401,7 @@
 		86EA62AC4FE412FD125A03F0 /* reelfin-onboarding-home.png in Resources */ = {isa = PBXBuildFile; fileRef = 48D988A1D91BABBD518E1E53 /* reelfin-onboarding-home.png */; };
 		8790AAC2D65CBE395DFEBAB7 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3772E703603E46C29857FE13 /* LibraryView.swift */; };
 		87C822BAFB1CAB1B577CB963 /* LRUDiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C45085D8B5DC89B05188205 /* LRUDiskCache.swift */; };
+		87F875F7E1A0EBBC1EB6E239 /* ReviewDemoMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C81703C9FC342D026804047 /* ReviewDemoMode.swift */; };
 		8811AEF54C2ED9AF45748A33 /* HeroCarouselView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87845ECDB05ACF3E08A8616B /* HeroCarouselView.swift */; };
 		883C5E155A27FCBBA9C6F25E /* ShimmerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1178F490712C59598B44CF6B /* ShimmerView.swift */; };
 		88537E6A46BEA9A1FB8EA98E /* HomeAndDetailActionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26889EF0AD3D5EE0ACB1EF8F /* HomeAndDetailActionsUITests.swift */; };
@@ -523,6 +525,7 @@
 		B8B695E3BA7E7138A974DCF3 /* NativePlayerIOSSystemControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F4D87735E6B09917516E3B /* NativePlayerIOSSystemControls.swift */; };
 		B8DAC18362AD3447CA3530B0 /* RequestDeduplicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B7A4C3B018207E57E97039A /* RequestDeduplicator.swift */; };
 		B8DECCE25AE2194F9304D006 /* NativeMediaCoreTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BE1D846BD3C7399A789F3A2 /* NativeMediaCoreTV.framework */; };
+		B9A776FA7CE76FB513217439 /* ReviewDemoModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 602DDD82F3DC073836E47D50 /* ReviewDemoModeTests.swift */; };
 		B9EC54A0BB7B7A0E166DE070 /* OrientationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C5B4EFF6FFC884150B32CE2 /* OrientationManager.swift */; };
 		BA024F79296F6B1D9234D0D7 /* ImageCache.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 612DF7C0B11D453DFED1600E /* ImageCache.framework */; };
 		BA33C7337D42995C6A76B1C9 /* NativePlayerPlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BCF68DFB8A04F6A3D3FE8D /* NativePlayerPlaybackController.swift */; };
@@ -1401,6 +1404,7 @@
 		5E687C50C88B01A739B36062 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		5EBB7A103847DA0678F13203 /* MP4SampleBufferReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP4SampleBufferReaderTests.swift; sourceTree = "<group>"; };
 		6020AC4866DEFBE6EFE6B480 /* NativePlayerTransportOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerTransportOverlayView.swift; sourceTree = "<group>"; };
+		602DDD82F3DC073836E47D50 /* ReviewDemoModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewDemoModeTests.swift; sourceTree = "<group>"; };
 		605434F5CC8C201626C04D2B /* DolbyVisionGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DolbyVisionGate.swift; sourceTree = "<group>"; };
 		6077705BD1EA11297063D830 /* PlaybackWarmupManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackWarmupManagerTests.swift; sourceTree = "<group>"; };
 		612DF7C0B11D453DFED1600E /* ImageCache.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ImageCache.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1417,6 +1421,7 @@
 		6B67C09062F13FBA7C1A9E17 /* EpisodeReleaseNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EpisodeReleaseNotifications.swift; sourceTree = "<group>"; };
 		6BDFEF740AA98A523DDBA030 /* ServerSettingsNativePlayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSettingsNativePlayerTests.swift; sourceTree = "<group>"; };
 		6C236AD9F0D85B5FCF4DEB26 /* DefaultImagePipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultImagePipelineTests.swift; sourceTree = "<group>"; };
+		6C81703C9FC342D026804047 /* ReviewDemoMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewDemoMode.swift; sourceTree = "<group>"; };
 		6D4953E6C6E30F10DAB1D582 /* TVRootDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVRootDestination.swift; sourceTree = "<group>"; };
 		6D93EC506F56342EA3C73240 /* MatroskaSegmentParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatroskaSegmentParser.swift; sourceTree = "<group>"; };
 		6EBE0D5A4B2D982073CB2C50 /* NativePlaybackBufferPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaybackBufferPolicy.swift; sourceTree = "<group>"; };
@@ -1879,6 +1884,7 @@
 				7DE77583AD06D18E9DF3DE60 /* PlaybackTVOSCachingPolicyTests.swift */,
 				6077705BD1EA11297063D830 /* PlaybackWarmupManagerTests.swift */,
 				207B2D2452A8ED8D00AB00FD /* PlayerOrientationLockTests.swift */,
+				602DDD82F3DC073836E47D50 /* ReviewDemoModeTests.swift */,
 				FD8F8B87A4A392FB35BD088B /* RootViewModelAuthPersistenceTests.swift */,
 				CA8A73A634C0467F018BA267 /* SessionPersistenceTests.swift */,
 				4D4EB6B44DC8976D5F88BEDB /* TransparentImageCropperTests.swift */,
@@ -2129,6 +2135,7 @@
 				1687256714E40F0B894538ED /* NativePlayerConfig.swift */,
 				7C9797B547A9CFADD7A5B9B4 /* Protocols.swift */,
 				EA00058358D2298F6ADE8A19 /* RetryPolicy.swift */,
+				6C81703C9FC342D026804047 /* ReviewDemoMode.swift */,
 				08A483F2699C0AFD53718AE6 /* SettingsStore.swift */,
 				197D1C629D760580747C700B /* TTFFTuningConfiguration.swift */,
 				400241D49AA52937147A119B /* TVFocusWarmupCoordinator.swift */,
@@ -3640,6 +3647,7 @@
 				BA4D1F0347364D3AAAF34834 /* NativePlayerConfig.swift in Sources */,
 				94D8CFB1F9C1D7D83D39B1C6 /* Protocols.swift in Sources */,
 				750B4D05F9E3760AD34A5A7C /* RetryPolicy.swift in Sources */,
+				2070C74B0A19C427AA174170 /* ReviewDemoMode.swift in Sources */,
 				EECB1EAC54FBD6B795B087E2 /* SettingsStore.swift in Sources */,
 				EFB5A567FD3379A74748C605 /* TTFFTuningConfiguration.swift in Sources */,
 				1501430E0DFFE002C3B5AD9B /* TVFocusWarmupCoordinator.swift in Sources */,
@@ -3716,6 +3724,7 @@
 				2127C0D5C54C7AD0301E7A3C /* PlaybackTrickplayTests.swift in Sources */,
 				69F0AD60FD4F7E9277C9893F /* PlaybackWarmupManagerTests.swift in Sources */,
 				758F1B6DE419308A74A46D54 /* PlayerOrientationLockTests.swift in Sources */,
+				B9A776FA7CE76FB513217439 /* ReviewDemoModeTests.swift in Sources */,
 				18BC1C8C44365D86D6466853 /* RootViewModelAuthPersistenceTests.swift in Sources */,
 				7E1174B374715828BD104CB6 /* SRTWebVTTConverterTests.swift in Sources */,
 				E4C3D9EFB423276D8519F2FE /* ServerSettingsNativePlayerTests.swift in Sources */,
@@ -3869,6 +3878,7 @@
 				EC310DB91757D7EB54CD424C /* NativePlayerConfig.swift in Sources */,
 				38FD0F73F1A90A73C1BE1A18 /* Protocols.swift in Sources */,
 				E7DDFFAD1BD34C51E50D9944 /* RetryPolicy.swift in Sources */,
+				87F875F7E1A0EBBC1EB6E239 /* ReviewDemoMode.swift in Sources */,
 				7F7BB74A31C527834CF48BC3 /* SettingsStore.swift in Sources */,
 				C96FA24E8FF641A674B5FE3C /* TTFFTuningConfiguration.swift in Sources */,
 				78EDD4D835D0F1EFA940F766 /* TVFocusWarmupCoordinator.swift in Sources */,
@@ -4651,7 +4661,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = ReelFinIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "Sign to Run Locally";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = WZ4CHJH7TA;
@@ -4661,7 +4670,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
-				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
+				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "florian.taffin.pro@gmail.com";
 				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
 				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -4913,7 +4922,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -4944,7 +4953,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = ReelFinIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "Sign to Run Locally";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = WZ4CHJH7TA;
@@ -4954,7 +4962,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
-				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
+				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "florian.taffin.pro@gmail.com";
 				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
 				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -5060,7 +5068,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
-				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
+				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "florian.taffin.pro@gmail.com";
 				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
 				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -5392,7 +5400,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -5620,7 +5628,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_REELFIN_PRIVACY_POLICY_URL = "https://flovflo.github.io/reelfin-site/privacy.html";
 				INFOPLIST_KEY_REELFIN_SENTRY_DSN = "$(REELFIN_SENTRY_DSN)";
-				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "floriantaffin@gmail.com";
+				INFOPLIST_KEY_REELFIN_SUPPORT_EMAIL = "florian.taffin.pro@gmail.com";
 				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
 				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				LD_RUNPATH_SEARCH_PATHS = (

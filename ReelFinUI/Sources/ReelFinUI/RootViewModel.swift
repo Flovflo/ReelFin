@@ -44,6 +44,7 @@ final class RootViewModel {
         dependencies.settingsStore.lastSession = session
         markOnboardingCompletedIfNeeded()
         withAnimation(.easeInOut(duration: 0.2)) {
+            didBootstrap = true
             isAuthenticated = true
         }
     }
@@ -53,6 +54,7 @@ final class RootViewModel {
             await dependencies.apiClient.signOut()
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.2)) {
+                    self.didBootstrap = true
                     self.isAuthenticated = false
                 }
             }

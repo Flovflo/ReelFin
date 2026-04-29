@@ -47,6 +47,12 @@ final class LoginViewModel: ObservableObject {
 
         do {
             let url = try normalizedServerURL(from: serverURLText)
+            if ReviewDemoMode.isReviewServer(url) {
+                validatedServerURL = url
+                serverMessage = "Review demo ready"
+                return true
+            }
+
             try await dependencies.apiClient.testConnection(serverURL: url)
             validatedServerURL = url
             serverMessage = "Server ready"
@@ -66,6 +72,12 @@ final class LoginViewModel: ObservableObject {
 
         do {
             let url = try validatedServerURL ?? normalizedServerURL(from: serverURLText)
+            let credentials = UserCredentials(username: username, password: password)
+            if ReviewDemoMode.matches(serverURL: url, credentials: credentials) {
+                validatedServerURL = url
+                return ReviewDemoMode.session
+            }
+
             let config = ServerConfiguration(
                 serverURL: url,
                 allowCellularStreaming: dependencies.settingsStore.serverConfiguration?.allowCellularStreaming ?? true,
@@ -74,7 +86,6 @@ final class LoginViewModel: ObservableObject {
             )
             try await dependencies.apiClient.configure(server: config)
 
-            let credentials = UserCredentials(username: username, password: password)
             let session = try await dependencies.apiClient.authenticate(credentials: credentials)
             dependencies.settingsStore.serverConfiguration = config
             dependencies.settingsStore.lastSession = session

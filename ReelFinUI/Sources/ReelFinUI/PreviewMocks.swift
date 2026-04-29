@@ -7,6 +7,9 @@ import UIKit
 final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
     private var config: ServerConfiguration?
     private var session: UserSession?
+    private(set) var configureCallCount = 0
+    private(set) var testConnectionCallCount = 0
+    private(set) var authenticateCallCount = 0
 
     init(authenticated: Bool = true) {
         config = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
@@ -22,12 +25,16 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func configure(server: ServerConfiguration) async throws {
+        configureCallCount += 1
         config = server
     }
 
-    func testConnection(serverURL: URL) async throws {}
+    func testConnection(serverURL: URL) async throws {
+        testConnectionCallCount += 1
+    }
 
     func authenticate(credentials: UserCredentials) async throws -> UserSession {
+        authenticateCallCount += 1
         let newSession = UserSession(userID: "preview-user", username: credentials.username, token: "token")
         session = newSession
         return newSession
@@ -415,7 +422,17 @@ final class MockSyncEngine: SyncEngineProtocol, @unchecked Sendable {
 
 public enum ReelFinPreviewFactory {
     @MainActor public static func dependencies(authenticated: Bool = true) -> ReelFinDependencies {
-        let api = MockJellyfinAPIClient(authenticated: authenticated)
+        dependencies(
+            authenticated: authenticated,
+            apiClient: MockJellyfinAPIClient(authenticated: authenticated)
+        )
+    }
+
+    @MainActor static func dependencies(
+        authenticated: Bool = true,
+        apiClient: MockJellyfinAPIClient
+    ) -> ReelFinDependencies {
+        let api = apiClient
         let repository = MockMetadataRepository()
         let detailRepository = DefaultMediaDetailRepository(
             apiClient: api,

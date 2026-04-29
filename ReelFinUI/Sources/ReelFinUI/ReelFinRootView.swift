@@ -9,7 +9,9 @@ public struct ReelFinRootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
     @State private var viewModel: RootViewModel
-    private let dependencies: ReelFinDependencies
+    @State private var dependencies: ReelFinDependencies
+    @State private var isReviewDemoMode = false
+    private let initialDependencies: ReelFinDependencies
 
     @State private var selectedTab = 0
     #if os(iOS)
@@ -17,7 +19,8 @@ public struct ReelFinRootView: View {
     #endif
 
     public init(dependencies: ReelFinDependencies) {
-        self.dependencies = dependencies
+        initialDependencies = dependencies
+        _dependencies = State(initialValue: dependencies)
         _viewModel = State(initialValue: RootViewModel(dependencies: dependencies))
     }
 
@@ -41,11 +44,11 @@ public struct ReelFinRootView: View {
             } else {
 #if os(tvOS)
                 TVAuthFlowView(dependencies: dependencies) { session in
-                    viewModel.completeLogin(session)
+                    completeLogin(session)
                 }
 #else
                 LoginView(dependencies: dependencies) { session in
-                    viewModel.completeLogin(session)
+                    completeLogin(session)
                 }
 #endif
             }
@@ -80,7 +83,7 @@ public struct ReelFinRootView: View {
             Tab("Settings", systemImage: "gearshape.fill", value: 2) {
                 NavigationStack {
                     ServerSettingsView(dependencies: dependencies) {
-                        viewModel.signOut()
+                        signOut()
                     }
                 }
             }
@@ -117,7 +120,7 @@ public struct ReelFinRootView: View {
                 case .settings:
                     NavigationStack {
                         ServerSettingsView(dependencies: dependencies) {
-                            viewModel.signOut()
+                            signOut()
                         }
                     }
                 }
@@ -133,6 +136,33 @@ public struct ReelFinRootView: View {
         return UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
     }
     #endif
+
+    private func completeLogin(_ session: UserSession) {
+        guard ReviewDemoMode.isReviewSession(session) else {
+            viewModel.completeLogin(session)
+            return
+        }
+
+        let reviewDependencies = ReelFinPreviewFactory.appStoreDependencies(authenticated: true)
+        let reviewViewModel = RootViewModel(dependencies: reviewDependencies)
+        reviewViewModel.completeLogin(session)
+        dependencies = reviewDependencies
+        viewModel = reviewViewModel
+        isReviewDemoMode = true
+    }
+
+    private func signOut() {
+        guard isReviewDemoMode else {
+            viewModel.signOut()
+            return
+        }
+
+        let resetViewModel = RootViewModel(dependencies: initialDependencies)
+        dependencies = initialDependencies
+        viewModel = resetViewModel
+        isReviewDemoMode = false
+        resetViewModel.signOut()
+    }
 }
 
 #if os(iOS)
