@@ -1,29 +1,12 @@
-const header = document.querySelector(".site-header");
-const revealItems = document.querySelectorAll(".reveal");
-const navLinks = [...document.querySelectorAll(".site-nav a[href^='#']")];
-const sections = navLinks
-  .map((link) => document.querySelector(link.getAttribute("href")))
-  .filter(Boolean);
-
-const updateHeader = () => {
-  header?.classList.toggle("is-scrolled", window.scrollY > 8);
-};
-
-const setActiveLink = (id) => {
-  navLinks.forEach((link) => {
-    link.classList.toggle("is-active", link.getAttribute("href") === `#${id}`);
-  });
-};
-
-updateHeader();
-window.addEventListener("scroll", updateHeader, { passive: true });
+const root = document.documentElement;
+const reveals = document.querySelectorAll(".reveal");
 
 if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-  revealItems.forEach((item) => item.classList.add("is-visible"));
+  reveals.forEach((element) => element.classList.add("is-visible"));
 } else {
   document.body.classList.add("motion-ready");
 
-  const revealObserver = new IntersectionObserver(
+  const observer = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) {
@@ -31,40 +14,36 @@ if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
         }
 
         entry.target.classList.add("is-visible");
-        revealObserver.unobserve(entry.target);
+        observer.unobserve(entry.target);
       });
     },
     {
       threshold: 0.18,
-      rootMargin: "0px 0px -10% 0px",
+      rootMargin: "0px 0px -8% 0px"
     }
   );
 
-  revealItems.forEach((item) => {
-    const rect = item.getBoundingClientRect();
+  reveals.forEach((element) => {
+    const rect = element.getBoundingClientRect();
     if (rect.top < window.innerHeight * 0.92) {
-      item.classList.add("is-visible");
+      element.classList.add("is-visible");
       return;
     }
 
-    revealObserver.observe(item);
+    observer.observe(element);
   });
-}
 
-const sectionObserver = new IntersectionObserver(
-  (entries) => {
-    const visible = entries
-      .filter((entry) => entry.isIntersecting)
-      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-
-    if (visible?.target.id) {
-      setActiveLink(visible.target.id);
+  const hero = document.querySelector(".hero");
+  const handleScroll = () => {
+    if (!hero) {
+      return;
     }
-  },
-  {
-    threshold: [0.22, 0.45, 0.68],
-    rootMargin: "-18% 0px -55% 0px",
-  }
-);
 
-sections.forEach((section) => sectionObserver.observe(section));
+    const rect = hero.getBoundingClientRect();
+    const distance = Math.min(Math.max(-rect.top, 0), 180);
+    root.style.setProperty("--hero-shift", `${distance * -0.12}px`);
+  };
+
+  handleScroll();
+  window.addEventListener("scroll", handleScroll, { passive: true });
+}
