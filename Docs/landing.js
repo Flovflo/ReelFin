@@ -1,12 +1,29 @@
-const root = document.documentElement;
-const reveals = document.querySelectorAll(".reveal");
+const header = document.querySelector(".site-header");
+const revealItems = document.querySelectorAll(".reveal");
+const navLinks = [...document.querySelectorAll(".site-nav a[href^='#']")];
+const sections = navLinks
+  .map((link) => document.querySelector(link.getAttribute("href")))
+  .filter(Boolean);
+
+const updateHeader = () => {
+  header?.classList.toggle("is-scrolled", window.scrollY > 8);
+};
+
+const setActiveLink = (id) => {
+  navLinks.forEach((link) => {
+    link.classList.toggle("is-active", link.getAttribute("href") === `#${id}`);
+  });
+};
+
+updateHeader();
+window.addEventListener("scroll", updateHeader, { passive: true });
 
 if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-  reveals.forEach((element) => element.classList.add("is-visible"));
+  revealItems.forEach((item) => item.classList.add("is-visible"));
 } else {
   document.body.classList.add("motion-ready");
 
-  const observer = new IntersectionObserver(
+  const revealObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) {
@@ -14,36 +31,40 @@ if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
         }
 
         entry.target.classList.add("is-visible");
-        observer.unobserve(entry.target);
+        revealObserver.unobserve(entry.target);
       });
     },
     {
       threshold: 0.18,
-      rootMargin: "0px 0px -8% 0px"
+      rootMargin: "0px 0px -10% 0px",
     }
   );
 
-  reveals.forEach((element) => {
-    const rect = element.getBoundingClientRect();
+  revealItems.forEach((item) => {
+    const rect = item.getBoundingClientRect();
     if (rect.top < window.innerHeight * 0.92) {
-      element.classList.add("is-visible");
+      item.classList.add("is-visible");
       return;
     }
 
-    observer.observe(element);
+    revealObserver.observe(item);
   });
-
-  const hero = document.querySelector(".hero");
-  const handleScroll = () => {
-    if (!hero) {
-      return;
-    }
-
-    const rect = hero.getBoundingClientRect();
-    const distance = Math.min(Math.max(-rect.top, 0), 180);
-    root.style.setProperty("--hero-shift", `${distance * -0.12}px`);
-  };
-
-  handleScroll();
-  window.addEventListener("scroll", handleScroll, { passive: true });
 }
+
+const sectionObserver = new IntersectionObserver(
+  (entries) => {
+    const visible = entries
+      .filter((entry) => entry.isIntersecting)
+      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+
+    if (visible?.target.id) {
+      setActiveLink(visible.target.id);
+    }
+  },
+  {
+    threshold: [0.22, 0.45, 0.68],
+    rootMargin: "-18% 0px -55% 0px",
+  }
+);
+
+sections.forEach((section) => sectionObserver.observe(section));
