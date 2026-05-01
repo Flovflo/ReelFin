@@ -27,6 +27,14 @@ public enum TVLibraryPaginationPolicy {
     }
 }
 
+public enum TVHomeFocusID {
+    public static let featuredHero = "home.featured.hero"
+
+    public static func row(rowID: String, itemID: String) -> String {
+        "home.row.\(rowID.count):\(rowID).item.\(itemID.count):\(itemID)"
+    }
+}
+
 public struct DetailNeighborNavigationState: Equatable, Sendable {
     public let currentItem: MediaItem
     public let contextItems: [MediaItem]

@@ -6,6 +6,7 @@ struct TVRootShellView: View {
     @State private var isTopNavigationVisible = true
     @State private var topNavigationAppearance = TVTopNavigationAppearance.neutral
     @State private var homeRefreshRequest = 0
+    @State private var homeHeroFocusRequest = 0
     @FocusState private var focusedDestination: TVRootDestination?
 
     let dependencies: ReelFinDependencies
@@ -15,6 +16,7 @@ struct TVRootShellView: View {
             TVRootContentView(
                 selectedDestination: selectedDestination,
                 homeRefreshRequest: homeRefreshRequest,
+                homeHeroFocusRequest: homeHeroFocusRequest,
                 dependencies: dependencies
             )
 
@@ -50,35 +52,45 @@ struct TVRootShellView: View {
     }
 
     private func handleTopNavigationMove(_ destination: TVRootDestination, direction: MoveCommandDirection) {
-        guard
-            direction == .up,
-            selectedDestination == .watchNow,
-            focusedDestination == .watchNow,
-            destination == .watchNow
-        else {
-            return
-        }
+        guard selectedDestination == .watchNow,
+              focusedDestination == .watchNow,
+              destination == .watchNow else { return }
 
-        homeRefreshRequest += 1
+        switch direction {
+        case .up:
+            homeRefreshRequest += 1
+        case .down:
+            homeHeroFocusRequest += 1
+        default:
+            break
+        }
     }
 }
 
 private struct TVRootContentView: View {
     let selectedDestination: TVRootDestination
     let homeRefreshRequest: Int
+    let homeHeroFocusRequest: Int
     let dependencies: ReelFinDependencies
 
     var body: some View {
         NavigationStack {
             content
+                .id(selectedDestination)
+                .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
         }
+        .animation(TVMotion.contentFadeAnimation, value: selectedDestination)
     }
 
     @ViewBuilder
     private var content: some View {
         switch selectedDestination {
         case .watchNow:
-            HomeView(dependencies: dependencies, tvRefreshRequest: homeRefreshRequest)
+            HomeView(
+                dependencies: dependencies,
+                tvRefreshRequest: homeRefreshRequest,
+                tvHeroFocusRequest: homeHeroFocusRequest
+            )
         case .search:
             TVSearchView(dependencies: dependencies)
                 .safeAreaPadding(.top, navigationBarReservedHeight)

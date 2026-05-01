@@ -12,11 +12,11 @@ import UIKit
 /// Uses a plain Button so Siri Remote OK activates reliably while keeping the
 /// custom focus treatment that matches the rest of the home shelf motion.
 private struct TVCardButton: View {
-    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
     @FocusState private var isFocused: Bool
     @State private var isActivating = false
 
     let item: MediaItem
+    let focusID: String
     let index: Int
     let kind: HomeSectionKind
     let isTop10: Bool
@@ -29,6 +29,7 @@ private struct TVCardButton: View {
     let progress: Double?
     let optimizationStatus: ApplePlaybackOptimizationStatus?
     let onFocus: ((MediaItem) -> Void)?
+    let onMoveUp: (() -> Void)?
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
@@ -56,7 +57,7 @@ private struct TVCardButton: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .focused($isFocused)
-        .modifier(TVHomeItemFocusModifier(itemID: item.id, focusedItemID: focusedItemID))
+        .modifier(TVHomeItemFocusModifier(itemID: focusID, focusedItemID: focusedItemID))
         .id(item.id)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -72,8 +73,8 @@ private struct TVCardButton: View {
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
-        guard direction == .up, kind == .continueWatching else { return }
-        requestTopNavigationFocus?(.watchNow)
+        guard direction == .up else { return }
+        onMoveUp?()
     }
 
     private func handleActivation() {
@@ -797,10 +798,12 @@ public struct SectionRow: View {
     private let imagePipeline: ImagePipelineProtocol
     private let namespaceProvider: (String) -> Namespace.ID?
     private let transitionSourceIDProvider: (String, String?) -> String
+    private let focusIDProvider: (String) -> String
     private let focusedItemID: FocusState<String?>.Binding?
     private let optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)?
     private let isLoadingMore: Bool
     private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
+    private let onMoveUp: (() -> Void)?
     private let onOpenSection: (() -> Void)?
     private let onItemAppear: ((MediaItem) -> Void)?
     private let onSelect: (MediaItem, String) -> Void
@@ -813,10 +816,12 @@ public struct SectionRow: View {
         imagePipeline: ImagePipelineProtocol,
         namespaceProvider: @escaping (String) -> Namespace.ID?,
         transitionSourceIDProvider: @escaping (String, String?) -> String = { itemID, _ in itemID },
+        focusIDProvider: @escaping (String) -> String = { itemID in itemID },
         focusedItemID: FocusState<String?>.Binding? = nil,
         optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)? = nil,
         isLoadingMore: Bool = false,
         onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
+        onMoveUp: (() -> Void)? = nil,
         onOpenSection: (() -> Void)? = nil,
         onItemAppear: ((MediaItem) -> Void)? = nil,
         onSelect: @escaping (MediaItem, String) -> Void
@@ -828,10 +833,12 @@ public struct SectionRow: View {
         self.imagePipeline = imagePipeline
         self.namespaceProvider = namespaceProvider
         self.transitionSourceIDProvider = transitionSourceIDProvider
+        self.focusIDProvider = focusIDProvider
         self.focusedItemID = focusedItemID
         self.optimizationStatusProvider = optimizationStatusProvider
         self.isLoadingMore = isLoadingMore
         self.onFocus = onFocus
+        self.onMoveUp = onMoveUp
         self.onOpenSection = onOpenSection
         self.onItemAppear = onItemAppear
         self.onSelect = onSelect
@@ -871,6 +878,7 @@ public struct SectionRow: View {
 #if os(tvOS)
                         TVCardButton(
                             item: item,
+                            focusID: focusIDProvider(item.id),
                             index: index,
                             kind: kind,
                             isTop10: isTop10,
@@ -885,6 +893,7 @@ public struct SectionRow: View {
                             onFocus: { focusedItem in
                                 onFocus?(focusedItem, items)
                             },
+                            onMoveUp: onMoveUp,
                             onSelect: { selectedItem in
                                 onSelect(selectedItem, transitionSourceID)
                             }
@@ -1060,6 +1069,9 @@ public struct SectionRow: View {
 }
 
 struct HomeView: View {
+#if os(tvOS)
+    @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
+#endif
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reelFinDisplayDensity) private var displayDensity
     @StateObject private var viewModel: HomeViewModel
@@ -1070,6 +1082,7 @@ struct HomeView: View {
 
     private let dependencies: ReelFinDependencies
     private let tvRefreshRequest: Int
+    private let tvHeroFocusRequest: Int
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
@@ -1083,6 +1096,8 @@ struct HomeView: View {
     @State private var featuredHeroItemID: String?
     @State private var homeReturnTarget: TVHomeReturnTarget?
     @State private var homeReturnRequest = 0
+    @State private var heroFocusRequest = 0
+    @State private var pendingHomeFocusID: String?
 #endif
     @State private var playerSession: PlaybackSessionController?
     @State private var playerItem: MediaItem?
@@ -1098,7 +1113,11 @@ struct HomeView: View {
     @StateObject private var tvScreenState: TVHomeScreenState
 #endif
 
-    init(dependencies: ReelFinDependencies, tvRefreshRequest: Int = 0) {
+    init(
+        dependencies: ReelFinDependencies,
+        tvRefreshRequest: Int = 0,
+        tvHeroFocusRequest: Int = 0
+    ) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
 #if os(tvOS)
         _tvScreenState = StateObject(
@@ -1110,6 +1129,7 @@ struct HomeView: View {
 #endif
         self.dependencies = dependencies
         self.tvRefreshRequest = tvRefreshRequest
+        self.tvHeroFocusRequest = tvHeroFocusRequest
     }
 
     var body: some View {
@@ -1182,6 +1202,10 @@ struct HomeView: View {
         .onChange(of: tvRefreshRequest) { _, newValue in
             guard newValue > 0 else { return }
             triggerTVHomeRefresh()
+        }
+        .onChange(of: tvHeroFocusRequest) { _, newValue in
+            guard newValue > 0 else { return }
+            focusTVHero()
         }
 #endif
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
@@ -1312,6 +1336,8 @@ struct HomeView: View {
 
     @ViewBuilder
     private func homeScrollSections(visibleRows: [HomeRow]) -> some View {
+        let firstVisibleRowID = visibleRows.first?.id
+
         LazyVStack(alignment: .leading, spacing: sectionSpacing) {
             if viewModel.isInitialLoading && visibleRows.isEmpty {
                 loadingSkeleton
@@ -1323,6 +1349,12 @@ struct HomeView: View {
                 featuredSection
 
                 ForEach(visibleRows) { row in
+#if os(tvOS)
+                    let rowMoveUpAction: (() -> Void)? = row.id == firstVisibleRowID ? focusAboveTVHomeRows : nil
+#else
+                    let rowMoveUpAction: (() -> Void)? = nil
+#endif
+
                     SectionRow(
                         title: row.title,
                         items: row.items,
@@ -1339,6 +1371,9 @@ struct HomeView: View {
                                 occurrenceID: occurrenceID
                             )
                         },
+                        focusIDProvider: { itemID in
+                            TVHomeFocusID.row(rowID: row.id, itemID: itemID)
+                        },
                         focusedItemID: homeFocusedItemBinding,
                         optimizationStatusProvider: { item in
                             appleOptimizationStatuses[item.id]
@@ -1347,10 +1382,14 @@ struct HomeView: View {
                         onFocus: { item, neighbors in
                             handleFocusedItem(item, neighbors: neighbors)
                         },
+                        onMoveUp: rowMoveUpAction,
                         onOpenSection: {
                             selectedHomeSectionRow = row
                         },
                         onItemAppear: { item in
+#if os(tvOS)
+                            resolvePendingHomeFocusIfNeeded(rowID: row.id, itemID: item.id)
+#endif
                             Task {
                                 await viewModel.loadMoreIfNeeded(rowID: row.id, visibleItemID: item.id)
                             }
@@ -1402,6 +1441,7 @@ struct HomeView: View {
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 selectedItemID: $featuredHeroItemID,
+                tvFocusRequest: heroFocusRequest,
                 onVisibleItemChange: { item in
                     scheduleWarmup(
                         for: item,
@@ -1890,6 +1930,32 @@ struct HomeView: View {
         Task { await viewModel.manualRefresh() }
     }
 
+    private func focusTVHero() {
+        guard !featuredItems.isEmpty else {
+            requestTopNavigationFocus?(.watchNow)
+            return
+        }
+
+        heroFocusRequest += 1
+    }
+
+    private func focusAboveTVHomeRows() {
+        focusTVHero()
+    }
+
+    private func requestHomeItemFocus(rowID: String, itemID: String) {
+        let focusID = TVHomeFocusID.row(rowID: rowID, itemID: itemID)
+        pendingHomeFocusID = focusID
+        focusedHomeItemID = focusID
+    }
+
+    private func resolvePendingHomeFocusIfNeeded(rowID: String, itemID: String) {
+        let focusID = TVHomeFocusID.row(rowID: rowID, itemID: itemID)
+        guard pendingHomeFocusID == focusID else { return }
+        focusedHomeItemID = focusID
+        pendingHomeFocusID = nil
+    }
+
     private func restoreHomeSelection(using proxy: ScrollViewProxy) {
         guard let homeReturnTarget else { return }
 
@@ -1899,15 +1965,12 @@ struct HomeView: View {
             withAnimation(.easeInOut(duration: 0.34)) {
                 proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
             }
+            focusTVHero()
         case let .row(rowID, itemID):
             withAnimation(.easeInOut(duration: 0.34)) {
                 proxy.scrollTo(rowID, anchor: .top)
             }
-
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 220_000_000)
-                focusedHomeItemID = itemID
-            }
+            requestHomeItemFocus(rowID: rowID, itemID: itemID)
         }
     }
 #endif

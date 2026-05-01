@@ -17,6 +17,7 @@ public struct HeroCarouselView: View {
     private let onToggleWatchlist: ((MediaItem) -> Void)?
     private let onVisibleItemChange: ((MediaItem) -> Void)?
     private let selectedItemID: Binding<String?>?
+    private let tvFocusRequest: Int
 
     @State private var currentIndex = 0
     #if os(iOS)
@@ -28,6 +29,7 @@ public struct HeroCarouselView: View {
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         selectedItemID: Binding<String?>? = nil,
+        tvFocusRequest: Int = 0,
         onVisibleItemChange: ((MediaItem) -> Void)? = nil,
         onPlay: ((MediaItem) -> Void)? = nil,
         onToggleWatchlist: ((MediaItem) -> Void)? = nil,
@@ -41,6 +43,7 @@ public struct HeroCarouselView: View {
         self.onPlay = onPlay
         self.onToggleWatchlist = onToggleWatchlist
         self.onTap = onTap
+        self.tvFocusRequest = tvFocusRequest
     }
 
     public var body: some View {
@@ -446,6 +449,7 @@ public struct HeroCarouselView: View {
         TVHeroCapsuleButton(
             title: primaryActionTitle(for: item),
             systemImage: "play.fill",
+            focusRequest: tvFocusRequest,
             onMoveCommand: handleMoveCommand,
             action: { (onPlay ?? onTap)(item) }
         )
@@ -710,6 +714,7 @@ private struct TVHeroCapsuleButton: View {
 
     let title: String
     let systemImage: String
+    let focusRequest: Int
     let onMoveCommand: (MoveCommandDirection) -> Void
     let action: () -> Void
 
@@ -736,6 +741,10 @@ private struct TVHeroCapsuleButton: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .onMoveCommand(perform: handleMoveCommand)
+        .onChange(of: focusRequest) { _, newValue in
+            guard newValue > 0 else { return }
+            isFocused = true
+        }
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Swipe left or right to browse featured titles.")
     }
@@ -744,17 +753,18 @@ private struct TVHeroCapsuleButton: View {
     private var backgroundView: some View {
         if #available(tvOS 26.0, *) {
             Capsule(style: .continuous)
-                .fill(isFocused ? Color.white.opacity(0.08) : .clear)
+                .fill(isFocused ? Color.white.opacity(0.78) : Color.white.opacity(0.04))
                 .glassEffect(
                     Glass.regular
-                        .tint(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.10))
+                        .tint(isFocused ? Color.white.opacity(0.46) : Color.white.opacity(0.10))
                         .interactive(),
                     in: .capsule
                 )
                 .overlay {
                     Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+                        .stroke(Color.white.opacity(isFocused ? 0.52 : 0.12), lineWidth: 1)
                 }
+                .shadow(color: .white.opacity(isFocused ? 0.20 : 0), radius: 20, x: 0, y: 0)
         } else {
             Capsule(style: .continuous)
                 .fill(isFocused ? .white : Color.white.opacity(0.10))

@@ -25,6 +25,14 @@ final class TVPerformanceStateTests: XCTestCase {
         XCTAssertEqual(triggerID, "item-8")
     }
 
+    func testHomeFocusIDIncludesRowAndItemIdentity() {
+        let firstRowFocusID = TVHomeFocusID.row(rowID: "continue", itemID: "shared-item")
+        let secondRowFocusID = TVHomeFocusID.row(rowID: "popular", itemID: "shared-item")
+
+        XCTAssertNotEqual(firstRowFocusID, secondRowFocusID)
+        XCTAssertEqual(firstRowFocusID, "home.row.8:continue.item.11:shared-item")
+    }
+
     func testDetailNeighborNavigationStateMatchesEpisodeContextAgainstSeriesShell() {
         let contextItems = [
             MediaItem(id: "movie-1", name: "Movie 1", mediaType: .movie),

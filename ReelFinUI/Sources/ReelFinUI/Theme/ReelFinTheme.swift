@@ -266,11 +266,11 @@ public enum TVMotion {
         }
     }
 
-    public static let focusAnimation = Animation.easeOut(duration: 0.16)
-    public static let contentFadeAnimation = Animation.easeInOut(duration: 0.18)
+    public static let focusAnimation = Animation.spring(response: 0.24, dampingFraction: 0.84)
+    public static let contentFadeAnimation = Animation.easeInOut(duration: 0.24)
     public static let titleLoadAnimation = Animation.easeInOut(duration: 0.22)
-    public static let heroPageAnimation = Animation.easeInOut(duration: 0.20)
-    public static let overlayFadeAnimation = Animation.easeInOut(duration: 0.14)
+    public static let heroPageAnimation = Animation.spring(response: 0.38, dampingFraction: 0.86, blendDuration: 0.08)
+    public static let overlayFadeAnimation = Animation.easeInOut(duration: 0.20)
 }
 
 public extension View {
