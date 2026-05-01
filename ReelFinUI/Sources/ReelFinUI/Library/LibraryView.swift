@@ -9,12 +9,15 @@ private enum TVLibraryWarmupScope {
 
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
+    @Namespace private var posterNamespace
 #if os(tvOS)
     @FocusState private var focusedControl: TVLibraryControlFocus?
 #endif
     @StateObject private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
     @State private var warmupTask: Task<Void, Never>?
+    @State private var selectedDetailTransitionSourceID: String?
 #if os(tvOS)
     @State private var allowsControlBarTopNavigation = true
     @State private var controlBarNavigationUnlockTask: Task<Void, Never>?
@@ -33,13 +36,20 @@ struct LibraryView: View {
         .navigationDestination(
             isPresented: Binding(
                 get: { viewModel.selectedItem != nil },
-                set: { if !$0 { viewModel.selectedItem = nil } }
+                set: {
+                    if !$0 {
+                        viewModel.selectedItem = nil
+                        selectedDetailTransitionSourceID = nil
+                    }
+                }
             )
         ) {
             if let item = viewModel.selectedItem {
                 DetailView(
                     dependencies: dependencies,
-                    item: item
+                    item: item,
+                    namespace: posterNamespace,
+                    transitionSourceID: selectedDetailTransitionSourceID
                 )
             }
         }
@@ -130,11 +140,14 @@ struct LibraryView: View {
                     TVLibraryPosterCard(
                         item: item,
                         dependencies: dependencies,
+                        namespace: posterNamespace,
+                        transitionSourceID: LibraryCardTransitionSource.id(itemID: item.id),
                         onFocus: { focusedItem in
                             handleFocusedItem(focusedItem)
                         },
                         onMoveUp: topRowItemIDs.contains(item.id) ? focusPreferredControlBar : nil,
                         onSelect: { selectedItem in
+                            selectedDetailTransitionSourceID = LibraryCardTransitionSource.id(itemID: selectedItem.id)
                             let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
                             Task {
                                 await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
@@ -146,8 +159,9 @@ struct LibraryView: View {
                         handleVisibleItem(item)
                     }
 #else
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: displayDensity.scaledSpacing(10)) {
                         Button {
+                            selectedDetailTransitionSourceID = LibraryCardTransitionSource.id(itemID: item.id)
                             let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
                             Task {
                                 await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
@@ -158,7 +172,9 @@ struct LibraryView: View {
                                 item: item,
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline,
-                                layoutStyle: .grid
+                                layoutStyle: .grid,
+                                namespace: posterNamespace,
+                                transitionSourceID: LibraryCardTransitionSource.id(itemID: item.id)
                             )
                         }
                         .accessibilityIdentifier("media_card_button_\(item.id)")
@@ -374,10 +390,12 @@ struct LibraryView: View {
 #if os(tvOS)
         return [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 32)]
 #else
-        if horizontalSizeClass == .compact {
-            return [GridItem(.adaptive(minimum: 152, maximum: 190), spacing: 12)]
-        }
-        return [GridItem(.adaptive(minimum: 186, maximum: 230), spacing: 16)]
+        let width = PosterCardMetrics.posterWidth(
+            for: .grid,
+            compact: horizontalSizeClass == .compact,
+            displayDensity: displayDensity
+        )
+        return [GridItem(.adaptive(minimum: width, maximum: width), spacing: gridSpacing)]
 #endif
     }
 
@@ -385,7 +403,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 40
 #else
-        return 16
+        return displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 12 : 16)
 #endif
     }
 
@@ -393,7 +411,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 56
 #else
-        return horizontalSizeClass == .compact ? 12 : 22
+        return displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 12 : 22)
 #endif
     }
 
@@ -401,7 +419,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 18
 #else
-        return 15
+        return displayDensity.scaledTextSize(15)
 #endif
     }
 
@@ -409,7 +427,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 20
 #else
-        return 14
+        return displayDensity.scaledSpacing(14)
 #endif
     }
 
@@ -417,7 +435,7 @@ struct LibraryView: View {
 #if os(tvOS)
         return 12
 #else
-        return 9
+        return displayDensity.scaledSpacing(9)
 #endif
     }
 

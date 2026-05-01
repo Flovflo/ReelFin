@@ -23,6 +23,7 @@ private struct TVCardButton: View {
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     let namespaceProvider: (String) -> Namespace.ID?
+    let transitionSourceID: String
     let focusedItemID: FocusState<String?>.Binding?
     let isLandscapeRail: Bool
     let progress: Double?
@@ -42,6 +43,7 @@ private struct TVCardButton: View {
                 progress: progress,
                 optimizationStatus: optimizationStatus,
                 namespace: transitionNamespace,
+                transitionSourceID: transitionSourceID,
                 apiClient: apiClient,
                 imagePipeline: imagePipeline,
                 isFocused: isFocused,
@@ -110,6 +112,7 @@ private struct TVHomeShelfCard: View {
     let progress: Double?
     let optimizationStatus: ApplePlaybackOptimizationStatus?
     let namespace: Namespace.ID?
+    let transitionSourceID: String
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     let isFocused: Bool
@@ -126,13 +129,14 @@ private struct TVHomeShelfCard: View {
                 imagePipeline: imagePipeline,
                 layoutStyle: layoutStyle,
                 namespace: namespace,
+                transitionSourceID: transitionSourceID,
                 ranking: nil,
                 progress: usesTVContinueWatchingStyle ? nil : progress,
                 optimizationStatus: optimizationStatus,
                 showsProgressOverlay: !usesTVContinueWatchingStyle,
                 showsTopTrailingBadges: false
             )
-            .modifier(TVMatchedTransitionSource(itemID: item.id, namespace: namespace))
+            .modifier(TVMatchedTransitionSource(itemID: transitionSourceID, namespace: namespace))
 
             LinearGradient(
                 stops: gradientStops,
@@ -488,12 +492,14 @@ private struct TVHomeItemFocusModifier: ViewModifier {
 #if os(iOS)
 private struct ImmersiveHomeRowCard: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
 
     let item: MediaItem
     let progress: Double?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     let namespace: Namespace.ID?
+    let transitionSourceID: String?
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -558,7 +564,7 @@ private struct ImmersiveHomeRowCard: View {
                 .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
         }
         .clipShape(cardShape)
-        .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
+        .modifier(MatchedCardModifier(itemID: transitionSourceID ?? item.id, namespace: namespace))
         .contentShape(cardShape)
         .shadow(color: .black.opacity(0.26), radius: 18, x: 0, y: 10)
         .accessibilityElement(children: .combine)
@@ -618,7 +624,7 @@ private struct ImmersiveHomeRowCard: View {
     }
 
     private var cardWidth: CGFloat {
-        horizontalSizeClass == .compact ? 296 : 420
+        displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 296 : 420)
     }
 
     private var cardHeight: CGFloat {
@@ -626,35 +632,35 @@ private struct ImmersiveHomeRowCard: View {
     }
 
     private var titleFontSize: CGFloat {
-        horizontalSizeClass == .compact ? 22 : 28
+        displayDensity.scaledTextSize(horizontalSizeClass == .compact ? 22 : 28)
     }
 
     private var metadataFontSize: CGFloat {
-        horizontalSizeClass == .compact ? 15 : 18
+        displayDensity.scaledTextSize(horizontalSizeClass == .compact ? 15 : 18)
     }
 
     private var progressTrackWidth: CGFloat {
-        horizontalSizeClass == .compact ? 38 : 46
+        displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 38 : 46)
     }
 
     private var contentHorizontalPadding: CGFloat {
-        horizontalSizeClass == .compact ? 16 : 20
+        displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 16 : 20)
     }
 
     private var contentBottomPadding: CGFloat {
-        horizontalSizeClass == .compact ? 14 : 18
+        displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 14 : 18)
     }
 
     private var titleTopPadding: CGFloat {
-        horizontalSizeClass == .compact ? 18 : 24
+        displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 18 : 24)
     }
 
     private var titleMaxWidth: CGFloat {
-        horizontalSizeClass == .compact ? 190 : 250
+        displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 190 : 250)
     }
 
     private var titleMaxHeight: CGFloat {
-        horizontalSizeClass == .compact ? 44 : 58
+        displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 44 : 58)
     }
 }
 
@@ -782,6 +788,7 @@ private struct ImmersiveRowProgressTrack: View {
 
 public struct SectionRow: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
 
     private let title: String
     private let items: [MediaItem]
@@ -789,10 +796,14 @@ public struct SectionRow: View {
     private let apiClient: JellyfinAPIClientProtocol
     private let imagePipeline: ImagePipelineProtocol
     private let namespaceProvider: (String) -> Namespace.ID?
+    private let transitionSourceIDProvider: (String, String?) -> String
     private let focusedItemID: FocusState<String?>.Binding?
     private let optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)?
+    private let isLoadingMore: Bool
     private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
-    private let onSelect: (MediaItem) -> Void
+    private let onOpenSection: (() -> Void)?
+    private let onItemAppear: ((MediaItem) -> Void)?
+    private let onSelect: (MediaItem, String) -> Void
 
     public init(
         title: String,
@@ -801,10 +812,14 @@ public struct SectionRow: View {
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         namespaceProvider: @escaping (String) -> Namespace.ID?,
+        transitionSourceIDProvider: @escaping (String, String?) -> String = { itemID, _ in itemID },
         focusedItemID: FocusState<String?>.Binding? = nil,
         optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)? = nil,
+        isLoadingMore: Bool = false,
         onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
-        onSelect: @escaping (MediaItem) -> Void
+        onOpenSection: (() -> Void)? = nil,
+        onItemAppear: ((MediaItem) -> Void)? = nil,
+        onSelect: @escaping (MediaItem, String) -> Void
     ) {
         self.title = title
         self.items = items
@@ -812,9 +827,13 @@ public struct SectionRow: View {
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
         self.namespaceProvider = namespaceProvider
+        self.transitionSourceIDProvider = transitionSourceIDProvider
         self.focusedItemID = focusedItemID
         self.optimizationStatusProvider = optimizationStatusProvider
+        self.isLoadingMore = isLoadingMore
         self.onFocus = onFocus
+        self.onOpenSection = onOpenSection
+        self.onItemAppear = onItemAppear
         self.onSelect = onSelect
     }
 
@@ -829,9 +848,17 @@ public struct SectionRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
 #if os(iOS)
-                Image(systemName: "chevron.right")
-                    .font(sectionChevronFont)
-                    .foregroundStyle(sectionChevronColor)
+                Button {
+                    onOpenSection?()
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(sectionChevronFont)
+                        .foregroundStyle(sectionChevronColor)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open \(title)")
 #endif
             }
             .padding(.horizontal, horizontalPadding)
@@ -839,6 +866,7 @@ public struct SectionRow: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: cardSpacing) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        let transitionSourceID = transitionSourceIDProvider(item.id, nil)
                         let optimizationStatus = optimizationStatusProvider?(item)
 #if os(tvOS)
                         TVCardButton(
@@ -849,6 +877,7 @@ public struct SectionRow: View {
                             apiClient: apiClient,
                             imagePipeline: imagePipeline,
                             namespaceProvider: namespaceProvider,
+                            transitionSourceID: transitionSourceID,
                             focusedItemID: focusedItemID,
                             isLandscapeRail: isLandscapeRail,
                             progress: progress(for: item),
@@ -856,11 +885,16 @@ public struct SectionRow: View {
                             onFocus: { focusedItem in
                                 onFocus?(focusedItem, items)
                             },
-                            onSelect: onSelect
+                            onSelect: { selectedItem in
+                                onSelect(selectedItem, transitionSourceID)
+                            }
                         )
+                        .onAppear {
+                            onItemAppear?(item)
+                        }
 #else
                         Button {
-                            onSelect(item)
+                            onSelect(item, transitionSourceID)
                         } label: {
                             if usesImmersiveLandscapeRowStyle {
                                 ImmersiveHomeRowCard(
@@ -868,7 +902,8 @@ public struct SectionRow: View {
                                     progress: progress(for: item),
                                     apiClient: apiClient,
                                     imagePipeline: imagePipeline,
-                                    namespace: namespaceProvider(item.id)
+                                    namespace: namespaceProvider(item.id),
+                                    transitionSourceID: transitionSourceID
                                 )
                                 .scrollTransition(axis: .horizontal) { content, phase in
                                     content
@@ -881,6 +916,7 @@ public struct SectionRow: View {
                                     imagePipeline: imagePipeline,
                                     layoutStyle: isLandscapeRail ? .landscape : .row,
                                     namespace: namespaceProvider(item.id),
+                                    transitionSourceID: transitionSourceID,
                                     ranking: isTop10 ? (index + 1) : nil,
                                     progress: progress(for: item),
                                     optimizationStatus: optimizationStatus,
@@ -896,7 +932,17 @@ public struct SectionRow: View {
                         .accessibilityIdentifier("media_card_button_\(kind.rawValue)_\(item.id)")
                         .buttonStyle(.plain)
                         .hoverEffect(.highlight)
+                        .onAppear {
+                            onItemAppear?(item)
+                        }
 #endif
+                    }
+
+                    if isLoadingMore {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: loadingMoreWidth, height: loadingMoreHeight)
+                            .accessibilityLabel("Loading more")
                     }
                 }
                 .scrollTargetLayout()
@@ -912,9 +958,9 @@ public struct SectionRow: View {
         return ReelFinTheme.tvRailSpacing
 #else
         if usesImmersiveLandscapeRowStyle {
-            return 18
+            return displayDensity.scaledSpacing(18)
         }
-        return 16
+        return displayDensity.scaledSpacing(16)
 #endif
     }
 
@@ -941,7 +987,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHorizontalPadding
         #else
-        return horizontalSizeClass == .compact ? 24 : 40
+        return displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 24 : 40)
         #endif
     }
 
@@ -949,7 +995,7 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHeaderSpacing
         #else
-        return usesImmersiveLandscapeRowStyle ? 12 : 14
+        return displayDensity.scaledSpacing(usesImmersiveLandscapeRowStyle ? 12 : 14)
         #endif
     }
 
@@ -957,8 +1003,30 @@ public struct SectionRow: View {
         #if os(tvOS)
         return ReelFinTheme.tvRailVerticalPadding
         #else
-        return usesImmersiveLandscapeRowStyle ? 10 : 14
+        return displayDensity.scaledSpacing(usesImmersiveLandscapeRowStyle ? 10 : 14)
         #endif
+    }
+
+    private var loadingMoreWidth: CGFloat {
+        isLandscapeRail
+            ? displayDensity.scaledVisualSize(86)
+            : PosterCardMetrics.posterWidth(
+                for: .row,
+                compact: horizontalSizeClass == .compact,
+                displayDensity: displayDensity
+            )
+    }
+
+    private var loadingMoreHeight: CGFloat {
+        if isLandscapeRail {
+            return loadingMoreWidth * (9.0 / 16.0)
+        }
+
+        return PosterCardMetrics.posterWidth(
+            for: .row,
+            compact: horizontalSizeClass == .compact,
+            displayDensity: displayDensity
+        ) * 1.55
     }
 
     private var sectionTitleFont: Font {
@@ -966,9 +1034,9 @@ public struct SectionRow: View {
         return .system(size: 24, weight: .bold, design: .rounded)
         #else
         if usesImmersiveLandscapeRowStyle {
-            return .system(size: 30, weight: .heavy)
+            return .system(size: displayDensity.scaledTextSize(30), weight: .heavy)
         }
-        return .system(size: 24, weight: .bold, design: .rounded)
+        return .system(size: displayDensity.scaledTextSize(24), weight: .bold, design: .rounded)
         #endif
     }
 
@@ -977,8 +1045,8 @@ public struct SectionRow: View {
         return .body.weight(.semibold)
         #else
         return usesImmersiveLandscapeRowStyle
-            ? .system(size: 28, weight: .bold)
-            : .headline.weight(.semibold)
+            ? .system(size: displayDensity.scaledTextSize(28), weight: .bold)
+            : .system(size: displayDensity.scaledTextSize(17), weight: .semibold)
         #endif
     }
 
@@ -993,6 +1061,7 @@ public struct SectionRow: View {
 
 struct HomeView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
     @StateObject private var viewModel: HomeViewModel
     @Namespace private var posterNamespace
 #if os(tvOS)
@@ -1007,6 +1076,7 @@ struct HomeView: View {
     @State private var selectedDetailTransitionSourceID: String?
     @State private var selectedDetailContextItems: [MediaItem] = []
     @State private var selectedDetailContextTitle: String?
+    @State private var selectedHomeSectionRow: HomeRow?
 #if os(tvOS)
     @State private var lastSelectedHomeRowID: String?
     @State private var lastSelectedHomeItemID: String?
@@ -1044,9 +1114,8 @@ struct HomeView: View {
 
     var body: some View {
         let visibleRows = viewModel.visibleRows
-        let rowIDByItemID = viewModel.rowIDByItemID
 
-        mainContent(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+        mainContent(visibleRows: visibleRows)
         .onDisappear {
             handleHomeDisappear()
         }
@@ -1077,6 +1146,24 @@ struct HomeView: View {
                     namespace: selectedDetailNamespace,
                     transitionSourceID: selectedDetailTransitionSourceID,
                     onDisplayedSourceItemChange: handleDisplayedDetailSourceItemChange
+                )
+            }
+        }
+        .navigationDestination(
+            isPresented: Binding(
+                get: { selectedHomeSectionRow != nil },
+                set: { newValue in
+                    if !newValue {
+                        selectedHomeSectionRow = nil
+                    }
+                }
+            )
+        ) {
+            if let selectedHomeSectionRow {
+                HomeSectionLibraryView(
+                    dependencies: dependencies,
+                    homeViewModel: viewModel,
+                    row: selectedHomeSectionRow
                 )
             }
         }
@@ -1124,12 +1211,10 @@ struct HomeView: View {
         } message: {
             Text(playbackErrorMessage ?? "Unknown error")
         }
-        .sheet(isPresented: $isCustomizationPresented) {
-            HomeCustomizationSheet(viewModel: viewModel)
-#if os(iOS)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-#endif
+        .alert("Personalization is coming soon", isPresented: $isCustomizationPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Home customization will be available in an upcoming update.")
         }
 #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
@@ -1138,13 +1223,12 @@ struct HomeView: View {
 
     @ViewBuilder
     private func mainContent(
-        visibleRows: [HomeRow],
-        rowIDByItemID: [String: String]
+        visibleRows: [HomeRow]
     ) -> some View {
 #if os(tvOS)
         TVHomeScreen(navigationAppearance: tvScreenState.navigationAppearance) {
             ZStack(alignment: .top) {
-                homeScrollContent(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+                homeScrollContent(visibleRows: visibleRows)
 
                 TVHomeRefreshStatusView(isRefreshing: viewModel.isRefreshing && !viewModel.isInitialLoading)
                     .padding(.top, ReelFinTheme.tvTopNavigationBarHeight + 42)
@@ -1166,15 +1250,12 @@ struct HomeView: View {
             )
             .ignoresSafeArea(edges: .top)
 
-            homeScrollContent(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+            homeScrollContent(visibleRows: visibleRows)
         }
 #endif
     }
 
-    private func homeScrollContent(
-        visibleRows: [HomeRow],
-        rowIDByItemID: [String: String]
-    ) -> some View {
+    private func homeScrollContent(visibleRows: [HomeRow]) -> some View {
 #if os(iOS)
         StickyBlurHeader(
             maxBlurRadius: 12,
@@ -1195,7 +1276,7 @@ struct HomeView: View {
                 .padding(.bottom, 12)
                 .accessibilityIdentifier("home_sticky_blur_header")
         } content: {
-            homeScrollSections(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+            homeScrollSections(visibleRows: visibleRows)
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .simultaneousGesture(
@@ -1213,7 +1294,7 @@ struct HomeView: View {
 #else
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                homeScrollSections(visibleRows: visibleRows, rowIDByItemID: rowIDByItemID)
+                homeScrollSections(visibleRows: visibleRows)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             #if os(tvOS)
@@ -1230,10 +1311,7 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func homeScrollSections(
-        visibleRows: [HomeRow],
-        rowIDByItemID: [String: String]
-    ) -> some View {
+    private func homeScrollSections(visibleRows: [HomeRow]) -> some View {
         LazyVStack(alignment: .leading, spacing: sectionSpacing) {
             if viewModel.isInitialLoading && visibleRows.isEmpty {
                 loadingSkeleton
@@ -1251,19 +1329,35 @@ struct HomeView: View {
                         kind: row.kind,
                         apiClient: dependencies.apiClient,
                         imagePipeline: dependencies.imagePipeline,
-                        namespaceProvider: { itemID in
-                            rowIDByItemID[itemID] == row.id ? posterNamespace : nil
+                        namespaceProvider: { _ in
+                            posterNamespace
+                        },
+                        transitionSourceIDProvider: { itemID, occurrenceID in
+                            HomeCardTransitionSource.id(
+                                rowID: row.id,
+                                itemID: itemID,
+                                occurrenceID: occurrenceID
+                            )
                         },
                         focusedItemID: homeFocusedItemBinding,
                         optimizationStatusProvider: { item in
                             appleOptimizationStatuses[item.id]
                         },
+                        isLoadingMore: viewModel.isLoadingMore(rowID: row.id),
                         onFocus: { item, neighbors in
                             handleFocusedItem(item, neighbors: neighbors)
                         },
-                        onSelect: { item in
-                            selectedDetailNamespace = rowIDByItemID[item.id] == row.id ? posterNamespace : nil
-                            selectedDetailTransitionSourceID = rowIDByItemID[item.id] == row.id ? item.id : nil
+                        onOpenSection: {
+                            selectedHomeSectionRow = row
+                        },
+                        onItemAppear: { item in
+                            Task {
+                                await viewModel.loadMoreIfNeeded(rowID: row.id, visibleItemID: item.id)
+                            }
+                        },
+                        onSelect: { item, transitionSourceID in
+                            selectedDetailNamespace = posterNamespace
+                            selectedDetailTransitionSourceID = transitionSourceID
                             selectedDetailContextItems = row.items
                             selectedDetailContextTitle = row.title
 #if os(tvOS)
@@ -1393,7 +1487,7 @@ struct HomeView: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionSpacing
         #else
-        return 24
+        return displayDensity.scaledSpacing(24)
         #endif
     }
 
@@ -1520,7 +1614,7 @@ struct HomeView: View {
         #if os(tvOS)
         return ReelFinTheme.tvSectionHorizontalPadding
         #else
-        return isCompact ? 24 : 40
+        return displayDensity.scaledSpacing(isCompact ? 24 : 40)
         #endif
     }
 
@@ -1529,11 +1623,15 @@ struct HomeView: View {
     }
 
     private var heroSkeletonHeight: CGFloat {
-        horizontalSizeClass == .compact ? 500 : 600
+        displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 500 : 600)
     }
 
     private var rowCardWidth: CGFloat {
-        isCompact ? 134 : 160
+        PosterCardMetrics.posterWidth(
+            for: .row,
+            compact: isCompact,
+            displayDensity: displayDensity
+        )
     }
 
     private var rowCardHeight: CGFloat {
@@ -1837,7 +1935,7 @@ struct HomeView: View {
         }
 
         selectedDetailNamespace = posterNamespace
-        selectedDetailTransitionSourceID = item.id
+        selectedDetailTransitionSourceID = HomeCardTransitionSource.id(rowID: rowID, itemID: item.id)
         lastSelectedHomeRowID = rowID
         lastSelectedHomeItemID = item.id
         homeReturnTarget = .row(rowID: rowID, itemID: item.id)

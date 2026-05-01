@@ -37,6 +37,7 @@ struct DetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
     @StateObject private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
 
@@ -735,7 +736,9 @@ struct DetailView: View {
 
     private var prefersNativeZoomTransition: Bool {
         if #available(iOS 18.0, tvOS 18.0, *) {
-            return transitionNamespace != nil && transitionSourceID == currentReturnSourceItem.id
+            guard transitionNamespace != nil, let transitionSourceID else { return false }
+            return transitionSourceID == currentReturnSourceItem.id
+                || transitionSourceID.hasSuffix("::\(currentReturnSourceItem.id)")
         }
         return false
     }
@@ -960,7 +963,7 @@ struct DetailView: View {
 #if os(tvOS)
         return ReelFinTheme.tvSectionHorizontalPadding
 #else
-        return horizontalSizeClass == .compact ? 20 : 36
+        return displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 20 : 36)
 #endif
     }
 
@@ -968,7 +971,7 @@ struct DetailView: View {
 #if os(tvOS)
         return ReelFinTheme.tvSectionSpacing
 #else
-        return 18
+        return displayDensity.scaledSpacing(18)
 #endif
     }
 
@@ -976,7 +979,7 @@ struct DetailView: View {
 #if os(tvOS)
         return dynamicTypeSize.isAccessibilitySize ? 176 : 144
 #else
-        return horizontalSizeClass == .compact ? 120 : 136
+        return displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 120 : 136)
 #endif
     }
 
@@ -984,7 +987,7 @@ struct DetailView: View {
 #if os(tvOS)
         return 64
 #else
-        return 40
+        return displayDensity.scaledSpacing(40)
 #endif
     }
 
@@ -992,7 +995,7 @@ struct DetailView: View {
 #if os(tvOS)
         return 480
 #else
-        return horizontalSizeClass == .compact ? 308 : 360
+        return displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 308 : 360)
 #endif
     }
 
@@ -1000,7 +1003,7 @@ struct DetailView: View {
 #if os(tvOS)
         return 30
 #else
-        return 14
+        return displayDensity.scaledSpacing(14)
 #endif
     }
 
@@ -1009,11 +1012,14 @@ struct DetailView: View {
         let ratioHeight = viewportSize.height * 0.74
         return min(max(ratioHeight, 760), 980)
 #else
-        let ratioHeight = viewportSize.height * (horizontalSizeClass == .compact ? 0.64 : 0.68)
+        let heroDensityScale = max(displayDensity.visualScale, 0.86)
+        let ratioHeight = viewportSize.height
+            * (horizontalSizeClass == .compact ? 0.64 : 0.68)
+            * heroDensityScale
         if horizontalSizeClass == .compact {
-            return min(max(ratioHeight, 420), 560)
+            return min(max(ratioHeight, 420 * heroDensityScale), 560 * heroDensityScale)
         }
-        return min(max(ratioHeight, 520), 700)
+        return min(max(ratioHeight, 520 * heroDensityScale), 700 * heroDensityScale)
 #endif
     }
 
@@ -1674,6 +1680,8 @@ private enum HeroMetadataLayout {
 
 #if os(iOS)
 private struct IOSDetailHeroContent: View {
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
+
     let item: MediaItem
     let playbackItem: MediaItem
     let preferredSource: MediaSource?
@@ -1741,7 +1749,7 @@ private struct IOSDetailHeroContent: View {
             IOSHeroChromeCircleButton(
                 systemImage: "chevron.left",
                 accessibilityLabel: "Back",
-                diameter: isCompactHeroLayout ? 44 : 50,
+                diameter: visualSize(isCompactHeroLayout ? 44 : 50),
                 action: onBack
             )
 
@@ -1751,15 +1759,15 @@ private struct IOSDetailHeroContent: View {
                 IOSHeroChromeBarButton(
                     systemImage: "arrow.down",
                     accessibilityLabel: "Download",
-                    controlWidth: isCompactHeroLayout ? 38 : 44,
-                    controlHeight: isCompactHeroLayout ? 27 : 30
+                    controlWidth: visualSize(isCompactHeroLayout ? 38 : 44),
+                    controlHeight: visualSize(isCompactHeroLayout ? 27 : 30)
                 ) {
                     isDownloadAvailabilityAlertPresented = true
                 }
 
                 Rectangle()
                     .fill(Color.white.opacity(0.18))
-                    .frame(width: 1, height: isCompactHeroLayout ? 15 : 18)
+                    .frame(width: 1, height: visualSize(isCompactHeroLayout ? 15 : 18))
 
                 ShareLink(
                     item: shareText,
@@ -1768,14 +1776,14 @@ private struct IOSDetailHeroContent: View {
                     IOSHeroChromeBarGlyph(
                         systemImage: "square.and.arrow.up",
                         accessibilityLabel: "Share",
-                        controlWidth: isCompactHeroLayout ? 38 : 44,
-                        controlHeight: isCompactHeroLayout ? 27 : 30
+                        controlWidth: visualSize(isCompactHeroLayout ? 38 : 44),
+                        controlHeight: visualSize(isCompactHeroLayout ? 27 : 30)
                     )
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, isCompactHeroLayout ? 8 : 10)
-            .padding(.vertical, isCompactHeroLayout ? 6 : 8)
+            .padding(.horizontal, spacing(isCompactHeroLayout ? 8 : 10))
+            .padding(.vertical, spacing(isCompactHeroLayout ? 6 : 8))
             .reelFinGlassCapsule(
                 interactive: true,
                 tint: Color.white.opacity(0.16),
@@ -1798,7 +1806,7 @@ private struct IOSDetailHeroContent: View {
 
             HStack(spacing: 10) {
                 Text(subtitleText)
-                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .font(.system(size: textSize(18), weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.86))
                     .multilineTextAlignment(.center)
 
@@ -1808,15 +1816,15 @@ private struct IOSDetailHeroContent: View {
             }
             .frame(maxWidth: .infinity)
 
-            HStack(spacing: isCompactHeroLayout ? 12 : 14) {
+            HStack(spacing: spacing(isCompactHeroLayout ? 12 : 14)) {
                 IOSDetailHeroPrimaryButton(
                     title: iosPlayButtonLabel,
                     isLoading: isLoadingPlayback,
-                    minHeight: isCompactHeroLayout ? 48 : 56,
-                    fontSize: isCompactHeroLayout ? 15.5 : 17,
+                    minHeight: visualSize(isCompactHeroLayout ? 48 : 56),
+                    fontSize: textSize(isCompactHeroLayout ? 15.5 : 17),
                     action: onPlay
                 )
-                .frame(maxWidth: isCompactHeroLayout ? 236 : 272)
+                .frame(maxWidth: visualSize(isCompactHeroLayout ? 236 : 272))
 
                 IOSDetailHeroRoundActionButton(
                     systemImage: isWatched ? "eye.fill" : "eye",
@@ -1824,7 +1832,7 @@ private struct IOSDetailHeroContent: View {
                     accessibilityIdentifier: "detail_watched_button",
                     accessibilityValue: isWatched ? "watched" : "not_watched",
                     isActive: isWatched,
-                    size: isCompactHeroLayout ? 48 : 56,
+                    size: visualSize(isCompactHeroLayout ? 48 : 56),
                     action: onToggleWatched
                 )
 
@@ -1834,11 +1842,11 @@ private struct IOSDetailHeroContent: View {
                     accessibilityIdentifier: "detail_favorite_button",
                     accessibilityValue: isInWatchlist ? "liked" : "not_liked",
                     isActive: isInWatchlist,
-                    size: isCompactHeroLayout ? 48 : 56,
+                    size: visualSize(isCompactHeroLayout ? 48 : 56),
                     action: onToggleWatchlist
                 )
             }
-            .frame(maxWidth: min(contentWidth, isCompactHeroLayout ? 388 : 424))
+            .frame(maxWidth: min(contentWidth, visualSize(isCompactHeroLayout ? 388 : 424)))
 
             resumeProgressBlock
         }
@@ -1847,10 +1855,10 @@ private struct IOSDetailHeroContent: View {
     @ViewBuilder
     private var resumeProgressBlock: some View {
         if hasResumeProgressInfo {
-            VStack(spacing: isCompactHeroLayout ? 5 : 8) {
+            VStack(spacing: spacing(isCompactHeroLayout ? 5 : 8)) {
                 if let playbackStatusText, !playbackStatusText.isEmpty {
                     Text(playbackStatusText)
-                        .font(.system(size: isCompactHeroLayout ? 13.5 : 15, weight: .semibold, design: .rounded))
+                        .font(.system(size: textSize(isCompactHeroLayout ? 13.5 : 15), weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.84))
                         .multilineTextAlignment(.center)
                         .lineLimit(1)
@@ -1864,7 +1872,7 @@ private struct IOSDetailHeroContent: View {
                     )
                 }
             }
-            .frame(maxWidth: min(contentWidth, isCompactHeroLayout ? 320 : 360))
+            .frame(maxWidth: min(contentWidth, visualSize(isCompactHeroLayout ? 320 : 360)))
             .accessibilityElement(children: .combine)
         }
     }
@@ -1894,10 +1902,10 @@ private struct IOSDetailHeroContent: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .font(.system(size: isCompactHeroLayout ? 12 : 13, weight: .bold, design: .rounded))
+                        .font(.system(size: textSize(isCompactHeroLayout ? 12 : 13), weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.92))
-                        .padding(.horizontal, isCompactHeroLayout ? 13 : 15)
-                        .padding(.vertical, isCompactHeroLayout ? 7 : 9)
+                        .padding(.horizontal, spacing(isCompactHeroLayout ? 13 : 15))
+                        .padding(.vertical, spacing(isCompactHeroLayout ? 7 : 9))
                         .background(Color.white.opacity(0.14), in: Capsule(style: .continuous))
                         .overlay {
                             Capsule(style: .continuous)
@@ -1939,7 +1947,7 @@ private struct IOSDetailHeroContent: View {
                     HStack(spacing: isCompactHeroLayout ? 8 : 10) {
                         if !footerPrimaryText.isEmpty {
                             Text(footerPrimaryText)
-                                .font(.system(size: isCompactHeroLayout ? 14 : 15, weight: .medium, design: .rounded))
+                                .font(.system(size: textSize(isCompactHeroLayout ? 14 : 15), weight: .medium, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.78))
                                 .lineLimit(1)
                         }
@@ -1962,7 +1970,7 @@ private struct IOSDetailHeroContent: View {
                         HStack(spacing: isCompactHeroLayout ? 8 : 10) {
                             if !footerPrimaryText.isEmpty {
                                 Text(footerPrimaryText)
-                                    .font(.system(size: isCompactHeroLayout ? 14 : 15, weight: .medium, design: .rounded))
+                                    .font(.system(size: textSize(isCompactHeroLayout ? 14 : 15), weight: .medium, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.78))
                                     .lineLimit(1)
                             }
@@ -2109,31 +2117,31 @@ private struct IOSDetailHeroContent: View {
 
     private var contentStackSpacing: CGFloat {
         if isCompactHeroLayout {
-            return max(10, 16 - (collapseProgress * 4))
+            return max(spacing(10), spacing(16) - (collapseProgress * spacing(4)))
         }
-        return max(18, 24 - (collapseProgress * 6))
+        return max(spacing(18), spacing(24) - (collapseProgress * spacing(6)))
     }
 
     private var identityBlockSpacing: CGFloat {
         if isCompactHeroLayout {
-            return max(9, 13 - (collapseProgress * 4))
+            return max(spacing(9), spacing(13) - (collapseProgress * spacing(4)))
         }
-        return max(14, 18 - (collapseProgress * 5))
+        return max(spacing(14), spacing(18) - (collapseProgress * spacing(5)))
     }
 
     private var detailBlockSpacing: CGFloat {
         if isCompactHeroLayout {
-            return max(7, 10 - (collapseProgress * 3))
+            return max(spacing(7), spacing(10) - (collapseProgress * spacing(3)))
         }
-        return max(12, 16 - (collapseProgress * 4))
+        return max(spacing(12), spacing(16) - (collapseProgress * spacing(4)))
     }
 
     private var synopsisFontSize: CGFloat {
-        isCompactHeroLayout ? 15.5 : 17
+        textSize(isCompactHeroLayout ? 15.5 : 17)
     }
 
     private var topChromeOffset: CGFloat {
-        isCompactHeroLayout ? 22 : 18
+        spacing(isCompactHeroLayout ? 22 : 18)
     }
 
     private var synopsisLineLimit: Int {
@@ -2157,9 +2165,23 @@ private struct IOSDetailHeroContent: View {
     private func resetSynopsisExpansion() {
         isSynopsisExpanded = false
     }
+
+    private func visualSize(_ value: CGFloat) -> CGFloat {
+        displayDensity.scaledVisualSize(value)
+    }
+
+    private func textSize(_ value: CGFloat) -> CGFloat {
+        displayDensity.scaledTextSize(value)
+    }
+
+    private func spacing(_ value: CGFloat) -> CGFloat {
+        displayDensity.scaledSpacing(value)
+    }
 }
 
 private struct IOSDetailHeroTitleView: View {
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
+
     let item: MediaItem
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
@@ -2175,12 +2197,15 @@ private struct IOSDetailHeroTitleView: View {
                 Image(uiImage: logoImage)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: 320, maxHeight: 94)
+                    .frame(
+                        maxWidth: displayDensity.scaledVisualSize(320),
+                        maxHeight: displayDensity.scaledVisualSize(94)
+                    )
                     .shadow(color: .black.opacity(0.42), radius: 18, x: 0, y: 8)
                     .transition(.opacity)
             }
         }
-        .frame(maxWidth: 540, minHeight: 74)
+        .frame(maxWidth: 540, minHeight: displayDensity.scaledVisualSize(74))
         .transaction { transaction in
             transaction.animation = nil
         }
@@ -2191,7 +2216,7 @@ private struct IOSDetailHeroTitleView: View {
 
     private var titleText: some View {
         Text(item.name)
-            .font(.system(size: item.name.count > 16 ? 42 : 48, weight: .black, design: .rounded))
+            .font(.system(size: displayDensity.scaledTextSize(item.name.count > 16 ? 42 : 48), weight: .black, design: .rounded))
             .tracking(item.name.count <= 8 ? 6 : 2)
             .foregroundStyle(.white)
             .lineLimit(2)
@@ -3101,13 +3126,21 @@ private struct HeroPrimaryButton: View {
             action()
         } label: {
             primaryLabel
-                .frame(width: 318, height: 78)
+                .foregroundStyle(primaryButtonForeground)
+                .frame(
+                    width: TVDetailActionButtonLayout.controlSize.width,
+                    height: TVDetailActionButtonLayout.controlSize.height
+                )
+                .background { primaryButtonBackground }
                 .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(.glass(Glass.clear.tint(Color.white.opacity(0.025))))
-        .buttonBorderShape(.capsule)
-        .controlSize(.regular)
+        .buttonStyle(TVNoChromeButtonStyle())
         .focused($isFocused)
+        .focusEffectDisabled(true)
+        .hoverEffectDisabled(true)
+        .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 24 : 12, x: 0, y: isFocused ? 14 : 8)
+        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
     }
 
@@ -3118,8 +3151,10 @@ private struct HeroPrimaryButton: View {
         } label: {
             primaryLabel
                 .foregroundStyle(primaryButtonForeground)
-                .frame(minWidth: 318, minHeight: 78)
-                .padding(.horizontal, 26)
+                .frame(
+                    width: TVDetailActionButtonLayout.controlSize.width,
+                    height: TVDetailActionButtonLayout.controlSize.height
+                )
                 .background { primaryButtonBackground }
                 .contentShape(Capsule(style: .continuous))
         }
@@ -3127,14 +3162,14 @@ private struct HeroPrimaryButton: View {
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
-        .scaleEffect(isFocused ? 1.03 : 1)
+        .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 24 : 12, x: 0, y: isFocused ? 14 : 8)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
     }
 
     private var primaryLabel: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: TVDetailActionButtonLayout.labelSpacing) {
             if isLoading {
                 ProgressView()
                 Text("Preparing")
@@ -3143,13 +3178,13 @@ private struct HeroPrimaryButton: View {
                 Text(title)
             }
         }
-        .font(.system(size: 19, weight: .semibold, design: .rounded))
+        .font(.system(size: TVDetailActionButtonLayout.fontSize, weight: .semibold, design: .rounded))
         .lineLimit(1)
         .minimumScaleFactor(0.85)
     }
 
     private var primaryButtonForeground: Color {
-        .white.opacity(isFocused ? 0.98 : 0.92)
+        isFocused ? .black.opacity(0.92) : .white.opacity(0.92)
     }
 
     private var primaryButtonBackground: some View {
@@ -3292,8 +3327,11 @@ private struct HeroSecondaryButton: View {
     private var tvOS26Button: some View {
         Button(action: action) {
             buttonLabel
-                .foregroundStyle(.white.opacity(isFocused ? 0.98 : 0.90))
-                .frame(width: 206, height: 72)
+                .foregroundStyle(buttonForeground)
+                .frame(
+                    width: TVDetailActionButtonLayout.controlSize.width,
+                    height: TVDetailActionButtonLayout.controlSize.height
+                )
                 .background { secondaryGlassBackground }
                 .contentShape(Capsule(style: .continuous))
         }
@@ -3301,33 +3339,41 @@ private struct HeroSecondaryButton: View {
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
-        .scaleEffect(isFocused ? 1.035 : 1)
+        .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isFocused)
         .accessibilityAddTraits(.isButton)
     }
 
     @available(tvOS 26.0, *)
+    @ViewBuilder
     private var secondaryGlassBackground: some View {
-        Color.clear
-            .glassEffect(
-                Glass.regular
-                    .tint(Color.white.opacity(isActive ? 0.045 : 0.032))
-                    .interactive(),
-                in: .capsule
-            )
+        if isFocused {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.96))
+        } else {
+            Color.clear
+                .glassEffect(
+                    Glass.regular
+                        .tint(Color.white.opacity(isActive ? 0.045 : 0.032))
+                        .interactive(),
+                    in: .capsule
+                )
+        }
     }
 
     private var legacyTVButton: some View {
         Button(action: action) {
             buttonLabel
                 .foregroundStyle(buttonForeground)
-                .frame(minWidth: 196, minHeight: 72)
-                .padding(.horizontal, 20)
+                .frame(
+                    width: TVDetailActionButtonLayout.controlSize.width,
+                    height: TVDetailActionButtonLayout.controlSize.height
+                )
                 .background { buttonBackground }
                 .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(TVNoChromeButtonStyle())
-        .scaleEffect(isFocused ? 1.03 : 1)
+        .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
         .focused($isFocused)
         .focusEffectDisabled(true)
@@ -3338,13 +3384,13 @@ private struct HeroSecondaryButton: View {
 
     private var buttonLabel: some View {
         Label(title, systemImage: systemImage)
-            .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .font(.system(size: TVDetailActionButtonLayout.fontSize, weight: .semibold, design: .rounded))
             .lineLimit(1)
             .minimumScaleFactor(0.86)
     }
 
     private var buttonForeground: Color {
-        .white.opacity(isFocused ? 0.98 : 0.90)
+        isFocused ? .black.opacity(0.92) : .white.opacity(0.90)
     }
 
     private var buttonBackground: some View {
@@ -3680,6 +3726,8 @@ private struct SeasonPickerView: View {
 }
 
 private struct CastRowView: View {
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
+
     let cast: [PersonCredit]
     let onMoveUp: (() -> Void)?
     let apiClient: any JellyfinAPIClientProtocol
@@ -3688,7 +3736,7 @@ private struct CastRowView: View {
     var body: some View {
         DetailRowContainer(title: "Cast") {
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 18) {
+                LazyHStack(alignment: .top, spacing: 18) {
                     ForEach(cast) { person in
                         #if os(tvOS)
                         TVCastRowItem(
@@ -3741,7 +3789,7 @@ private struct CastRowView: View {
 #if os(tvOS)
         return 116
 #else
-        return 96
+        return displayDensity.scaledVisualSize(96)
 #endif
     }
 
@@ -3749,7 +3797,7 @@ private struct CastRowView: View {
 #if os(tvOS)
         return 16
 #else
-        return 13
+        return displayDensity.scaledTextSize(13)
 #endif
     }
 
@@ -3757,7 +3805,7 @@ private struct CastRowView: View {
 #if os(tvOS)
         return 14
 #else
-        return 11
+        return displayDensity.scaledTextSize(11)
 #endif
     }
 }
@@ -3815,6 +3863,8 @@ private struct TVCastRowItem: View {
 #endif
 
 private struct CastAvatarView: View {
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
+
     let person: PersonCredit
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
@@ -3861,7 +3911,7 @@ private struct CastAvatarView: View {
 #if os(tvOS)
         return 88
 #else
-        return 74
+        return displayDensity.scaledVisualSize(74)
 #endif
     }
 
@@ -3869,7 +3919,7 @@ private struct CastAvatarView: View {
 #if os(tvOS)
         return 28
 #else
-        return 24
+        return displayDensity.scaledTextSize(24)
 #endif
     }
 
@@ -3883,6 +3933,8 @@ private struct CastAvatarView: View {
 }
 
 private struct RelatedRowView: View {
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
+
     let title: String
     let items: [MediaItem]
     let onSelect: (MediaItem) -> Void
@@ -3893,7 +3945,7 @@ private struct RelatedRowView: View {
     var body: some View {
         DetailRowContainer(title: title) {
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 18) {
+                LazyHStack(alignment: .top, spacing: rowSpacing) {
                     ForEach(items) { item in
                         #if os(tvOS)
                         TVRelatedRowItem(
@@ -3927,6 +3979,14 @@ private struct RelatedRowView: View {
             .scrollClipDisabled()
             .scrollTargetBehavior(.viewAligned)
         }
+    }
+
+    private var rowSpacing: CGFloat {
+        #if os(tvOS)
+        return 18
+        #else
+        return displayDensity.scaledSpacing(18)
+        #endif
     }
 }
 
@@ -4078,6 +4138,8 @@ private struct DetailPageSkeletonView: View {
 }
 
 private struct DetailRowContainer<Content: View>: View {
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
+
     let title: String
     var subtitle: String?
     @ViewBuilder let content: Content
@@ -4116,7 +4178,7 @@ private struct DetailRowContainer<Content: View>: View {
 #if os(tvOS)
         return 24
 #else
-        return 20
+        return displayDensity.scaledTextSize(20)
 #endif
     }
 
@@ -4124,7 +4186,7 @@ private struct DetailRowContainer<Content: View>: View {
 #if os(tvOS)
         return 18
 #else
-        return 15
+        return displayDensity.scaledTextSize(15)
 #endif
     }
 
@@ -4132,7 +4194,7 @@ private struct DetailRowContainer<Content: View>: View {
         #if os(tvOS)
         return 20
         #else
-        return 16
+        return displayDensity.scaledSpacing(16)
         #endif
     }
 

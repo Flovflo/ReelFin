@@ -4,6 +4,7 @@ import Shared
 import SwiftUI
 
 public struct EpisodeCardView: View {
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
     #if os(tvOS)
     @FocusState private var isFocused: Bool
     #else
@@ -260,20 +261,20 @@ public struct EpisodeCardView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .center, spacing: 10) {
                         Text(iosEpisodeLabel.uppercased())
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .font(.system(size: displayDensity.scaledTextSize(13), weight: .medium, design: .rounded))
                             .foregroundStyle(.white.opacity(0.76))
 
                         Spacer(minLength: 0)
                     }
 
                     Text(episode.name)
-                        .font(.system(size: 21, weight: .medium, design: .rounded))
+                        .font(.system(size: displayDensity.scaledTextSize(21), weight: .medium, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(2)
 
                     if let overview = episode.overview, !overview.isEmpty {
                         Text(overview)
-                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                            .font(.system(size: displayDensity.scaledTextSize(14), weight: .regular, design: .rounded))
                             .foregroundStyle(.white.opacity(0.76))
                             .lineLimit(4)
                     }
@@ -281,7 +282,7 @@ public struct EpisodeCardView: View {
                     HStack(spacing: 8) {
                         if let runtime = episode.runtimeDisplayText {
                             Label(runtime, systemImage: "play.fill")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .font(.system(size: displayDensity.scaledTextSize(13), weight: .semibold, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.92))
                         }
 
@@ -294,7 +295,7 @@ public struct EpisodeCardView: View {
                         }
                     }
                 }
-                .padding(22)
+                .padding(displayDensity.scaledSpacing(22))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
             .frame(width: width, height: iosCardHeight, alignment: .leading)

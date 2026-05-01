@@ -443,6 +443,8 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                 pageSize: query.pageSize,
                 searchQuery: query.query,
                 mediaType: query.mediaType,
+                sortBy: query.sortBy,
+                sortDescending: query.sortDescending,
                 viewID: viewIDs.first
             )
         }
@@ -459,6 +461,8 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                         pageSize: requestedWindowSize,
                         searchQuery: query.query,
                         mediaType: query.mediaType,
+                        sortBy: query.sortBy,
+                        sortDescending: query.sortDescending,
                         viewID: viewID
                     )
                     return (viewID, items)
@@ -483,6 +487,8 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         pageSize: Int,
         searchQuery: String?,
         mediaType: MediaType?,
+        sortBy: LibraryItemSort,
+        sortDescending: Bool,
         viewID: String?
     ) async throws -> [MediaItem] {
         var queryItems = [
@@ -490,8 +496,8 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             URLQueryItem(name: "StartIndex", value: String(page * pageSize)),
             URLQueryItem(name: "Limit", value: String(pageSize)),
             URLQueryItem(name: "Recursive", value: "true"),
-            URLQueryItem(name: "SortBy", value: "DateCreated,SortName"),
-            URLQueryItem(name: "SortOrder", value: "Descending")
+            URLQueryItem(name: "SortBy", value: querySortBy(for: sortBy)),
+            URLQueryItem(name: "SortOrder", value: sortDescending ? "Descending" : "Ascending")
         ]
 
         if let viewID {
@@ -521,6 +527,17 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
         let response: ItemsResponseDTO = try await request(path: "Users/\(userID)/Items", query: queryItems)
         return response.items.map { $0.toDomain(libraryID: viewID) }
+    }
+
+    private func querySortBy(for sort: LibraryItemSort) -> String {
+        switch sort {
+        case .dateCreated:
+            return "DateCreated,SortName"
+        case .premiereDate:
+            return "PremiereDate,SortName"
+        case .sortName:
+            return "SortName"
+        }
     }
 
     private func dedupedLibraryItems(_ items: [MediaItem]) -> [MediaItem] {

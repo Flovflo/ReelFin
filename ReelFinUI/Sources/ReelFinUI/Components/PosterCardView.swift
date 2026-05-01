@@ -14,6 +14,7 @@ public enum PosterCardFocusStyle: Sendable, Equatable {
 
 public struct PosterCardView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
     #if os(tvOS)
     @Environment(\.isFocused) private var isFocused
     #endif
@@ -24,6 +25,7 @@ public struct PosterCardView: View {
     private let layoutStyle: PosterCardLayoutStyle
     private let focusStyle: PosterCardFocusStyle
     private let namespace: Namespace.ID?
+    private let transitionSourceID: String?
     private let ranking: Int?
     private let progress: Double?
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
@@ -40,6 +42,7 @@ public struct PosterCardView: View {
         layoutStyle: PosterCardLayoutStyle = .row,
         focusStyle: PosterCardFocusStyle = .standard,
         namespace: Namespace.ID? = nil,
+        transitionSourceID: String? = nil,
         ranking: Int? = nil,
         progress: Double? = nil,
         optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
@@ -55,6 +58,7 @@ public struct PosterCardView: View {
         self.layoutStyle = layoutStyle
         self.focusStyle = focusStyle
         self.namespace = namespace
+        self.transitionSourceID = transitionSourceID
         self.ranking = ranking
         self.progress = progress
         self.optimizationStatus = optimizationStatus
@@ -74,6 +78,7 @@ public struct PosterCardView: View {
                 layoutStyle: layoutStyle,
                 focusStyle: focusStyle,
                 namespace: namespace,
+                transitionSourceID: transitionSourceID,
                 ranking: ranking,
                 progress: showsArtworkProgress ? progress : nil,
                 optimizationStatus: optimizationStatus,
@@ -93,7 +98,14 @@ public struct PosterCardView: View {
             .padding(.bottom, 4)
             #endif
         }
-        .frame(width: PosterCardMetrics.posterWidth(for: layoutStyle, compact: isCompact), alignment: .leading)
+        .frame(
+            width: PosterCardMetrics.posterWidth(
+                for: layoutStyle,
+                compact: isCompact,
+                displayDensity: displayDensity
+            ),
+            alignment: .leading
+        )
         #if os(tvOS)
         .tvMotionFocus(.posterCard, isFocused: isFocused)
         #endif
@@ -109,13 +121,14 @@ public struct PosterCardView: View {
         #if os(tvOS)
         return ReelFinTheme.tvCardMetadataSpacing
         #else
-        return 10
+        return displayDensity.scaledSpacing(10)
         #endif
     }
 }
 
 public struct PosterCardArtworkView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
     @Environment(\.isFocused) private var isFocused
 
     private let item: MediaItem
@@ -124,6 +137,7 @@ public struct PosterCardArtworkView: View {
     private let layoutStyle: PosterCardLayoutStyle
     private let focusStyle: PosterCardFocusStyle
     private let namespace: Namespace.ID?
+    private let transitionSourceID: String?
     private let ranking: Int?
     private let progress: Double?
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
@@ -137,6 +151,7 @@ public struct PosterCardArtworkView: View {
         layoutStyle: PosterCardLayoutStyle = .row,
         focusStyle: PosterCardFocusStyle = .standard,
         namespace: Namespace.ID? = nil,
+        transitionSourceID: String? = nil,
         ranking: Int? = nil,
         progress: Double? = nil,
         optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
@@ -149,6 +164,7 @@ public struct PosterCardArtworkView: View {
         self.layoutStyle = layoutStyle
         self.focusStyle = focusStyle
         self.namespace = namespace
+        self.transitionSourceID = transitionSourceID
         self.ranking = ranking
         self.progress = progress
         self.optimizationStatus = optimizationStatus
@@ -244,7 +260,7 @@ public struct PosterCardArtworkView: View {
             }
         }
         .frame(width: metrics.posterWidth, height: metrics.posterHeight)
-        .modifier(MatchedCardModifier(itemID: item.id, namespace: namespace))
+        .modifier(MatchedCardModifier(itemID: transitionSourceID ?? item.id, namespace: namespace))
         .contentShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
         #if os(iOS)
         .scaleEffect(isFocused ? focusedScale : 1)
@@ -260,7 +276,11 @@ public struct PosterCardArtworkView: View {
     }
 
     private var metrics: PosterCardMetrics {
-        PosterCardMetrics(layoutStyle: layoutStyle, compact: horizontalSizeClass == .compact)
+        PosterCardMetrics(
+            layoutStyle: layoutStyle,
+            compact: horizontalSizeClass == .compact,
+            displayDensity: displayDensity
+        )
     }
 
     private var focusedStrokeColor: Color {
@@ -305,6 +325,7 @@ public struct PosterCardArtworkView: View {
 
 public struct PosterCardMetadataView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.reelFinDisplayDensity) private var displayDensity
     #if os(tvOS)
     @Environment(\.isFocused) private var isFocused
     #endif
@@ -335,20 +356,25 @@ public struct PosterCardMetadataView: View {
                 .foregroundStyle(titleColor)
                 .lineLimit(resolvedTitleLineLimit)
                 .fixedSize(horizontal: false, vertical: true)
-                #if os(tvOS)
                 .frame(maxWidth: .infinity, minHeight: titleBlockHeight, maxHeight: titleBlockHeight, alignment: .topLeading)
-                #endif
 
             secondaryMetadata
         }
-        .frame(width: PosterCardMetrics.posterWidth(for: layoutStyle, compact: horizontalSizeClass == .compact), alignment: .leading)
+        .frame(
+            width: PosterCardMetrics.posterWidth(
+                for: layoutStyle,
+                compact: horizontalSizeClass == .compact,
+                displayDensity: displayDensity
+            ),
+            alignment: .leading
+        )
     }
 
     private var titleFontSize: CGFloat {
         #if os(tvOS)
         return layoutStyle == .landscape ? 24 : 22
         #else
-        return 15
+        return displayDensity.scaledTextSize(15)
         #endif
     }
 
@@ -356,7 +382,7 @@ public struct PosterCardMetadataView: View {
         #if os(tvOS)
         return layoutStyle == .landscape ? 18 : 17
         #else
-        return 13
+        return displayDensity.scaledTextSize(13)
         #endif
     }
 
@@ -364,7 +390,7 @@ public struct PosterCardMetadataView: View {
         #if os(tvOS)
         return 15
         #else
-        return 11
+        return displayDensity.scaledTextSize(11)
         #endif
     }
 
@@ -372,7 +398,7 @@ public struct PosterCardMetadataView: View {
         #if os(tvOS)
         return 8
         #else
-        return 2
+        return displayDensity.scaledSpacing(2)
         #endif
     }
 
@@ -426,8 +452,10 @@ public struct PosterCardMetadataView: View {
     }
 
     private var titleBlockHeight: CGFloat {
-        let lineHeight = titleFontSize * 1.18
-        return ceil(lineHeight * CGFloat(resolvedTitleLineLimit))
+        PosterCardMetrics.titleBlockHeight(
+            fontSize: titleFontSize,
+            lineLimit: resolvedTitleLineLimit
+        )
     }
 
     @ViewBuilder
@@ -511,7 +539,7 @@ public struct PosterCardMetadataView: View {
         #if os(tvOS)
         return 56
         #else
-        return 34
+        return displayDensity.scaledVisualSize(34)
         #endif
     }
 }
@@ -568,15 +596,30 @@ private struct PosterCardInlineProgressTrack: View {
     }
 }
 
-private struct PosterCardMetrics {
+struct PosterCardMetrics {
     let layoutStyle: PosterCardLayoutStyle
     let compact: Bool
+    let displayDensity: ReelFinDisplayDensity
 
-    var posterWidth: CGFloat {
-        Self.posterWidth(for: layoutStyle, compact: compact)
+    init(
+        layoutStyle: PosterCardLayoutStyle,
+        compact: Bool,
+        displayDensity: ReelFinDisplayDensity = .standard
+    ) {
+        self.layoutStyle = layoutStyle
+        self.compact = compact
+        self.displayDensity = displayDensity
     }
 
-    static func posterWidth(for layoutStyle: PosterCardLayoutStyle, compact: Bool) -> CGFloat {
+    var posterWidth: CGFloat {
+        Self.posterWidth(for: layoutStyle, compact: compact, displayDensity: displayDensity)
+    }
+
+    static func posterWidth(
+        for layoutStyle: PosterCardLayoutStyle,
+        compact: Bool,
+        displayDensity: ReelFinDisplayDensity = .standard
+    ) -> CGFloat {
         #if os(tvOS)
         switch layoutStyle {
         case .row:
@@ -587,14 +630,16 @@ private struct PosterCardMetrics {
             return 400
         }
         #else
+        let baseWidth: CGFloat
         switch layoutStyle {
         case .row:
-            return compact ? 134 : 160
+            baseWidth = compact ? 134 : 160
         case .grid:
-            return compact ? 158 : 206
+            baseWidth = compact ? 158 : 206
         case .landscape:
-            return compact ? 240 : 300
+            baseWidth = compact ? 240 : 300
         }
+        return baseWidth * displayDensity.visualScale
         #endif
     }
 
@@ -605,6 +650,11 @@ private struct PosterCardMetrics {
         default:
             return posterWidth * 1.55
         }
+    }
+
+    static func titleBlockHeight(fontSize: CGFloat, lineLimit: Int) -> CGFloat {
+        let lineHeight = fontSize * 1.18
+        return ceil(lineHeight * CGFloat(max(lineLimit, 1)))
     }
 }
 

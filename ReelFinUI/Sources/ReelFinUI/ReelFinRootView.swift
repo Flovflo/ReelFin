@@ -11,6 +11,7 @@ public struct ReelFinRootView: View {
     @State private var viewModel: RootViewModel
     @State private var dependencies: ReelFinDependencies
     @State private var isReviewDemoMode = false
+    @AppStorage(ReelFinDisplayDensity.storageKey) private var displayDensityRawValue = ReelFinDisplayDensity.standard.rawValue
     private let initialDependencies: ReelFinDependencies
 
     @State private var selectedTab = 0
@@ -54,9 +55,14 @@ public struct ReelFinRootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.reelFinDisplayDensity, displayDensity)
         .task {
             await viewModel.bootstrap()
         }
+    }
+
+    private var displayDensity: ReelFinDisplayDensity {
+        ReelFinDisplayDensity(rawStoredValue: displayDensityRawValue)
     }
 
     #if os(tvOS)

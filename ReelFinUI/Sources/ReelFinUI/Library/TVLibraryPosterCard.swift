@@ -8,6 +8,8 @@ struct TVLibraryPosterCard: View {
 
     let item: MediaItem
     let dependencies: ReelFinDependencies
+    var namespace: Namespace.ID? = nil
+    var transitionSourceID: String? = nil
     let onFocus: (MediaItem) -> Void
     var onMoveUp: (() -> Void)? = nil
     let onSelect: (MediaItem) -> Void
@@ -19,7 +21,9 @@ struct TVLibraryPosterCard: View {
                     item: item,
                     apiClient: dependencies.apiClient,
                     imagePipeline: dependencies.imagePipeline,
-                    layoutStyle: .grid
+                    layoutStyle: .grid,
+                    namespace: namespace,
+                    transitionSourceID: transitionSourceID
                 )
                 .clipShape(surfaceShape)
 

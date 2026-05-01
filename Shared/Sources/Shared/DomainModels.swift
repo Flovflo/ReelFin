@@ -929,6 +929,12 @@ public struct PlaybackProgress: Codable, Hashable, Sendable {
     }
 }
 
+public enum LibraryItemSort: String, Codable, Hashable, Sendable {
+    case dateCreated
+    case premiereDate
+    case sortName
+}
+
 public struct LibraryQuery: Hashable, Sendable {
     public var viewID: String?
     public var viewIDs: [String]?
@@ -936,17 +942,37 @@ public struct LibraryQuery: Hashable, Sendable {
     public var pageSize: Int
     public var query: String?
     public var mediaType: MediaType?
+    public var sortBy: LibraryItemSort
+    public var sortDescending: Bool
 
-    public init(viewID: String?, page: Int, pageSize: Int, query: String?, mediaType: MediaType?) {
+    public init(
+        viewID: String?,
+        page: Int,
+        pageSize: Int,
+        query: String?,
+        mediaType: MediaType?,
+        sortBy: LibraryItemSort = .dateCreated,
+        sortDescending: Bool = true
+    ) {
         self.viewID = viewID
         viewIDs = nil
         self.page = page
         self.pageSize = pageSize
         self.query = query
         self.mediaType = mediaType
+        self.sortBy = sortBy
+        self.sortDescending = sortDescending
     }
 
-    public init(viewIDs: [String], page: Int, pageSize: Int, query: String?, mediaType: MediaType?) {
+    public init(
+        viewIDs: [String],
+        page: Int,
+        pageSize: Int,
+        query: String?,
+        mediaType: MediaType?,
+        sortBy: LibraryItemSort = .dateCreated,
+        sortDescending: Bool = true
+    ) {
         let normalizedIDs = Self.normalizedViewIDs(from: viewIDs)
         viewID = normalizedIDs.count == 1 ? normalizedIDs.first : nil
         self.viewIDs = normalizedIDs.isEmpty ? nil : normalizedIDs
@@ -954,6 +980,8 @@ public struct LibraryQuery: Hashable, Sendable {
         self.pageSize = pageSize
         self.query = query
         self.mediaType = mediaType
+        self.sortBy = sortBy
+        self.sortDescending = sortDescending
     }
 
     public var resolvedViewIDs: [String] {

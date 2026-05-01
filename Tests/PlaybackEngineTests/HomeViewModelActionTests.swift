@@ -77,6 +77,79 @@ final class HomeViewModelActionTests: XCTestCase {
         XCTAssertTrue(viewModel.isRefreshing)
     }
 
+    func testLoadMoreFetchesNextPageForReleasedMovieSection() async throws {
+        let initialItems = (0..<20).map { index in
+            MediaItem(
+                id: "movie-\(index)",
+                name: "Movie \(index)",
+                mediaType: .movie,
+                libraryID: "movies"
+            )
+        }
+        let remoteItems = (20..<23).map { index in
+            MediaItem(
+                id: "movie-\(index)",
+                name: "Movie \(index)",
+                mediaType: .movie,
+                libraryID: "movies"
+            )
+        }
+        let apiClient = HomeActionSpyAPIClient(
+            userViews: [Shared.LibraryView(id: "movies", name: "Movies", collectionType: "movies")],
+            libraryItems: remoteItems
+        )
+        let repository = MockMetadataRepository()
+        try await repository.saveHomeFeed(
+            HomeFeed(
+                featured: [],
+                rows: [
+                    HomeRow(
+                        kind: .recentlyReleasedMovies,
+                        title: "Recently Released Movies",
+                        items: initialItems
+                    )
+                ]
+            )
+        )
+
+        let viewModel = HomeViewModel(dependencies: makeDependencies(apiClient: apiClient, repository: repository))
+        await viewModel.load()
+        let row = try XCTUnwrap(viewModel.visibleRows.first)
+        let triggerItemID = try XCTUnwrap(TVLibraryPaginationPolicy.triggerItemID(in: row.items, trailingWindow: 6))
+
+        await viewModel.loadMoreIfNeeded(rowID: row.id, visibleItemID: triggerItemID)
+
+        let loadedIDs = viewModel.visibleRows.first?.items.map(\.id) ?? []
+        XCTAssertEqual(Array(loadedIDs.suffix(3)), ["movie-20", "movie-21", "movie-22"])
+        let recordedQueries = await apiClient.recordedLibraryQueries()
+        let query = recordedQueries.last
+        XCTAssertEqual(query?.page, 1)
+        XCTAssertEqual(query?.pageSize, 20)
+        XCTAssertEqual(query?.mediaType, .movie)
+        XCTAssertEqual(query?.sortBy, .premiereDate)
+        XCTAssertEqual(query?.resolvedViewIDs, ["movies"])
+    }
+
+    func testContinueWatchingDoesNotPaginateFromHomeRail() async throws {
+        let item = MediaItem(id: "resume-1", name: "Resume", mediaType: .movie)
+        let apiClient = HomeActionSpyAPIClient(libraryItems: [MediaItem(id: "movie-2", name: "Movie 2")])
+        let repository = MockMetadataRepository()
+        try await repository.saveHomeFeed(
+            HomeFeed(
+                featured: [],
+                rows: [HomeRow(kind: .continueWatching, title: "Continue Watching", items: [item])]
+            )
+        )
+
+        let viewModel = HomeViewModel(dependencies: makeDependencies(apiClient: apiClient, repository: repository))
+        await viewModel.load()
+        await viewModel.loadMoreIfNeeded(rowID: viewModel.visibleRows[0].id, visibleItemID: item.id)
+
+        let recordedQueries = await apiClient.recordedLibraryQueries()
+        XCTAssertEqual(recordedQueries, [])
+        XCTAssertEqual(viewModel.visibleRows[0].items.map(\.id), ["resume-1"])
+    }
+
     private func makeDependencies(
         apiClient: HomeActionSpyAPIClient,
         repository: MockMetadataRepository,
@@ -153,7 +226,15 @@ private actor HomeRecordingSyncEngine: SyncEngineProtocol {
 }
 
 private actor HomeActionSpyAPIClient: JellyfinAPIClientProtocol {
+    private let userViews: [Shared.LibraryView]
+    private let libraryItems: [MediaItem]
     private var recordedFavoriteCalls: [(itemID: String, isFavorite: Bool)] = []
+    private var recordedQueries: [LibraryQuery] = []
+
+    init(userViews: [Shared.LibraryView] = [], libraryItems: [MediaItem] = []) {
+        self.userViews = userViews
+        self.libraryItems = libraryItems
+    }
 
     func currentConfiguration() async -> ServerConfiguration? { nil }
     func currentSession() async -> UserSession? { nil }
@@ -163,7 +244,7 @@ private actor HomeActionSpyAPIClient: JellyfinAPIClientProtocol {
     func signOut() async {}
     func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
     func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
-    func fetchUserViews() async throws -> [Shared.LibraryView] { [] }
+    func fetchUserViews() async throws -> [Shared.LibraryView] { userViews }
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed {
         _ = since
         return .empty
@@ -184,8 +265,8 @@ private actor HomeActionSpyAPIClient: JellyfinAPIClientProtocol {
         return nil
     }
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
-        _ = query
-        return []
+        recordedQueries.append(query)
+        return libraryItems
     }
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
         _ = itemID
@@ -206,5 +287,9 @@ private actor HomeActionSpyAPIClient: JellyfinAPIClientProtocol {
 
     func favoriteCalls() -> [(itemID: String, isFavorite: Bool)] {
         recordedFavoriteCalls
+    }
+
+    func recordedLibraryQueries() -> [LibraryQuery] {
+        recordedQueries
     }
 }

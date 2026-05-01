@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ServerSettingsView: View {
     @Environment(\.openURL) private var openURL
+    @AppStorage(ReelFinDisplayDensity.storageKey) private var displayDensityRawValue = ReelFinDisplayDensity.standard.rawValue
     @StateObject private var viewModel: ServerSettingsViewModel
     private let metadata = AppMetadata.current
     let onLogout: () -> Void
@@ -241,6 +242,20 @@ struct ServerSettingsView: View {
             }
 
             Section {
+                Picker("Interface Density", selection: displayDensitySelection) {
+                    ForEach(ReelFinDisplayDensity.allCases) { density in
+                        Text(density.settingsLabel).tag(density.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("settings_display_density_picker")
+            } header: {
+                Text("Display")
+            } footer: {
+                Text(currentDisplayDensity.settingsDescription)
+            }
+
+            Section {
                 LabeledContent("Current Address") {
                     Text(currentServerAddress)
                         .multilineTextAlignment(.trailing)
@@ -413,6 +428,17 @@ struct ServerSettingsView: View {
         }
 
         return "Use the connection test when the server feels unreachable."
+    }
+
+    private var currentDisplayDensity: ReelFinDisplayDensity {
+        ReelFinDisplayDensity(rawStoredValue: displayDensityRawValue)
+    }
+
+    private var displayDensitySelection: Binding<String> {
+        Binding(
+            get: { currentDisplayDensity.rawValue },
+            set: { displayDensityRawValue = $0 }
+        )
     }
     #endif
 

@@ -131,7 +131,9 @@ final class LibraryViewModel: ObservableObject {
                 page: page,
                 pageSize: pageSize,
                 query: search.isEmpty ? nil : search,
-                mediaType: selectedFilter
+                mediaType: selectedFilter,
+                sortBy: querySortBy,
+                sortDescending: querySortDescending
             )
         }
 
@@ -140,8 +142,28 @@ final class LibraryViewModel: ObservableObject {
             page: page,
             pageSize: pageSize,
             query: search.isEmpty ? nil : search,
-            mediaType: selectedFilter
+            mediaType: selectedFilter,
+            sortBy: querySortBy,
+            sortDescending: querySortDescending
         )
+    }
+
+    private var querySortBy: LibraryItemSort {
+        switch sortMode {
+        case .recent:
+            return .dateCreated
+        case .title:
+            return .sortName
+        }
+    }
+
+    private var querySortDescending: Bool {
+        switch sortMode {
+        case .recent:
+            return true
+        case .title:
+            return false
+        }
     }
 
     private func resolvedLibraryViewIDs() async throws -> [String] {

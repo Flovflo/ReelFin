@@ -3,6 +3,11 @@ import JellyfinAPI
 import Shared
 import SwiftUI
 
+struct HomeSectionPaginationRequest: Equatable, Sendable {
+    let mediaType: MediaType
+    let sortBy: LibraryItemSort
+}
+
 @MainActor
 final class HomeViewModel: ObservableObject {
     @Published var feed: HomeFeed = .empty
@@ -16,9 +21,12 @@ final class HomeViewModel: ObservableObject {
     @Published private(set) var visibleRows: [HomeRow] = []
     @Published private(set) var rowIDByItemID: [String: String] = [:]
     @Published private(set) var visibleRowsRevision = 0
+    @Published private var loadingMoreRowIDs: Set<String> = []
 
     private let dependencies: ReelFinDependencies
     private var feedEnrichmentTask: Task<Void, Never>?
+    private var exhaustedPaginationRowIDs: Set<String> = []
+    private let homeSectionPageSize = 20
     nonisolated static let supportedSectionKinds: [HomeSectionKind] = [
         .continueWatching,
         .recentlyReleasedMovies,
@@ -52,6 +60,19 @@ final class HomeViewModel: ObservableObject {
 
     func manualRefresh() async {
         await refresh(reason: .manualRefresh)
+    }
+
+    func isLoadingMore(rowID: String) -> Bool {
+        loadingMoreRowIDs.contains(rowID)
+    }
+
+    func loadMoreIfNeeded(rowID: String, visibleItemID: String) async {
+        guard
+            let row = visibleRows.first(where: { $0.id == rowID }),
+            paginationTriggerItemID(for: row) == visibleItemID
+        else { return }
+
+        await loadMore(row: row)
     }
 
     func select(item: MediaItem) {
@@ -201,6 +222,7 @@ final class HomeViewModel: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
+        exhaustedPaginationRowIDs.removeAll()
         await dependencies.syncEngine.sync(reason: reason)
         await loadFromCache()
     }
@@ -260,6 +282,119 @@ final class HomeViewModel: ObservableObject {
         ensureKnownSectionKinds(from: merged.rows)
         feed = merged
         rebuildVisibleRowsCache()
+    }
+
+    private func loadMore(row: HomeRow) async {
+        guard
+            !loadingMoreRowIDs.contains(row.id),
+            !exhaustedPaginationRowIDs.contains(row.id),
+            let request = Self.paginationRequest(for: row.kind)
+        else { return }
+
+        loadingMoreRowIDs.insert(row.id)
+        defer {
+            loadingMoreRowIDs.remove(row.id)
+        }
+
+        do {
+            let page = max(0, row.items.count / homeSectionPageSize)
+            let query = try await makePaginationQuery(
+                request: request,
+                page: page,
+                pageSize: homeSectionPageSize
+            )
+            let remoteItems = try await dependencies.apiClient.fetchLibraryItems(query: query)
+            guard !remoteItems.isEmpty else {
+                exhaustedPaginationRowIDs.insert(row.id)
+                return
+            }
+
+            let previousCount = row.items.count
+            append(remoteItems, toRowID: row.id)
+            try await dependencies.repository.upsertItems(remoteItems)
+            try await dependencies.repository.saveHomeFeed(feed)
+
+            if remoteItems.count < homeSectionPageSize || rowItemCount(rowID: row.id) <= previousCount {
+                exhaustedPaginationRowIDs.insert(row.id)
+            }
+        } catch {
+            AppLog.ui.error("Home section pagination failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func append(_ newItems: [MediaItem], toRowID rowID: String) {
+        let updatedRows = feed.rows.map { row -> HomeRow in
+            guard row.id == rowID else { return row }
+            var updatedRow = row
+            updatedRow.items = deduplicatedItems(row.items + newItems)
+            return updatedRow
+        }
+
+        feed = HomeFeed(featured: feed.featured, rows: updatedRows)
+        rebuildVisibleRowsCache()
+    }
+
+    private func rowItemCount(rowID: String) -> Int {
+        feed.rows.first(where: { $0.id == rowID })?.items.count ?? 0
+    }
+
+    private func paginationTriggerItemID(for row: HomeRow) -> String? {
+        guard
+            Self.paginationRequest(for: row.kind) != nil,
+            !loadingMoreRowIDs.contains(row.id),
+            !exhaustedPaginationRowIDs.contains(row.id)
+        else { return nil }
+
+        return TVLibraryPaginationPolicy.triggerItemID(in: row.items, trailingWindow: 6)
+    }
+
+    private func makePaginationQuery(
+        request: HomeSectionPaginationRequest,
+        page: Int,
+        pageSize: Int
+    ) async throws -> LibraryQuery {
+        let viewIDs = try await resolvedLibraryViewIDs(for: request.mediaType)
+
+        if viewIDs.isEmpty {
+            return LibraryQuery(
+                viewID: nil,
+                page: page,
+                pageSize: pageSize,
+                query: nil,
+                mediaType: request.mediaType,
+                sortBy: request.sortBy
+            )
+        }
+
+        return LibraryQuery(
+            viewIDs: viewIDs,
+            page: page,
+            pageSize: pageSize,
+            query: nil,
+            mediaType: request.mediaType,
+            sortBy: request.sortBy
+        )
+    }
+
+    private func resolvedLibraryViewIDs(for mediaType: MediaType) async throws -> [String] {
+        let cachedViews = try await dependencies.repository.fetchLibraryViews()
+        let cachedMatches = matchingLibraryViewIDs(in: cachedViews, mediaType: mediaType)
+        if !cachedMatches.isEmpty {
+            return cachedMatches
+        }
+
+        let remoteViews = try await dependencies.apiClient.fetchUserViews()
+        if !remoteViews.isEmpty {
+            try await dependencies.repository.saveLibraryViews(remoteViews)
+        }
+
+        return matchingLibraryViewIDs(in: remoteViews, mediaType: mediaType)
+    }
+
+    private func matchingLibraryViewIDs(in views: [Shared.LibraryView], mediaType: MediaType) -> [String] {
+        views
+            .filter { $0.supports(mediaType: mediaType) }
+            .map(\.id)
     }
 
     private func mergeEnrichedFeed(current: HomeFeed, processed: HomeFeed) -> HomeFeed {
@@ -403,6 +538,21 @@ final class HomeViewModel: ObservableObject {
 
         let missing = supportedSectionKinds.filter { !seen.contains($0) }
         return preserved + missing
+    }
+
+    nonisolated static func paginationRequest(for kind: HomeSectionKind) -> HomeSectionPaginationRequest? {
+        switch kind {
+        case .recentlyReleasedMovies:
+            return HomeSectionPaginationRequest(mediaType: .movie, sortBy: .premiereDate)
+        case .recentlyReleasedSeries:
+            return HomeSectionPaginationRequest(mediaType: .series, sortBy: .premiereDate)
+        case .recentlyAddedMovies:
+            return HomeSectionPaginationRequest(mediaType: .movie, sortBy: .dateCreated)
+        case .recentlyAddedSeries:
+            return HomeSectionPaginationRequest(mediaType: .series, sortBy: .dateCreated)
+        case .continueWatching, .nextUp, .popular, .trending, .movies, .shows, .latest:
+            return nil
+        }
     }
 
     private func normalizedFeed(_ feed: HomeFeed) -> HomeFeed {

@@ -186,12 +186,23 @@ public actor GRDBMetadataRepository: MetadataRepositoryProtocol {
                 FROM media_items m
                 \(mediaItemProgressJoin())
                 WHERE \(conditions.joined(separator: " AND "))
-                ORDER BY m.updated_at DESC
+                ORDER BY \(libraryOrderClause(for: query))
                 LIMIT ? OFFSET ?
                 """
 
             let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
             return rows.compactMap(mediaItem(from:))
+        }
+    }
+
+    private func libraryOrderClause(for query: LibraryQuery) -> String {
+        switch query.sortBy {
+        case .dateCreated:
+            return "m.updated_at \(query.sortDescending ? "DESC" : "ASC"), m.name COLLATE NOCASE ASC"
+        case .premiereDate:
+            return "COALESCE(m.year, 0) \(query.sortDescending ? "DESC" : "ASC"), m.name COLLATE NOCASE ASC"
+        case .sortName:
+            return "m.name COLLATE NOCASE \(query.sortDescending ? "DESC" : "ASC")"
         }
     }
 
