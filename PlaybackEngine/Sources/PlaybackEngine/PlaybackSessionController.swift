@@ -1096,6 +1096,20 @@ public final class PlaybackSessionController {
         )
     }
 
+    nonisolated static func shouldReassertDirectPlayResumePositionAfterStartupSelection(
+        route: PlaybackRoute?,
+        resumeSeconds: Double?,
+        currentTime: Double,
+        transcodeStartOffset: Double
+    ) -> Bool {
+        DirectPlaySessionPolicy.shouldReassertResumePositionAfterStartupSelection(
+            route: route,
+            resumeSeconds: resumeSeconds,
+            currentTime: currentTime,
+            transcodeStartOffset: transcodeStartOffset
+        )
+    }
+
     nonisolated static func shouldSuppressPlaybackFailureRecoveryAfterFirstFrame(
         hasMarkedFirstFrame: Bool,
         route: PlaybackRoute?
@@ -3040,6 +3054,7 @@ public final class PlaybackSessionController {
             ) {
             case .applyEmbedded(let trackID):
                 await self.selectSubtitleTrackAsync(id: trackID)
+                await self.reassertDirectPlayResumePositionAfterStartupSelectionIfNeeded(for: item)
             case .skipExternal(let trackID):
                 if let track = self.availableSubtitleTracks.first(where: { $0.id == trackID }) {
                     AppLog.playback.info(
@@ -3050,6 +3065,31 @@ public final class PlaybackSessionController {
                 break
             }
         }
+    }
+
+    private func reassertDirectPlayResumePositionAfterStartupSelectionIfNeeded(for item: AVPlayerItem) async {
+        guard player.currentItem === item else { return }
+        let resumeSeconds = pendingResumeSeconds ?? (sessionInitialResumeSeconds > 0 ? sessionInitialResumeSeconds : nil)
+        let current = player.currentTime().seconds
+        guard Self.shouldReassertDirectPlayResumePositionAfterStartupSelection(
+            route: lastPreparedSelection?.decision.route,
+            resumeSeconds: resumeSeconds,
+            currentTime: current,
+            transcodeStartOffset: transcodeStartOffset
+        ) else { return }
+        guard let resumeSeconds, item.status == .readyToPlay else { return }
+
+        let shouldResumePlayback = Self.shouldResumePlaybackAfterTrackReload(
+            wasPlayingBeforeReplacement: isPlaying,
+            playerRate: player.rate,
+            timeControlStatus: player.timeControlStatus
+        )
+        _ = await seekToDirectPlayResumePosition(
+            phase: "startup_subtitle",
+            targetSeconds: resumeSeconds,
+            resumePlaybackWhenDone: shouldResumePlayback,
+            retryCancelledSeek: true
+        )
     }
 
     private func scheduleVideoValidation(for item: AVPlayerItem) {
@@ -3186,24 +3226,13 @@ public final class PlaybackSessionController {
             return await applyPendingDirectPlayResumeSeekIfNeeded(phase: "preplay")
         }
 
-        let target = CMTime(seconds: resumeSeconds, preferredTimescale: 600)
-        let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
-        recordRequestedPlaybackPosition(resumeSeconds)
-        let completed = await player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
-        logDirectPlayResumeSeekResult(
+        let completed = await seekToDirectPlayResumePosition(
             phase: "preplay",
-            target: resumeSeconds,
-            completed: completed
+            targetSeconds: resumeSeconds,
+            resumePlaybackWhenDone: false,
+            retryCancelledSeek: false
         )
-        player.pause()
-        let satisfied = Self.isResumePositionSatisfied(
-            currentTime: player.currentTime().seconds,
-            resumeSeconds: resumeSeconds
-        )
-        if satisfied {
-            pendingResumeSeconds = nil
-        }
-        return completed && satisfied
+        return completed
     }
 
     private func applyPendingDirectPlayResumeSeekIfNeeded(phase: String) async -> Bool {
@@ -3226,25 +3255,58 @@ public final class PlaybackSessionController {
         }
 
         guard let targetSeconds = pendingResumeSeconds else { return true }
+        let shouldResumePlayback = Self.shouldResumePlaybackAfterTrackReload(
+            wasPlayingBeforeReplacement: isPlaying,
+            playerRate: player.rate,
+            timeControlStatus: player.timeControlStatus
+        )
+        return await seekToDirectPlayResumePosition(
+            phase: phase,
+            targetSeconds: targetSeconds,
+            resumePlaybackWhenDone: shouldResumePlayback,
+            retryCancelledSeek: true
+        )
+    }
+
+    private func seekToDirectPlayResumePosition(
+        phase: String,
+        targetSeconds: Double,
+        resumePlaybackWhenDone: Bool,
+        retryCancelledSeek: Bool
+    ) async -> Bool {
         player.pause()
+        var completed = await performDirectPlayResumeSeek(phase: phase, targetSeconds: targetSeconds)
+        var satisfied = Self.isResumePositionSatisfied(currentTime: player.currentTime().seconds, resumeSeconds: targetSeconds)
+        if retryCancelledSeek, !completed, !satisfied, player.currentItem?.status == .readyToPlay {
+            await Task.yield()
+            completed = await performDirectPlayResumeSeek(phase: "\(phase)_retry", targetSeconds: targetSeconds)
+            satisfied = Self.isResumePositionSatisfied(currentTime: player.currentTime().seconds, resumeSeconds: targetSeconds)
+        }
+        if satisfied {
+            pendingResumeSeconds = nil
+            if resumePlaybackWhenDone {
+                player.play()
+            } else {
+                player.pause()
+            }
+        } else {
+            pendingResumeSeconds = targetSeconds
+            player.pause()
+        }
+        return completed && satisfied
+    }
+
+    private func performDirectPlayResumeSeek(phase: String, targetSeconds: Double) async -> Bool {
         let target = CMTime(seconds: targetSeconds, preferredTimescale: 600)
         let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
         recordRequestedPlaybackPosition(targetSeconds)
         let completed = await player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
-        player.pause()
         logDirectPlayResumeSeekResult(
             phase: phase,
             target: targetSeconds,
             completed: completed
         )
-        let satisfied = Self.isResumePositionSatisfied(
-            currentTime: player.currentTime().seconds,
-            resumeSeconds: targetSeconds
-        )
-        if satisfied {
-            pendingResumeSeconds = nil
-        }
-        return completed && satisfied
+        return completed
     }
 
     private func logDirectPlayResumeSeekResult(

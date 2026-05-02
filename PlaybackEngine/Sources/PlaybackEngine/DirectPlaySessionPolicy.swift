@@ -45,6 +45,19 @@ enum DirectPlaySessionPolicy {
         )
     }
 
+    static func shouldReassertResumePositionAfterStartupSelection(
+        route: PlaybackRoute?,
+        resumeSeconds: Double?,
+        currentTime: Double,
+        transcodeStartOffset: Double,
+        toleranceSeconds: Double = 3
+    ) -> Bool {
+        guard case .directPlay = route else { return false }
+        guard transcodeStartOffset <= 0 else { return false }
+        guard let resumeSeconds, resumeSeconds > 0, currentTime.isFinite else { return false }
+        return currentTime + toleranceSeconds < resumeSeconds
+    }
+
     static func shouldSuppressPlaybackFailureRecoveryAfterFirstFrame(
         hasMarkedFirstFrame: Bool,
         route: PlaybackRoute?

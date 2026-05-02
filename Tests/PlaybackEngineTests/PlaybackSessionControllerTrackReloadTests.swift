@@ -818,6 +818,44 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
+    func testStartupSubtitleSelectionReassertsDirectPlayResumeOnlyWhenPlaybackFallsBehindTarget() {
+        let url = URL(string: "https://example.com/Videos/premium-source/stream?static=true&MediaSourceId=premium-source")!
+        let resumeSeconds = 2_128.126
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldReassertDirectPlayResumePositionAfterStartupSelection(
+                route: .directPlay(url),
+                resumeSeconds: resumeSeconds,
+                currentTime: 1.261,
+                transcodeStartOffset: 0
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldReassertDirectPlayResumePositionAfterStartupSelection(
+                route: .directPlay(url),
+                resumeSeconds: resumeSeconds,
+                currentTime: 2_128.417,
+                transcodeStartOffset: 0
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldReassertDirectPlayResumePositionAfterStartupSelection(
+                route: .directPlay(url),
+                resumeSeconds: resumeSeconds,
+                currentTime: 2_133.417,
+                transcodeStartOffset: 0
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldReassertDirectPlayResumePositionAfterStartupSelection(
+                route: .directPlay(url),
+                resumeSeconds: resumeSeconds,
+                currentTime: 1.261,
+                transcodeStartOffset: resumeSeconds
+            )
+        )
+    }
+
     func testVisibleDirectPlayFrameAtPendingResumeSatisfiesStartupReadiness() {
         let url = URL(string: "https://example.com/Videos/premium-source/stream?static=true&MediaSourceId=premium-source")!
 
