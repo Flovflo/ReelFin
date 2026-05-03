@@ -3158,8 +3158,12 @@ public final class PlaybackSessionController {
         let selection = lastPreparedSelection
         guard case .directPlay = selection.decision.route else { return false }
 
-        let playerSeconds = player.currentTime().seconds.isFinite ? max(0, player.currentTime().seconds) : 0
-        let resumeSeconds = hasMarkedFirstFrame ? playerSeconds : max(sessionInitialResumeSeconds, playerSeconds)
+        let resumeSeconds = Self.directPlaySameRouteRecoveryResumeSeconds(
+            hasMarkedFirstFrame: hasMarkedFirstFrame,
+            playerSeconds: player.currentTime().seconds,
+            sessionInitialResumeSeconds: sessionInitialResumeSeconds,
+            transcodeStartOffset: transcodeStartOffset
+        )
         recentStallTimestamps.removeAll()
         await loadDirectPlaySelectionAtResumePosition(selection, resumeSeconds: resumeSeconds)
         routeDescription = "Direct Play (stability recovery)"
@@ -3167,8 +3171,9 @@ public final class PlaybackSessionController {
         player.play()
         scheduleDecodedFrameWatchdog()
         scheduleStartupWatchdog()
+        let resumeLabel = resumeSeconds.map { String(format: "%.3f", $0) } ?? "none"
         AppLog.playback.notice(
-            "playback.directplay.recovery_reloaded — \(self.playbackLogScope(), privacy: .public) resume=\(resumeSeconds, format: .fixed(precision: 3)) url=\(selection.assetURL.reelfinCompactLogString, privacy: .public)"
+            "playback.directplay.recovery_reloaded — \(self.playbackLogScope(), privacy: .public) resume=\(resumeLabel, privacy: .public) url=\(selection.assetURL.reelfinCompactLogString, privacy: .public)"
         )
         return true
     }
@@ -3325,19 +3330,12 @@ public final class PlaybackSessionController {
     }
 
     private func recoveryResumeSeconds() -> Double? {
-        let playerSecondsRaw = player.currentTime().seconds
-        let playerSeconds = playerSecondsRaw.isFinite ? max(0, playerSecondsRaw) : 0
-        let absoluteSeconds: Double
-
-        if hasMarkedFirstFrame {
-            absoluteSeconds = playerSeconds + transcodeStartOffset
-        } else if transcodeStartOffset > 0 {
-            absoluteSeconds = transcodeStartOffset
-        } else {
-            absoluteSeconds = max(sessionInitialResumeSeconds, playerSeconds)
-        }
-
-        return absoluteSeconds > 0 ? absoluteSeconds : nil
+        Self.directPlaySameRouteRecoveryResumeSeconds(
+            hasMarkedFirstFrame: hasMarkedFirstFrame,
+            playerSeconds: player.currentTime().seconds,
+            sessionInitialResumeSeconds: sessionInitialResumeSeconds,
+            transcodeStartOffset: transcodeStartOffset
+        )
     }
 
     private func performStartupReadinessGateIfNeeded(
@@ -3777,6 +3775,16 @@ public final class PlaybackSessionController {
            Self.shouldPreserveDirectPlayRecovery(route: lastPreparedSelection?.decision.route) {
             if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: reason) {
                 return true
+            }
+            if Self.shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(reason: reason) {
+                AppLog.playback.warning(
+                    "playback.directplay.profile_fallback_after_same_route_failed — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public)"
+                )
+                return await attemptRecovery(
+                    reason: reason,
+                    userMessage: userMessage,
+                    retryDelayNanoseconds: retryDelayNanoseconds
+                )
             }
             AppLog.playback.warning(
                 "playback.directplay.profile_fallback_suppressed — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public)"
@@ -6194,6 +6202,44 @@ public final class PlaybackSessionController {
             return true
         }
         return false
+    }
+
+    nonisolated static func shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(reason: String) -> Bool {
+        switch StartupFailureReason(rawValue: reason) {
+        case .decodedFrameWatchdog,
+             .audioOnlyNoVideo,
+             .readyButNoVideoFrame,
+             .decoderStall,
+             .presentationSizeZero,
+             .playerItemFailed,
+             .playerItemFailedTransient,
+             .startupWatchdogExpired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated static func directPlaySameRouteRecoveryResumeSeconds(
+        hasMarkedFirstFrame: Bool,
+        playerSeconds: Double,
+        sessionInitialResumeSeconds: Double,
+        transcodeStartOffset: Double
+    ) -> Double? {
+        let currentSeconds = playerSeconds.isFinite ? max(0, playerSeconds) : 0
+        let initialResumeSeconds = sessionInitialResumeSeconds.isFinite ? max(0, sessionInitialResumeSeconds) : 0
+        let startOffsetSeconds = transcodeStartOffset.isFinite ? max(0, transcodeStartOffset) : 0
+
+        let absoluteSeconds: Double
+        if hasMarkedFirstFrame {
+            absoluteSeconds = currentSeconds + startOffsetSeconds
+        } else if startOffsetSeconds > 0 {
+            absoluteSeconds = startOffsetSeconds
+        } else {
+            absoluteSeconds = max(initialResumeSeconds, currentSeconds)
+        }
+
+        return absoluteSeconds > 0 ? absoluteSeconds : nil
     }
 
     nonisolated static func shouldAttemptSameRouteDirectPlayRecovery(reason: String) -> Bool {

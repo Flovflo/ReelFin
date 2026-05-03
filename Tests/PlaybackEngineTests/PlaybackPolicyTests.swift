@@ -172,6 +172,24 @@ final class PlaybackPolicyTests: XCTestCase {
         )
     }
 
+    func testDirectPlayProfileFallbackIsAllowedAfterSameRouteRetryForDecodeFailures() {
+        XCTAssertTrue(
+            PlaybackSessionController.shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(
+                reason: StartupFailureReason.playerItemFailed.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(
+                reason: StartupFailureReason.readyButNoVideoFrame.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(
+                reason: StartupFailureReason.directPlayStall.rawValue
+            )
+        )
+    }
+
     func testInitialProfilePromotesStoredH264FallbackToHEVCForDolbyVisionItems() {
         let profile = PlaybackSessionController.initialProfile(
             stored: .forceH264Transcode,

@@ -856,6 +856,38 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
+    func testDirectPlaySameRouteRecoveryPreservesMissingResumeAsNil() {
+        XCTAssertNil(
+            PlaybackSessionController.directPlaySameRouteRecoveryResumeSeconds(
+                hasMarkedFirstFrame: false,
+                playerSeconds: 0,
+                sessionInitialResumeSeconds: 0,
+                transcodeStartOffset: 0
+            )
+        )
+    }
+
+    func testDirectPlaySameRouteRecoveryUsesPositiveResumeContext() {
+        XCTAssertEqual(
+            PlaybackSessionController.directPlaySameRouteRecoveryResumeSeconds(
+                hasMarkedFirstFrame: false,
+                playerSeconds: 0,
+                sessionInitialResumeSeconds: 2_128.126,
+                transcodeStartOffset: 0
+            ),
+            2_128.126
+        )
+        XCTAssertEqual(
+            PlaybackSessionController.directPlaySameRouteRecoveryResumeSeconds(
+                hasMarkedFirstFrame: true,
+                playerSeconds: 12.5,
+                sessionInitialResumeSeconds: 2_128.126,
+                transcodeStartOffset: 100
+            ),
+            112.5
+        )
+    }
+
     func testVisibleDirectPlayFrameAtPendingResumeSatisfiesStartupReadiness() {
         let url = URL(string: "https://example.com/Videos/premium-source/stream?static=true&MediaSourceId=premium-source")!
 
