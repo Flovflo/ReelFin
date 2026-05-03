@@ -77,11 +77,8 @@ enum DirectPlaySessionPolicy {
     ) -> Bool {
         guard isStallResistantDirectPlay(route: route, source: source) else { return false }
 
-        if let elapsedSecondsSinceFirstFrame {
-            if isTVOS {
-                return elapsedSecondsSinceFirstFrame <= 20 && recentStallCount >= 2
-            }
-            return recentStallCount >= 3
+        if elapsedSecondsSinceFirstFrame != nil {
+            return false
         }
 
         return elapsedSecondsSinceLoad <= 12 && recentStallCount >= 2
@@ -92,12 +89,34 @@ enum DirectPlaySessionPolicy {
         source: MediaSource?,
         isTVOS: Bool
     ) -> Bool {
-        guard !isTVOS else { return false }
+        _ = isTVOS
         return isStallResistantDirectPlay(route: route, source: source)
     }
 
-    static func postStartStallBufferDuration(currentForwardBufferDuration: Double) -> Double {
-        max(currentForwardBufferDuration, 24)
+    static func postStartStallBufferDuration(
+        currentForwardBufferDuration: Double,
+        recentStallCount: Int = 1,
+        isTVOS: Bool = false
+    ) -> Double {
+        guard isTVOS else { return max(currentForwardBufferDuration, 24) }
+
+        let target: Double
+        switch recentStallCount {
+        case ..<2:
+            target = 24
+        case 2:
+            target = 60
+        case 3 ..< 6:
+            target = 120
+        default:
+            target = 240
+        }
+        return max(currentForwardBufferDuration, target)
+    }
+
+    static func postStartStallWaitsToMinimizeStalling(isTVOS: Bool) -> Bool {
+        _ = isTVOS
+        return true
     }
 
     static func isIPhoneNoStallGuardedDirectPlay(route: PlaybackRoute, source: MediaSource?) -> Bool {

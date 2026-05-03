@@ -99,6 +99,13 @@ public actor PlaybackCoordinator {
         }
 
         let nativeConfig = configuration.nativePlayerConfig.applyingRuntimeOverride()
+        if nativeConfig.enabled,
+           nativeEngineFallbackReason == StartupFailureReason.directPlayPostStartStall.rawValue {
+            AppLog.playback.error(
+                "nativeplayer.route.guard.blocked — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) reason=Direct Play post-start stalls must keep the current Direct Play item."
+            )
+            throw NativePlayerRouteViolation.legacyPlaybackCoordinator
+        }
         if nativeConfig.enabled, nativeEngineFallbackReason == nil {
             let proof = NativePlayerRouteProof(
                 usedLegacyPlaybackCoordinator: true,

@@ -145,7 +145,7 @@ final class NativePlayerRouteGuardTests: XCTestCase {
         XCTAssertEqual(apiClient.fetchPlaybackSourcesCallCount, 0)
     }
 
-    func testPlaybackCoordinatorAllowsExplicitNativeRecoveryFallback() async throws {
+    func testPlaybackCoordinatorAllowsExplicitNativeDecodeRecoveryFallback() async throws {
         let apiClient = NativeWarmupGuardAPIClient(
             configuration: ServerConfiguration(
                 serverURL: URL(string: "https://jellyfin.example")!,
@@ -161,7 +161,7 @@ final class NativePlayerRouteGuardTests: XCTestCase {
             transcodeProfile: .appleOptimizedHEVC,
             startTimeTicks: startTimeTicks,
             allowDirectRoutes: false,
-            nativeEngineFallbackReason: StartupFailureReason.directPlayPostStartStall.rawValue
+            nativeEngineFallbackReason: StartupFailureReason.audioOnlyNoVideo.rawValue
         )
 
         guard case .transcode = selection.decision.route else {
@@ -172,6 +172,29 @@ final class NativePlayerRouteGuardTests: XCTestCase {
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectPlay, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, true)
+    }
+
+    func testPlaybackCoordinatorBlocksPostStartDirectPlayFallbackOverride() async throws {
+        let apiClient = NativeWarmupGuardAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: URL(string: "https://jellyfin.example")!,
+                nativePlayerConfig: NativePlayerConfig(enabled: true)
+            )
+        )
+        let coordinator = PlaybackCoordinator(apiClient: apiClient)
+
+        do {
+            _ = try await coordinator.resolvePlayback(
+                itemID: "item-1",
+                mode: .balanced,
+                transcodeProfile: .appleOptimizedHEVC,
+                allowDirectRoutes: false,
+                nativeEngineFallbackReason: StartupFailureReason.directPlayPostStartStall.rawValue
+            )
+            XCTFail("Direct Play post-start stalls must not force a transcode fallback.")
+        } catch NativePlayerRouteViolation.legacyPlaybackCoordinator {
+            XCTAssertEqual(apiClient.fetchPlaybackSourcesCallCount, 0)
+        }
     }
 }
 

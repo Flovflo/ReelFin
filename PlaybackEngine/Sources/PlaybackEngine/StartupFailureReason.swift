@@ -36,7 +36,7 @@ public enum StartupFailureReason: String, Sendable, Equatable {
         case .directPlayPreflightInsufficient, .directPlayStall:
             return false // Direct Play is preserved; controller handles same-route retry/logging.
         case .directPlayPostStartStall:
-            return true
+            return false
         case .subtitlePipelineFailure, .audioPipelineFailure:
             return true
         case .nativeBridgePackagingFailure:

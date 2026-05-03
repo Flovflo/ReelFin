@@ -998,7 +998,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
-    func testIPhoneRepeatedPostFirstFrameDirectPlayStallsTriggerRecovery() {
+    func testIPhoneRepeatedPostFirstFrameDirectPlayStallsKeepCurrentItem() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -1021,10 +1021,17 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             elapsedSecondsSinceFirstFrame: 22
         )
 
-        XCTAssertTrue(shouldRecover)
+        XCTAssertFalse(shouldRecover)
+        XCTAssertTrue(
+            PlaybackSessionController.shouldKeepCurrentDirectPlayItemAfterPostStartStall(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+                source: source,
+                isTVOS: false
+            )
+        )
     }
 
-    func testIPhoneRepeatedLatePostFirstFrameDirectPlayStallsTriggerRecovery() {
+    func testIPhoneRepeatedLatePostFirstFrameDirectPlayStallsKeepCurrentItem() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -1047,10 +1054,10 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             elapsedSecondsSinceFirstFrame: 185
         )
 
-        XCTAssertTrue(shouldRecover)
+        XCTAssertFalse(shouldRecover)
     }
 
-    func testTvOSPostFirstFrameDirectPlayStallsCanStillRecover() {
+    func testTvOSPostFirstFrameDirectPlayStallsKeepCurrentItemAndGrowBuffer() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -1074,7 +1081,22 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             isTVOS: true
         )
 
-        XCTAssertTrue(shouldRecover)
+        XCTAssertFalse(shouldRecover)
+        XCTAssertTrue(
+            PlaybackSessionController.shouldKeepCurrentDirectPlayItemAfterPostStartStall(
+                route: .directPlay(URL(string: "https://example.com/Videos/item-premium/stream?static=true&MediaSourceId=premium-source")!),
+                source: source,
+                isTVOS: true
+            )
+        )
+        XCTAssertEqual(
+            PlaybackSessionController.postStartDirectPlayStallBufferDuration(
+                currentForwardBufferDuration: 24,
+                recentStallCount: 3,
+                isTVOS: true
+            ),
+            120
+        )
     }
 
     func testSingleDirectPlayStallBeforeFirstFrameDoesNotTriggerRecovery() {
@@ -1129,13 +1151,13 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertFalse(shouldRecover)
     }
 
-    func testPostStartDirectPlayStallUsesProfileFallbackRecovery() {
-        XCTAssertTrue(
+    func testPostStartDirectPlayStallKeepsDirectPlayWithoutProfileFallback() {
+        XCTAssertFalse(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             PlaybackSessionController.shouldSuspendCurrentItemBeforeProfileRecovery(
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
@@ -1145,7 +1167,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             PlaybackSessionController.shouldAllowNativeModeCoordinatorFallback(
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
@@ -1155,13 +1177,13 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
                 reason: StartupFailureReason.decodedFrameWatchdog.rawValue
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             PlaybackSessionController.shouldAllowNativeModeCoordinatorFallback(
                 reason: StartupFailureReason.decodedFrameWatchdog.rawValue,
                 rootReason: StartupFailureReason.directPlayPostStartStall.rawValue
             )
         )
-        XCTAssertTrue(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
+        XCTAssertFalse(StartupFailureReason.directPlayPostStartStall.shouldTriggerRecovery)
     }
 
     func testPostFirstFrameDirectPlayItemFailureIsNotSuppressed() {

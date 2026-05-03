@@ -2839,36 +2839,29 @@ public final class PlaybackSessionController {
                         isTVOS: Self.isTvOSPlatform
                        ) {
                         let bufferDuration = Self.postStartDirectPlayStallBufferDuration(
-                            currentForwardBufferDuration: self.currentForwardBufferDuration
+                            currentForwardBufferDuration: self.currentForwardBufferDuration,
+                            recentStallCount: self.recentStallTimestamps.count,
+                            isTVOS: Self.isTvOSPlatform
+                        )
+                        let waitsToMinimizeStalling = DirectPlaySessionPolicy.postStartStallWaitsToMinimizeStalling(
+                            isTVOS: Self.isTvOSPlatform
                         )
                         item.preferredForwardBufferDuration = bufferDuration
                         self.currentForwardBufferDuration = bufferDuration
-                        self.player.automaticallyWaitsToMinimizeStalling = true
+                        self.player.automaticallyWaitsToMinimizeStalling = waitsToMinimizeStalling
                         self.player.play()
                         AppLog.playback.warning(
-                            "playback.directplay.poststart_stall_wait — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s firstFrameElapsed=\(elapsedSinceFirstFrame, format: .fixed(precision: 1))s buffer=\(bufferDuration, format: .fixed(precision: 1)) action=keep_current_item"
+                            "playback.directplay.poststart_stall_wait — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s firstFrameElapsed=\(elapsedSinceFirstFrame, format: .fixed(precision: 1))s buffer=\(bufferDuration, format: .fixed(precision: 1)) waits=\(waitsToMinimizeStalling, privacy: .public) action=keep_current_item"
                         )
                     }
                     return
                 }
 
-                if elapsedSinceFirstFrame != nil {
-                    AppLog.playback.warning(
-                        "playback.directplay.poststart_stall_recovery — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s"
-                    )
-                    if !(await self.attemptRecoveryPreservingDirectPlay(
-                        reason: StartupFailureReason.directPlayPostStartStall.rawValue,
-                        userMessage: "Direct Play stalled after startup. Reloading the same stream."
-                    )) {
-                        self.playbackErrorMessage = "Direct Play stalled after startup."
-                    }
-                } else {
-                    AppLog.playback.warning(
-                        "playback.directplay.stall_reload — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s"
-                    )
-                    if !(await self.attemptDirectPlaySameRouteRecoveryIfAvailable(reason: StartupFailureReason.directPlayStall.rawValue)) {
-                        self.playbackErrorMessage = "Direct Play stalled repeatedly."
-                    }
+                AppLog.playback.warning(
+                    "playback.directplay.stall_reload — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) elapsed=\(now.timeIntervalSince(self.startDate), format: .fixed(precision: 1))s"
+                )
+                if !(await self.attemptDirectPlaySameRouteRecoveryIfAvailable(reason: StartupFailureReason.directPlayStall.rawValue)) {
+                    self.playbackErrorMessage = "Direct Play stalled repeatedly."
                 }
             }
         }
@@ -6284,8 +6277,7 @@ public final class PlaybackSessionController {
              .readyButNoVideoFrame,
              .decoderStall,
              .presentationSizeZero,
-             .playerItemFailed,
-             .directPlayPostStartStall:
+             .playerItemFailed:
             return true
         default:
             return false
@@ -6302,8 +6294,7 @@ public final class PlaybackSessionController {
              .readyButNoVideoFrame,
              .decoderStall,
              .presentationSizeZero,
-             .playerItemFailed,
-             .directPlayPostStartStall:
+             .playerItemFailed:
             return true
         default:
             return false
@@ -6322,26 +6313,13 @@ public final class PlaybackSessionController {
             return true
         }
 
-        guard StartupFailureReason(rawValue: rootReason ?? "") == .directPlayPostStartStall else {
-            return false
-        }
-
-        switch StartupFailureReason(rawValue: reason) {
-        case .decodedFrameWatchdog,
-             .audioOnlyNoVideo,
-             .readyButNoVideoFrame,
-             .decoderStall,
-             .presentationSizeZero,
-             .playerItemFailed,
-             .playerItemFailedTransient:
-            return true
-        default:
-            return false
-        }
+        _ = rootReason
+        return false
     }
 
     nonisolated static func shouldStartNativeModeCoordinatorFallbackChain(reason: String) -> Bool {
-        StartupFailureReason(rawValue: reason) == .directPlayPostStartStall
+        _ = reason
+        return false
     }
 
     nonisolated static func canUseWarmedSelection(
@@ -6386,10 +6364,14 @@ public final class PlaybackSessionController {
     }
 
     static func postStartDirectPlayStallBufferDuration(
-        currentForwardBufferDuration: Double
+        currentForwardBufferDuration: Double,
+        recentStallCount: Int = 1,
+        isTVOS: Bool = false
     ) -> Double {
         DirectPlaySessionPolicy.postStartStallBufferDuration(
-            currentForwardBufferDuration: currentForwardBufferDuration
+            currentForwardBufferDuration: currentForwardBufferDuration,
+            recentStallCount: recentStallCount,
+            isTVOS: isTVOS
         )
     }
 

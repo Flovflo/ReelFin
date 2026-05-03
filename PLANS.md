@@ -315,6 +315,34 @@
   - tvOS continues to preserve Direct Play and does not inherit the iOS preemptive HLS fallback
 - Validation: targeted red/green playback policy tests, focused PlaybackEngine startup tests, `ReelFinTV` build/test, and `scripts/run_reelfin_player_e2e.sh --skip-ui --loops 1 --sample-size 4 --max-failures 1` passed with artifacts `.artifacts/player-e2e/20260428-202226`.
 
+### M30
+- Status: completed
+- Objective: make tvOS progressive Direct Play start immediately from the native Apple player path.
+- Scope: `PlaybackStartupReadinessPolicy`, `DirectPlaySessionPolicy`, `PlaybackSessionController`, AVKit ready-display observer tests, native sample-buffer cancellation guards
+- Acceptance:
+  - tvOS MP4/MOV Direct Play no longer creates a startup readiness gate or range preheat requirement
+  - high-bitrate/premium tvOS progressive Direct Play keeps the default fast buffer policy instead of forcing `24s` and `automaticallyWaitsToMinimizeStalling`
+  - resumed tvOS MP4/MOV Direct Play primes the resume seek before autoplay instead of letting AVPlayer advance from `0s`
+  - post-first-frame tvOS MP4/MOV Direct Play no longer applies the adaptive `24s`/`90s` caching ramp to progressive remote files
+  - AVPlayer `waitingToPlayAtSpecifiedRate` preserves the app's active playback intent instead of reporting a user pause
+  - post-first-frame tvOS Direct Play stalls keep the current item, avoid same-route reloads, avoid buffer target growth, and keep `automaticallyWaitsToMinimizeStalling` off
+  - Detail warmup may still issue an opportunistic tvOS resume range preheat and consume that evidence for `play_ready`, but playback startup does not block on it
+  - AVKit `readyForDisplay` signals that arrive before item readiness are rechecked when the item becomes ready
+  - native sample-buffer async work is generation-guarded so stale MP4/Matroska tasks cannot publish or render after reload/stop
+- Validation: targeted red/green playback policy, warmup, detail readiness, playback-state, adaptive-caching, and post-start stall tests; focused native player configuration tests; `xcodegen generate`; `ReelFinTV` build/test; and `scripts/run_reelfin_player_e2e.sh --skip-ui --loops 1 --sample-size 4 --max-failures 1` passed with artifacts `.artifacts/player-e2e/20260503-110443`.
+
+### M31
+- Status: completed
+- Objective: rollback post-start Direct Play fallback behavior and keep visible playback on the original Direct Play item.
+- Scope: `DirectPlaySessionPolicy`, `PlaybackSessionController`, `PlaybackCoordinator`, `StartupFailureReason`, playback policy/route-guard tests
+- Acceptance:
+  - once Direct Play has rendered a first frame, `directplay_poststart_stall` cannot trigger profile fallback, HLS/transcode fallback, same-route item reload, or stored transcode pinning
+  - post-first-frame Direct Play stalls keep the current `AVPlayerItem`, reassert play intent, and let AVPlayer re-buffer the same progressive stream
+  - tvOS post-start Direct Play stalls grow the requested forward-buffer target dynamically: `24s`, `60s`, `120s`, then `240s` for repeated stalls
+  - post-start stall rebuffering enables `automaticallyWaitsToMinimizeStalling` after playback is already visible, preserving fast startup while prioritizing continuity after a stall
+  - explicit native coordinator fallback is still allowed for decode failures like `audio_only_no_video`, but `directplay_poststart_stall` is blocked at the coordinator guard
+- Validation: targeted playback and route-guard tests passed; `xcodegen generate` passed; `ReelFinTV` simulator build passed; live player E2E passed with artifacts `.artifacts/player-e2e/20260503-114654` (`4/4` explicit probes, resume reporting, `4/4` original-stream benchmarks, `3/3` live playback probes, `74/74` deterministic player tests, clean runtime-log scan).
+
 ## Validation Commands
 
 ```bash
