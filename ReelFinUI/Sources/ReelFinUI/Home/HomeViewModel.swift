@@ -655,7 +655,7 @@ final class HomeViewModel: ObservableObject {
         orderedSectionKinds: [HomeSectionKind],
         hiddenSectionKinds: Set<HomeSectionKind>
     ) -> (rows: [HomeRow], rowIDByItemID: [String: String]) {
-        let normalizedRows = rows.compactMap { row -> HomeRow? in
+        let normalizedRows = rows.map { row -> HomeRow in
             var normalizedRow = row
 
 #if os(tvOS)
@@ -671,7 +671,7 @@ final class HomeViewModel: ObservableObject {
             }
 #endif
 
-            return normalizedRow.items.isEmpty ? nil : normalizedRow
+            return normalizedRow
         }
 
         let filteredRows = normalizedRows.filter { row in

@@ -110,6 +110,7 @@ struct ItemDTO: Decodable {
     let seriesID: String?
     let seriesName: String?
     let seriesPrimaryImageTag: String?
+    let premiereDate: String?
     let indexNumber: Int?
     let parentIndexNumber: Int?
     let people: [PersonDTO]?
@@ -133,6 +134,7 @@ struct ItemDTO: Decodable {
         case seriesID = "SeriesId"
         case seriesName = "SeriesName"
         case seriesPrimaryImageTag = "SeriesPrimaryImageTag"
+        case premiereDate = "PremiereDate"
         case indexNumber = "IndexNumber"
         case parentIndexNumber = "ParentIndexNumber"
         case people = "People"
@@ -157,6 +159,7 @@ struct ItemDTO: Decodable {
         seriesID: String? = nil,
         seriesName: String? = nil,
         seriesPrimaryImageTag: String? = nil,
+        premiereDate: String? = nil,
         indexNumber: Int? = nil,
         parentIndexNumber: Int? = nil,
         people: [PersonDTO]? = nil,
@@ -179,6 +182,7 @@ struct ItemDTO: Decodable {
         self.seriesID = seriesID
         self.seriesName = seriesName
         self.seriesPrimaryImageTag = seriesPrimaryImageTag
+        self.premiereDate = premiereDate
         self.indexNumber = indexNumber
         self.parentIndexNumber = parentIndexNumber
         self.people = people

@@ -60,6 +60,37 @@ final class HomeViewModelFeedEnrichmentTests: XCTestCase {
         )
     }
 
+    func testLoadKeepsEmptyCanonicalRowsVisible() async throws {
+        let repository = MockMetadataRepository()
+        try await repository.saveHomeFeed(
+            HomeFeed(
+                featured: [],
+                rows: [
+                    HomeRow(kind: .continueWatching, title: "Continue Watching", items: [
+                        MediaItem(id: "resume", name: "Resume", mediaType: .movie)
+                    ]),
+                    HomeRow(kind: .recentlyReleasedMovies, title: "Recently Released Movies", items: []),
+                    HomeRow(kind: .recentlyReleasedSeries, title: "Recently Released TV Shows", items: [
+                        MediaItem(id: "released-tv", name: "Released TV", mediaType: .series)
+                    ]),
+                    HomeRow(kind: .recentlyAddedMovies, title: "Recently Added Movies", items: []),
+                    HomeRow(kind: .recentlyAddedSeries, title: "Recently Added TV", items: [])
+                ]
+            )
+        )
+
+        let viewModel = HomeViewModel(
+            dependencies: makeDependencies(
+                apiClient: MockJellyfinAPIClient(),
+                repository: repository,
+                warmupManager: HomeFeedWarmupManagerStub()
+            )
+        )
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.visibleRows.map(\.kind), HomeViewModel.defaultSectionOrder)
+    }
+
     func testLoadDeduplicatesRepeatedItemsWithinFeaturedAndRows() async throws {
         let dependencies = ReelFinPreviewFactory.dependencies()
         let repeated = MediaItem(id: "jurassic-world", name: "Jurassic World", mediaType: .movie, libraryID: "movies")

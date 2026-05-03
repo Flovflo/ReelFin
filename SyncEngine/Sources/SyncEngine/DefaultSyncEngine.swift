@@ -46,7 +46,7 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
 
             var feed = try await apiClient.fetchHomeFeed(since: lastSyncDate)
 
-            // Incremental feed can be degraded (for example only "Continue Watching").
+            // Incremental feed can be degraded (for example only "Continue Watching" or one updated catalog row).
             // In that case, fetch a full feed before overwriting cache.
             if lastSyncDate != nil, shouldRefreshWithFullFeed(feed) {
                 do {
@@ -61,8 +61,12 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
                     }
                 } catch {
                     AppLog.sync.warning(
-                        "Full-feed refresh fallback failed: \(error.localizedDescription, privacy: .public). Keeping incremental feed."
+                        "Full-feed refresh fallback failed: \(error.localizedDescription, privacy: .public). Keeping cached feed if available."
                     )
+                    let cached = try? await repository.fetchHomeFeed()
+                    if let cached, !isEmpty(cached) {
+                        feed = cached
+                    }
                 }
             }
 
@@ -152,6 +156,20 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
 
         // Incremental feeds can contain only resume/next-up rails, which degrades Home.
         if !hasContentRows {
+            return true
+        }
+
+        let catalogKinds: [HomeSectionKind] = [
+            .recentlyReleasedMovies,
+            .recentlyReleasedSeries,
+            .recentlyAddedMovies,
+            .recentlyAddedSeries
+        ]
+        var itemsByCatalogKind = [HomeSectionKind: [MediaItem]]()
+        for row in feed.rows where catalogKinds.contains(row.kind) {
+            itemsByCatalogKind[row.kind, default: []].append(contentsOf: row.items)
+        }
+        if catalogKinds.contains(where: { (itemsByCatalogKind[$0] ?? []).isEmpty }) {
             return true
         }
 

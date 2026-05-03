@@ -40,6 +40,11 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         static let deviceID = "jellyfin.client.device_id"
     }
 
+    private enum HomeFeedDefaults {
+        static let recentlyReleasedTVShowLimit = 20
+        static let recentlyReleasedTVShowSignalLimit = 200
+    }
+
     private let tokenStore: TokenStoreProtocol
     private let settingsStore: SettingsStoreProtocol
     private let urlSession: URLSession
@@ -52,6 +57,11 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
     private let iso8601 = ISO8601DateFormatter()
+    private let iso8601WithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     private var configuration: ServerConfiguration?
     private var activeSession: UserSession?
@@ -272,18 +282,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             libraryID: nil
         )
 
-        async let recentlyReleasedSeries = fetchItems(
-            userID: userID,
-            path: "Users/\(userID)/Items",
-            query: [
-                URLQueryItem(name: "Recursive", value: "true"),
-                URLQueryItem(name: "IncludeItemTypes", value: "Series"),
-                URLQueryItem(name: "Limit", value: "20"),
-                URLQueryItem(name: "SortBy", value: "PremiereDate"),
-                URLQueryItem(name: "SortOrder", value: "Descending")
-            ] + incrementalQuery(since: since),
-            libraryID: nil
-        )
+        async let recentlyReleasedSeries = fetchRecentlyReleasedTVShows(userID: userID, since: since)
 
         let resume = (try? await resumeItems) ?? []
         let releasedMovieItems = (try? await recentlyReleasedMovies) ?? []
@@ -538,6 +537,90 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         case .sortName:
             return "SortName"
         }
+    }
+
+    private func fetchRecentlyReleasedTVShows(userID: String, since _: Date?) async throws -> [MediaItem] {
+        let query = [
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Episode"),
+            URLQueryItem(name: "Limit", value: String(HomeFeedDefaults.recentlyReleasedTVShowSignalLimit)),
+            URLQueryItem(name: "SortBy", value: "PremiereDate"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "IsMissing", value: "false"),
+            URLQueryItem(name: "IsUnaired", value: "false")
+        ]
+
+        let response: ItemsResponseDTO = try await request(
+            path: "Users/\(userID)/Items",
+            query: mergedQueryItems(query, fields: ItemFields.home)
+        )
+
+        return await recentlyReleasedTVShowItems(
+            from: response.items,
+            limit: HomeFeedDefaults.recentlyReleasedTVShowLimit
+        )
+    }
+
+    private func recentlyReleasedTVShowItems(from releaseSignals: [ItemDTO], limit: Int) async -> [MediaItem] {
+        let orderedSeriesIDs = recentlyReleasedTVShowSeriesIDs(from: releaseSignals, limit: limit)
+        guard !orderedSeriesIDs.isEmpty else { return [] }
+
+        var seriesByID: [String: MediaItem] = [:]
+
+        await withTaskGroup(of: (String, MediaItem?).self) { group in
+            for seriesID in orderedSeriesIDs {
+                group.addTask { [self] in
+                    let series = try? await fetchItem(id: seriesID)
+                    guard series?.mediaType == .series else {
+                        return (seriesID, nil)
+                    }
+                    return (seriesID, series)
+                }
+            }
+
+            for await (seriesID, series) in group {
+                if let series {
+                    seriesByID[seriesID] = series
+                }
+            }
+        }
+
+        return orderedSeriesIDs.compactMap { seriesByID[$0] }
+    }
+
+    private func recentlyReleasedTVShowSeriesIDs(from releaseSignals: [ItemDTO], limit: Int) -> [String] {
+        guard limit > 0 else { return [] }
+
+        let now = Date()
+        var orderedSeriesIDs: [String] = []
+        var seen = Set<String>()
+
+        for item in releaseSignals {
+            guard orderedSeriesIDs.count < limit else { break }
+            guard item.type?.caseInsensitiveCompare("Episode") == .orderedSame else { continue }
+            guard
+                let premiereDate = jellyfinDate(from: item.premiereDate),
+                premiereDate <= now
+            else {
+                continue
+            }
+            guard
+                let seriesID = item.seriesID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !seriesID.isEmpty,
+                seen.insert(seriesID).inserted
+            else {
+                continue
+            }
+
+            orderedSeriesIDs.append(seriesID)
+        }
+
+        return orderedSeriesIDs
+    }
+
+    private func jellyfinDate(from value: String?) -> Date? {
+        guard let value else { return nil }
+        return iso8601.date(from: value) ?? iso8601WithFractionalSeconds.date(from: value)
     }
 
     private func dedupedLibraryItems(_ items: [MediaItem]) -> [MediaItem] {
