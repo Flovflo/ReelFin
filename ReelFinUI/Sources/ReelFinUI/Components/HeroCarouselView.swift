@@ -17,6 +17,11 @@ public struct HeroCarouselView: View {
     private let onToggleWatchlist: ((MediaItem) -> Void)?
     private let onVisibleItemChange: ((MediaItem) -> Void)?
     private let selectedItemID: Binding<String?>?
+    private let transitionNamespace: Namespace.ID?
+    private let transitionSourceID: ((MediaItem) -> String?)?
+    private let usesTVInlineDetailTransition: Bool
+    private let tvFocusedItemID: FocusState<String?>.Binding?
+    private let tvPrimaryActionFocusID: String?
 
     @State private var currentIndex = 0
     #if os(iOS)
@@ -28,6 +33,11 @@ public struct HeroCarouselView: View {
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         selectedItemID: Binding<String?>? = nil,
+        transitionNamespace: Namespace.ID? = nil,
+        transitionSourceID: ((MediaItem) -> String?)? = nil,
+        usesTVInlineDetailTransition: Bool = false,
+        tvFocusedItemID: FocusState<String?>.Binding? = nil,
+        tvPrimaryActionFocusID: String? = nil,
         onVisibleItemChange: ((MediaItem) -> Void)? = nil,
         onPlay: ((MediaItem) -> Void)? = nil,
         onToggleWatchlist: ((MediaItem) -> Void)? = nil,
@@ -37,6 +47,11 @@ public struct HeroCarouselView: View {
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
         self.selectedItemID = selectedItemID
+        self.transitionNamespace = transitionNamespace
+        self.transitionSourceID = transitionSourceID
+        self.usesTVInlineDetailTransition = usesTVInlineDetailTransition
+        self.tvFocusedItemID = tvFocusedItemID
+        self.tvPrimaryActionFocusID = tvPrimaryActionFocusID
         self.onVisibleItemChange = onVisibleItemChange
         self.onPlay = onPlay
         self.onToggleWatchlist = onToggleWatchlist
@@ -247,6 +262,12 @@ public struct HeroCarouselView: View {
         .clipped()
         .id(item.id) // triggers crossfade
         .transition(.opacity.animation(TVMotion.contentFadeAnimation))
+        .modifier(MatchedCardModifier(itemID: transitionID(for: item), namespace: transitionNamespace))
+        .modifier(TVHeroInlineDetailSourceModifier(
+            itemID: transitionID(for: item),
+            namespace: transitionNamespace,
+            isEnabled: usesTVInlineDetailTransition
+        ))
     }
 
     // MARK: Gradient Overlay
@@ -446,6 +467,8 @@ public struct HeroCarouselView: View {
         TVHeroCapsuleButton(
             title: primaryActionTitle(for: item),
             systemImage: "play.fill",
+            focusedItemID: tvFocusedItemID,
+            focusID: tvPrimaryActionFocusID,
             onMoveCommand: handleMoveCommand,
             action: { (onPlay ?? onTap)(item) }
         )
@@ -506,6 +529,10 @@ public struct HeroCarouselView: View {
         currentIndex = newIndex
     }
 
+    private func transitionID(for item: MediaItem) -> String {
+        transitionSourceID?(item) ?? item.id
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Shared helpers
     // ──────────────────────────────────────────────
@@ -521,6 +548,7 @@ public struct HeroCarouselView: View {
         )
         .frame(width: size.width, height: heroHeight)
         .clipped()
+        .modifier(MatchedCardModifier(itemID: transitionID(for: item), namespace: transitionNamespace))
     }
 
     private var pageControl: some View {
@@ -710,6 +738,8 @@ private struct TVHeroCapsuleButton: View {
 
     let title: String
     let systemImage: String
+    let focusedItemID: FocusState<String?>.Binding?
+    let focusID: String?
     let onMoveCommand: (MoveCommandDirection) -> Void
     let action: () -> Void
 
@@ -733,6 +763,7 @@ private struct TVHeroCapsuleButton: View {
         .buttonStyle(TVNoChromeButtonStyle())
         .tvMotionFocus(.heroButton, isFocused: isFocused)
         .focused($isFocused)
+        .modifier(TVHeroActionFocusModifier(focusedItemID: focusedItemID, focusID: focusID))
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .onMoveCommand(perform: handleMoveCommand)
@@ -773,6 +804,35 @@ private struct TVHeroCapsuleButton: View {
             onMoveCommand(direction)
         default:
             break
+        }
+    }
+}
+
+private struct TVHeroActionFocusModifier: ViewModifier {
+    let focusedItemID: FocusState<String?>.Binding?
+    let focusID: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let focusedItemID, let focusID {
+            content.focused(focusedItemID, equals: focusID)
+        } else {
+            content
+        }
+    }
+}
+
+private struct TVHeroInlineDetailSourceModifier: ViewModifier {
+    let itemID: String
+    let namespace: Namespace.ID?
+    let isEnabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled, let namespace {
+            content.matchedGeometryEffect(id: "poster-\(itemID)", in: namespace, isSource: true)
+        } else {
+            content
         }
     }
 }

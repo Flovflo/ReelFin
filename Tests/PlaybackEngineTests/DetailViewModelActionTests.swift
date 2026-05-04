@@ -237,6 +237,79 @@ final class DetailViewModelActionTests: XCTestCase {
         )
     }
 
+    func testEpisodeFileInfoSummaryFormatsNativeDirectPlaySource() {
+        let source = MediaSource(
+            id: "source-1",
+            itemID: "episode-1",
+            name: "Episode source",
+            fileSize: 17_693_312_645,
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            audioChannels: 6,
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directPlayURL: URL(string: "https://example.com/Videos/episode-1/stream.mp4"),
+            videoWidth: 3840,
+            videoHeight: 1608
+        )
+
+        let summary = EpisodeFileInfoSummary(source: source)
+
+        XCTAssertEqual(
+            summary.rows.map { "\($0.label)=\($0.value)" },
+            [
+                "Route=Native Direct Play",
+                "Container=MP4",
+                "Video=HEVC 10-bit HDR10",
+                "Audio=EAC3 6ch",
+                "Bitrate=21.9 Mbps",
+                "Resolution=3840x1608",
+                "Size=17.69 GB"
+            ]
+        )
+        XCTAssertTrue(summary.alertMessage.contains("Native Direct Play"))
+    }
+
+    func testEpisodeFileInfoLoadsPlaybackSourcesOnceAndCachesSummary() async {
+        let source = MediaSource(
+            id: "source-1",
+            itemID: "episode-cache",
+            name: "Episode source",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            bitrate: 8_400_000,
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directPlayURL: URL(string: "https://example.com/Videos/episode-cache/stream.mp4")
+        )
+        let apiClient = DetailActionSpyAPIClient(
+            playbackSourcesByItemID: ["episode-cache": [source]]
+        )
+        let repository = MockMetadataRepository()
+        let episode = MediaItem(
+            id: "episode-cache",
+            name: "Episode",
+            mediaType: .episode
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(id: "series-1", name: "Series", mediaType: .series),
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        let firstSummary = await viewModel.loadEpisodeFileInfo(for: episode)
+        let secondSummary = await viewModel.loadEpisodeFileInfo(for: episode)
+        let fetchCount = await apiClient.fetchPlaybackSourcesCount(for: "episode-cache")
+
+        XCTAssertEqual(firstSummary, secondSummary)
+        XCTAssertEqual(firstSummary?.rowValue(label: "Route"), "Native Direct Play")
+        XCTAssertEqual(fetchCount, 1)
+    }
+
     func testRemoteProgressiveDirectPlayWarmupDoesNotMarkReadyWithoutConsumableEvidence() async {
         let apiClient = DetailActionSpyAPIClient()
         let repository = MockMetadataRepository()
@@ -821,17 +894,21 @@ final class DetailViewModelActionTests: XCTestCase {
     private let seasonsBySeriesID: [String: [MediaItem]]
     private let episodesBySeasonID: [String: [MediaItem]]
     private let nextUpBySeriesID: [String: MediaItem]
+    private let playbackSourcesByItemID: [String: [MediaSource]]
+    private var playbackSourceFetchCountsByItemID: [String: Int] = [:]
     private var recordedPlayedCalls: [(itemID: String, isPlayed: Bool)] = []
     private var recordedFavoriteCalls: [(itemID: String, isFavorite: Bool)] = []
 
     init(
         seasonsBySeriesID: [String: [MediaItem]] = [:],
         episodesBySeasonID: [String: [MediaItem]] = [:],
-        nextUpBySeriesID: [String: MediaItem] = [:]
+        nextUpBySeriesID: [String: MediaItem] = [:],
+        playbackSourcesByItemID: [String: [MediaSource]] = [:]
     ) {
         self.seasonsBySeriesID = seasonsBySeriesID
         self.episodesBySeasonID = episodesBySeasonID
         self.nextUpBySeriesID = nextUpBySeriesID
+        self.playbackSourcesByItemID = playbackSourcesByItemID
     }
 
     func currentConfiguration() async -> ServerConfiguration? { nil }
@@ -864,7 +941,10 @@ final class DetailViewModelActionTests: XCTestCase {
         nextUpBySeriesID[seriesID]
     }
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { _ = query; return [] }
-    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] { _ = itemID; return [] }
+    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
+        playbackSourceFetchCountsByItemID[itemID, default: 0] += 1
+        return playbackSourcesByItemID[itemID] ?? []
+    }
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? {
         _ = itemID
         _ = type
@@ -888,5 +968,9 @@ final class DetailViewModelActionTests: XCTestCase {
 
     func favoriteCalls() -> [(itemID: String, isFavorite: Bool)] {
         recordedFavoriteCalls
+    }
+
+    func fetchPlaybackSourcesCount(for itemID: String) -> Int {
+        playbackSourceFetchCountsByItemID[itemID, default: 0]
     }
 }

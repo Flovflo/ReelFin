@@ -29,6 +29,7 @@ private struct TVCardButton: View {
     let progress: Double?
     let optimizationStatus: ApplePlaybackOptimizationStatus?
     let onFocus: ((MediaItem) -> Void)?
+    let onMoveUpFromContinueWatching: (() -> Void)?
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
@@ -73,7 +74,11 @@ private struct TVCardButton: View {
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
         guard direction == .up, kind == .continueWatching else { return }
-        requestTopNavigationFocus?(.watchNow)
+        if let onMoveUpFromContinueWatching {
+            onMoveUpFromContinueWatching()
+        } else {
+            requestTopNavigationFocus?(.watchNow)
+        }
     }
 
     private func handleActivation() {
@@ -136,7 +141,6 @@ private struct TVHomeShelfCard: View {
                 showsProgressOverlay: !usesTVContinueWatchingStyle,
                 showsTopTrailingBadges: false
             )
-            .modifier(TVMatchedTransitionSource(itemID: transitionSourceID, namespace: namespace))
 
             LinearGradient(
                 stops: gradientStops,
@@ -454,24 +458,6 @@ private enum TVHomeWarmupScope {
 private enum TVHomeReturnTarget: Equatable {
     case featured(itemID: String)
     case row(rowID: String, itemID: String)
-}
-
-private struct TVMatchedTransitionSource: ViewModifier {
-    let itemID: String
-    let namespace: Namespace.ID?
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if let namespace {
-            if #available(tvOS 18.0, *) {
-                content.matchedTransitionSource(id: "poster-\(itemID)", in: namespace)
-            } else {
-                content.matchedGeometryEffect(id: "poster-\(itemID)", in: namespace)
-            }
-        } else {
-            content
-        }
-    }
 }
 
 private struct TVHomeItemFocusModifier: ViewModifier {
@@ -801,6 +787,7 @@ public struct SectionRow: View {
     private let optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)?
     private let isLoadingMore: Bool
     private let onFocus: ((MediaItem, [MediaItem]) -> Void)?
+    private let onMoveUpFromContinueWatching: (() -> Void)?
     private let onOpenSection: (() -> Void)?
     private let onItemAppear: ((MediaItem) -> Void)?
     private let onSelect: (MediaItem, String) -> Void
@@ -817,6 +804,7 @@ public struct SectionRow: View {
         optimizationStatusProvider: ((MediaItem) -> ApplePlaybackOptimizationStatus?)? = nil,
         isLoadingMore: Bool = false,
         onFocus: ((MediaItem, [MediaItem]) -> Void)? = nil,
+        onMoveUpFromContinueWatching: (() -> Void)? = nil,
         onOpenSection: (() -> Void)? = nil,
         onItemAppear: ((MediaItem) -> Void)? = nil,
         onSelect: @escaping (MediaItem, String) -> Void
@@ -832,6 +820,7 @@ public struct SectionRow: View {
         self.optimizationStatusProvider = optimizationStatusProvider
         self.isLoadingMore = isLoadingMore
         self.onFocus = onFocus
+        self.onMoveUpFromContinueWatching = onMoveUpFromContinueWatching
         self.onOpenSection = onOpenSection
         self.onItemAppear = onItemAppear
         self.onSelect = onSelect
@@ -885,6 +874,7 @@ public struct SectionRow: View {
                             onFocus: { focusedItem in
                                 onFocus?(focusedItem, items)
                             },
+                            onMoveUpFromContinueWatching: onMoveUpFromContinueWatching,
                             onSelect: { selectedItem in
                                 onSelect(selectedItem, transitionSourceID)
                             }
@@ -1070,6 +1060,7 @@ struct HomeView: View {
 
     private let dependencies: ReelFinDependencies
     private let tvRefreshRequest: Int
+    private let tvHeroFocusRequest: Int
     @State private var scrollInterval: SignpostInterval?
     @State private var isCustomizationPresented = false
     @State private var selectedDetailNamespace: Namespace.ID?
@@ -1083,6 +1074,9 @@ struct HomeView: View {
     @State private var featuredHeroItemID: String?
     @State private var homeReturnTarget: TVHomeReturnTarget?
     @State private var homeReturnRequest = 0
+    @State private var localHeroFocusRequest = 0
+    @State private var tvOpeningArtworkItem: MediaItem?
+    @State private var tvOpeningArtworkVisible = false
 #endif
     @State private var playerSession: PlaybackSessionController?
     @State private var playerItem: MediaItem?
@@ -1098,7 +1092,7 @@ struct HomeView: View {
     @StateObject private var tvScreenState: TVHomeScreenState
 #endif
 
-    init(dependencies: ReelFinDependencies, tvRefreshRequest: Int = 0) {
+    init(dependencies: ReelFinDependencies, tvRefreshRequest: Int = 0, tvHeroFocusRequest: Int = 0) {
         _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
 #if os(tvOS)
         _tvScreenState = StateObject(
@@ -1110,6 +1104,7 @@ struct HomeView: View {
 #endif
         self.dependencies = dependencies
         self.tvRefreshRequest = tvRefreshRequest
+        self.tvHeroFocusRequest = tvHeroFocusRequest
     }
 
     var body: some View {
@@ -1120,21 +1115,7 @@ struct HomeView: View {
             handleHomeDisappear()
         }
         .navigationDestination(
-            isPresented: Binding(
-                get: { viewModel.selectedItem != nil },
-                set: {
-                    if !$0 {
-#if os(iOS)
-                        ambientItem = nil
-#endif
-#if os(tvOS)
-                        focusedHomeItemID = nil
-                        homeReturnRequest += 1
-#endif
-                        viewModel.dismissDetail()
-                    }
-                }
-            )
+            isPresented: nativeDetailNavigationBinding
         ) {
             if let item = viewModel.selectedItem {
                 DetailView(
@@ -1145,7 +1126,8 @@ struct HomeView: View {
                     contextTitle: selectedDetailContextTitle,
                     namespace: selectedDetailNamespace,
                     transitionSourceID: selectedDetailTransitionSourceID,
-                    onDisplayedSourceItemChange: handleDisplayedDetailSourceItemChange
+                    onDisplayedSourceItemChange: handleDisplayedDetailSourceItemChange,
+                    onDismissRequest: dismissDetailPresentation
                 )
             }
         }
@@ -1227,12 +1209,19 @@ struct HomeView: View {
     ) -> some View {
 #if os(tvOS)
         TVHomeScreen(navigationAppearance: tvScreenState.navigationAppearance) {
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topTrailing) {
                 homeScrollContent(visibleRows: visibleRows)
+                    .scaleEffect(viewModel.selectedItem == nil ? 1 : 0.982)
+                    .opacity(viewModel.selectedItem == nil ? 1 : 0.46)
+                    .blur(radius: viewModel.selectedItem == nil ? 0 : 10)
+                    .animation(tvDetailPresentationAnimation, value: viewModel.selectedItem?.id)
 
                 TVHomeRefreshStatusView(isRefreshing: viewModel.isRefreshing && !viewModel.isInitialLoading)
-                    .padding(.top, ReelFinTheme.tvTopNavigationBarHeight + 42)
+                    .padding(.top, tvRefreshStatusTopPadding)
+                    .padding(.trailing, tvRefreshStatusTrailingPadding)
                     .zIndex(2)
+
+                tvInlineDetailPresentation
             }
         }
 #else
@@ -1301,6 +1290,12 @@ struct HomeView: View {
             .onChange(of: homeReturnRequest) { _, _ in
                 restoreHomeSelection(using: proxy)
             }
+            .onChange(of: tvHeroFocusRequest) { _, _ in
+                focusFeaturedAction(using: proxy)
+            }
+            .onChange(of: localHeroFocusRequest) { _, _ in
+                focusFeaturedAction(using: proxy)
+            }
             #endif
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
@@ -1347,6 +1342,7 @@ struct HomeView: View {
                         onFocus: { item, neighbors in
                             handleFocusedItem(item, neighbors: neighbors)
                         },
+                        onMoveUpFromContinueWatching: continueWatchingHeroFocusAction(for: row.kind),
                         onOpenSection: {
                             selectedHomeSectionRow = row
                         },
@@ -1377,7 +1373,7 @@ struct HomeView: View {
                             Task {
                                 await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
                             }
-                            viewModel.select(item: item)
+                            presentDetail(item)
                         }
                     )
                     .id(row.id)
@@ -1402,6 +1398,13 @@ struct HomeView: View {
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 selectedItemID: $featuredHeroItemID,
+                transitionNamespace: posterNamespace,
+                transitionSourceID: { item in
+                    HomeFeaturedTransitionSource.id(itemID: item.id)
+                },
+                usesTVInlineDetailTransition: true,
+                tvFocusedItemID: homeFocusedItemBinding,
+                tvPrimaryActionFocusID: featuredPrimaryActionFocusID,
                 onVisibleItemChange: { item in
                     scheduleWarmup(
                         for: item,
@@ -1421,6 +1424,10 @@ struct HomeView: View {
                 items: Array(viewModel.feed.featured.prefix(10)),
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
+                transitionNamespace: posterNamespace,
+                transitionSourceID: { item in
+                    HomeFeaturedTransitionSource.id(itemID: item.id)
+                },
                 onPlay: handleFeaturedPlay,
                 onToggleWatchlist: viewModel.toggleFeaturedWatchlist,
                 onTap: handleFeaturedSelection
@@ -1520,6 +1527,77 @@ struct HomeView: View {
         nil
 #endif
     }
+
+    private var nativeDetailNavigationBinding: Binding<Bool> {
+        Binding(
+            get: {
+#if os(tvOS)
+                false
+#else
+                viewModel.selectedItem != nil
+#endif
+            },
+            set: { isPresented in
+                guard !isPresented else { return }
+                dismissDetailPresentation()
+            }
+        )
+    }
+
+#if os(tvOS)
+    @ViewBuilder
+    private var tvInlineDetailPresentation: some View {
+        if let item = viewModel.selectedItem {
+            ZStack {
+                Color.black
+                    .ignoresSafeArea()
+
+                DetailView(
+                    dependencies: dependencies,
+                    item: item,
+                    preferredEpisode: viewModel.selectedEpisode,
+                    contextItems: selectedDetailContextItems,
+                    contextTitle: selectedDetailContextTitle,
+                    namespace: selectedDetailNamespace,
+                    transitionSourceID: selectedDetailTransitionSourceID,
+                    onDisplayedSourceItemChange: handleDisplayedDetailSourceItemChange,
+                    onDismissRequest: dismissDetailPresentation
+                )
+                .ignoresSafeArea()
+
+                if let tvOpeningArtworkItem {
+                    TVDetailOpeningArtworkView(
+                        item: tvOpeningArtworkItem,
+                        apiClient: dependencies.apiClient,
+                        imagePipeline: dependencies.imagePipeline
+                    )
+                    .modifier(TVInlineDetailArtworkDestinationModifier(
+                        namespace: selectedDetailNamespace,
+                        sourceID: selectedDetailTransitionSourceID
+                    ))
+                    .opacity(tvOpeningArtworkVisible ? 1 : 0)
+                    .allowsHitTesting(false)
+                    .zIndex(2)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.ignoresSafeArea())
+            .transition(tvInlineDetailTransition)
+            .zIndex(10)
+        }
+    }
+
+    private var tvInlineDetailTransition: AnyTransition {
+        .asymmetric(
+            insertion: .scale(scale: 0.92, anchor: .center),
+            removal: .scale(scale: 0.96, anchor: .center)
+        )
+    }
+
+    private var tvDetailPresentationAnimation: Animation {
+        .smooth(duration: 0.42, extraBounce: 0.055)
+    }
+#endif
 
     private func preloadOptimizationStatuses() async {
         guard let heroItem = featuredItems.first else { return }
@@ -1655,6 +1733,65 @@ struct HomeView: View {
 #endif
     }
 
+    private func dismissDetailPresentation() {
+#if os(tvOS)
+        let closingItem = viewModel.selectedItem
+        tvOpeningArtworkItem = closingItem
+        tvOpeningArtworkVisible = true
+
+        withAnimation(tvDetailPresentationAnimation) {
+            focusedHomeItemID = nil
+            homeReturnRequest += 1
+            tvOpeningArtworkVisible = false
+            viewModel.dismissDetail()
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 460_000_000)
+            if viewModel.selectedItem == nil {
+                tvOpeningArtworkItem = nil
+            }
+        }
+#else
+        ambientItem = nil
+        viewModel.dismissDetail()
+#endif
+    }
+
+    private func presentDetail(_ item: MediaItem) {
+#if os(tvOS)
+        let presentedItemID = presentedDetailItemID(for: item)
+        tvOpeningArtworkItem = item
+        tvOpeningArtworkVisible = true
+
+        withAnimation(tvDetailPresentationAnimation) {
+            viewModel.select(item: item)
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 420_000_000)
+            guard viewModel.selectedItem?.id == presentedItemID else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                tvOpeningArtworkVisible = false
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard viewModel.selectedItem?.id == presentedItemID else { return }
+            tvOpeningArtworkItem = nil
+        }
+#else
+        viewModel.select(item: item)
+#endif
+    }
+
+#if os(tvOS)
+    private func presentedDetailItemID(for item: MediaItem) -> String {
+        if item.mediaType == .episode, let parentID = item.parentID {
+            return parentID
+        }
+        return item.id
+    }
+#endif
+
     private func featuredContextItems(around item: MediaItem) -> [MediaItem] {
         TVHeroPagingPolicy.contextItems(around: item, in: featuredItems)
     }
@@ -1668,8 +1805,8 @@ struct HomeView: View {
             settleDelayNanoseconds: 0
         )
 #endif
-        selectedDetailNamespace = nil
-        selectedDetailTransitionSourceID = nil
+        selectedDetailNamespace = posterNamespace
+        selectedDetailTransitionSourceID = HomeFeaturedTransitionSource.id(itemID: item.id)
         selectedDetailContextItems = featuredItems
         selectedDetailContextTitle = "Featured"
 #if os(tvOS)
@@ -1684,7 +1821,7 @@ struct HomeView: View {
             await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
         }
 
-        viewModel.select(item: item)
+        presentDetail(item)
     }
 
     private func handleFeaturedPlay(_ item: MediaItem) {
@@ -1910,17 +2047,54 @@ struct HomeView: View {
             }
         }
     }
+
+    private func focusFeaturedAction(using proxy: ScrollViewProxy) {
+        guard !featuredItems.isEmpty else { return }
+
+        focusedHomeItemID = nil
+        withAnimation(.easeInOut(duration: 0.28)) {
+            proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 160_000_000)
+            focusedHomeItemID = featuredPrimaryActionFocusID
+        }
+    }
 #endif
 
     private var featuredScrollAnchorID: String {
         "home.featured.anchor"
     }
 
+    private var tvRefreshStatusTopPadding: CGFloat {
+        ReelFinTheme.tvTopNavigationBarHeight + 90
+    }
+
+    private var tvRefreshStatusTrailingPadding: CGFloat {
+        96
+    }
+
+    private func continueWatchingHeroFocusAction(for kind: HomeSectionKind) -> (() -> Void)? {
+#if os(tvOS)
+        guard kind == .continueWatching else { return nil }
+        return {
+            localHeroFocusRequest += 1
+        }
+#else
+        return nil
+#endif
+    }
+
+    private var featuredPrimaryActionFocusID: String {
+        "home.featured.primaryAction"
+    }
+
     private func handleDisplayedDetailSourceItemChange(_ item: MediaItem) {
 #if os(tvOS)
         if featuredItems.contains(where: { $0.id == item.id }) {
-            selectedDetailNamespace = nil
-            selectedDetailTransitionSourceID = nil
+            selectedDetailNamespace = posterNamespace
+            selectedDetailTransitionSourceID = HomeFeaturedTransitionSource.id(itemID: item.id)
             featuredHeroItemID = item.id
             homeReturnTarget = .featured(itemID: item.id)
             lastSelectedHomeRowID = nil
@@ -2026,6 +2200,63 @@ private struct TVHomeRefreshStatusView: View {
         } else {
             Capsule(style: .continuous)
                 .fill(Color.black.opacity(0.46))
+        }
+    }
+}
+
+private struct TVDetailOpeningArtworkView: View {
+    let item: MediaItem
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color.black
+
+                CachedRemoteImage(
+                    itemID: imageItemID,
+                    type: .backdrop,
+                    width: Int(max(proxy.size.width, 1)),
+                    quality: 90,
+                    apiClient: apiClient,
+                    imagePipeline: imagePipeline
+                )
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .clipped()
+
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.10),
+                        .init(color: .black.opacity(0.18), location: 0.56),
+                        .init(color: .black.opacity(0.82), location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private var imageItemID: String {
+        if item.mediaType == .episode, let parentID = item.parentID {
+            return parentID
+        }
+        return item.id
+    }
+}
+
+private struct TVInlineDetailArtworkDestinationModifier: ViewModifier {
+    let namespace: Namespace.ID?
+    let sourceID: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let namespace, let sourceID {
+            content.matchedGeometryEffect(id: "poster-\(sourceID)", in: namespace, isSource: false)
+        } else {
+            content
         }
     }
 }

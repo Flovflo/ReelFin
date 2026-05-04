@@ -33,22 +33,7 @@ struct HomeSectionLibraryView: View {
                     .padding(.top, topPadding)
                     .padding(.bottom, 16)
 
-                ScrollView(showsIndicators: false) {
-                    LazyVGrid(columns: columns, spacing: gridSpacing) {
-                        ForEach(entries) { entry in
-                            gridCell(for: entry)
-                        }
-
-                        if homeViewModel.isLoadingMore(rowID: rowID) {
-                            ProgressView()
-                                .tint(.white)
-                                .frame(width: gridCardWidth, height: gridCardWidth * 1.55)
-                                .accessibilityLabel("Loading more")
-                        }
-                    }
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.bottom, bottomPadding)
-                }
+                gridScrollView
             }
         }
         .navigationDestination(
@@ -102,7 +87,38 @@ struct HomeSectionLibraryView: View {
         }
     }
 
-    private func gridCell(for entry: HomeSectionLibraryEntry) -> some View {
+    @ViewBuilder
+    private var gridScrollView: some View {
+        #if os(tvOS)
+        gridScrollContent(columns: columns, cardWidth: gridCardWidth)
+        #else
+        GeometryReader { proxy in
+            let layout = iosPosterGridLayout(containerWidth: proxy.size.width)
+            gridScrollContent(columns: layout.gridItems, cardWidth: layout.cardWidth)
+        }
+        #endif
+    }
+
+    private func gridScrollContent(columns: [GridItem], cardWidth: CGFloat) -> some View {
+        ScrollView(showsIndicators: false) {
+            LazyVGrid(columns: columns, spacing: gridSpacing) {
+                ForEach(entries) { entry in
+                    gridCell(for: entry, cardWidth: cardWidth)
+                }
+
+                if homeViewModel.isLoadingMore(rowID: rowID) {
+                    ProgressView()
+                        .tint(.white)
+                        .frame(width: cardWidth, height: cardWidth * 1.55)
+                        .accessibilityLabel("Loading more")
+                }
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.bottom, bottomPadding)
+        }
+    }
+
+    private func gridCell(for entry: HomeSectionLibraryEntry, cardWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: displayDensity.scaledSpacing(10)) {
             Button {
                 select(entry)
@@ -113,7 +129,8 @@ struct HomeSectionLibraryView: View {
                     imagePipeline: dependencies.imagePipeline,
                     layoutStyle: .grid,
                     namespace: posterNamespace,
-                    transitionSourceID: transitionSourceID(for: entry)
+                    transitionSourceID: transitionSourceID(for: entry),
+                    preferredWidth: cardWidth
                 )
             }
             .accessibilityIdentifier("home_section_media_card_button_\(row.kind.rawValue)_\(entry.item.id)")
@@ -127,7 +144,8 @@ struct HomeSectionLibraryView: View {
             PosterCardMetadataView(
                 item: entry.item,
                 layoutStyle: .grid,
-                titleLineLimit: 2
+                titleLineLimit: 2,
+                preferredWidth: cardWidth
             )
         }
     }
@@ -209,6 +227,15 @@ struct HomeSectionLibraryView: View {
             for: .grid,
             compact: horizontalSizeClass == .compact,
             displayDensity: displayDensity
+        )
+    }
+
+    private func iosPosterGridLayout(containerWidth: CGFloat) -> PosterGridLayout {
+        PosterGridLayout(
+            containerWidth: containerWidth,
+            horizontalPadding: horizontalPadding,
+            spacing: gridSpacing,
+            minimumCardWidth: gridCardWidth
         )
     }
 

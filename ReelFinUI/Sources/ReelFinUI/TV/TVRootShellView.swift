@@ -6,6 +6,7 @@ struct TVRootShellView: View {
     @State private var isTopNavigationVisible = true
     @State private var topNavigationAppearance = TVTopNavigationAppearance.neutral
     @State private var homeRefreshRequest = 0
+    @State private var homeHeroFocusRequest = 0
     @FocusState private var focusedDestination: TVRootDestination?
 
     let dependencies: ReelFinDependencies
@@ -15,6 +16,7 @@ struct TVRootShellView: View {
             TVRootContentView(
                 selectedDestination: selectedDestination,
                 homeRefreshRequest: homeRefreshRequest,
+                homeHeroFocusRequest: homeHeroFocusRequest,
                 dependencies: dependencies
             )
 
@@ -51,9 +53,21 @@ struct TVRootShellView: View {
 
     private func handleTopNavigationMove(_ destination: TVRootDestination, direction: MoveCommandDirection) {
         guard
-            direction == .up,
             selectedDestination == .watchNow,
             focusedDestination == .watchNow,
+            destination == .watchNow
+        else {
+            return
+        }
+
+        if direction == .down {
+            focusedDestination = nil
+            homeHeroFocusRequest += 1
+            return
+        }
+
+        guard
+            direction == .up,
             destination == .watchNow
         else {
             return
@@ -66,6 +80,7 @@ struct TVRootShellView: View {
 private struct TVRootContentView: View {
     let selectedDestination: TVRootDestination
     let homeRefreshRequest: Int
+    let homeHeroFocusRequest: Int
     let dependencies: ReelFinDependencies
 
     var body: some View {
@@ -78,7 +93,11 @@ private struct TVRootContentView: View {
     private var content: some View {
         switch selectedDestination {
         case .watchNow:
-            HomeView(dependencies: dependencies, tvRefreshRequest: homeRefreshRequest)
+            HomeView(
+                dependencies: dependencies,
+                tvRefreshRequest: homeRefreshRequest,
+                tvHeroFocusRequest: homeHeroFocusRequest
+            )
         case .search:
             TVSearchView(dependencies: dependencies)
                 .safeAreaPadding(.top, navigationBarReservedHeight)

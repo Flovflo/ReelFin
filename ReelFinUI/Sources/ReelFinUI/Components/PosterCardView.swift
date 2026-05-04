@@ -34,6 +34,7 @@ public struct PosterCardView: View {
     private let showsTopTrailingBadges: Bool
     private let titleLineLimit: Int
     private let subtitleLineLimit: Int
+    private let preferredWidth: CGFloat?
 
     public init(
         item: MediaItem,
@@ -50,7 +51,8 @@ public struct PosterCardView: View {
         showsInlineProgress: Bool = false,
         showsTopTrailingBadges: Bool = true,
         titleLineLimit: Int = 1,
-        subtitleLineLimit: Int = 1
+        subtitleLineLimit: Int = 1,
+        preferredWidth: CGFloat? = nil
     ) {
         self.item = item
         self.apiClient = apiClient
@@ -67,6 +69,7 @@ public struct PosterCardView: View {
         self.showsTopTrailingBadges = showsTopTrailingBadges
         self.titleLineLimit = titleLineLimit
         self.subtitleLineLimit = subtitleLineLimit
+        self.preferredWidth = preferredWidth
     }
 
     public var body: some View {
@@ -83,7 +86,8 @@ public struct PosterCardView: View {
                 progress: showsArtworkProgress ? progress : nil,
                 optimizationStatus: optimizationStatus,
                 showsProgressOverlay: showsArtworkProgress,
-                showsTopTrailingBadges: showsTopTrailingBadges
+                showsTopTrailingBadges: showsTopTrailingBadges,
+                preferredWidth: preferredWidth
             )
 
             PosterCardMetadataView(
@@ -91,21 +95,15 @@ public struct PosterCardView: View {
                 layoutStyle: layoutStyle,
                 inlineProgress: showsInlineProgress ? progress : nil,
                 titleLineLimit: titleLineLimit,
-                subtitleLineLimit: subtitleLineLimit
+                subtitleLineLimit: subtitleLineLimit,
+                preferredWidth: preferredWidth
             )
             #if os(tvOS)
             .padding(.horizontal, 6)
             .padding(.bottom, 4)
             #endif
         }
-        .frame(
-            width: PosterCardMetrics.posterWidth(
-                for: layoutStyle,
-                compact: isCompact,
-                displayDensity: displayDensity
-            ),
-            alignment: .leading
-        )
+        .frame(width: resolvedPosterWidth, alignment: .leading)
         #if os(tvOS)
         .tvMotionFocus(.posterCard, isFocused: isFocused)
         #endif
@@ -115,6 +113,14 @@ public struct PosterCardView: View {
 
     private var isCompact: Bool {
         horizontalSizeClass == .compact
+    }
+
+    private var resolvedPosterWidth: CGFloat {
+        preferredWidth ?? PosterCardMetrics.posterWidth(
+            for: layoutStyle,
+            compact: isCompact,
+            displayDensity: displayDensity
+        )
     }
 
     private var tvMetadataSpacing: CGFloat {
@@ -143,6 +149,7 @@ public struct PosterCardArtworkView: View {
     private let optimizationStatus: ApplePlaybackOptimizationStatus?
     private let showsProgressOverlay: Bool
     private let showsTopTrailingBadges: Bool
+    private let preferredWidth: CGFloat?
 
     public init(
         item: MediaItem,
@@ -156,7 +163,8 @@ public struct PosterCardArtworkView: View {
         progress: Double? = nil,
         optimizationStatus: ApplePlaybackOptimizationStatus? = nil,
         showsProgressOverlay: Bool = true,
-        showsTopTrailingBadges: Bool = true
+        showsTopTrailingBadges: Bool = true,
+        preferredWidth: CGFloat? = nil
     ) {
         self.item = item
         self.apiClient = apiClient
@@ -170,6 +178,7 @@ public struct PosterCardArtworkView: View {
         self.optimizationStatus = optimizationStatus
         self.showsProgressOverlay = showsProgressOverlay
         self.showsTopTrailingBadges = showsTopTrailingBadges
+        self.preferredWidth = preferredWidth
     }
 
     public var body: some View {
@@ -181,7 +190,7 @@ public struct PosterCardArtworkView: View {
                 apiClient: apiClient,
                 imagePipeline: imagePipeline
             )
-            .frame(width: metrics.posterWidth, height: metrics.posterHeight)
+            .frame(width: resolvedPosterWidth, height: resolvedPosterHeight)
             .clipShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
             #if !os(tvOS)
             .shadow(color: .black.opacity(isFocused ? focusedShadowOpacity : 0.18), radius: isFocused ? focusedShadowRadius : 10, x: 0, y: isFocused ? focusedShadowYOffset : 6)
@@ -259,7 +268,7 @@ public struct PosterCardArtworkView: View {
                     .offset(x: -12, y: 16)
             }
         }
-        .frame(width: metrics.posterWidth, height: metrics.posterHeight)
+        .frame(width: resolvedPosterWidth, height: resolvedPosterHeight)
         .modifier(MatchedCardModifier(itemID: transitionSourceID ?? item.id, namespace: namespace))
         .contentShape(RoundedRectangle(cornerRadius: ReelFinTheme.cardCornerRadius, style: .continuous))
         #if os(iOS)
@@ -281,6 +290,19 @@ public struct PosterCardArtworkView: View {
             compact: horizontalSizeClass == .compact,
             displayDensity: displayDensity
         )
+    }
+
+    private var resolvedPosterWidth: CGFloat {
+        preferredWidth ?? metrics.posterWidth
+    }
+
+    private var resolvedPosterHeight: CGFloat {
+        switch layoutStyle {
+        case .landscape:
+            return resolvedPosterWidth * (9.0 / 16.0)
+        default:
+            return resolvedPosterWidth * 1.55
+        }
     }
 
     private var focusedStrokeColor: Color {
@@ -334,19 +356,22 @@ public struct PosterCardMetadataView: View {
     private let inlineProgress: Double?
     private let titleLineLimit: Int
     private let subtitleLineLimit: Int
+    private let preferredWidth: CGFloat?
 
     public init(
         item: MediaItem,
         layoutStyle: PosterCardLayoutStyle = .row,
         inlineProgress: Double? = nil,
         titleLineLimit: Int = 1,
-        subtitleLineLimit: Int = 1
+        subtitleLineLimit: Int = 1,
+        preferredWidth: CGFloat? = nil
     ) {
         self.item = item
         self.layoutStyle = layoutStyle
         self.inlineProgress = inlineProgress
         self.titleLineLimit = titleLineLimit
         self.subtitleLineLimit = subtitleLineLimit
+        self.preferredWidth = preferredWidth
     }
 
     public var body: some View {
@@ -360,14 +385,7 @@ public struct PosterCardMetadataView: View {
 
             secondaryMetadata
         }
-        .frame(
-            width: PosterCardMetrics.posterWidth(
-                for: layoutStyle,
-                compact: horizontalSizeClass == .compact,
-                displayDensity: displayDensity
-            ),
-            alignment: .leading
-        )
+        .frame(width: resolvedPosterWidth, alignment: .leading)
     }
 
     private var titleFontSize: CGFloat {
@@ -376,6 +394,14 @@ public struct PosterCardMetadataView: View {
         #else
         return displayDensity.scaledTextSize(15)
         #endif
+    }
+
+    private var resolvedPosterWidth: CGFloat {
+        preferredWidth ?? PosterCardMetrics.posterWidth(
+            for: layoutStyle,
+            compact: horizontalSizeClass == .compact,
+            displayDensity: displayDensity
+        )
     }
 
     private var subtitleFontSize: CGFloat {
@@ -655,6 +681,39 @@ struct PosterCardMetrics {
     static func titleBlockHeight(fontSize: CGFloat, lineLimit: Int) -> CGFloat {
         let lineHeight = fontSize * 1.18
         return ceil(lineHeight * CGFloat(max(lineLimit, 1)))
+    }
+}
+
+struct PosterGridLayout: Equatable {
+    let containerWidth: CGFloat
+    let horizontalPadding: CGFloat
+    let spacing: CGFloat
+    let minimumCardWidth: CGFloat
+
+    var availableWidth: CGFloat {
+        max(0, containerWidth - (horizontalPadding * 2))
+    }
+
+    var columnCount: Int {
+        guard availableWidth > 0, minimumCardWidth > 0 else { return 1 }
+        return max(Int((availableWidth + spacing) / (minimumCardWidth + spacing)), 1)
+    }
+
+    var cardWidth: CGFloat {
+        let columns = CGFloat(columnCount)
+        let totalSpacing = spacing * max(columns - 1, 0)
+        return max(0, (availableWidth - totalSpacing) / columns)
+    }
+
+    var occupiedWidth: CGFloat {
+        (cardWidth * CGFloat(columnCount)) + (spacing * CGFloat(max(columnCount - 1, 0)))
+    }
+
+    var gridItems: [GridItem] {
+        Array(
+            repeating: GridItem(.fixed(cardWidth), spacing: spacing, alignment: .top),
+            count: columnCount
+        )
     }
 }
 

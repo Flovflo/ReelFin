@@ -7,3 +7,9 @@ enum HomeCardTransitionSource {
         return "\(rowID)::\(itemID)"
     }
 }
+
+enum HomeFeaturedTransitionSource {
+    static func id(itemID: String) -> String {
+        "featured::\(itemID)"
+    }
+}

@@ -28,4 +28,11 @@ final class HomeCardTransitionSourceTests: XCTestCase {
             "recently-released-movies::cycle-4-index-1::zootopia-2"
         )
     }
+
+    func testFeaturedTransitionSourceIsScopedToHero() {
+        XCTAssertEqual(
+            HomeFeaturedTransitionSource.id(itemID: "what-now"),
+            "featured::what-now"
+        )
+    }
 }

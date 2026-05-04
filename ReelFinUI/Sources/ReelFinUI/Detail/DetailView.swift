@@ -3,7 +3,7 @@ import JellyfinAPI
 import PlaybackEngine
 import Shared
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 import UIKit
 #endif
 
@@ -22,7 +22,7 @@ private struct DetailNavigationContext: Equatable {
     static let empty = DetailNavigationContext(title: nil, items: [])
 }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 private struct IOSDetailCarouselEntry: Identifiable, Equatable {
     let id: String
     let displayItem: MediaItem
@@ -53,12 +53,14 @@ struct DetailView: View {
     @State private var tvScrollRequest: TVDetailScrollRequest?
     @State private var tvScrollRequestID = 0
     @State private var pendingTVFocusTarget: TVDetailFocusTarget?
+    @State private var tvEpisodeFileInfoPresentation: TVEpisodeFileInfoPresentation?
 #endif
     @FocusState private var focusedHeroAction: DetailHeroAction?
     @FocusState private var focusedSeasonID: String?
     private let transitionNamespace: Namespace.ID?
     private let transitionSourceID: String?
     private let onDisplayedSourceItemChange: ((MediaItem) -> Void)?
+    private let onDismissRequest: (() -> Void)?
 
     init(
         dependencies: ReelFinDependencies,
@@ -68,7 +70,8 @@ struct DetailView: View {
         contextTitle: String? = nil,
         namespace: Namespace.ID? = nil,
         transitionSourceID: String? = nil,
-        onDisplayedSourceItemChange: ((MediaItem) -> Void)? = nil
+        onDisplayedSourceItemChange: ((MediaItem) -> Void)? = nil,
+        onDismissRequest: (() -> Void)? = nil
     ) {
         _viewModel = StateObject(
             wrappedValue: DetailViewModel(
@@ -86,6 +89,7 @@ struct DetailView: View {
         self.transitionNamespace = namespace
         self.transitionSourceID = transitionSourceID
         self.onDisplayedSourceItemChange = onDisplayedSourceItemChange
+        self.onDismissRequest = onDismissRequest
     }
 
     var body: some View {
@@ -124,6 +128,7 @@ struct DetailView: View {
                 entries: iosCarouselEntries,
                 currentItemID: viewModel.detail.item.id,
                 selectedItemID: $iosSelectedCarouselItemID,
+                showsCompactHeader: true,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 onSelectItem: handleIOSCarouselSelection
@@ -146,6 +151,9 @@ struct DetailView: View {
 #elseif os(tvOS)
         .toolbar(.hidden, for: .tabBar)
         .preference(key: TVTopNavigationVisibilityPreferenceKey.self, value: false)
+        .onExitCommand {
+            dismissDetail()
+        }
 #endif
         .task {
             await viewModel.load()
@@ -194,6 +202,25 @@ struct DetailView: View {
         } message: {
             Text(viewModel.errorMessage ?? "Unknown error")
         }
+#if os(tvOS)
+        .alert(
+            tvEpisodeFileInfoPresentation?.title ?? "File Info",
+            isPresented: Binding(
+                get: { tvEpisodeFileInfoPresentation != nil },
+                set: { newValue in
+                    if !newValue {
+                        tvEpisodeFileInfoPresentation = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                tvEpisodeFileInfoPresentation = nil
+            }
+        } message: {
+            Text(tvEpisodeFileInfoPresentation?.message ?? "")
+        }
+#endif
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let playerSession {
                 PlayerView(
@@ -230,7 +257,7 @@ struct DetailView: View {
         #endif
     }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
     private func iosHeroSection(
         heroHeight: CGFloat,
         viewportSize: CGSize,
@@ -289,7 +316,7 @@ struct DetailView: View {
                 prefersNativeZoomTransition: prefersNativeZoomTransition,
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
-                onBack: { dismiss() },
+                onBack: dismissDetail,
                 onPlay: { startPlayback() },
                 onToggleWatchlist: viewModel.toggleWatchlist,
                 onToggleWatched: viewModel.toggleWatched
@@ -548,6 +575,9 @@ struct DetailView: View {
                                 onSetWatched: { isPlayed in
                                     viewModel.setEpisodeWatched(episode, isPlayed: isPlayed)
                                 },
+                                onShowFileInfo: {
+                                    showEpisodeFileInfo(for: episode)
+                                },
                                 onMoveUp: focusAboveEpisodes,
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline
@@ -621,7 +651,7 @@ struct DetailView: View {
         }
     }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
     private var iosCarouselEntries: [IOSDetailCarouselEntry] {
         var entries: [IOSDetailCarouselEntry] = []
         var seenDisplayIDs: Set<String> = []
@@ -667,6 +697,14 @@ struct DetailView: View {
     }
 #endif
 
+    private func dismissDetail() {
+        if let onDismissRequest {
+            onDismissRequest()
+        } else {
+            dismiss()
+        }
+    }
+
     private var heroNeighbors: (previous: MediaItem?, next: MediaItem?) {
         let navigationState = DetailNeighborNavigationState(
             currentItem: viewModel.detail.item,
@@ -679,7 +717,7 @@ struct DetailView: View {
         return (navigationState.previousItem, navigationState.nextItem)
     }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
     private func handleIOSCarouselSelection(_ entry: IOSDetailCarouselEntry) {
         guard entry.id != viewModel.detail.item.id else { return }
         navigateToDetailItem(entry.sourceItem)
@@ -693,7 +731,7 @@ struct DetailView: View {
         tvHeroRevealProgress = 0
 #endif
         hasAnimatedIn = false
-#if os(iOS)
+#if os(iOS) || os(tvOS)
         iosSelectedCarouselItemID = targetItemID
 #endif
         currentReturnSourceItem = item
@@ -767,6 +805,35 @@ struct DetailView: View {
             tvHeroRevealProgress = 1
         }
     }
+
+    @MainActor
+    private func showEpisodeFileInfo(for episode: MediaItem) {
+        if let summary = viewModel.episodeFileInfo(for: episode) {
+            tvEpisodeFileInfoPresentation = TVEpisodeFileInfoPresentation(
+                episodeID: episode.id,
+                title: episode.name,
+                message: summary.alertMessage
+            )
+            return
+        }
+
+        tvEpisodeFileInfoPresentation = TVEpisodeFileInfoPresentation(
+            episodeID: episode.id,
+            title: episode.name,
+            message: "Loading file details..."
+        )
+
+        Task { @MainActor in
+            let summary = await viewModel.loadEpisodeFileInfo(for: episode)
+            guard tvEpisodeFileInfoPresentation?.episodeID == episode.id else { return }
+
+            tvEpisodeFileInfoPresentation = TVEpisodeFileInfoPresentation(
+                episodeID: episode.id,
+                title: episode.name,
+                message: summary?.alertMessage ?? "File details unavailable."
+            )
+        }
+    }
 #endif
 
     private func focusHeroPrimaryActionFromSeasonPicker() {
@@ -784,13 +851,7 @@ struct DetailView: View {
     private func focusAboveEpisodes() {
 #if os(tvOS)
         // Keep a deterministic path back to the hero so tvOS never traps focus in the episode rail.
-        let targetSeasonID = viewModel.selectedSeason?.id ?? viewModel.seasons.first?.id
-
-        if shouldShowSeasonPicker, let targetSeasonID {
-            requestTVFocus(.season(targetSeasonID), scrollTarget: .seasons)
-        } else {
-            focusHeroPrimaryActionFromDetailRow()
-        }
+        focusHeroPrimaryActionFromDetailRow()
 #endif
     }
 
@@ -839,10 +900,18 @@ struct DetailView: View {
         switch target {
         case .heroPrimary:
             focusedSeasonID = nil
-            focusedHeroAction = .play
+            focusedHeroAction = nil
+            Task { @MainActor in
+                await Task.yield()
+                focusedHeroAction = .play
+            }
         case let .season(seasonID):
             focusedHeroAction = nil
-            focusedSeasonID = seasonID
+            focusedSeasonID = nil
+            Task { @MainActor in
+                await Task.yield()
+                focusedSeasonID = seasonID
+            }
         case nil:
             break
         }
@@ -1082,6 +1151,12 @@ private enum TVDetailFocusTarget: Equatable {
     case season(String)
 }
 
+private struct TVEpisodeFileInfoPresentation: Equatable {
+    let episodeID: String
+    let title: String
+    let message: String
+}
+
 private struct TVDetailScrollSnapshot: Equatable {
     var offsetY: CGFloat = 0
     var topInset: CGFloat = 0
@@ -1113,7 +1188,7 @@ private struct TVDetailStageMetrics: Equatable {
     }
 
     func sidePreviewWidth(for baseWidth: CGFloat) -> CGFloat {
-        max(baseWidth * (1 - normalizedProgress), 0)
+        max(baseWidth * previewRevealProgress, 0)
     }
 
     func sidePreviewHeight(for heroHeight: CGFloat) -> CGFloat {
@@ -1128,20 +1203,28 @@ private struct TVDetailStageMetrics: Equatable {
         baseWidth + (normalizedProgress * 260)
     }
 
-    var heroOuterHorizontalPadding: CGFloat { 28 * (1 - normalizedProgress) }
-    var heroSpacing: CGFloat { 18 - (normalizedProgress * 18) }
+    private var heroChromeLayout: TVDetailHeroChromeLayout {
+        TVDetailHeroChromeLayout(collapseProgress: collapseProgress)
+    }
+
+    var heroOuterHorizontalPadding: CGFloat { heroChromeLayout.outerHorizontalPadding }
+    var heroSpacing: CGFloat { 18 * previewRevealProgress }
     var heroHorizontalInset: CGFloat { 50 - (normalizedProgress * 18) }
     var heroBottomInset: CGFloat { 44 - (normalizedProgress * 10) }
-    var heroCornerRadius: CGFloat { 44 - (normalizedProgress * 22) }
+    var heroCornerRadius: CGFloat { heroChromeLayout.cornerRadius }
     var heroBackgroundScaleX: CGFloat { 1 + (normalizedProgress * 0.08) }
     var heroBackgroundScaleY: CGFloat { 1 + (normalizedProgress * 0.03) }
     var heroLift: CGFloat { -16 * normalizedProgress }
-    var heroStrokeOpacity: Double { 0.12 - (normalizedProgress * 0.08) }
+    var heroStrokeOpacity: Double { heroChromeLayout.strokeOpacity }
     var heroShadowOpacity: Double { 0.48 - (normalizedProgress * 0.14) }
     var heroShadowRadius: CGFloat { 40 - (normalizedProgress * 14) }
     var heroShadowYOffset: CGFloat { 24 - (normalizedProgress * 8) }
-    var previewVisibility: Double { 1 - Double(normalizedProgress) }
+    var previewVisibility: Double { Double(previewRevealProgress) }
     var previewInteractionEnabled: Bool { collapseProgress < 0.08 }
+
+    private var previewRevealProgress: CGFloat {
+        max(1 - (normalizedProgress * 2.8), 0)
+    }
 }
 
 private struct TVDetailScreen<Hero: View, Supporting: View>: View {
@@ -1160,7 +1243,7 @@ private struct TVDetailScreen<Hero: View, Supporting: View>: View {
         let metrics = TVDetailStageMetrics(
             snapshot: scrollSnapshot,
             heroHeight: heroHeight,
-            topTriggerDistance: max(heroHeight * 0.30, 1),
+            topTriggerDistance: max(heroHeight * 0.16, 1),
             forcedCollapseProgress: forcedHeroCollapseProgress
         )
 
@@ -1202,7 +1285,7 @@ private struct TVDetailScreen<Hero: View, Supporting: View>: View {
         }
 
         Task { @MainActor in
-            await Task.yield()
+            try? await Task.sleep(nanoseconds: 320_000_000)
             onScrollRequestCompleted(request)
         }
     }
@@ -1245,7 +1328,7 @@ private struct TVDetailStageMetrics: Equatable {
 }
 #endif
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 private struct IOSDetailScrollSnapshot: Equatable {
     var offsetY: CGFloat = 0
     var topInset: CGFloat = 0
@@ -1306,6 +1389,7 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     let entries: [IOSDetailCarouselEntry]
     let currentItemID: String
     @Binding var selectedItemID: String?
+    let showsCompactHeader: Bool
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
     let onSelectItem: (IOSDetailCarouselEntry) -> Void
@@ -1349,7 +1433,9 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
                 scrollSnapshot = newValue
             }
 
-            compactHeader(metrics: metrics)
+            if showsCompactHeader {
+                compactHeader(metrics: metrics)
+            }
         }
         .onAppear {
             if selectedItemID == nil {
@@ -1447,6 +1533,7 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     }
 
     private func compactHeader(metrics: IOSDetailStageMetrics) -> some View {
+#if os(iOS)
         VStack(spacing: 0) {
             ZStack {
                 TransparentBlurView(style: .systemUltraThinMaterial)
@@ -1476,6 +1563,9 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
             Spacer(minLength: 0)
         }
         .ignoresSafeArea(edges: .top)
+#else
+        EmptyView()
+#endif
     }
 
     private var stageTopInset: CGFloat {
@@ -1678,7 +1768,7 @@ private enum HeroMetadataLayout {
     case centered
 }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 private struct IOSDetailHeroContent: View {
     @Environment(\.reelFinDisplayDensity) private var displayDensity
 
@@ -1755,6 +1845,26 @@ private struct IOSDetailHeroContent: View {
 
             Spacer()
 
+#if os(tvOS)
+            IOSHeroChromeBarButton(
+                systemImage: "arrow.down",
+                accessibilityLabel: "Download",
+                controlWidth: visualSize(isCompactHeroLayout ? 38 : 44),
+                controlHeight: visualSize(isCompactHeroLayout ? 27 : 30)
+            ) {
+                isDownloadAvailabilityAlertPresented = true
+            }
+            .padding(.horizontal, spacing(isCompactHeroLayout ? 8 : 10))
+            .padding(.vertical, spacing(isCompactHeroLayout ? 6 : 8))
+            .reelFinGlassCapsule(
+                interactive: true,
+                tint: Color.white.opacity(0.16),
+                stroke: Color.white.opacity(0.16),
+                shadowOpacity: 0.18,
+                shadowRadius: 16,
+                shadowYOffset: 8
+            )
+#else
             HStack(spacing: 0) {
                 IOSHeroChromeBarButton(
                     systemImage: "arrow.down",
@@ -1792,6 +1902,7 @@ private struct IOSDetailHeroContent: View {
                 shadowRadius: 16,
                 shadowYOffset: 8
             )
+#endif
         }
     }
 

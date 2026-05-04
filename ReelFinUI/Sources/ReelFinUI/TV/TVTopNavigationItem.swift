@@ -35,7 +35,7 @@ struct TVTopNavigationItem: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .onMoveCommand { direction in
-            guard direction == .up else { return }
+            guard direction == .up || direction == .down else { return }
             onMoveCommand(destination, direction)
         }
         .animation(ReelFinTheme.tvFocusSpring, value: isHighlighted)

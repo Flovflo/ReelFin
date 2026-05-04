@@ -28,6 +28,7 @@ final class DetailViewModel: ObservableObject {
     @Published var selectedSeason: MediaItem?
     @Published var isLoadingEpisodes = false
     @Published var nextUpEpisode: MediaItem?
+    @Published private(set) var episodeFileInfoByID: [String: EpisodeFileInfoSummary] = [:]
 
     private let dependencies: ReelFinDependencies
     private var preferredEpisode: MediaItem?
@@ -69,6 +70,7 @@ final class DetailViewModel: ObservableObject {
         episodes = []
         selectedSeason = nil
         nextUpEpisode = nil
+        episodeFileInfoByID = [:]
         errorMessage = nil
         loadPhase = .shell
         syncDerivedFlags()
@@ -243,6 +245,29 @@ final class DetailViewModel: ObservableObject {
                     self.errorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    func episodeFileInfo(for episode: MediaItem) -> EpisodeFileInfoSummary? {
+        episodeFileInfoByID[episode.id]
+    }
+
+    func loadEpisodeFileInfo(for episode: MediaItem) async -> EpisodeFileInfoSummary? {
+        if let cachedSummary = episodeFileInfoByID[episode.id] {
+            return cachedSummary
+        }
+
+        do {
+            let sources = try await dependencies.apiClient.fetchPlaybackSources(itemID: episode.id)
+            guard let source = Self.preferredEpisodeFileInfoSource(from: sources) else {
+                return nil
+            }
+            let summary = EpisodeFileInfoSummary(source: source)
+            episodeFileInfoByID[episode.id] = summary
+            return summary
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
     }
 
@@ -587,6 +612,31 @@ final class DetailViewModel: ObservableObject {
         guard case let .directPlay(url) = selection.decision.route else { return false }
         guard !["m3u8", "m3u"].contains(url.pathExtension.lowercased()) else { return false }
         return url.host != "127.0.0.1" && url.host != "localhost"
+    }
+
+    private static func preferredEpisodeFileInfoSource(from sources: [MediaSource]) -> MediaSource? {
+        sources.max { lhs, rhs in
+            episodeFileInfoSourceScore(lhs) < episodeFileInfoSourceScore(rhs)
+        }
+    }
+
+    private static func episodeFileInfoSourceScore(_ source: MediaSource) -> Int {
+        if source.supportsDirectPlay, source.directPlayURL != nil {
+            return 50
+        }
+        if source.supportsDirectPlay {
+            return 40
+        }
+        if source.supportsDirectStream, source.directStreamURL != nil {
+            return 30
+        }
+        if source.supportsDirectStream {
+            return 20
+        }
+        if source.transcodeURL != nil {
+            return 10
+        }
+        return 0
     }
 
     private func mergedEpisode(_ item: MediaItem, preferred: MediaItem) -> MediaItem {

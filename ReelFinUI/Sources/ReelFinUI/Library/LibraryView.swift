@@ -97,11 +97,20 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
 #else
-        libraryContent(topRowItemIDs: [])
+        GeometryReader { proxy in
+            libraryContent(
+                topRowItemIDs: [],
+                posterGridLayout: iosPosterGridLayout(containerWidth: proxy.size.width)
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
 #endif
     }
 
-    private func libraryContent(topRowItemIDs: Set<String>) -> some View {
+    private func libraryContent(
+        topRowItemIDs: Set<String>,
+        posterGridLayout: PosterGridLayout? = nil
+    ) -> some View {
 #if os(tvOS)
         VStack(spacing: 14) {
             topBar
@@ -121,7 +130,11 @@ struct LibraryView: View {
                 .padding(.bottom, 14)
                 .accessibilityIdentifier("library_sticky_blur_header")
         } content: {
-            libraryGridContent(topRowItemIDs: topRowItemIDs)
+            libraryGridContent(
+                topRowItemIDs: topRowItemIDs,
+                gridColumns: posterGridLayout?.gridItems,
+                cardWidth: posterGridLayout?.cardWidth
+            )
         }
 #endif
     }
@@ -132,9 +145,13 @@ struct LibraryView: View {
         }
     }
 
-    private func libraryGridContent(topRowItemIDs: Set<String>) -> some View {
+    private func libraryGridContent(
+        topRowItemIDs: Set<String>,
+        gridColumns: [GridItem]? = nil,
+        cardWidth: CGFloat? = nil
+    ) -> some View {
         VStack(spacing: 0) {
-            LazyVGrid(columns: columns, spacing: gridSpacing) {
+            LazyVGrid(columns: gridColumns ?? columns, spacing: gridSpacing) {
                 ForEach(viewModel.items) { item in
 #if os(tvOS)
                     TVLibraryPosterCard(
@@ -174,7 +191,8 @@ struct LibraryView: View {
                                 imagePipeline: dependencies.imagePipeline,
                                 layoutStyle: .grid,
                                 namespace: posterNamespace,
-                                transitionSourceID: LibraryCardTransitionSource.id(itemID: item.id)
+                                transitionSourceID: LibraryCardTransitionSource.id(itemID: item.id),
+                                preferredWidth: cardWidth
                             )
                         }
                         .accessibilityIdentifier("media_card_button_\(item.id)")
@@ -182,7 +200,8 @@ struct LibraryView: View {
 
                         PosterCardMetadataView(
                             item: item,
-                            layoutStyle: .grid
+                            layoutStyle: .grid,
+                            preferredWidth: cardWidth
                         )
                     }
                     .onAppear {
@@ -413,6 +432,19 @@ struct LibraryView: View {
 #else
         return displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 12 : 22)
 #endif
+    }
+
+    private func iosPosterGridLayout(containerWidth: CGFloat) -> PosterGridLayout {
+        PosterGridLayout(
+            containerWidth: containerWidth,
+            horizontalPadding: horizontalPadding,
+            spacing: gridSpacing,
+            minimumCardWidth: PosterCardMetrics.posterWidth(
+                for: .grid,
+                compact: horizontalSizeClass == .compact,
+                displayDensity: displayDensity
+            )
+        )
     }
 
     private var chipFontSize: CGFloat {

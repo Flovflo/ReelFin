@@ -1,6 +1,6 @@
 import CoreGraphics
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 enum IOSDetailSynopsisLayout {
     static func lineLimit(isExpanded: Bool, contentWidth: CGFloat) -> Int {
         let isCompact = contentWidth < compactContentWidthThreshold

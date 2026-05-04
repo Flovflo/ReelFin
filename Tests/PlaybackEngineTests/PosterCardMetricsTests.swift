@@ -35,4 +35,30 @@ final class PosterCardMetricsTests: XCTestCase {
         XCTAssertEqual(ReelFinDisplayDensity(rawStoredValue: "dense"), .dense)
         XCTAssertEqual(ReelFinDisplayDensity(rawStoredValue: "unexpected"), .standard)
     }
+
+    func testCompactLibraryGridFillsAvailableWidth() {
+        let layout = PosterGridLayout(
+            containerWidth: 430,
+            horizontalPadding: 12,
+            spacing: 12,
+            minimumCardWidth: 158
+        )
+
+        XCTAssertEqual(layout.columnCount, 2)
+        XCTAssertEqual(layout.cardWidth, 197, accuracy: 0.001)
+        XCTAssertEqual(layout.occupiedWidth, layout.availableWidth, accuracy: 0.001)
+    }
+
+    func testHomeSectionGridFillsAvailableWidthWithLargerMargins() {
+        let layout = PosterGridLayout(
+            containerWidth: 430,
+            horizontalPadding: 24,
+            spacing: 18,
+            minimumCardWidth: 158
+        )
+
+        XCTAssertEqual(layout.columnCount, 2)
+        XCTAssertEqual(layout.cardWidth, 182, accuracy: 0.001)
+        XCTAssertEqual(layout.occupiedWidth, layout.availableWidth, accuracy: 0.001)
+    }
 }

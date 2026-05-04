@@ -16,6 +16,7 @@ public struct EpisodeCardView: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onSetWatched: ((Bool) -> Void)?
+    let onShowFileInfo: (() -> Void)?
     let onMoveUp: (() -> Void)?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
@@ -26,6 +27,7 @@ public struct EpisodeCardView: View {
         isSelected: Bool = false,
         onSelect: @escaping () -> Void,
         onSetWatched: ((Bool) -> Void)? = nil,
+        onShowFileInfo: (() -> Void)? = nil,
         onMoveUp: (() -> Void)? = nil,
         apiClient: any JellyfinAPIClientProtocol,
         imagePipeline: any ImagePipelineProtocol
@@ -35,6 +37,7 @@ public struct EpisodeCardView: View {
         self.isSelected = isSelected
         self.onSelect = onSelect
         self.onSetWatched = onSetWatched
+        self.onShowFileInfo = onShowFileInfo
         self.onMoveUp = onMoveUp
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
@@ -79,6 +82,9 @@ public struct EpisodeCardView: View {
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
+        .contextMenu {
+            episodeContextActions
+        }
         .onMoveCommand { direction in
             guard direction == .up else { return }
             onMoveUp?()
@@ -317,7 +323,7 @@ public struct EpisodeCardView: View {
         .accessibilityHint("Play episode")
         .accessibilityValue(episodeAccessibilityStatus)
         .contextMenu {
-            episodeWatchedAction
+            episodeContextActions
         }
     }
 
@@ -359,6 +365,32 @@ public struct EpisodeCardView: View {
         }
     }
 
+    private var episodeAccessibilityStatus: String {
+        if episode.isPlayed {
+            return "Watched"
+        }
+        if let positionText = episode.playbackPositionDisplayText {
+            return "Stopped at \(positionText)"
+        }
+        return "Not started"
+    }
+
+    private var iosCardHeight: CGFloat { width * 1.14 }
+    #endif
+
+    @ViewBuilder
+    private var episodeContextActions: some View {
+        episodeWatchedAction
+
+        if let onShowFileInfo {
+            Button {
+                onShowFileInfo()
+            } label: {
+                Label("File Info", systemImage: "info.circle")
+            }
+        }
+    }
+
     @ViewBuilder
     private var episodeWatchedAction: some View {
         if let onSetWatched {
@@ -372,19 +404,6 @@ public struct EpisodeCardView: View {
             }
         }
     }
-
-    private var episodeAccessibilityStatus: String {
-        if episode.isPlayed {
-            return "Watched"
-        }
-        if let positionText = episode.playbackPositionDisplayText {
-            return "Stopped at \(positionText)"
-        }
-        return "Not started"
-    }
-
-    private var iosCardHeight: CGFloat { width * 1.14 }
-    #endif
 }
 
 private struct EpisodePlaybackStatusBadge: View {
