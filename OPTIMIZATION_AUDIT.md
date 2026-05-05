@@ -127,9 +127,14 @@
 - Strict native mode now stays on the sample-buffer engine: compatible MP4/MOV originals and Matroska originals use the native sample-buffer surface, while `AVPlayerItem`, `AVPlayerViewController`, Jellyfin HLS/transcode URLs, and loopback local HLS are blocked by route guards.
 - Player presentation now keeps one stable `native_engine_player_screen` accessibility anchor for the sample-buffer native surface.
 - HDR/Dolby Vision preservation now has an explicit native pipeline instead of relying on renderer defaults: Matroska/MP4 demuxing carries HDR metadata, HEVC sample-buffer format descriptions include CoreMedia color extensions, MP4 native playback keeps compressed samples, and Direct Play/sample-buffer presentation opts into the Apple HDR display paths.
+- Dynamic media cache now backs original-first playback: Direct Play originals can be served through an opaque `127.0.0.1` Range gateway, native sample-buffer reads can use a persistent byte cache, and the policy is tvOS-aggressive/iOS-moderate with cache phases from startup through complete-item caching.
+- The local Direct Play gateway now gives AVPlayer priority on requested ranges, writes completed ranges atomically, and starts bounded background prefetch from the active cache policy so good tvOS/iOS networks build useful ahead cache without exposing remote URLs or headers.
+- Media cache persistence now protects secrets and cache correctness: range chunks write atomically, `.part` files are ignored, TTL/LRU metadata is stored separately from payloads, server/user scope can be removed, and route signatures ignore API keys, bearer tokens, cookies, and Jellyfin token headers.
+- Settings now exposes a minimal `Media Cache` control (`Automatic`, `Reduced`, `Off`) plus a clear-cache action, keeping the default user experience quality-first while preserving a reduced/off escape hatch for storage or data constraints.
 
 ## Validation Results
 
+- Dynamic media cache validation: targeted cache/gateway/settings tests passed, including red/green coverage for gateway ahead-prefetch; `xcodegen generate`, iOS `ReelFin` simulator build, tvOS `ReelFinTV` simulator build, and `git diff --check` passed; fast live Jellyfin E2E passed with artifacts `.artifacts/player-e2e/20260505-122924` (`4/4` explicit probes, resume reporting, `4/4` original-stream benchmarks, `4/4` live playback probes, `76/76` deterministic tests, clean fatal-log scan; UI and tvOS runner steps intentionally skipped).
 - `xcodegen generate`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinAppleTransmuxDD -only-testing:PlaybackEngineTests/NativeApplePlaybackRoutePlannerTests -only-testing:PlaybackEngineTests/NativePlayerRouteGuardTests -only-testing:PlaybackEngineTests/NativePlayerSessionRoutingTests -only-testing:PlaybackEngineTests/NativePlayerPlaybackControllerEndToEndTests`: passed, 19 tests
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinAppleTransmuxDD -only-testing:PlaybackEngineTests`: passed, 442 tests, 4 expected skips
@@ -225,7 +230,7 @@
 - Split scroll-linked and hydration state out of `HomeView` and `DetailView` so focus and phased-loading updates do not invalidate large view roots.
 - Continue the playback lifecycle hardening pass for observer callbacks and reload paths that still hop through ad hoc `Task` boundaries.
 - Add launch/signpost regression assertions and stronger playback TTFF checks so performance assumptions stop living only in manual scripts.
-- Wire the persistent media cache foundations into the playback routes: HLS segment serving first, then direct-play prefetch/spooling once Range behavior and AVPlayer source promotion are proven stable.
+- Extend the media cache with native sample-buffer background prefetch and richer network-cost signals; the Direct Play gateway path now has write-through caching and bounded ahead prefetch.
 
 ## Rejected Or Deferred Optimizations
 

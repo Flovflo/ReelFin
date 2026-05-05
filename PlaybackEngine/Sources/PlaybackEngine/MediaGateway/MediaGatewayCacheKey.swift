@@ -4,6 +4,12 @@ import Foundation
 public struct MediaGatewayCacheKey: Sendable, Codable, Hashable {
     public static let currentVersion = 1
     public static let resumeBucketDurationSeconds: Double = 30
+    private static let sensitiveQueryNames: Set<String> = [
+        "api_key", "apikey", "access_token", "token", "x-emby-token"
+    ]
+    private static let sensitiveHeaderNames: Set<String> = [
+        "authorization", "cookie", "x-emby-token", "x-mediabrowser-token"
+    ]
 
     public let version: Int
     public let scope: String?
@@ -141,6 +147,9 @@ public struct MediaGatewayCacheKey: Sendable, Codable, Hashable {
         return items
             .map { item in
                 let name = item.name.lowercased()
+                if sensitiveQueryNames.contains(name) {
+                    return "\(name)=<sensitive>"
+                }
                 let value = item.value ?? ""
                 return "\(name)=\(digest(value))"
             }
@@ -153,7 +162,11 @@ public struct MediaGatewayCacheKey: Sendable, Codable, Hashable {
 
         return headers
             .map { key, value in
-                "\(key.lowercased())=\(digest(value))"
+                let name = key.lowercased()
+                if sensitiveHeaderNames.contains(name) {
+                    return "\(name)=<sensitive>"
+                }
+                return "\(name)=\(digest(value))"
             }
             .sorted()
             .joined(separator: "&")

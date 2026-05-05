@@ -94,6 +94,19 @@ struct ServerSettingsView: View {
                             }
                         }
 
+                        tvMenuRow(
+                            title: "Media Cache",
+                            value: viewModel.mediaCacheMode.settingsLabel
+                        ) {
+                            ForEach(MediaCacheMode.allCases, id: \.self) { mode in
+                                Button {
+                                    viewModel.mediaCacheMode = mode
+                                } label: {
+                                    Text(mode.settingsLabel)
+                                }
+                            }
+                        }
+
                         Toggle(isOn: $viewModel.forceH264FallbackWhenNotDirectPlay) {
                             Text("Use H.264 compatibility fallback")
                                 .font(.system(size: 14, weight: .medium, design: .rounded))
@@ -102,6 +115,11 @@ struct ServerSettingsView: View {
                         .tint(.white)
                         .disabled(viewModel.nativePlayerEnabled)
                         .opacity(viewModel.nativePlayerEnabled ? 0.55 : 1)
+
+                        Button("Clear Media Cache") {
+                            Task { await viewModel.clearMediaCache() }
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     tvSection(title: "Notifications") {
@@ -299,6 +317,12 @@ struct ServerSettingsView: View {
                     }
                 }
 
+                Picker("Media Cache", selection: $viewModel.mediaCacheMode) {
+                    ForEach(MediaCacheMode.allCases, id: \.self) { mode in
+                        Text(mode.settingsLabel).tag(mode)
+                    }
+                }
+
                 Toggle(isOn: $viewModel.forceH264FallbackWhenNotDirectPlay) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("H.264 Compatibility Fallback")
@@ -315,6 +339,12 @@ struct ServerSettingsView: View {
                     Label(viewModel.saveButtonTitle, systemImage: "checkmark.circle")
                 }
                 .disabled(!viewModel.canSave || !viewModel.hasPendingChanges)
+
+                Button {
+                    Task { await viewModel.clearMediaCache() }
+                } label: {
+                    Label("Clear Media Cache", systemImage: "trash")
+                }
             } header: {
                 Text("Playback")
             } footer: {
@@ -664,6 +694,19 @@ private extension PlaybackPolicy {
             return "Prefer Original"
         case .originalLockHDRDV:
             return "Preserve HDR"
+        }
+    }
+}
+
+private extension MediaCacheMode {
+    var settingsLabel: String {
+        switch self {
+        case .automatic:
+            return "Automatic"
+        case .reduced:
+            return "Reduced"
+        case .off:
+            return "Off"
         }
     }
 }

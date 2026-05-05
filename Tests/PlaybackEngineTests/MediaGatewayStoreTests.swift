@@ -1,0 +1,116 @@
+import Foundation
+import NativeMediaCore
+import XCTest
+@testable import PlaybackEngine
+
+final class MediaGatewayStoreTests: XCTestCase {
+    func testRangeMissThenWriteThenHit() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 128)
+        )
+        let key = makeKey(suffix: "hit")
+        let range = ByteRange(offset: 0, length: 4)
+
+        let miss = try await store.read(range: range, key: key)
+        XCTAssertNil(miss)
+
+        try await store.write(range: range, data: Data([0, 1, 2, 3]), key: key)
+
+        let hit = try await store.read(range: ByteRange(offset: 1, length: 2), key: key)
+        XCTAssertEqual(hit, Data([1, 2]))
+        let covered = try await store.coveredRanges(key: key)
+        XCTAssertEqual(covered, [range])
+    }
+
+    func testTrimProtectsActiveItemAndEvictsLRUItems() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 64)
+        )
+        let protected = makeKey(suffix: "protected")
+        let evictable = makeKey(suffix: "evictable")
+
+        try await store.write(range: ByteRange(offset: 0, length: 4), data: Data([1, 1, 1, 1]), key: evictable)
+        try await store.write(range: ByteRange(offset: 0, length: 4), data: Data([2, 2, 2, 2]), key: protected)
+
+        try await store.trim(budget: 4, protectedKeys: [protected])
+
+        let evictedRead = try await store.read(range: ByteRange(offset: 0, length: 4), key: evictable)
+        let protectedRead = try await store.read(range: ByteRange(offset: 0, length: 4), key: protected)
+        XCTAssertNil(evictedRead)
+        XCTAssertEqual(protectedRead, Data([2, 2, 2, 2]))
+    }
+
+    func testRemoveServerScopeDeletesOnlyMatchingServerRecords() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 128)
+        )
+        let serverA = makeKey(suffix: "a", serverID: "server-a")
+        let serverB = makeKey(suffix: "b", serverID: "server-b")
+
+        try await store.write(range: ByteRange(offset: 0, length: 4), data: Data([1, 2, 3, 4]), key: serverA)
+        try await store.write(range: ByteRange(offset: 0, length: 4), data: Data([5, 6, 7, 8]), key: serverB)
+
+        try await store.removeServerScope(serverID: "server-a", userID: nil)
+
+        let removedRead = try await store.read(range: ByteRange(offset: 0, length: 4), key: serverA)
+        let keptRead = try await store.read(range: ByteRange(offset: 0, length: 4), key: serverB)
+        XCTAssertNil(removedRead)
+        XCTAssertEqual(keptRead, Data([5, 6, 7, 8]))
+    }
+
+    func testPartialFilesAreIgnored() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 128)
+        )
+        let key = makeKey(suffix: "partial")
+
+        let partialURL = try await store.partialFileURLForTesting(
+            range: ByteRange(offset: 0, length: 4),
+            key: key
+        )
+        try FileManager.default.createDirectory(
+            at: partialURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([9, 9, 9, 9]).write(to: partialURL)
+
+        let read = try await store.read(range: ByteRange(offset: 0, length: 4), key: key)
+        let covered = try await store.coveredRanges(key: key)
+        XCTAssertNil(read)
+        XCTAssertEqual(covered, [])
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MediaGatewayStoreTests.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func makeKey(suffix: String, serverID: String = "server-1") -> MediaGatewayCacheKey {
+        MediaGatewayCacheKey(
+            scope: "original",
+            userID: "user-1",
+            serverID: serverID,
+            itemID: "item-\(suffix)",
+            sourceID: "source-\(suffix)",
+            routeURL: URL(string: "https://media.example.com/videos/\(suffix)/stream.mp4?static=true&api_key=secret")!,
+            routeHeaders: ["Authorization": "Bearer secret"],
+            audioSignature: "default",
+            subtitleSignature: "none",
+            resumeSeconds: 0
+        )
+    }
+}

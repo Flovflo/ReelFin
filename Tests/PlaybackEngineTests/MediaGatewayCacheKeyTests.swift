@@ -57,7 +57,7 @@ final class MediaGatewayCacheKeyTests: XCTestCase {
         XCTAssertEqual(decoded, key)
     }
 
-    func testRouteSignatureChangesWithHeaderFingerprintButKeepsSecretsOut() {
+    func testRouteSignatureIgnoresSensitiveValuesButTracksNonSensitiveRouteShape() {
         let url = URL(string: "https://media.example.com/library/items/123/master.m3u8?container=fmp4&static=true")!
 
         let signatureA = MediaGatewayCacheKey.routeSignature(
@@ -72,10 +72,28 @@ final class MediaGatewayCacheKeyTests: XCTestCase {
             for: url,
             headers: ["Authorization": "Bearer token-b"]
         )
+        let signatureD = MediaGatewayCacheKey.routeSignature(
+            for: url,
+            headers: ["Accept": "application/vnd.apple.mpegurl"]
+        )
 
         XCTAssertEqual(signatureA, signatureB)
-        XCTAssertNotEqual(signatureA, signatureC)
+        XCTAssertEqual(signatureA, signatureC)
+        XCTAssertNotEqual(signatureA, signatureD)
         XCTAssertFalse(signatureA.contains("token-a"))
         XCTAssertFalse(signatureC.contains("token-b"))
+    }
+
+    func testRouteSignatureIgnoresSensitiveQueryValues() {
+        let signatureA = MediaGatewayCacheKey.routeSignature(
+            for: URL(string: "https://media.example.com/video.mp4?static=true&api_key=secret-a")!
+        )
+        let signatureB = MediaGatewayCacheKey.routeSignature(
+            for: URL(string: "https://media.example.com/video.mp4?static=true&api_key=secret-b")!
+        )
+
+        XCTAssertEqual(signatureA, signatureB)
+        XCTAssertFalse(signatureA.contains("secret-a"))
+        XCTAssertFalse(signatureB.contains("secret-b"))
     }
 }

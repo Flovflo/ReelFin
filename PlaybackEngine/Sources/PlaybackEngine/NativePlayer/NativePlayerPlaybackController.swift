@@ -56,15 +56,18 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
 public actor NativePlayerPlaybackController {
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let resolver: OriginalMediaResolver
+    private let mediaGatewayStore: MediaGatewayStore?
     private let probeService = ContainerProbeService()
     private var stateMachine = NativePlaybackStateMachine()
 
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
-        resolver: OriginalMediaResolver = OriginalMediaResolver()
+        resolver: OriginalMediaResolver = OriginalMediaResolver(),
+        mediaGatewayStore: MediaGatewayStore? = nil
     ) {
         self.apiClient = apiClient
         self.resolver = resolver
+        self.mediaGatewayStore = mediaGatewayStore
     }
 
     public func prepare(
@@ -97,6 +100,7 @@ public actor NativePlayerPlaybackController {
         stateMachine.apply(.originalResolved)
         return try await prepareResolved(
             resolution,
+            configuration: configuration,
             session: session,
             nativeConfig: nativeConfig,
             startTimeTicks: startTimeTicks
@@ -105,6 +109,7 @@ public actor NativePlayerPlaybackController {
 
     private func prepareResolved(
         _ resolution: OriginalMediaResolution,
+        configuration: ServerConfiguration,
         session: UserSession,
         nativeConfig: NativePlayerConfig,
         startTimeTicks: Int64?
@@ -137,9 +142,14 @@ public actor NativePlayerPlaybackController {
             )
         }
 
-        let source = HTTPRangeByteSource(url: resolution.url, headers: resolution.headers)
+        let byteSource = makeByteSource(
+            resolution: resolution,
+            configuration: configuration,
+            session: session
+        )
+        let source = byteSource.source
         AppLog.playback.notice(
-            "nativeplayer.byteSource.open — source=\(resolution.mediaSource.id, privacy: .public) type=HTTPRangeByteSource"
+            "nativeplayer.byteSource.open — source=\(resolution.mediaSource.id, privacy: .public) type=\(byteSource.type, privacy: .public)"
         )
         stateMachine.apply(.probeStarted)
         AppLog.playback.notice("nativeplayer.probe.start — source=\(resolution.mediaSource.id, privacy: .public)")
@@ -165,7 +175,7 @@ public actor NativePlayerPlaybackController {
             var diagnostics = NativePlayerDiagnostics(
                 playbackState: stateMachine.state.rawValue,
                 mediaSourceID: resolution.mediaSource.id,
-                byteSourceType: "HTTPRangeByteSource",
+                byteSourceType: byteSource.type,
                 container: probe.format,
                 demuxer: "unavailable"
             )
@@ -199,7 +209,7 @@ public actor NativePlayerPlaybackController {
         diagnostics.mediaSourceID = resolution.mediaSource.id
         diagnostics.originalMediaRequested = resolution.originalMediaRequested
         diagnostics.serverTranscodeUsed = resolution.serverTranscodeUsed
-        diagnostics.byteSourceType = "HTTPRangeByteSource"
+        diagnostics.byteSourceType = byteSource.type
         diagnostics.rendererBackend = plan.canStartLocalPlayback ? "AVSampleBufferDisplayLayer" : diagnostics.rendererBackend
         diagnostics.audioRendererBackend = plan.canStartLocalPlayback ? "AVSampleBufferAudioRenderer" : diagnostics.audioRendererBackend
         diagnostics.masterClock = plan.canStartLocalPlayback ? "AVSampleBufferRenderSynchronizer" : diagnostics.masterClock
@@ -254,6 +264,28 @@ public actor NativePlayerPlaybackController {
             selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
             selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
         )
+    }
+
+    private func makeByteSource(
+        resolution: OriginalMediaResolution,
+        configuration: ServerConfiguration,
+        session: UserSession
+    ) -> (source: any MediaByteSource, type: String) {
+        let upstream = HTTPRangeByteSource(url: resolution.url, headers: resolution.headers)
+        guard configuration.mediaCacheMode != .off, let mediaGatewayStore else {
+            return (upstream, "HTTPRangeByteSource")
+        }
+        let key = MediaGatewayCacheKey(
+            scope: "native-original",
+            userID: session.userID,
+            serverID: configuration.serverURL.host ?? configuration.serverURL.absoluteString,
+            itemID: resolution.mediaSource.itemID,
+            sourceID: resolution.mediaSource.id,
+            routeURL: resolution.url,
+            routeHeaders: resolution.headers
+        )
+        let cached = CachingMediaByteSource(upstream: upstream, store: mediaGatewayStore, key: key)
+        return (cached, "CachingMediaByteSource(HTTPRangeByteSource)")
     }
 
     private func plannerOptions(from config: NativePlayerConfig) -> NativePlaybackPlannerOptions {

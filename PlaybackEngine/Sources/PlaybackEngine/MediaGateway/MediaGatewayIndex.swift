@@ -94,6 +94,10 @@ public actor MediaGatewayIndex {
         sortedRecords(now: now).map(\.key)
     }
 
+    public func records(now: Date = Date()) -> [Record] {
+        sortedRecords(now: now)
+    }
+
     public func upsert(
         key: MediaGatewayCacheKey,
         byteSize: Int,

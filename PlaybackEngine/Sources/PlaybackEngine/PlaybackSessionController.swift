@@ -347,6 +347,9 @@ public final class PlaybackSessionController {
     private let audioSelector = AudioCompatibilitySelector()
     private let subtitlePolicy = SubtitleCompatibilityPolicy()
     private let assetURLValidator = AssetURLValidator()
+    private let mediaGatewayStore: MediaGatewayStore?
+    private var localMediaGatewayServer: LocalMediaGatewayServer?
+    private var localMediaGatewaySession: LocalMediaGatewaySession?
     private var startDate = Date()
     private var loadStartDate = Date()
     private var preferredProfilesByItemID: [String: TranscodeURLProfile] = [:]
@@ -485,7 +488,12 @@ public final class PlaybackSessionController {
         self.repository = repository
         self.episodeReleaseTracker = episodeReleaseTracker
         self.coordinator = PlaybackCoordinator(apiClient: apiClient, decisionEngine: decisionEngine)
-        self.nativePlayerController = NativePlayerPlaybackController(apiClient: apiClient)
+        let mediaGatewayStore = try? MediaGatewayStore()
+        self.mediaGatewayStore = mediaGatewayStore
+        self.nativePlayerController = NativePlayerPlaybackController(
+            apiClient: apiClient,
+            mediaGatewayStore: mediaGatewayStore
+        )
         self.warmupManager = warmupManager
         self.preferredProfilesByItemID = Self.loadStoredPreferredProfiles()
         configurePlayerBase()
@@ -549,6 +557,7 @@ public final class PlaybackSessionController {
         remoteProgressReportTask?.cancel()
         markerRefreshTask?.cancel()
         trickplayRefreshTask?.cancel()
+        stopLocalMediaGateway(reason: "controller_deinit")
         localHLSServer?.stop(reason: "controller_deinit")
     }
 
@@ -560,6 +569,7 @@ public final class PlaybackSessionController {
     ) async throws {
         currentItemID = item.id
         playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
+        stopLocalMediaGateway(reason: "new_load")
         currentMediaItem = item
         nextEpisodeQueue = upNextEpisodes
         currentTime = 0
@@ -1443,6 +1453,7 @@ public final class PlaybackSessionController {
         await nativeBridgeSession?.invalidate()
         nativeBridgeSession = nil
         syntheticHLSSession = nil
+        stopLocalMediaGateway(reason: "native_player_class_route")
         localHLSServer?.stop(reason: "native_player_class_route")
         localHLSServer = nil
         localHLSStartupSummary = nil
@@ -1899,6 +1910,12 @@ public final class PlaybackSessionController {
                 "playback.asset.stale_prepare_skipped — \(Self.playbackLogScope(sessionID: self.playbackLogSessionID, itemID: selection.source.itemID), privacy: .public) activeItem=\(self.currentItemID.map { AppLogFormat.shortIdentifier($0) } ?? "none", privacy: .public)"
             )
             return
+        }
+        switch selection.decision.route {
+        case .directPlay:
+            break
+        case .remux, .transcode, .nativeBridge:
+            stopLocalMediaGateway(reason: "prepare_non_direct_route")
         }
 
         trickplayRefreshTask?.cancel()
@@ -3389,6 +3406,7 @@ public final class PlaybackSessionController {
         _ selection: PlaybackAssetSelection,
         resumeSeconds: Double?
     ) async {
+        let selection = await prepareLocalMediaGatewayIfNeeded(selection, resumeSeconds: resumeSeconds)
         prepareAndLoadSelection(selection, resumeSeconds: resumeSeconds)
         guard isActivePlaybackTarget(itemID: selection.source.itemID), player.currentItem != nil else {
             return
@@ -3415,6 +3433,130 @@ public final class PlaybackSessionController {
             completed: completed
         )
         player.pause()
+    }
+
+    private func prepareLocalMediaGatewayIfNeeded(
+        _ selection: PlaybackAssetSelection,
+        resumeSeconds: Double?
+    ) async -> PlaybackAssetSelection {
+        guard case .directPlay = selection.decision.route else {
+            stopLocalMediaGateway(reason: "non_direct_route")
+            return selection
+        }
+        guard ["http", "https"].contains(selection.assetURL.scheme?.lowercased() ?? "") else {
+            stopLocalMediaGateway(reason: "gateway_local_asset_skip")
+            return selection
+        }
+        guard let store = mediaGatewayStore,
+              let configuration = await apiClient.currentConfiguration(),
+              let session = await apiClient.currentSession()
+        else {
+            stopLocalMediaGateway(reason: "gateway_unavailable")
+            return selection
+        }
+
+        let key = mediaGatewayKey(
+            selection: selection,
+            configuration: configuration,
+            session: session
+        )
+        let cachedBytes = ((try? await store.coveredRanges(key: key)) ?? [])
+            .reduce(0) { $0 + Int64($1.length) }
+        guard LocalMediaGatewayRoutePolicy.shouldUseGateway(
+            route: selection.decision.route,
+            source: selection.source,
+            mediaCacheMode: configuration.mediaCacheMode,
+            isTVOS: Self.isTvOSPlatform,
+            resumeSeconds: resumeSeconds,
+            hasCachedBytes: cachedBytes > 0
+        ) else {
+            stopLocalMediaGateway(reason: "gateway_policy_skip")
+            return selection
+        }
+
+        return startLocalMediaGateway(
+            selection: selection,
+            key: key,
+            store: store,
+            configuration: configuration,
+            cachedBytes: cachedBytes
+        )
+    }
+
+    private func startLocalMediaGateway(
+        selection: PlaybackAssetSelection,
+        key: MediaGatewayCacheKey,
+        store: MediaGatewayStore,
+        configuration: ServerConfiguration,
+        cachedBytes: Int64
+    ) -> PlaybackAssetSelection {
+        do {
+            stopLocalMediaGateway(reason: "gateway_replace")
+            let gatewaySession = LocalMediaGatewaySession(
+                remoteURL: selection.assetURL,
+                headers: selection.headers,
+                key: key,
+                store: store,
+                prefetchConfiguration: localGatewayPrefetchConfiguration(selection: selection, configuration: configuration)
+            )
+            let server = LocalMediaGatewayServer(session: gatewaySession)
+            let localURL = try server.start()
+            localMediaGatewaySession = gatewaySession
+            localMediaGatewayServer = server
+            var updated = selection
+            updated.assetURL = localURL
+            updated.headers = [:]
+            AppLog.playback.notice(
+                "playback.cache.gateway.selected — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) mode=\(configuration.mediaCacheMode.rawValue, privacy: .public) cachedBytes=\(cachedBytes, privacy: .public) host=127.0.0.1"
+            )
+            return updated
+        } catch {
+            stopLocalMediaGateway(reason: "gateway_start_failed")
+            AppLog.playback.warning(
+                "playback.cache.gateway.unavailable — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
+            )
+            return selection
+        }
+    }
+
+    private func localGatewayPrefetchConfiguration(
+        selection: PlaybackAssetSelection,
+        configuration: ServerConfiguration
+    ) -> LocalMediaGatewayPrefetchConfiguration {
+        LocalMediaGatewayPrefetchConfiguration(
+            mediaCacheMode: configuration.mediaCacheMode,
+            isTVOS: Self.isTvOSPlatform,
+            routeKind: .directPlayOriginal,
+            sourceBitrate: selection.source.bitrate ?? 0,
+            runtimeSeconds: Double(currentMediaItem?.runtimeTicks ?? 0) / 10_000_000,
+            isExpensiveNetwork: false,
+            isConstrainedNetwork: false
+        )
+    }
+
+    private func mediaGatewayKey(
+        selection: PlaybackAssetSelection,
+        configuration: ServerConfiguration,
+        session: UserSession
+    ) -> MediaGatewayCacheKey {
+        MediaGatewayCacheKey(
+            scope: "directplay-original",
+            userID: session.userID,
+            serverID: configuration.serverURL.host ?? configuration.serverURL.absoluteString,
+            itemID: selection.source.itemID,
+            sourceID: selection.source.id,
+            routeURL: selection.assetURL,
+            routeHeaders: selection.headers,
+            audioSignature: selectedAudioTrackID ?? "default",
+            subtitleSignature: selectedSubtitleTrackID ?? "default",
+            resumeSeconds: nil
+        )
+    }
+
+    private func stopLocalMediaGateway(reason: String) {
+        localMediaGatewayServer?.stop(reason: reason)
+        localMediaGatewayServer = nil
+        localMediaGatewaySession = nil
     }
 
     private func ensureDirectPlayResumePositionBeforeAutoplayIfNeeded(

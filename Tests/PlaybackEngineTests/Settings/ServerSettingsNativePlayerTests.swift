@@ -48,6 +48,25 @@ final class ServerSettingsNativePlayerTests: XCTestCase {
         XCTAssertFalse(viewModel.hasPendingChanges)
     }
 
+    func testMediaCacheModePersistsWithServerConfiguration() async throws {
+        let defaults = makeDefaults()
+        let dependencies = ReelFinPreviewFactory.dependencies()
+        dependencies.settingsStore.serverConfiguration = ServerConfiguration(
+            serverURL: URL(string: "https://jellyfin.example")!,
+            mediaCacheMode: .automatic,
+            nativePlayerConfig: NativePlayerConfig(enabled: true)
+        )
+        let viewModel = ServerSettingsViewModel(dependencies: dependencies, defaults: defaults)
+
+        viewModel.mediaCacheMode = .reduced
+        let result = await viewModel.save()
+
+        XCTAssertEqual(result, .saved)
+        let saved = try XCTUnwrap(dependencies.settingsStore.serverConfiguration)
+        XCTAssertEqual(saved.mediaCacheMode, .reduced)
+        XCTAssertFalse(viewModel.hasPendingChanges)
+    }
+
     func testNativePlayerModeWritesRuntimeDefaultsImmediately() {
         let defaults = makeDefaults()
         defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)

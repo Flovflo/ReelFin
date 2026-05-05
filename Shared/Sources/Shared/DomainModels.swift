@@ -54,6 +54,12 @@ public enum PlaybackPolicy: String, Codable, CaseIterable, Sendable {
     case originalLockHDRDV
 }
 
+public enum MediaCacheMode: String, Codable, CaseIterable, Sendable {
+    case automatic
+    case reduced
+    case off
+}
+
 public struct ServerConfiguration: Codable, Hashable, Sendable {
     public var serverURL: URL
     public var allowCellularStreaming: Bool
@@ -65,6 +71,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
     public var maxStreamingBitrateOverride: Int?
     public var forceH264FallbackWhenNotDirectPlay: Bool
     public var nativePlayerConfig: NativePlayerConfig
+    public var mediaCacheMode: MediaCacheMode
     /// BCP-47 / ISO 639 language tag for preferred audio track selection (e.g. "fr", "en", "de").
     /// When set this is the primary signal for audio track choice — it beats codec prestige.
     /// nil means "use the track flagged as default, or the first native-compatible track".
@@ -83,6 +90,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         preferAudioTranscodeOnly: Bool = true,
         maxStreamingBitrateOverride: Int? = nil,
         forceH264FallbackWhenNotDirectPlay: Bool = false,
+        mediaCacheMode: MediaCacheMode = .automatic,
         nativePlayerConfig: NativePlayerConfig = NativePlayerConfig(),
         preferredAudioLanguage: String? = nil,
         preferredSubtitleLanguage: String? = nil
@@ -97,6 +105,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         self.maxStreamingBitrateOverride = maxStreamingBitrateOverride
         self.forceH264FallbackWhenNotDirectPlay = forceH264FallbackWhenNotDirectPlay
         self.nativePlayerConfig = nativePlayerConfig
+        self.mediaCacheMode = mediaCacheMode
         self.preferredAudioLanguage = preferredAudioLanguage
         self.preferredSubtitleLanguage = preferredSubtitleLanguage
     }
@@ -112,6 +121,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         case maxStreamingBitrateOverride
         case forceH264FallbackWhenNotDirectPlay
         case nativePlayerConfig
+        case mediaCacheMode
         case preferredAudioLanguage
         case preferredSubtitleLanguage
     }
@@ -132,6 +142,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
             NativePlayerConfig.self,
             forKey: .nativePlayerConfig
         ) ?? NativePlayerConfig()
+        mediaCacheMode = try container.decodeIfPresent(MediaCacheMode.self, forKey: .mediaCacheMode) ?? .automatic
         preferredAudioLanguage = try container.decodeIfPresent(String.self, forKey: .preferredAudioLanguage)
         preferredSubtitleLanguage = try container.decodeIfPresent(String.self, forKey: .preferredSubtitleLanguage)
     }
@@ -148,6 +159,7 @@ public struct ServerConfiguration: Codable, Hashable, Sendable {
         try container.encodeIfPresent(maxStreamingBitrateOverride, forKey: .maxStreamingBitrateOverride)
         try container.encode(forceH264FallbackWhenNotDirectPlay, forKey: .forceH264FallbackWhenNotDirectPlay)
         try container.encode(nativePlayerConfig, forKey: .nativePlayerConfig)
+        try container.encode(mediaCacheMode, forKey: .mediaCacheMode)
         try container.encodeIfPresent(preferredAudioLanguage, forKey: .preferredAudioLanguage)
         try container.encodeIfPresent(preferredSubtitleLanguage, forKey: .preferredSubtitleLanguage)
     }

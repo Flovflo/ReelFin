@@ -34,6 +34,7 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var forceH264FallbackWhenNotDirectPlay = true
     @Published var nativePlayerEnabled = false
     @Published var nativePlayerSurfacePreference: NativePlayerSurfacePreference = .directPlayWhenPossible
+    @Published var mediaCacheMode: MediaCacheMode = .automatic
     @Published var episodeReleaseNotificationsEnabled = false
     @Published var homeOrderedSectionKinds: [HomeSectionKind] = HomeViewModel.defaultSectionOrder
     @Published var homeHiddenSectionKinds: Set<HomeSectionKind> = []
@@ -71,6 +72,7 @@ final class ServerSettingsViewModel: ObservableObject {
             allowSDRFallback = config.allowSDRFallback
             preferAudioTranscodeOnly = config.preferAudioTranscodeOnly
             forceH264FallbackWhenNotDirectPlay = config.forceH264FallbackWhenNotDirectPlay
+            mediaCacheMode = config.mediaCacheMode
             let nativeConfig = config.nativePlayerConfig
                 .applyingRuntimeOverride(userDefaults: defaults)
             nativePlayerEnabled = nativeConfig.enabled
@@ -152,7 +154,7 @@ final class ServerSettingsViewModel: ObservableObject {
         let bridge = localPlaybackBridgeEnabled ? "Local bridge on" : "Server-only playback"
         let startup = fasterVideoOnlyStartupEnabled ? "fast startup" : "full startup"
         let native = Self.nativeModeLabel(for: nativePlayerSettingsMode)
-        return "\(native) | \(bridge) | \(startup) | \(Self.dolbyVisionLabel(for: dolbyVisionPackagingMode))"
+        return "\(native) | \(bridge) | \(startup) | \(Self.mediaCacheLabel(for: mediaCacheMode)) | \(Self.dolbyVisionLabel(for: dolbyVisionPackagingMode))"
     }
 
     var nativePlayerSettingsMode: NativePlayerSettingsMode {
@@ -201,6 +203,7 @@ final class ServerSettingsViewModel: ObservableObject {
             || forceH264FallbackWhenNotDirectPlay != (saved?.forceH264FallbackWhenNotDirectPlay ?? false)
             || nativePlayerEnabled != (saved?.nativePlayerConfig.enabled ?? false)
             || nativePlayerSurfacePreference != (saved?.nativePlayerConfig.surfacePreference ?? .directPlayWhenPossible)
+            || mediaCacheMode != (saved?.mediaCacheMode ?? .automatic)
             || normalizedLanguageCode(from: preferredAudioLanguage) != saved?.preferredAudioLanguage
             || normalizedLanguageCode(from: preferredSubtitleLanguage) != saved?.preferredSubtitleLanguage
             || parsedCustomBitrateOverride() != saved?.maxStreamingBitrateOverride
@@ -271,6 +274,7 @@ final class ServerSettingsViewModel: ObservableObject {
                 preferAudioTranscodeOnly: preferAudioTranscodeOnly,
                 maxStreamingBitrateOverride: parsedCustomBitrateOverride(),
                 forceH264FallbackWhenNotDirectPlay: forceH264FallbackWhenNotDirectPlay,
+                mediaCacheMode: mediaCacheMode,
                 nativePlayerConfig: nativeConfig,
                 preferredAudioLanguage: effectivePreferredAudioLanguage,
                 preferredSubtitleLanguage: effectivePreferredSubtitleLanguage
@@ -433,7 +437,18 @@ final class ServerSettingsViewModel: ObservableObject {
         setLocalPlaybackBridgeEnabled(true)
         setFasterVideoOnlyStartupEnabled(false)
         setDolbyVisionPackagingMode(.dvProfile81Compatible)
+        mediaCacheMode = .automatic
         infoMessage = "Advanced playback settings reset."
+    }
+
+    func clearMediaCache() async {
+        clearMessages()
+        do {
+            try await MediaGatewayStore.clearDefaultCache()
+            infoMessage = "Media cache cleared."
+        } catch {
+            errorMessage = "Could not clear media cache: \(error.localizedDescription)"
+        }
     }
 
     func runPlaybackDiagnostics() async {
@@ -779,6 +794,17 @@ final class ServerSettingsViewModel: ObservableObject {
             return "Native auto Direct Play"
         case .customPlayer:
             return "Native custom player"
+        }
+    }
+
+    private static func mediaCacheLabel(for mode: MediaCacheMode) -> String {
+        switch mode {
+        case .automatic:
+            return "Auto cache"
+        case .reduced:
+            return "Reduced cache"
+        case .off:
+            return "Cache off"
         }
     }
 }

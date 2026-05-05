@@ -355,6 +355,21 @@
   - post-first-frame Direct Play stalls keep the current item, increase buffering policy, and mark the item route fragile only after repeated measured stalls so the next start requires stronger item-specific proof
 - Validation: targeted red/green Direct Play startup and warmup tests passed; focused playback/native suite passed 211 tests; `xcodegen generate`, iOS `ReelFin` simulator build, tvOS `ReelFinTV` simulator build, and `git diff --check` passed; fast live Jellyfin E2E passed with artifacts `.artifacts/player-e2e/20260505-100500` (`4/4` explicit probes, resume reporting, `4/4` original-stream benchmarks, `4/4` live playback probes, `76/76` deterministic tests, clean runtime-log scan; UI and tvOS runner steps skipped by the fast variant).
 
+### M33
+- Status: completed
+- Objective: add a dynamic original-media cache that can absorb network drops without lowering quality first.
+- Scope: `PlaybackEngine` media gateway/cache store, Direct Play AVPlayer gateway routing, native byte source cache, Settings media-cache mode
+- Acceptance:
+  - `PlaybackMediaCachePolicy` chooses startup, steady, deep, complete, or paused cache phases from platform, route, headroom, storage, network cost, and cache mode
+  - media payload ranges are stored in `Caches` with atomic `.part` writes, persistent TTL/LRU metadata, server/user scope removal, and active-item protection
+  - route signatures ignore sensitive query/header values so raw or hashed API keys/tokens are not persisted in cache identity
+  - Direct Play original can be served through a local `127.0.0.1` Range gateway with opaque session URLs and private remote headers
+  - Direct Play gateway responses write through to cache and schedule bounded ahead prefetch from `PlaybackMediaCachePolicy`
+  - tvOS automatic mode uses the local gateway for Apple-compatible Direct Play originals; iOS uses it for high-bitrate, resumed, or already cached originals
+  - native sample-buffer playback reads remote originals through the same persistent byte cache when media cache is not Off
+  - Settings exposes `Media Cache` as Automatic, Reduced, or Off plus a clear-cache action
+- Validation: targeted cache/gateway/settings tests passed, including the red/green gateway prefetch test; `xcodegen generate`, iOS `ReelFin` build, tvOS `ReelFinTV` build, and `git diff --check` passed; fast live Jellyfin E2E passed with artifacts `.artifacts/player-e2e/20260505-122924` (`4/4` explicit probes, resume reporting, `4/4` original-stream benchmarks, `4/4` live playback probes, `76/76` deterministic tests, clean fatal-log scan; UI and tvOS runner steps skipped by the fast variant).
+
 ## Validation Commands
 
 ```bash
