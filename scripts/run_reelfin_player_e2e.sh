@@ -140,6 +140,34 @@ require_value() {
   echo "${name}=SET"
 }
 
+redact_xcode_ui_log() {
+  python3 -c '
+import re
+import sys
+
+password_type = re.compile(r"(Type )'\''[^'\'']*'\''( into \"login_password_field\" SecureTextField)")
+for line in sys.stdin:
+    line = password_type.sub(r"\1'\''<redacted>'\''\2", line)
+    sys.stdout.write(line)
+'
+}
+
+settle_ios_simulator_for_ui_test() {
+  xcrun simctl terminate booted com.reelfin.app >/dev/null 2>&1 || true
+  xcrun simctl terminate booted com.reelfin.ui.tests.xctrunner >/dev/null 2>&1 || true
+  sleep 2
+}
+
+run_live_ui_smoke_test() {
+  local result_bundle="$1"
+  xcodebuild test \
+    -project ReelFin.xcodeproj \
+    -scheme ReelFin \
+    -destination "${IOS_DESTINATION}" \
+    -resultBundlePath "${result_bundle}" \
+    -only-testing:ReelFinUITests/PlaybackLiveSmokeUITests/testLiveLoginAndStartPlayback
+}
+
 echo "Run artifacts: ${RUN_DIR}"
 echo "Env file: ${ENV_FILE}"
 missing=0
@@ -207,13 +235,24 @@ xcodebuild test \
 if [[ "${RUN_UI}" -eq 1 ]]; then
   echo
   echo "Running live iOS UI smoke test..."
-  xcodebuild test \
-    -project ReelFin.xcodeproj \
-    -scheme ReelFin \
-    -destination "${IOS_DESTINATION}" \
-    -resultBundlePath "${RUN_DIR}/LiveUI.xcresult" \
-    -only-testing:ReelFinUITests/PlaybackLiveSmokeUITests/testLiveLoginAndStartPlayback \
+  settle_ios_simulator_for_ui_test
+  set +e
+  run_live_ui_smoke_test "${RUN_DIR}/LiveUI.xcresult" \
+    | redact_xcode_ui_log \
     | tee "${RUN_DIR}/xcodebuild-live-ui.log"
+  ui_status="${PIPESTATUS[0]}"
+  set -e
+  if [[ "${ui_status}" -ne 0 ]]; then
+    if grep -Eq 'Application failed preflight checks|reason: Busy|Simulator device failed to launch' "${RUN_DIR}/xcodebuild-live-ui.log"; then
+      echo "Retrying live iOS UI smoke test after simulator busy preflight..."
+      settle_ios_simulator_for_ui_test
+      run_live_ui_smoke_test "${RUN_DIR}/LiveUI-retry.xcresult" \
+        | redact_xcode_ui_log \
+        | tee "${RUN_DIR}/xcodebuild-live-ui-retry.log"
+    else
+      exit "${ui_status}"
+    fi
+  fi
 fi
 
 if [[ "${RUN_TVOS}" -eq 1 ]]; then

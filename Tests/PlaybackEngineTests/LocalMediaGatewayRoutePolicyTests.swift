@@ -52,6 +52,25 @@ final class LocalMediaGatewayRoutePolicyTests: XCTestCase {
         )
     }
 
+    func testLoopbackDirectPlayNeverUsesGateway() {
+        for url in [
+            URL(string: "http://127.0.0.1:59235/media/session")!,
+            URL(string: "http://localhost:59235/media/session")!
+        ] {
+            XCTAssertFalse(
+                LocalMediaGatewayRoutePolicy.shouldUseGateway(
+                    route: .directPlay(url),
+                    source: makeSource(container: "mp4", bitrate: 30_000_000),
+                    mediaCacheMode: .automatic,
+                    isTVOS: true,
+                    resumeSeconds: 900,
+                    hasCachedBytes: true
+                ),
+                "Gateway must not wrap local upstream \(url.absoluteString)"
+            )
+        }
+    }
+
     func testOffModeNeverUsesGateway() {
         XCTAssertFalse(
             LocalMediaGatewayRoutePolicy.shouldUseGateway(

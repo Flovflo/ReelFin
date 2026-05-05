@@ -110,7 +110,7 @@ public enum PlaybackServerNetworkBaseline {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(url, headers: headers))
         request.timeoutInterval = timeout
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         request.setValue("bytes=0-\(byteCount - 1)", forHTTPHeaderField: "Range")

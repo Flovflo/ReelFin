@@ -1243,6 +1243,83 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
+    func testGatewayRecoveryUnwrapsLocalSelectionToOriginalRemoteSelection() {
+        let remoteURL = URL(string: "https://media.example.com/Videos/item/stream.mp4?static=true&api_key=secret")!
+        let localURL = URL(string: "http://127.0.0.1:59235/media/session")!
+        var remoteSelection = makeWarmedSelection(route: .directPlay(remoteURL))
+        remoteSelection.assetURL = remoteURL
+        remoteSelection.headers = ["X-Emby-Token": "secret"]
+        var localSelection = remoteSelection
+        localSelection.assetURL = localURL
+        localSelection.headers = [:]
+
+        let resolved = PlaybackSessionController.directPlayRecoverySelection(
+            preparedSelection: localSelection,
+            gatewayRemoteSelection: remoteSelection
+        )
+
+        XCTAssertEqual(resolved.assetURL, remoteURL)
+        XCTAssertEqual(resolved.headers["X-Emby-Token"], "secret")
+    }
+
+    func testGatewayRecoveryKeepsRemoteSelectionWhenAlreadyRemote() {
+        let remoteURL = URL(string: "https://media.example.com/Videos/item/stream.mp4?static=true&api_key=secret")!
+        var remoteSelection = makeWarmedSelection(route: .directPlay(remoteURL))
+        remoteSelection.assetURL = remoteURL
+        remoteSelection.headers = ["X-Emby-Token": "secret"]
+
+        let resolved = PlaybackSessionController.directPlayRecoverySelection(
+            preparedSelection: remoteSelection,
+            gatewayRemoteSelection: nil
+        )
+
+        XCTAssertEqual(resolved.assetURL, remoteURL)
+        XCTAssertEqual(resolved.headers["X-Emby-Token"], "secret")
+    }
+
+    func testGatewayTransportFailureBeforeFirstFrameDisablesGatewayRetry() {
+        var localSelection = makeWarmedSelection(
+            route: .directPlay(URL(string: "http://127.0.0.1:59235/media/session")!)
+        )
+        localSelection.assetURL = URL(string: "http://127.0.0.1:59235/media/session")!
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableLocalGatewayForDirectPlayRecovery(
+                reason: StartupFailureReason.playerItemFailedTransient.rawValue,
+                preparedSelection: localSelection,
+                hasMarkedFirstFrame: false
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldDisableLocalGatewayForDirectPlayRecovery(
+                reason: StartupFailureReason.playerItemFailedTransient.rawValue,
+                preparedSelection: localSelection,
+                hasMarkedFirstFrame: true
+            )
+        )
+    }
+
+    func testAppleNativeRecoveryAllowsProfileFallbackButSampleBufferBlocks() {
+        XCTAssertFalse(
+            PlaybackSessionController.shouldBlockLegacyCoordinatorRecovery(
+                isNativePlayerActive: true,
+                nativeSurface: .appleNative
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldBlockLegacyCoordinatorRecovery(
+                isNativePlayerActive: true,
+                nativeSurface: .sampleBuffer
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldBlockLegacyCoordinatorRecovery(
+                isNativePlayerActive: false,
+                nativeSurface: .sampleBuffer
+            )
+        )
+    }
+
     func testBeginningStartPositionIgnoresServerAndLocalResumeProgress() {
         let item = MediaItem(
             id: "movie-start",

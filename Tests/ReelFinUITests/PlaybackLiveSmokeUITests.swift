@@ -158,13 +158,60 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     }
 
     private func openCardAndWaitForDetail(_ card: XCUIElement, in app: XCUIApplication) -> Bool {
+        let identifier = card.identifier
         for attempt in 0 ..< 3 {
-            tapElement(card)
+            let currentCard = identifier.isEmpty ? card : app.buttons[identifier].firstMatch
+            guard bringCardIntoViewport(currentCard, in: app) else { continue }
+            currentCard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             if waitForDetail(in: app, timeout: attempt == 0 ? 5 : 7) {
                 return true
             }
         }
         return false
+    }
+
+    private func bringCardIntoViewport(_ card: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard card.exists else { return false }
+        let windowFrame = app.windows.firstMatch.exists
+            ? app.windows.firstMatch.frame
+            : CGRect(origin: .zero, size: XCUIScreen.main.screenshot().image.size)
+
+        for _ in 0 ..< 8 {
+            let cardFrame = card.frame
+            if windowFrame.contains(CGPoint(x: cardFrame.midX, y: cardFrame.midY)) {
+                return true
+            }
+            if cardFrame.midY > windowFrame.maxY {
+                app.swipeUp()
+            } else if cardFrame.midY < windowFrame.minY {
+                app.swipeDown()
+            } else if cardFrame.midX > windowFrame.maxX,
+                      let row = horizontalScrollView(containingY: cardFrame.midY, in: app) {
+                row.swipeLeft()
+            } else if cardFrame.midX < windowFrame.minX,
+                      let row = horizontalScrollView(containingY: cardFrame.midY, in: app) {
+                row.swipeRight()
+            } else {
+                return false
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+
+        let finalFrame = card.frame
+        return windowFrame.contains(CGPoint(x: finalFrame.midX, y: finalFrame.midY))
+    }
+
+    private func horizontalScrollView(containingY yPosition: CGFloat, in app: XCUIApplication) -> XCUIElement? {
+        let candidates = app.scrollViews.allElementsBoundByIndex
+        let maximumRowHeight = app.windows.firstMatch.exists
+            ? app.windows.firstMatch.frame.height * 0.6
+            : CGFloat.greatestFiniteMagnitude
+        return candidates.first { scrollView in
+            let frame = scrollView.frame
+            return frame.minY <= yPosition &&
+                yPosition <= frame.maxY &&
+                frame.height < maximumRowHeight
+        }
     }
 
     private func waitForDetail(in app: XCUIApplication, timeout: TimeInterval) -> Bool {

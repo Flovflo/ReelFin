@@ -13,7 +13,8 @@ public enum LocalMediaGatewayRoutePolicy {
         resumeSeconds: Double?,
         hasCachedBytes: Bool
     ) -> Bool {
-        guard mediaCacheMode != .off, case .directPlay = route else { return false }
+        guard mediaCacheMode != .off, case let .directPlay(url) = route else { return false }
+        guard LocalMediaGatewayURLPolicy.isSupportedRemoteURL(url) else { return false }
         guard isAppleCompatible(source: source) else { return false }
 
         if isTVOS {

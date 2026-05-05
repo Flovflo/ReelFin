@@ -101,6 +101,77 @@ final class LocalMediaGatewayServerTests: XCTestCase {
         XCTAssertEqual(prefetched, Data((8..<16).map(UInt8.init)))
     }
 
+    func testTinySniffRangeDoesNotTriggerPrefetch() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        MockOriginalMediaProtocol.storage = Data((0..<128).map(UInt8.init))
+        let key = makeKey()
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 8, maxBytes: 512)
+        )
+        let session = LocalMediaGatewaySession(
+            remoteURL: URL(string: "https://media.example.com/video.mp4?api_key=secret")!,
+            headers: ["X-Emby-Token": "secret"],
+            key: key,
+            store: store,
+            prefetchConfiguration: LocalMediaGatewayPrefetchConfiguration(
+                mediaCacheMode: .automatic,
+                isTVOS: true,
+                routeKind: .directPlayOriginal,
+                sourceBitrate: 8,
+                runtimeSeconds: 128,
+                isExpensiveNetwork: false,
+                isConstrainedNetwork: false
+            ),
+            sessionConfiguration: makeMockSessionConfiguration()
+        )
+        let server = LocalMediaGatewayServer(session: session)
+        let assetURL = try server.start()
+        defer { server.stop(reason: "test_teardown_sniff") }
+
+        let first = try await fetchRange(url: assetURL, range: "bytes=0-1")
+        XCTAssertEqual(first.data, Data([0, 1]))
+
+        let didPrefetch = await waitUntil(timeout: 0.5) {
+            (try? await store.read(range: ByteRange(offset: 2, length: 8), key: key)) != nil
+        }
+        XCTAssertFalse(didPrefetch)
+        XCTAssertEqual(MockOriginalMediaProtocol.rangeRequestCount, 1)
+    }
+
+    func testInternalGatewayRequestsStripQueryAPIKeyWhenHeaderAuthExists() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        MockOriginalMediaProtocol.storage = Data((0..<32).map(UInt8.init))
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 128)
+        )
+        let session = LocalMediaGatewaySession(
+            remoteURL: URL(string: "https://media.example.com/video.mp4?static=true&api_key=secret")!,
+            headers: ["X-Emby-Token": "secret"],
+            key: makeKey(),
+            store: store,
+            sessionConfiguration: makeMockSessionConfiguration()
+        )
+        let server = LocalMediaGatewayServer(session: session)
+        let assetURL = try server.start()
+        defer { server.stop(reason: "test_teardown_internal_auth") }
+
+        _ = try await fetchRange(url: assetURL, range: "bytes=4-7")
+
+        XCTAssertFalse(MockOriginalMediaProtocol.requestedURLs.isEmpty)
+        XCTAssertTrue(
+            MockOriginalMediaProtocol.requestedURLs.allSatisfy {
+                URLComponents(url: $0, resolvingAgainstBaseURL: false)?
+                    .queryItems?
+                    .contains { $0.name.caseInsensitiveCompare("api_key") == .orderedSame } != true
+            }
+        )
+        XCTAssertTrue(MockOriginalMediaProtocol.requestedHeaders.contains { $0["X-Emby-Token"] == "secret" })
+    }
+
     private func fetchRange(url: URL, range: String) async throws -> (data: Data, response: HTTPURLResponse, statusCode: Int) {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"

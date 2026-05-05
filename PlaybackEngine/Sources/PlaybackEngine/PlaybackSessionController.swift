@@ -350,6 +350,9 @@ public final class PlaybackSessionController {
     private let mediaGatewayStore: MediaGatewayStore?
     private var localMediaGatewayServer: LocalMediaGatewayServer?
     private var localMediaGatewaySession: LocalMediaGatewaySession?
+    private var localMediaGatewayRemoteSelection: PlaybackAssetSelection?
+    private var localMediaGatewayLocalSelection: PlaybackAssetSelection?
+    private var localMediaGatewayDisabledSourceIDs = Set<String>()
     private var startDate = Date()
     private var loadStartDate = Date()
     private var preferredProfilesByItemID: [String: TranscodeURLProfile] = [:]
@@ -570,6 +573,7 @@ public final class PlaybackSessionController {
         currentItemID = item.id
         playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
         stopLocalMediaGateway(reason: "new_load")
+        localMediaGatewayDisabledSourceIDs.removeAll()
         currentMediaItem = item
         nextEpisodeQueue = upNextEpisodes
         currentTime = 0
@@ -896,12 +900,18 @@ public final class PlaybackSessionController {
                 resumeSeconds: initialResumeSecs,
                 isTVOS: Self.isTvOSPlatform
             )
-            let preheatTask = shouldRunInlinePreheat ? makeStartupPreheatTask(
+            let shouldUseStartupGateway = autoPlay
+                ? await shouldUseLocalMediaGatewayForStartup(selection: selection, resumeSeconds: initialResumeSecs)
+                : false
+            if shouldUseStartupGateway {
+                logPrestartEvidenceSkipped(selection: selection, reason: "local_gateway_startup")
+            }
+            let preheatTask = shouldRunInlinePreheat && !shouldUseStartupGateway ? makeStartupPreheatTask(
                 selection: selection,
                 resumeSeconds: initialResumeSecs,
                 runtimeSeconds: runtimeSeconds
             ) : nil
-            let serverBaselineTask = shouldRunInlinePreheat ? makeServerBaselineTask(
+            let serverBaselineTask = shouldRunInlinePreheat && !shouldUseStartupGateway ? makeServerBaselineTask(
                 selection: selection
             ) : nil
 
@@ -1538,14 +1548,20 @@ public final class PlaybackSessionController {
                     source: selection.source
                 )
             )
-            let preheatTask = autoPlay
+            let shouldUseStartupGateway = autoPlay
+                ? await shouldUseLocalMediaGatewayForStartup(selection: selection, resumeSeconds: sanitizedResumeSeconds)
+                : false
+            if shouldUseStartupGateway {
+                logPrestartEvidenceSkipped(selection: selection, reason: "local_gateway_startup")
+            }
+            let preheatTask = autoPlay && !shouldUseStartupGateway
                 ? makeStartupPreheatTask(
                     selection: selection,
                     resumeSeconds: sanitizedResumeSeconds,
                     runtimeSeconds: runtimeSeconds
                 )
                 : nil
-            let serverBaselineTask = autoPlay
+            let serverBaselineTask = autoPlay && !shouldUseStartupGateway
                 ? makeServerBaselineTask(selection: selection)
                 : nil
             isNativePlayerActive = false
@@ -1752,6 +1768,43 @@ public final class PlaybackSessionController {
         }
     }
 
+    private func shouldUseLocalMediaGatewayForStartup(
+        selection: PlaybackAssetSelection,
+        resumeSeconds: Double?
+    ) async -> Bool {
+        guard case .directPlay = selection.decision.route else { return false }
+        guard mediaGatewayStore != nil else { return false }
+        guard !localMediaGatewayDisabledSourceIDs.contains(selection.source.id) else { return false }
+        guard LocalMediaGatewayURLPolicy.isSupportedRemoteURL(selection.assetURL) else { return false }
+        guard let configuration = await apiClient.currentConfiguration() else { return false }
+
+        var hasCachedBytes = false
+        if let store = mediaGatewayStore, let session = await apiClient.currentSession() {
+            let key = mediaGatewayKey(
+                selection: selection,
+                configuration: configuration,
+                session: session
+            )
+            hasCachedBytes = ((try? await store.coveredRanges(key: key)) ?? [])
+                .contains { $0.length > 0 }
+        }
+
+        return LocalMediaGatewayRoutePolicy.shouldUseGateway(
+            route: selection.decision.route,
+            source: selection.source,
+            mediaCacheMode: configuration.mediaCacheMode,
+            isTVOS: Self.isTvOSPlatform,
+            resumeSeconds: resumeSeconds,
+            hasCachedBytes: hasCachedBytes
+        )
+    }
+
+    private func logPrestartEvidenceSkipped(selection: PlaybackAssetSelection, reason: String) {
+        AppLog.playback.info(
+            "playback.prestart.evidence.skipped — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=\(reason, privacy: .public)"
+        )
+    }
+
     private func resolvePrestartEvidence(
         selection: PlaybackAssetSelection,
         preheatTask: Task<PlaybackStartupPreheater.Result?, Never>?,
@@ -1891,7 +1944,10 @@ public final class PlaybackSessionController {
     }
 
     private func prepareAndLoadSelection(_ selection: PlaybackAssetSelection, resumeSeconds: Double?) {
-        if isNativePlayerActive && nativePlayerPlaybackSurface == .sampleBuffer {
+        if Self.shouldBlockLegacyCoordinatorRecovery(
+            isNativePlayerActive: isNativePlayerActive,
+            nativeSurface: nativePlayerPlaybackSurface
+        ) {
             let proof = NativePlayerRouteProof(
                 usedLegacyPlaybackCoordinator: true,
                 createdAVPlayerItem: true,
@@ -3377,10 +3433,24 @@ public final class PlaybackSessionController {
         )
     }
 
-    private func attemptDirectPlayStallRecovery() async -> Bool {
-        guard let lastPreparedSelection else { return false }
-        let selection = lastPreparedSelection
-        guard case .directPlay = selection.decision.route else { return false }
+    private func attemptDirectPlayStallRecovery(reason: String) async -> Bool {
+        guard let preparedSelection = lastPreparedSelection else { return false }
+        guard case .directPlay = preparedSelection.decision.route else { return false }
+        let selection = Self.directPlayRecoverySelection(
+            preparedSelection: preparedSelection,
+            gatewayRemoteSelection: localMediaGatewayRemoteSelection
+        )
+        if Self.shouldDisableLocalGatewayForDirectPlayRecovery(
+            reason: reason,
+            preparedSelection: preparedSelection,
+            hasMarkedFirstFrame: hasMarkedFirstFrame
+        ) {
+            localMediaGatewayDisabledSourceIDs.insert(preparedSelection.source.id)
+            stopLocalMediaGateway(reason: "directplay_recovery_transport_failure")
+            AppLog.playback.warning(
+                "playback.cache.gateway.bypassed — \(self.playbackLogScope(), privacy: .public) source=\(preparedSelection.source.id, privacy: .public) reason=directplay_recovery_transport_failure"
+            )
+        }
 
         let resumeSeconds = Self.directPlaySameRouteRecoveryResumeSeconds(
             hasMarkedFirstFrame: hasMarkedFirstFrame,
@@ -3396,8 +3466,9 @@ public final class PlaybackSessionController {
         scheduleDecodedFrameWatchdog()
         scheduleStartupWatchdog()
         let resumeLabel = resumeSeconds.map { String(format: "%.3f", $0) } ?? "none"
+        let loadedURL = lastPreparedSelection?.assetURL ?? selection.assetURL
         AppLog.playback.notice(
-            "playback.directplay.recovery_reloaded — \(self.playbackLogScope(), privacy: .public) resume=\(resumeLabel, privacy: .public) url=\(selection.assetURL.reelfinCompactLogString, privacy: .public)"
+            "playback.directplay.recovery_reloaded — \(self.playbackLogScope(), privacy: .public) resume=\(resumeLabel, privacy: .public) url=\(loadedURL.reelfinCompactLogString, privacy: .public)"
         )
         return true
     }
@@ -3443,8 +3514,26 @@ public final class PlaybackSessionController {
             stopLocalMediaGateway(reason: "non_direct_route")
             return selection
         }
-        guard ["http", "https"].contains(selection.assetURL.scheme?.lowercased() ?? "") else {
+        if Self.isLocalMediaGatewayURL(selection.assetURL) {
+            let remoteSelection = Self.directPlayRecoverySelection(
+                preparedSelection: selection,
+                gatewayRemoteSelection: localMediaGatewayRemoteSelection
+            )
+            stopLocalMediaGateway(reason: "gateway_wrap_prevented")
+            AppLog.playback.error(
+                "playback.cache.gateway.wrap_prevented — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=local_gateway_upstream"
+            )
+            return remoteSelection
+        }
+        guard LocalMediaGatewayURLPolicy.isSupportedRemoteURL(selection.assetURL) else {
             stopLocalMediaGateway(reason: "gateway_local_asset_skip")
+            return selection
+        }
+        guard !localMediaGatewayDisabledSourceIDs.contains(selection.source.id) else {
+            stopLocalMediaGateway(reason: "gateway_session_disabled")
+            AppLog.playback.info(
+                "playback.cache.gateway.skipped — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=session_disabled"
+            )
             return selection
         }
         guard let store = mediaGatewayStore,
@@ -3490,6 +3579,12 @@ public final class PlaybackSessionController {
         configuration: ServerConfiguration,
         cachedBytes: Int64
     ) -> PlaybackAssetSelection {
+        guard LocalMediaGatewayURLPolicy.isSupportedRemoteURL(selection.assetURL) else {
+            AppLog.playback.error(
+                "playback.cache.gateway.wrap_prevented — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=unsupported_upstream"
+            )
+            return selection
+        }
         do {
             stopLocalMediaGateway(reason: "gateway_replace")
             let gatewaySession = LocalMediaGatewaySession(
@@ -3506,6 +3601,8 @@ public final class PlaybackSessionController {
             var updated = selection
             updated.assetURL = localURL
             updated.headers = [:]
+            localMediaGatewayRemoteSelection = selection
+            localMediaGatewayLocalSelection = updated
             AppLog.playback.notice(
                 "playback.cache.gateway.selected — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) mode=\(configuration.mediaCacheMode.rawValue, privacy: .public) cachedBytes=\(cachedBytes, privacy: .public) host=127.0.0.1"
             )
@@ -3557,6 +3654,8 @@ public final class PlaybackSessionController {
         localMediaGatewayServer?.stop(reason: reason)
         localMediaGatewayServer = nil
         localMediaGatewaySession = nil
+        localMediaGatewayRemoteSelection = nil
+        localMediaGatewayLocalSelection = nil
     }
 
     private func ensureDirectPlayResumePositionBeforeAutoplayIfNeeded(
@@ -4107,7 +4206,10 @@ public final class PlaybackSessionController {
         userMessage: String,
         retryDelayNanoseconds: UInt64 = 0
     ) async -> Bool {
-        if isNativePlayerActive {
+        if Self.shouldBlockLegacyCoordinatorRecovery(
+            isNativePlayerActive: isNativePlayerActive,
+            nativeSurface: nativePlayerPlaybackSurface
+        ) {
             let message = NativePlayerRouteViolation.serverTranscodeBlockedByConfig.localizedDescription
             AppLog.playback.error(
                 "nativeplayer.route.guard.blocked — \(self.playbackLogScope(), privacy: .public) reason=\(message, privacy: .public) trigger=\(reason, privacy: .public)"
@@ -4195,7 +4297,7 @@ public final class PlaybackSessionController {
         AppLog.playback.warning(
             "playback.directplay.same_route_recovery — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public)"
         )
-        return await attemptDirectPlayStallRecovery()
+        return await attemptDirectPlayStallRecovery(reason: reason)
     }
 
     private func handlePlaybackFailure(message: String, error: NSError?) async -> Bool {
@@ -4992,8 +5094,10 @@ public final class PlaybackSessionController {
             )
             selectedVariantPlaylistInspection = variantInspection
             let transport = StreamVariantInspector.inferTransport(from: preferred, playlist: variantInspection)
+            let mapURI = Self.redactedPlaylistURIForLog(variantInspection.mapURI)
+            let firstSegmentURI = Self.redactedPlaylistURIForLog(variantInspection.firstSegmentURI)
             AppLog.playback.notice(
-                "playback.hls.variant.selected — \(self.playbackLogScope(), privacy: .public) url=\(updated.assetURL.reelfinCompactLogString, privacy: .public) transport=\(transport, privacy: .public) map=\(variantInspection.mapURI ?? "none", privacy: .public) firstSegment=\(variantInspection.firstSegmentURI ?? "none", privacy: .public)"
+                "playback.hls.variant.selected — \(self.playbackLogScope(), privacy: .public) url=\(updated.assetURL.reelfinCompactLogString, privacy: .public) transport=\(transport, privacy: .public) map=\(mapURI, privacy: .public) firstSegment=\(firstSegmentURI, privacy: .public)"
             )
 
             if strictQualityIsActive, selection.source.isLikelyHDRorDV, transport != "fMP4" {
@@ -5040,7 +5144,10 @@ public final class PlaybackSessionController {
     }
 
     private func reloadRecoveryTranscode(reason: String, attempt: Int) async -> Bool {
-        if isNativePlayerActive {
+        if Self.shouldBlockLegacyCoordinatorRecovery(
+            isNativePlayerActive: isNativePlayerActive,
+            nativeSurface: nativePlayerPlaybackSurface
+        ) {
             let message = NativePlayerRouteViolation.serverTranscodeBlockedByConfig.localizedDescription
             AppLog.playback.error(
                 "nativeplayer.route.guard.blocked — \(self.playbackLogScope(attempt: attempt), privacy: .public) reason=\(message, privacy: .public) trigger=\(reason, privacy: .public)"
@@ -6582,6 +6689,78 @@ public final class PlaybackSessionController {
             return true
         }
         return false
+    }
+
+    nonisolated static func isLocalMediaGatewayURL(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return false }
+        guard LocalMediaGatewayURLPolicy.isLoopbackURL(url) else { return false }
+        return url.path.contains("/media/") && url.pathExtension.lowercased() != "m3u8"
+    }
+
+    nonisolated static func redactedPlaylistURIForLog(_ uri: String?) -> String {
+        guard let uri, !uri.isEmpty else { return "none" }
+        guard var components = URLComponents(string: uri),
+              let queryItems = components.queryItems,
+              !queryItems.isEmpty
+        else {
+            return uri
+        }
+
+        let sensitiveNames: Set<String> = [
+            "api_key", "apikey", "token", "access_token", "x-emby-token", "authorization"
+        ]
+        components.queryItems = queryItems.map { item in
+            sensitiveNames.contains(item.name.lowercased())
+                ? URLQueryItem(name: item.name, value: "REDACTED")
+                : item
+        }
+        return components.string ?? uri
+    }
+
+    nonisolated static func directPlayRecoverySelection(
+        preparedSelection: PlaybackAssetSelection,
+        gatewayRemoteSelection: PlaybackAssetSelection?
+    ) -> PlaybackAssetSelection {
+        guard isLocalMediaGatewayURL(preparedSelection.assetURL),
+              let gatewayRemoteSelection,
+              gatewayRemoteSelection.source.itemID == preparedSelection.source.itemID,
+              gatewayRemoteSelection.source.id == preparedSelection.source.id,
+              LocalMediaGatewayURLPolicy.isSupportedRemoteURL(gatewayRemoteSelection.assetURL),
+              case .directPlay = gatewayRemoteSelection.decision.route
+        else {
+            return preparedSelection
+        }
+        return gatewayRemoteSelection
+    }
+
+    nonisolated static func shouldDisableLocalGatewayForDirectPlayRecovery(
+        reason: String,
+        preparedSelection: PlaybackAssetSelection,
+        hasMarkedFirstFrame: Bool
+    ) -> Bool {
+        guard !hasMarkedFirstFrame else { return false }
+        guard isLocalMediaGatewayURL(preparedSelection.assetURL) else { return false }
+
+        switch StartupFailureReason(rawValue: reason) {
+        case .decodedFrameWatchdog,
+             .audioOnlyNoVideo,
+             .readyButNoVideoFrame,
+             .presentationSizeZero,
+             .playerItemFailed,
+             .playerItemFailedTransient,
+             .startupWatchdogExpired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated static func shouldBlockLegacyCoordinatorRecovery(
+        isNativePlayerActive: Bool,
+        nativeSurface: NativePlayerPlaybackSurface
+    ) -> Bool {
+        isNativePlayerActive && nativeSurface == .sampleBuffer
     }
 
     nonisolated static func shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(reason: String) -> Bool {

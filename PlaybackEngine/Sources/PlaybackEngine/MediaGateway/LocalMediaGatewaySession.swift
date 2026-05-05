@@ -72,7 +72,7 @@ public actor LocalMediaGatewaySession {
 
     func size() async throws -> Int64? {
         if let cachedSize { return cachedSize }
-        var request = URLRequest(url: remoteURL)
+        var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
         request.httpMethod = "HEAD"
         applyHeaders(to: &request)
         let (_, response) = try await session.data(for: request)
@@ -92,7 +92,7 @@ public actor LocalMediaGatewaySession {
 
     private func fetchAndStore(range: ByteRange) async throws -> LocalMediaGatewayRangeResponse {
         let start = Date()
-        var request = URLRequest(url: remoteURL)
+        var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
         request.httpMethod = "GET"
         request.setValue("bytes=\(range.offset)-\(range.offset + Int64(range.length) - 1)", forHTTPHeaderField: "Range")
         applyHeaders(to: &request)

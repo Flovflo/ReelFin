@@ -3,10 +3,14 @@ import Foundation
 final class MockOriginalMediaProtocol: URLProtocol {
     static var storage = Data()
     static var rangeRequestCount = 0
+    static var requestedURLs: [URL] = []
+    static var requestedHeaders: [[String: String]] = []
 
     static func reset() {
         storage = Data()
         rangeRequestCount = 0
+        requestedURLs = []
+        requestedHeaders = []
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -18,6 +22,10 @@ final class MockOriginalMediaProtocol: URLProtocol {
     }
 
     override func startLoading() {
+        if let url = request.url {
+            Self.requestedURLs.append(url)
+        }
+        Self.requestedHeaders.append(request.allHTTPHeaderFields ?? [:])
         let data = Self.storage
         let method = request.httpMethod?.uppercased() ?? "GET"
         if method == "HEAD" {

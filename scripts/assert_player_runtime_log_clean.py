@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 
@@ -20,6 +21,22 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     ("DIRECTPLAY_RANGE_TIMEOUT", "directplay_range_deep error=The request timed out"),
     ("DIRECTPLAY_RANGE_TIMEOUT", "directplay_range_deep error=The operation couldn’t be completed. (NSURLErrorDomain error -1001.)"),
     ("URL_TIMEOUT", "NSURLErrorDomain Code=-1001"),
+    ("LOCAL_GATEWAY_LOOPBACK_FAILURE", "NSErrorFailingURLStringKey=http://127.0.0.1"),
+    ("LOCAL_GATEWAY_WRAP_PREVENTED", "playback.cache.gateway.wrap_prevented"),
+)
+
+FORBIDDEN_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "RAW_API_KEY_URL",
+        re.compile(r"(?i)\bapi_key=(?!(?:REDACTED|<redacted>|%3Credacted%3E)(?:\b|&))[^&\s]+"),
+    ),
+)
+
+FORBIDDEN_TEXT_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "LOCAL_GATEWAY_CONNECTION_REFUSED",
+        re.compile(r"(?is)(?:127\.0\.0\.1|localhost).{0,500}connection refused|connection refused.{0,500}(?:127\.0\.0\.1|localhost)"),
+    ),
 )
 
 
@@ -59,6 +76,17 @@ def main() -> int:
                     if is_ignorable_line(label, line):
                         continue
                     findings.append(f"{label} {log_file}:{line_number}: {line.strip()}")
+            for label, pattern in FORBIDDEN_REGEXES:
+                if pattern.search(line):
+                    if is_ignorable_line(label, line):
+                        continue
+                    findings.append(f"{label} {log_file}:{line_number}: {line.strip()}")
+
+        for label, pattern in FORBIDDEN_TEXT_REGEXES:
+            for match in pattern.finditer(text):
+                line_number = text.count("\n", 0, match.start()) + 1
+                snippet = " ".join(match.group(0).split())
+                findings.append(f"{label} {log_file}:{line_number}: {snippet}")
 
     if findings:
         print("FAIL player runtime log cleanliness")

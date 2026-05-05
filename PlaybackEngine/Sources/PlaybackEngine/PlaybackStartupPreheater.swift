@@ -220,7 +220,7 @@ public enum PlaybackStartupPreheater {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
-        var request = URLRequest(url: requestPlan.url)
+        var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(requestPlan.url, headers: headers))
         request.timeoutInterval = requestPlan.timeout
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         for (key, value) in headers {
