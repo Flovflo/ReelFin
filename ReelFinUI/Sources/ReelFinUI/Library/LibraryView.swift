@@ -499,7 +499,7 @@ struct LibraryView: View {
                         guard !Task.isCancelled else { return }
                         await dependencies.playbackWarmupManager.trim(keeping: [item.id])
                         guard !Task.isCancelled else { return }
-                        await dependencies.playbackWarmupManager.warm(itemID: item.id)
+                        await warmPlaybackItem(item)
                     }
                 )
             }
@@ -527,8 +527,39 @@ struct LibraryView: View {
 
             await dependencies.playbackWarmupManager.trim(keeping: [item.id])
             guard !Task.isCancelled else { return }
-            await dependencies.playbackWarmupManager.warm(itemID: item.id)
+            await warmPlaybackItem(item)
         }
+    }
+
+    private func warmPlaybackItem(_ item: MediaItem) async {
+        await dependencies.playbackWarmupManager.warm(
+            itemID: item.id,
+            resumeSeconds: Self.resumeSeconds(for: item),
+            runtimeSeconds: Self.runtimeSeconds(for: item),
+            isTVOS: Self.isTVOSPlatform
+        )
+    }
+
+    private static var isTVOSPlatform: Bool {
+#if os(tvOS)
+        true
+#else
+        false
+#endif
+    }
+
+    private static func resumeSeconds(for item: MediaItem) -> Double {
+        guard let ticks = item.playbackPositionTicks, ticks > 0 else {
+            return 0
+        }
+        return Double(ticks) / 10_000_000
+    }
+
+    private static func runtimeSeconds(for item: MediaItem) -> Double? {
+        guard let ticks = item.runtimeTicks, ticks > 0 else {
+            return nil
+        }
+        return Double(ticks) / 10_000_000
     }
 
     private func handleVisibleItem(_ item: MediaItem) {

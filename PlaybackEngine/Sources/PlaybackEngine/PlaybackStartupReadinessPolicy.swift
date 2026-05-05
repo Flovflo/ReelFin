@@ -112,23 +112,14 @@ public enum PlaybackStartupReadinessPolicy {
             guard bitrate >= 18_000_000 || (isResume && bitrate >= 12_000_000) else {
                 return nil
             }
-            if bitrate >= 18_000_000 {
-                return Requirement(
-                    minimumBufferDuration: 24,
-                    preferredBufferDuration: 24,
-                    timeout: 24,
-                    pollInterval: 0.15,
-                    reason: isResume ? "ios_resume_directplay_ready" : "ios_high_bitrate_directplay_ready",
-                    allowsTimeoutStart: false
-                )
-            }
+            let decision = DirectPlayStartupPolicy.guardedDecision(isTVOS: false)
             return Requirement(
-                minimumBufferDuration: 0,
-                preferredBufferDuration: 0,
-                timeout: 4,
+                minimumBufferDuration: decision.minimumBufferDuration,
+                preferredBufferDuration: decision.preferredBufferDuration,
+                timeout: decision.timeout,
                 pollInterval: 0.15,
                 reason: isResume ? "ios_resume_directplay_ready" : "ios_high_bitrate_directplay_ready",
-                allowsTimeoutStart: false
+                allowsTimeoutStart: decision.allowsTimeoutStart
             )
         }
 
@@ -136,13 +127,14 @@ public enum PlaybackStartupReadinessPolicy {
         guard guardedDirectPlay else { return nil }
 
         if bitrate >= 18_000_000 {
+            let decision = DirectPlayStartupPolicy.guardedDecision(isTVOS: true)
             return Requirement(
-                minimumBufferDuration: 4,
-                preferredBufferDuration: 12,
-                timeout: 6,
+                minimumBufferDuration: decision.minimumBufferDuration,
+                preferredBufferDuration: decision.preferredBufferDuration,
+                timeout: decision.timeout,
                 pollInterval: 0.15,
                 reason: "tvos_high_bitrate_directplay_ready",
-                allowsTimeoutStart: false
+                allowsTimeoutStart: decision.allowsTimeoutStart
             )
         }
 

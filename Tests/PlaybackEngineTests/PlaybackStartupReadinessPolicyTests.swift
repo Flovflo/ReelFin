@@ -27,7 +27,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         XCTAssertNil(requirement)
     }
 
-    func testRequirementUsesNoStallGateForIPhoneHighBitrateResume() throws {
+    func testRequirementUsesGuardedFastGateForIPhoneHighBitrateResume() throws {
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: .directPlay(URL(string: "https://example.com/Videos/item/stream?static=true")!),
             sourceBitrate: 22_000_000,
@@ -36,39 +36,39 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertEqual(requirement?.minimumBufferDuration, 24)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 24)
-        XCTAssertEqual(requirement?.timeout, 24)
+        XCTAssertEqual(requirement?.minimumBufferDuration, 2)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 2)
+        XCTAssertEqual(requirement?.timeout, 4)
         XCTAssertEqual(requirement?.pollInterval, 0.15)
         XCTAssertEqual(requirement?.reason, "ios_resume_directplay_ready")
-        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
+        XCTAssertEqual(requirement?.allowsTimeoutStart, true)
         XCTAssertFalse(
             PlaybackStartupReadinessPolicy.shouldStart(
-                bufferedDuration: 3.3,
+                bufferedDuration: 1.3,
                 likelyToKeepUp: false,
                 elapsedSeconds: 1.1,
                 requirement: try XCTUnwrap(requirement)
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             PlaybackStartupReadinessPolicy.shouldStart(
-                bufferedDuration: 6.7,
+                bufferedDuration: 2,
                 likelyToKeepUp: true,
                 elapsedSeconds: 3.25,
                 requirement: try XCTUnwrap(requirement)
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             PlaybackStartupReadinessPolicy.shouldStart(
-                bufferedDuration: 12,
-                likelyToKeepUp: true,
-                elapsedSeconds: 4,
+                bufferedDuration: 0,
+                likelyToKeepUp: false,
+                elapsedSeconds: 4.1,
                 requirement: try XCTUnwrap(requirement)
             )
         )
         XCTAssertTrue(
             PlaybackStartupReadinessPolicy.shouldStart(
-                bufferedDuration: 24,
+                bufferedDuration: 2,
                 likelyToKeepUp: false,
                 elapsedSeconds: 16,
                 requirement: try XCTUnwrap(requirement)
@@ -141,7 +141,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         XCTAssertEqual(requirement?.reason, "tvos_hls_startup")
     }
 
-    func testRequirementUsesNoStallGateForTvOSHighBitrateDirectPlay() {
+    func testRequirementUsesGuardedGateForTvOSHighBitrateDirectPlay() {
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: .directPlay(URL(string: "https://example.com/video.mp4")!),
             sourceBitrate: 18_000_000,
@@ -151,14 +151,14 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(requirement?.minimumBufferDuration, 4)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 12)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 4)
         XCTAssertEqual(requirement?.timeout, 6)
         XCTAssertEqual(requirement?.pollInterval, 0.15)
         XCTAssertEqual(requirement?.reason, "tvos_high_bitrate_directplay_ready")
-        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
+        XCTAssertEqual(requirement?.allowsTimeoutStart, true)
     }
 
-    func testTvOSHighBitrateDirectPlayWaitsForMeasuredBufferTelemetry() throws {
+    func testTvOSHighBitrateDirectPlayAllowsTimeoutStartAfterGuardedWindow() throws {
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: .directPlay(URL(string: "https://example.com/video.mp4")!),
             sourceBitrate: 22_000_000,
@@ -168,9 +168,9 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(requirement?.minimumBufferDuration, 4)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 12)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 4)
         XCTAssertEqual(requirement?.timeout, 6)
-        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
+        XCTAssertEqual(requirement?.allowsTimeoutStart, true)
         XCTAssertFalse(
             PlaybackStartupReadinessPolicy.shouldStart(
                 bufferedDuration: 0,
@@ -179,7 +179,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
                 requirement: try XCTUnwrap(requirement)
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             PlaybackStartupReadinessPolicy.shouldStart(
                 bufferedDuration: 0,
                 likelyToKeepUp: false,

@@ -93,6 +93,17 @@ enum DirectPlaySessionPolicy {
         return isStallResistantDirectPlay(route: route, source: source)
     }
 
+    static func shouldMarkRouteFragileAfterPostStartStall(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        recentStallCount: Int,
+        elapsedSecondsSinceFirstFrame: Double?
+    ) -> Bool {
+        guard elapsedSecondsSinceFirstFrame != nil else { return false }
+        guard recentStallCount >= 3 else { return false }
+        return isStallResistantDirectPlay(route: route, source: source)
+    }
+
     static func postStartStallBufferDuration(
         currentForwardBufferDuration: Double,
         recentStallCount: Int = 1,

@@ -328,6 +328,8 @@ public final class PlaybackSessionController {
     private var recentStallTimestamps: [Date] = []
     private var didAttemptDirectPlayStallRecovery = false
     private var attemptedPlaybackTriples = Set<String>()
+    private static var fragileDirectPlayRoutes: [String: Date] = [:]
+    private static let fragileDirectPlayRouteTTL: TimeInterval = 600
     private var sessionInitialResumeSeconds: Double = 0
     private var selectedVariantInfo: HLSVariantInfo?
     private var selectedMasterPlaylistURL: URL?
@@ -680,7 +682,7 @@ public final class PlaybackSessionController {
 
             if playbackConfig.nativePlayerConfig.enabled {
                 AppLog.playback.notice(
-                    "nativeplayer.route.selected — \(self.playbackLogScope(), privacy: .public) legacyCoordinator=false avPlayerItem=false avPlayerViewController=false profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)"
+                    "nativeplayer.route.selected — \(self.playbackLogScope(), privacy: .public) surfacePreference=\(playbackConfig.nativePlayerConfig.surfacePreference.rawValue, privacy: .public) legacyCoordinator=false avPlayerItem=false avPlayerViewController=false profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)"
                 )
                 try await prepareNativePlayerPlayback(
                     item: item,
@@ -877,24 +879,21 @@ public final class PlaybackSessionController {
                 maxStreamingBitrate: playbackConfig.maxStreamingBitrate,
                 isTVOS: Self.isTvOSPlatform
             )
-            let shouldRunInlinePreheat = autoPlay && !shouldPreserveDirectPlayStartup
-            let preheatTask: Task<PlaybackStartupPreheater.Result?, Never>? = shouldRunInlinePreheat ? Task(priority: .utility) {
-                if let warmedResult = await warmupManager?.warm(
-                    selection: selection,
-                    resumeSeconds: initialResumeSecs,
-                    runtimeSeconds: runtimeSeconds,
-                    isTVOS: Self.isTvOSPlatform
-                ) {
-                    return warmedResult
-                }
-
-                return await PlaybackStartupPreheater.preheat(
-                    selection: selection,
-                    resumeSeconds: initialResumeSecs,
-                    runtimeSeconds: runtimeSeconds,
-                    isTVOS: Self.isTvOSPlatform
-                )
-            } : nil
+            let shouldRunInlinePreheat = autoPlay && PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+                route: selection.decision.route,
+                sourceBitrate: selection.source.bitrate,
+                runtimeSeconds: runtimeSeconds,
+                resumeSeconds: initialResumeSecs,
+                isTVOS: Self.isTvOSPlatform
+            )
+            let preheatTask = shouldRunInlinePreheat ? makeStartupPreheatTask(
+                selection: selection,
+                resumeSeconds: initialResumeSecs,
+                runtimeSeconds: runtimeSeconds
+            ) : nil
+            let serverBaselineTask = shouldRunInlinePreheat ? makeServerBaselineTask(
+                selection: selection
+            ) : nil
 
             // For transcode/remux routes, only apply an absolute-time offset when
             // the loaded stream proves that it starts from the resume position.
@@ -919,16 +918,45 @@ public final class PlaybackSessionController {
             ttffTuning = coordinator.ttffTuning
 
             if autoPlay {
-                let preheatResult = await preheatTask?.value
+                let evidence = await resolvePrestartEvidence(
+                    selection: selection,
+                    preheatTask: preheatTask,
+                    serverBaselineTask: serverBaselineTask
+                )
+                let preheatResult = evidence.preheatResult
+                let serverBaselineResult = evidence.serverBaselineResult
+                if let prestartReason = Self.directPlayPrestartRecoveryReason(
+                    route: selection.decision.route,
+                    sourceBitrate: selection.source.bitrate,
+                    preheatResult: preheatResult,
+                    serverBaselineResult: serverBaselineResult,
+                    isTVOS: Self.isTvOSPlatform
+                ) {
+                    logDirectPlayPrestartHeadroom(
+                        selection: selection,
+                        preheatResult: preheatResult,
+                        serverBaselineResult: serverBaselineResult,
+                        reason: prestartReason,
+                        action: "profile_fallback"
+                    )
+                    if await attemptStartupRecoveryIfAvailable(
+                        reason: prestartReason.rawValue,
+                        userMessage: "Direct Play network preflight was too weak. Switching playback profile."
+                    ) {
+                        return
+                    }
+                }
                 logUnsafeDirectPlayStartupHeadroomIfNeeded(
                     selection: selection,
-                    preheatResult: preheatResult
+                    preheatResult: preheatResult,
+                    serverBaselineResult: serverBaselineResult
                 )
                 let startupReady = await performStartupReadinessGateIfNeeded(
                     selection: selection,
                     resumeSeconds: initialResumeSecs,
                     runtimeSeconds: runtimeSeconds,
                     preheatResult: preheatResult,
+                    serverBaselineResult: serverBaselineResult,
                     maxStreamingBitrate: playbackConfig.maxStreamingBitrate
                 )
                 if !startupReady {
@@ -1422,6 +1450,7 @@ public final class PlaybackSessionController {
 
         let resumeSeconds = startTimeTicks.map { Double($0) / 10_000_000 }
         if let warmedSelection = await warmupManager?.selection(for: item.id),
+           nativeConfig.surfacePreference == .directPlayWhenPossible,
            Self.canUseWarmedSelection(warmedSelection, resumeSeconds: resumeSeconds ?? 0),
            case .directPlay = warmedSelection.decision.route,
            NativePlayerPlaybackController.shouldUseAppleNativeSurface(
@@ -1505,6 +1534,9 @@ public final class PlaybackSessionController {
                     runtimeSeconds: runtimeSeconds
                 )
                 : nil
+            let serverBaselineTask = autoPlay
+                ? makeServerBaselineTask(selection: selection)
+                : nil
             isNativePlayerActive = false
             nativePlayerPlaybackSurface = .sampleBuffer
             nativePlayerDiagnosticsOverlayLines = []
@@ -1523,16 +1555,45 @@ public final class PlaybackSessionController {
                 prepareAndLoadSelection(selection, resumeSeconds: resumeSeconds)
             }
             if autoPlay {
-                let preheatResult = await preheatTask?.value
+                let evidence = await resolvePrestartEvidence(
+                    selection: selection,
+                    preheatTask: preheatTask,
+                    serverBaselineTask: serverBaselineTask
+                )
+                let preheatResult = evidence.preheatResult
+                let serverBaselineResult = evidence.serverBaselineResult
+                if let prestartReason = Self.directPlayPrestartRecoveryReason(
+                    route: selection.decision.route,
+                    sourceBitrate: selection.source.bitrate,
+                    preheatResult: preheatResult,
+                    serverBaselineResult: serverBaselineResult,
+                    isTVOS: Self.isTvOSPlatform
+                ) {
+                    logDirectPlayPrestartHeadroom(
+                        selection: selection,
+                        preheatResult: preheatResult,
+                        serverBaselineResult: serverBaselineResult,
+                        reason: prestartReason,
+                        action: "profile_fallback"
+                    )
+                    if await attemptStartupRecoveryIfAvailable(
+                        reason: prestartReason.rawValue,
+                        userMessage: "Direct Play network preflight was too weak. Switching playback profile."
+                    ) {
+                        return
+                    }
+                }
                 logUnsafeDirectPlayStartupHeadroomIfNeeded(
                     selection: selection,
-                    preheatResult: preheatResult
+                    preheatResult: preheatResult,
+                    serverBaselineResult: serverBaselineResult
                 )
                 let startupReady = await performStartupReadinessGateIfNeeded(
                     selection: selection,
                     resumeSeconds: sanitizedResumeSeconds,
                     runtimeSeconds: runtimeSeconds,
                     preheatResult: preheatResult,
+                    serverBaselineResult: serverBaselineResult,
                     maxStreamingBitrate: currentMaxStreamingBitrate
                 )
                 if !startupReady {
@@ -1648,6 +1709,148 @@ public final class PlaybackSessionController {
                 isTVOS: Self.isTvOSPlatform
             )
         }
+    }
+
+    private func makeServerBaselineTask(
+        selection: PlaybackAssetSelection
+    ) -> Task<PlaybackServerNetworkBaseline.Result?, Never>? {
+        guard PlaybackServerNetworkBaseline.isEligible(selection: selection) else {
+            return nil
+        }
+
+        let warmupManager = warmupManager
+        return Task(priority: .utility) {
+            if let cachedResult = await warmupManager?.serverBaselineResult(
+                for: selection,
+                isTVOS: Self.isTvOSPlatform
+            ) {
+                return cachedResult
+            }
+
+            if let warmedResult = await warmupManager?.warmServerBaselineIfNeeded(
+                selection: selection,
+                isTVOS: Self.isTvOSPlatform
+            ) {
+                return warmedResult
+            }
+
+            return await PlaybackServerNetworkBaseline.warm(
+                selection: selection,
+                isTVOS: Self.isTvOSPlatform
+            )
+        }
+    }
+
+    private func resolvePrestartEvidence(
+        selection: PlaybackAssetSelection,
+        preheatTask: Task<PlaybackStartupPreheater.Result?, Never>?,
+        serverBaselineTask: Task<PlaybackServerNetworkBaseline.Result?, Never>?
+    ) async -> (
+        preheatResult: PlaybackStartupPreheater.Result?,
+        serverBaselineResult: PlaybackServerNetworkBaseline.Result?
+    ) {
+        let routeMarkedFragile = Self.isDirectPlayRouteMarkedFragile(
+            route: selection.decision.route,
+            source: selection.source
+        )
+
+        if let preheatTask, let serverBaselineTask {
+            return await resolveRacedPrestartEvidence(
+                selection: selection,
+                preheatTask: preheatTask,
+                serverBaselineTask: serverBaselineTask,
+                routeMarkedFragile: routeMarkedFragile
+            )
+        }
+
+        if let preheatResult = await preheatTask?.value {
+            return (preheatResult, nil)
+        }
+
+        let serverBaselineResult = await serverBaselineTask?.value
+        if shouldUseServerBaselineEvidence(
+            serverBaselineResult,
+            selection: selection,
+            routeMarkedFragile: routeMarkedFragile
+        ) {
+            return (nil, serverBaselineResult)
+        }
+        return (nil, routeMarkedFragile ? nil : serverBaselineResult)
+    }
+
+    private func resolveRacedPrestartEvidence(
+        selection: PlaybackAssetSelection,
+        preheatTask: Task<PlaybackStartupPreheater.Result?, Never>,
+        serverBaselineTask: Task<PlaybackServerNetworkBaseline.Result?, Never>,
+        routeMarkedFragile: Bool
+    ) async -> (
+        preheatResult: PlaybackStartupPreheater.Result?,
+        serverBaselineResult: PlaybackServerNetworkBaseline.Result?
+    ) {
+        await withTaskGroup(of: PrestartEvidenceEvent.self) { group in
+            group.addTask { .preheat(await preheatTask.value) }
+            group.addTask { .serverBaseline(await serverBaselineTask.value) }
+
+            var pendingPreheat = true
+            var pendingBaseline = true
+            var latestBaselineResult: PlaybackServerNetworkBaseline.Result?
+
+            while let event = await group.next() {
+                switch event {
+                case let .preheat(preheatResult):
+                    pendingPreheat = false
+                    if let preheatResult {
+                        group.cancelAll()
+                        return (preheatResult, nil)
+                    }
+                    if !pendingBaseline {
+                        return (nil, routeMarkedFragile ? nil : latestBaselineResult)
+                    }
+
+                case let .serverBaseline(serverBaselineResult):
+                    pendingBaseline = false
+                    latestBaselineResult = serverBaselineResult
+                    if shouldUseServerBaselineEvidence(
+                        serverBaselineResult,
+                        selection: selection,
+                        routeMarkedFragile: routeMarkedFragile
+                    ) {
+                        preheatTask.cancel()
+                        group.cancelAll()
+                        return (nil, serverBaselineResult)
+                    }
+                    if !pendingPreheat {
+                        return (nil, routeMarkedFragile ? nil : serverBaselineResult)
+                    }
+                }
+            }
+
+            return (nil, routeMarkedFragile ? nil : latestBaselineResult)
+        }
+    }
+
+    private func shouldUseServerBaselineEvidence(
+        _ serverBaselineResult: PlaybackServerNetworkBaseline.Result?,
+        selection: PlaybackAssetSelection,
+        routeMarkedFragile: Bool
+    ) -> Bool {
+        guard let serverBaselineResult, !routeMarkedFragile else {
+            return false
+        }
+
+        let decision = Self.directPlayStartupDecision(
+            route: selection.decision.route,
+            sourceBitrate: selection.source.bitrate,
+            preheatResult: nil,
+            serverBaselineResult: serverBaselineResult,
+            isTVOS: Self.isTvOSPlatform
+        )
+        return decision.failureReason == nil
+    }
+
+    private enum PrestartEvidenceEvent: Sendable {
+        case preheat(PlaybackStartupPreheater.Result?)
+        case serverBaseline(PlaybackServerNetworkBaseline.Result?)
     }
 
     private func applyNativePlayerSnapshot(_ snapshot: NativePlayerPlaybackSnapshot) {
@@ -2838,6 +3041,17 @@ public final class PlaybackSessionController {
                         source: self.currentSource,
                         isTVOS: Self.isTvOSPlatform
                        ) {
+                        if Self.shouldMarkDirectPlayRouteFragileAfterPostStartStall(
+                            route: route,
+                            source: self.currentSource,
+                            recentStallCount: self.recentStallTimestamps.count,
+                            elapsedSecondsSinceFirstFrame: elapsedSinceFirstFrame
+                        ) {
+                            Self.markDirectPlayRouteFragile(route: route, source: self.currentSource, at: now)
+                            AppLog.playback.warning(
+                                "playback.directplay.route_fragile — \(self.playbackLogScope(), privacy: .public) recentStalls=\(self.recentStallTimestamps.count, privacy: .public) firstFrameElapsed=\(elapsedSinceFirstFrame, format: .fixed(precision: 1))s action=baseline_disabled"
+                            )
+                        }
                         let bufferDuration = Self.postStartDirectPlayStallBufferDuration(
                             currentForwardBufferDuration: self.currentForwardBufferDuration,
                             recentStallCount: self.recentStallTimestamps.count,
@@ -3336,6 +3550,7 @@ public final class PlaybackSessionController {
         resumeSeconds: Double,
         runtimeSeconds: Double?,
         preheatResult: PlaybackStartupPreheater.Result?,
+        serverBaselineResult: PlaybackServerNetworkBaseline.Result?,
         maxStreamingBitrate: Int
     ) async -> Bool {
         if Self.shouldUseFastDirectPlayStartup(
@@ -3348,6 +3563,24 @@ public final class PlaybackSessionController {
                 "playback.startup.readiness.skipped — \(self.playbackLogScope(), privacy: .public) reason=directplay_network_headroom sourceBitrate=\(selection.source.bitrate ?? 0, privacy: .public) maxStreamingBitrate=\(maxStreamingBitrate, privacy: .public)"
             )
             return true
+        }
+
+        if case .directPlay = selection.decision.route {
+            let decision = Self.directPlayStartupDecision(
+                route: selection.decision.route,
+                sourceBitrate: selection.source.bitrate,
+                preheatResult: preheatResult,
+                serverBaselineResult: serverBaselineResult,
+                isTVOS: Self.isTvOSPlatform
+            )
+            if decision.mode == .fast {
+                let baselineBitrate = Int(serverBaselineResult?.observedBitrate ?? 0)
+                let preheatBitrate = Int(preheatResult?.observedBitrate ?? 0)
+                AppLog.playback.info(
+                    "playback.startup.readiness.skipped — \(self.playbackLogScope(), privacy: .public) reason=directplay_measured_headroom preheatBitrate=\(preheatBitrate, privacy: .public) baselineBitrate=\(baselineBitrate, privacy: .public)"
+                )
+                return true
+            }
         }
 
         guard let requirement = PlaybackStartupReadinessPolicy.requirement(
@@ -3433,23 +3666,42 @@ public final class PlaybackSessionController {
 
     private func logUnsafeDirectPlayStartupHeadroomIfNeeded(
         selection: PlaybackAssetSelection,
-        preheatResult: PlaybackStartupPreheater.Result?
+        preheatResult: PlaybackStartupPreheater.Result?,
+        serverBaselineResult: PlaybackServerNetworkBaseline.Result?
     ) {
-        guard preheatResult != nil else { return }
+        guard preheatResult != nil || serverBaselineResult != nil else { return }
         guard let reason = Self.directPlayPrestartRecoveryReason(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
             preheatResult: preheatResult,
+            serverBaselineResult: serverBaselineResult,
             isTVOS: Self.isTvOSPlatform
         ) else {
             return
         }
 
+        logDirectPlayPrestartHeadroom(
+            selection: selection,
+            preheatResult: preheatResult,
+            serverBaselineResult: serverBaselineResult,
+            reason: reason,
+            action: "keep_directplay"
+        )
+    }
+
+    private func logDirectPlayPrestartHeadroom(
+        selection: PlaybackAssetSelection,
+        preheatResult: PlaybackStartupPreheater.Result?,
+        serverBaselineResult: PlaybackServerNetworkBaseline.Result?,
+        reason: StartupFailureReason,
+        action: String
+    ) {
         let sourceBitrate = selection.source.bitrate ?? 0
         let observedBitrate = Int(preheatResult?.observedBitrate ?? 0)
+        let baselineBitrate = Int(serverBaselineResult?.observedBitrate ?? 0)
         let rangeStart = preheatResult?.rangeStart.map(String.init) ?? "none"
         AppLog.playback.warning(
-            "playback.directplay.prestart_headroom — \(self.playbackLogScope(), privacy: .public) reason=\(reason.rawValue, privacy: .public) action=keep_directplay sourceBitrate=\(sourceBitrate, privacy: .public) preheatBitrate=\(observedBitrate, privacy: .public) rangeStart=\(rangeStart, privacy: .public)"
+            "playback.directplay.prestart_headroom — \(self.playbackLogScope(), privacy: .public) reason=\(reason.rawValue, privacy: .public) action=\(action, privacy: .public) sourceBitrate=\(sourceBitrate, privacy: .public) preheatBitrate=\(observedBitrate, privacy: .public) baselineBitrate=\(baselineBitrate, privacy: .public) rangeStart=\(rangeStart, privacy: .public)"
         )
     }
 
@@ -6055,17 +6307,10 @@ public final class PlaybackSessionController {
         isTVOS: Bool
     ) -> DirectPlayStabilityPolicy {
         guard isTVOS else {
-            guard shouldUseIPhoneNoStallDirectPlayGuard(route: route, source: source) else {
-                return DirectPlayStabilityPolicy(
-                    forwardBufferDuration: defaultForwardBufferDuration,
-                    waitsToMinimizeStalling: defaultWaitsToMinimizeStalling,
-                    reason: nil
-                )
-            }
             return DirectPlayStabilityPolicy(
-                forwardBufferDuration: max(defaultForwardBufferDuration, 24),
-                waitsToMinimizeStalling: true,
-                reason: "ios_no_stall_directplay_guard"
+                forwardBufferDuration: defaultForwardBufferDuration,
+                waitsToMinimizeStalling: defaultWaitsToMinimizeStalling,
+                reason: nil
             )
         }
 
@@ -6091,9 +6336,9 @@ public final class PlaybackSessionController {
         }
 
         return DirectPlayStabilityPolicy(
-            forwardBufferDuration: max(defaultForwardBufferDuration, 24),
+            forwardBufferDuration: max(defaultForwardBufferDuration, 4),
             waitsToMinimizeStalling: true,
-            reason: "tvos_no_stall_directplay_guard"
+            reason: "tvos_guarded_directplay_startup"
         )
     }
 
@@ -6363,6 +6608,20 @@ public final class PlaybackSessionController {
         )
     }
 
+    static func shouldMarkDirectPlayRouteFragileAfterPostStartStall(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        recentStallCount: Int,
+        elapsedSecondsSinceFirstFrame: Double?
+    ) -> Bool {
+        DirectPlaySessionPolicy.shouldMarkRouteFragileAfterPostStartStall(
+            route: route,
+            source: source,
+            recentStallCount: recentStallCount,
+            elapsedSecondsSinceFirstFrame: elapsedSecondsSinceFirstFrame
+        )
+    }
+
     static func postStartDirectPlayStallBufferDuration(
         currentForwardBufferDuration: Double,
         recentStallCount: Int = 1,
@@ -6375,27 +6634,78 @@ public final class PlaybackSessionController {
         )
     }
 
+    private static func markDirectPlayRouteFragile(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        at date: Date = Date()
+    ) {
+        guard let signature = directPlayRouteHealthSignature(route: route, source: source) else {
+            return
+        }
+        pruneFragileDirectPlayRoutes(at: date)
+        fragileDirectPlayRoutes[signature] = date
+    }
+
+    private static func isDirectPlayRouteMarkedFragile(
+        route: PlaybackRoute,
+        source: MediaSource?,
+        at date: Date = Date()
+    ) -> Bool {
+        guard let signature = directPlayRouteHealthSignature(route: route, source: source) else {
+            return false
+        }
+        pruneFragileDirectPlayRoutes(at: date)
+        return fragileDirectPlayRoutes[signature] != nil
+    }
+
+    private static func pruneFragileDirectPlayRoutes(at date: Date) {
+        fragileDirectPlayRoutes = fragileDirectPlayRoutes.filter {
+            date.timeIntervalSince($0.value) <= fragileDirectPlayRouteTTL
+        }
+    }
+
+    private static func directPlayRouteHealthSignature(
+        route: PlaybackRoute,
+        source: MediaSource?
+    ) -> String? {
+        guard case let .directPlay(url) = route, let source else { return nil }
+        return [
+            PlaybackServerNetworkBaseline.serverKey(for: url),
+            source.itemID,
+            source.id
+        ].joined(separator: "|")
+    }
+
     nonisolated static func directPlayPrestartRecoveryReason(
         route: PlaybackRoute,
         sourceBitrate: Int?,
         preheatResult: PlaybackStartupPreheater.Result?,
+        serverBaselineResult: PlaybackServerNetworkBaseline.Result? = nil,
         isTVOS: Bool
     ) -> StartupFailureReason? {
-        guard isTVOS else { return nil }
-        guard case let .directPlay(url) = route else { return nil }
-        guard url.pathExtension.lowercased() != "m3u8" else { return nil }
-        guard let sourceBitrate, sourceBitrate >= 18_000_000 else { return nil }
+        directPlayStartupDecision(
+            route: route,
+            sourceBitrate: sourceBitrate,
+            preheatResult: preheatResult,
+            serverBaselineResult: serverBaselineResult,
+            isTVOS: isTVOS
+        ).failureReason
+    }
 
-        guard
-            let observedBitrate = preheatResult?.observedBitrate,
-            observedBitrate.isFinite,
-            observedBitrate > 0
-        else {
-            return .directPlayPreflightInsufficient
-        }
-
-        let requiredBitrate = Double(sourceBitrate) * 1.25
-        return observedBitrate >= requiredBitrate ? nil : .directPlayPreflightInsufficient
+    nonisolated static func directPlayStartupDecision(
+        route: PlaybackRoute,
+        sourceBitrate: Int?,
+        preheatResult: PlaybackStartupPreheater.Result?,
+        serverBaselineResult: PlaybackServerNetworkBaseline.Result? = nil,
+        isTVOS: Bool
+    ) -> DirectPlayStartupPolicy.Decision {
+        DirectPlayStartupPolicy.decision(
+            route: route,
+            sourceBitrate: sourceBitrate,
+            itemPreheatResult: preheatResult,
+            serverBaselineResult: serverBaselineResult,
+            isTVOS: isTVOS
+        )
     }
 
     static func shouldBlockAutoplayAfterUnsafeStartup(
@@ -6405,6 +6715,9 @@ public final class PlaybackSessionController {
         resumeSeconds: Double,
         isTVOS: Bool
     ) -> Bool {
+        if case .directPlay = route {
+            return false
+        }
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: route,
             sourceBitrate: source?.bitrate,
@@ -6431,19 +6744,14 @@ public final class PlaybackSessionController {
         maxStreamingBitrate: Int,
         isTVOS: Bool
     ) -> Bool {
-        guard !isTVOS else { return false }
-        guard playbackPolicy == .auto, allowSDRFallback, !usesDirectRemuxOnly else { return false }
-        guard case let .directPlay(url) = route else { return false }
-        guard url.pathExtension.lowercased() != "m3u8" else { return false }
-        guard let source else { return false }
-        guard (source.bitrate ?? 0) >= 18_000_000 else { return false }
-        guard source.isPremiumVideoSource || source.isLikelyHDRorDV else { return false }
-
-        let audio = source.normalizedAudioCodec
-        let audioLikelyNeedsTranscode = audio.contains("eac3")
-            || audio.contains("truehd")
-            || audio.contains("dts")
-        return audioLikelyNeedsTranscode
+        _ = route
+        _ = source
+        _ = playbackPolicy
+        _ = allowSDRFallback
+        _ = usesDirectRemuxOnly
+        _ = maxStreamingBitrate
+        _ = isTVOS
+        return false
     }
 
     nonisolated static func variantURLStrippingResumeQuery(

@@ -23,6 +23,14 @@ public protocol PlaybackWarmupManaging: AnyObject, Sendable {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) async -> PlaybackStartupPreheater.Result?
+    func warmServerBaselineIfNeeded(
+        selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) async -> PlaybackServerNetworkBaseline.Result?
+    func serverBaselineResult(
+        for selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) async -> PlaybackServerNetworkBaseline.Result?
     func cancel(itemID: String) async
     func trim(keeping itemIDs: [String]) async
     func invalidate(itemID: String) async
@@ -74,6 +82,24 @@ public extension PlaybackWarmupManaging {
         _ = isTVOS
         return nil
     }
+
+    func warmServerBaselineIfNeeded(
+        selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) async -> PlaybackServerNetworkBaseline.Result? {
+        _ = selection
+        _ = isTVOS
+        return nil
+    }
+
+    func serverBaselineResult(
+        for selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) async -> PlaybackServerNetworkBaseline.Result? {
+        _ = selection
+        _ = isTVOS
+        return nil
+    }
 }
 
 public actor PlaybackWarmupManager: PlaybackWarmupManaging {
@@ -105,6 +131,21 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         let isTVOS: Bool
     }
 
+    private struct ServerBaselineEntry: Sendable {
+        let result: PlaybackServerNetworkBaseline.Result
+        let expirationDate: Date
+
+        func isValid(at date: Date) -> Bool {
+            expirationDate > date
+        }
+    }
+
+    private struct ServerBaselineKey: Hashable, Sendable {
+        let serverKey: String
+        let networkScope: String
+        let isTVOS: Bool
+    }
+
     private let ttl: TimeInterval
     private let resolver: @Sendable (String) async throws -> PlaybackAssetSelection
     private let startupPreheater: @Sendable (
@@ -113,11 +154,17 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         Double?,
         Bool
     ) async -> PlaybackStartupPreheater.Result?
+    private let serverBaselineWarmer: @Sendable (
+        PlaybackAssetSelection,
+        Bool
+    ) async -> PlaybackServerNetworkBaseline.Result?
 
     private var cache: [String: WarmEntry] = [:]
     private var inFlight: [String: Task<PlaybackAssetSelection, Error>] = [:]
     private var startupPreheatCache: [StartupPreheatKey: StartupPreheatEntry] = [:]
     private var startupPreheatInFlight: [StartupPreheatKey: Task<PlaybackStartupPreheater.Result?, Never>] = [:]
+    private var serverBaselineCache: [ServerBaselineKey: ServerBaselineEntry] = [:]
+    private var serverBaselineInFlight: [ServerBaselineKey: Task<PlaybackServerNetworkBaseline.Result?, Never>] = [:]
 
     public init(
         ttl: TimeInterval = 240,
@@ -126,7 +173,8 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         self.init(
             ttl: ttl,
             resolver: resolver,
-            startupPreheater: Self.makeDefaultStartupPreheater()
+            startupPreheater: Self.makeDefaultStartupPreheater(),
+            serverBaselineWarmer: Self.makeDefaultServerBaselineWarmer()
         )
     }
 
@@ -140,9 +188,32 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             Bool
         ) async -> PlaybackStartupPreheater.Result?
     ) {
+        self.init(
+            ttl: ttl,
+            resolver: resolver,
+            startupPreheater: startupPreheater,
+            serverBaselineWarmer: Self.makeDefaultServerBaselineWarmer()
+        )
+    }
+
+    public init(
+        ttl: TimeInterval = 240,
+        resolver: @escaping @Sendable (String) async throws -> PlaybackAssetSelection,
+        startupPreheater: @escaping @Sendable (
+            PlaybackAssetSelection,
+            Double,
+            Double?,
+            Bool
+        ) async -> PlaybackStartupPreheater.Result?,
+        serverBaselineWarmer: @escaping @Sendable (
+            PlaybackAssetSelection,
+            Bool
+        ) async -> PlaybackServerNetworkBaseline.Result?
+    ) {
         self.ttl = ttl
         self.resolver = resolver
         self.startupPreheater = startupPreheater
+        self.serverBaselineWarmer = serverBaselineWarmer
     }
 
     public init(
@@ -155,7 +226,8 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         self.resolver = { itemID in
             if let configuration = await apiClient.currentConfiguration() {
                 let nativeConfig = configuration.nativePlayerConfig.applyingRuntimeOverride()
-                if nativeConfig.enabled {
+                if nativeConfig.enabled,
+                   nativeConfig.surfacePreference == .directPlayWhenPossible {
                     guard let session = await apiClient.currentSession() else {
                         throw AppError.unauthenticated
                     }
@@ -187,6 +259,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             )
         }
         self.startupPreheater = Self.makeDefaultStartupPreheater()
+        self.serverBaselineWarmer = Self.makeDefaultServerBaselineWarmer()
     }
 
     public func warm(itemID: String) async {
@@ -331,6 +404,44 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         return nil
     }
 
+    public func warmServerBaselineIfNeeded(
+        selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) async -> PlaybackServerNetworkBaseline.Result? {
+        guard PlaybackServerNetworkBaseline.isEligible(selection: selection) else {
+            return nil
+        }
+
+        let key = serverBaselineKey(for: selection, isTVOS: isTVOS)
+        return await resolveServerBaseline(
+            key: key,
+            selection: selection,
+            isTVOS: isTVOS
+        )
+    }
+
+    public func serverBaselineResult(
+        for selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) async -> PlaybackServerNetworkBaseline.Result? {
+        guard PlaybackServerNetworkBaseline.isEligible(selection: selection) else {
+            return nil
+        }
+
+        let key = serverBaselineKey(for: selection, isTVOS: isTVOS)
+        let now = Date()
+        if let entry = serverBaselineCache[key], entry.isValid(at: now) {
+            return entry.result
+        }
+
+        if let task = serverBaselineInFlight[key] {
+            return await task.value
+        }
+
+        serverBaselineCache[key] = nil
+        return nil
+    }
+
     public func cancel(itemID: String) async {
         inFlight[itemID]?.cancel()
         inFlight[itemID] = nil
@@ -406,13 +517,6 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         runtimeSeconds: Double?,
         isTVOS: Bool
     ) -> Bool {
-        guard !shouldSkipIPhoneHighRiskProgressiveDirectPlayWarmup(
-            selection: selection,
-            isTVOS: isTVOS
-        ) else {
-            return false
-        }
-
         return PlaybackStartupReadinessPolicy.requiresStartupPreheat(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
@@ -420,22 +524,6 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             resumeSeconds: resumeSeconds,
             isTVOS: isTVOS
         )
-    }
-
-    private func shouldSkipIPhoneHighRiskProgressiveDirectPlayWarmup(
-        selection: PlaybackAssetSelection,
-        isTVOS: Bool
-    ) -> Bool {
-        guard !isTVOS else { return false }
-        guard case let .directPlay(url) = selection.decision.route else { return false }
-        guard url.pathExtension.lowercased() != "m3u8" else { return false }
-        guard (selection.source.bitrate ?? 0) >= 18_000_000 else { return false }
-        guard selection.source.isPremiumVideoSource || selection.source.isLikelyHDRorDV else { return false }
-
-        let audio = selection.source.normalizedAudioCodec
-        return audio.contains("eac3")
-            || audio.contains("truehd")
-            || audio.contains("dts")
     }
 
     private func resolveStartupPreheat(
@@ -470,6 +558,48 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
             )
         }
         return result
+    }
+
+    private func resolveServerBaseline(
+        key: ServerBaselineKey,
+        selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) async -> PlaybackServerNetworkBaseline.Result? {
+        let now = Date()
+        if let entry = serverBaselineCache[key], entry.isValid(at: now) {
+            return entry.result
+        }
+
+        if let task = serverBaselineInFlight[key] {
+            return await task.value
+        }
+
+        let serverBaselineWarmer = serverBaselineWarmer
+        let task = Task<PlaybackServerNetworkBaseline.Result?, Never> {
+            await serverBaselineWarmer(selection, isTVOS)
+        }
+        serverBaselineInFlight[key] = task
+
+        let result = await task.value
+        serverBaselineInFlight[key] = nil
+        if let result {
+            serverBaselineCache[key] = ServerBaselineEntry(
+                result: result,
+                expirationDate: Date().addingTimeInterval(min(ttl, PlaybackServerNetworkBaseline.maximumAge))
+            )
+        }
+        return result
+    }
+
+    private func serverBaselineKey(
+        for selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) -> ServerBaselineKey {
+        ServerBaselineKey(
+            serverKey: PlaybackServerNetworkBaseline.serverKey(for: selection.assetURL),
+            networkScope: PlaybackServerNetworkBaseline.defaultNetworkScope,
+            isTVOS: isTVOS
+        )
     }
 
     private func startupPreheatKey(
@@ -527,6 +657,18 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
                 selection: selection,
                 resumeSeconds: resumeSeconds,
                 runtimeSeconds: runtimeSeconds,
+                isTVOS: isTVOS
+            )
+        }
+    }
+
+    private static func makeDefaultServerBaselineWarmer() -> @Sendable (
+        PlaybackAssetSelection,
+        Bool
+    ) async -> PlaybackServerNetworkBaseline.Result? {
+        { selection, isTVOS in
+            await PlaybackServerNetworkBaseline.warm(
+                selection: selection,
                 isTVOS: isTVOS
             )
         }

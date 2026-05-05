@@ -128,7 +128,7 @@ final class PlaybackWarmupManagerTests: XCTestCase {
         XCTAssertEqual(result?.reason, "test_preheat")
     }
 
-    func test_warmWithResumeSkipsIPhoneHighRiskProgressiveDirectPlayPreheat() async {
+    func test_warmWithResumePreheatsIPhoneHighRiskProgressiveDirectPlay() async {
         let preheater = WarmStartupPreheaterRecorder()
         let manager = PlaybackWarmupManager(
             ttl: 120,
@@ -155,8 +155,10 @@ final class PlaybackWarmupManagerTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertTrue(calls.isEmpty)
-        XCTAssertNil(result)
+        XCTAssertEqual(calls.map(\.itemID), ["movie-1"])
+        XCTAssertEqual(calls.map(\.resumeSeconds), [600])
+        XCTAssertEqual(calls.map(\.isTVOS), [false])
+        XCTAssertEqual(result?.reason, "test_preheat")
     }
 
     func test_warmupCacheRunsStartupPreheatWithoutNativeDisableGate() async {
@@ -193,6 +195,93 @@ final class PlaybackWarmupManagerTests: XCTestCase {
         XCTAssertEqual(callCount, 2)
         XCTAssertEqual(calls.map(\.itemID), ["movie-2"])
         XCTAssertEqual(calls.map(\.resumeSeconds), [600])
+    }
+
+    func test_serverBaselineDeduplicatesConcurrentRequestsPerServer() async {
+        let baselineWarmer = WarmServerBaselineRecorder()
+        let manager = PlaybackWarmupManager(
+            ttl: 120,
+            resolver: { itemID in
+                makeWarmSelection(itemID: itemID)
+            },
+            startupPreheater: { _, _, _, _ in nil },
+            serverBaselineWarmer: { selection, isTVOS in
+                await baselineWarmer.warm(selection: selection, isTVOS: isTVOS)
+            }
+        )
+        let selection = makeWarmHighRiskDirectPlaySelection(itemID: "movie-1")
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                _ = await manager.warmServerBaselineIfNeeded(selection: selection, isTVOS: false)
+            }
+            group.addTask {
+                _ = await manager.warmServerBaselineIfNeeded(selection: selection, isTVOS: false)
+            }
+            group.addTask {
+                _ = await manager.warmServerBaselineIfNeeded(selection: selection, isTVOS: false)
+            }
+        }
+
+        let calls = await baselineWarmer.calls
+        let result = await manager.serverBaselineResult(for: selection, isTVOS: false)
+
+        XCTAssertEqual(calls.map(\.serverKey), ["https://example.com"])
+        XCTAssertEqual(result?.serverKey, "https://example.com")
+    }
+
+    func test_serverBaselineExpiresWithTTL() async {
+        let manager = PlaybackWarmupManager(
+            ttl: -1,
+            resolver: { itemID in
+                makeWarmSelection(itemID: itemID)
+            },
+            startupPreheater: { _, _, _, _ in nil },
+            serverBaselineWarmer: { selection, _ in
+                PlaybackServerNetworkBaseline.Result(
+                    byteCount: 4 * 1_024 * 1_024,
+                    elapsedSeconds: 0.5,
+                    observedBitrate: 67_108_864,
+                    createdAt: Date(),
+                    serverKey: PlaybackServerNetworkBaseline.serverKey(for: selection.assetURL),
+                    networkScope: "default"
+                )
+            }
+        )
+        let selection = makeWarmHighRiskDirectPlaySelection(itemID: "movie-1")
+
+        _ = await manager.warmServerBaselineIfNeeded(selection: selection, isTVOS: false)
+        let result = await manager.serverBaselineResult(for: selection, isTVOS: false)
+
+        XCTAssertNil(result)
+    }
+
+    func test_trimDoesNotDiscardServerBaselineForSameServer() async {
+        let manager = PlaybackWarmupManager(
+            ttl: 120,
+            resolver: { itemID in
+                makeWarmSelection(itemID: itemID)
+            },
+            startupPreheater: { _, _, _, _ in nil },
+            serverBaselineWarmer: { selection, _ in
+                PlaybackServerNetworkBaseline.Result(
+                    byteCount: 4 * 1_024 * 1_024,
+                    elapsedSeconds: 0.5,
+                    observedBitrate: 67_108_864,
+                    createdAt: Date(),
+                    serverKey: PlaybackServerNetworkBaseline.serverKey(for: selection.assetURL),
+                    networkScope: "default"
+                )
+            }
+        )
+        let firstSelection = makeWarmHighRiskDirectPlaySelection(itemID: "movie-1")
+        let secondSelection = makeWarmHighRiskDirectPlaySelection(itemID: "movie-2")
+
+        _ = await manager.warmServerBaselineIfNeeded(selection: firstSelection, isTVOS: false)
+        await manager.trim(keeping: [])
+        let result = await manager.serverBaselineResult(for: secondSelection, isTVOS: false)
+
+        XCTAssertEqual(result?.serverKey, "https://example.com")
     }
 }
 
@@ -235,6 +324,31 @@ private actor WarmStartupPreheaterRecorder {
             observedBitrate: 81_920,
             rangeStart: nil,
             reason: "test_preheat"
+        )
+    }
+}
+
+private actor WarmServerBaselineRecorder {
+    struct Call: Equatable {
+        let serverKey: String
+        let isTVOS: Bool
+    }
+
+    private(set) var calls: [Call] = []
+
+    func warm(
+        selection: PlaybackAssetSelection,
+        isTVOS: Bool
+    ) -> PlaybackServerNetworkBaseline.Result {
+        let serverKey = PlaybackServerNetworkBaseline.serverKey(for: selection.assetURL)
+        calls.append(Call(serverKey: serverKey, isTVOS: isTVOS))
+        return PlaybackServerNetworkBaseline.Result(
+            byteCount: 4 * 1_024 * 1_024,
+            elapsedSeconds: 0.5,
+            observedBitrate: 67_108_864,
+            createdAt: Date(),
+            serverKey: serverKey,
+            networkScope: "default"
         )
     }
 }

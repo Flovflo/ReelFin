@@ -1921,13 +1921,40 @@ struct HomeView: View {
 
         guard let playbackItem = await optimizationPlaybackItem(for: item) else { return }
 
-        await dependencies.playbackWarmupManager.warm(itemID: playbackItem.id)
+        await dependencies.playbackWarmupManager.warm(
+            itemID: playbackItem.id,
+            resumeSeconds: Self.resumeSeconds(for: playbackItem),
+            runtimeSeconds: Self.runtimeSeconds(for: playbackItem),
+            isTVOS: Self.isTVOSPlatform
+        )
         let selection = await dependencies.playbackWarmupManager.selection(for: playbackItem.id)
         let status = ApplePlaybackOptimizationStatus(selection: selection)
 
         await MainActor.run {
             appleOptimizationStatuses[item.id] = status
         }
+    }
+
+    private static var isTVOSPlatform: Bool {
+        #if os(tvOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    private static func resumeSeconds(for item: MediaItem) -> Double {
+        guard let ticks = item.playbackPositionTicks, ticks > 0 else {
+            return 0
+        }
+        return Double(ticks) / 10_000_000
+    }
+
+    private static func runtimeSeconds(for item: MediaItem) -> Double? {
+        guard let ticks = item.runtimeTicks, ticks > 0 else {
+            return nil
+        }
+        return Double(ticks) / 10_000_000
     }
 
     private func optimizationPlaybackItem(for item: MediaItem) async -> MediaItem? {
