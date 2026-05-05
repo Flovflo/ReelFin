@@ -32,7 +32,7 @@ final class LocalMediaGatewayRoutePolicyTests: XCTestCase {
         XCTAssertTrue(
             LocalMediaGatewayRoutePolicy.shouldUseGateway(
                 route: .directPlay(URL(string: "https://media.example.com/video.mp4")!),
-                source: makeSource(container: "mp4", bitrate: 22_000_000),
+                source: makeSource(container: "mp4", bitrate: 22_000_000, fileSize: 64 * 1_024 * 1_024),
                 mediaCacheMode: .automatic,
                 isTVOS: false,
                 resumeSeconds: 0,
@@ -48,6 +48,46 @@ final class LocalMediaGatewayRoutePolicyTests: XCTestCase {
                 isTVOS: false,
                 resumeSeconds: 900,
                 hasCachedBytes: false
+            )
+        )
+    }
+
+    func testLargeDirectPlayMovieSkipsGatewayUntilFullyCached() {
+        let largeFileSize: Int64 = 17_000_000_000
+
+        XCTAssertFalse(
+            LocalMediaGatewayRoutePolicy.shouldUseGateway(
+                route: .directPlay(URL(string: "https://media.example.com/video.mp4")!),
+                source: makeSource(container: "mp4", bitrate: 24_000_000, fileSize: largeFileSize),
+                mediaCacheMode: .automatic,
+                isTVOS: false,
+                resumeSeconds: 900,
+                hasCachedBytes: true,
+                cachedBytes: 32 * 1_024 * 1_024
+            )
+        )
+
+        XCTAssertFalse(
+            LocalMediaGatewayRoutePolicy.shouldUseGateway(
+                route: .directPlay(URL(string: "https://media.example.com/video.mp4")!),
+                source: makeSource(container: "mp4", bitrate: 24_000_000, fileSize: largeFileSize),
+                mediaCacheMode: .automatic,
+                isTVOS: true,
+                resumeSeconds: 900,
+                hasCachedBytes: true,
+                cachedBytes: 32 * 1_024 * 1_024
+            )
+        )
+
+        XCTAssertTrue(
+            LocalMediaGatewayRoutePolicy.shouldUseGateway(
+                route: .directPlay(URL(string: "https://media.example.com/video.mp4")!),
+                source: makeSource(container: "mp4", bitrate: 24_000_000, fileSize: largeFileSize),
+                mediaCacheMode: .automatic,
+                isTVOS: true,
+                resumeSeconds: 900,
+                hasCachedBytes: true,
+                cachedBytes: largeFileSize
             )
         )
     }
@@ -84,12 +124,13 @@ final class LocalMediaGatewayRoutePolicyTests: XCTestCase {
         )
     }
 
-    private func makeSource(container: String, bitrate: Int) -> MediaSource {
+    private func makeSource(container: String, bitrate: Int, fileSize: Int64? = nil) -> MediaSource {
         MediaSource(
             id: "source-1",
             itemID: "item-1",
             name: "source-1",
             filePath: "/media/movie.\(container)",
+            fileSize: fileSize,
             container: container,
             videoCodec: "hevc",
             audioCodec: "aac",

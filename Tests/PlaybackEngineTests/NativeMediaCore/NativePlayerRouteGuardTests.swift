@@ -119,7 +119,8 @@ final class NativePlayerRouteGuardTests: XCTestCase {
         XCTAssertEqual(url.path, "/Videos/item-1/stream.mp4")
         XCTAssertEqual(queryItems.first { $0.name == "static" }?.value, "true")
         XCTAssertEqual(queryItems.first { $0.name == "MediaSourceId" }?.value, "source-1")
-        XCTAssertEqual(queryItems.first { $0.name == "api_key" }?.value, "secret")
+        XCTAssertNil(queryItems.first { $0.name == "api_key" }?.value)
+        XCTAssertEqual(selection.headers["X-Emby-Token"], "secret")
         XCTAssertTrue(NativePlayerRouteGuard.validateOriginalPlaybackURL(url).isEmpty)
     }
 

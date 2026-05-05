@@ -1299,6 +1299,54 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
+    func testGatewayAVFoundationConfigurationFailureBypassesRemoteRetry() {
+        var localSelection = makeWarmedSelection(
+            route: .directPlay(URL(string: "http://127.0.0.1:59235/media/session")!)
+        )
+        localSelection.assetURL = URL(string: "http://127.0.0.1:59235/media/session")!
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldBypassSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.playerItemFailedTransient.rawValue,
+                preparedSelection: localSelection,
+                hasMarkedFirstFrame: false,
+                failureDomain: AVFoundationErrorDomain,
+                failureCode: AVError.serverIncorrectlyConfigured.rawValue
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldBypassSameRouteDirectPlayRecovery(
+                reason: StartupFailureReason.playerItemFailedTransient.rawValue,
+                preparedSelection: localSelection,
+                hasMarkedFirstFrame: true,
+                failureDomain: AVFoundationErrorDomain,
+                failureCode: AVError.serverIncorrectlyConfigured.rawValue
+            )
+        )
+    }
+
+    func testSameRouteRecoveryRejectsStaleLocalGatewaySelection() {
+        let remoteURL = URL(string: "https://media.example.com/Videos/item/stream.mp4?static=true")!
+        let localURL = URL(string: "http://127.0.0.1:59235/media/session")!
+        var remoteSelection = makeWarmedSelection(route: .directPlay(remoteURL))
+        remoteSelection.assetURL = remoteURL
+        var localSelection = remoteSelection
+        localSelection.assetURL = localURL
+
+        XCTAssertFalse(
+            PlaybackSessionController.canAttemptSameRouteDirectPlayRecovery(
+                preparedSelection: localSelection,
+                gatewayRemoteSelection: nil
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.canAttemptSameRouteDirectPlayRecovery(
+                preparedSelection: localSelection,
+                gatewayRemoteSelection: remoteSelection
+            )
+        )
+    }
+
     func testAppleNativeRecoveryAllowsProfileFallbackButSampleBufferBlocks() {
         XCTAssertFalse(
             PlaybackSessionController.shouldBlockLegacyCoordinatorRecovery(
@@ -1316,6 +1364,30 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             PlaybackSessionController.shouldBlockLegacyCoordinatorRecovery(
                 isNativePlayerActive: false,
                 nativeSurface: .sampleBuffer
+            )
+        )
+    }
+
+    func testAppleNativeFallbackAllowsCoordinatorAfterMeasuredFailure() {
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAllowAppleNativeCoordinatorFallback(
+                reason: StartupFailureReason.playerItemFailedTransient.rawValue,
+                isNativePlayerActive: false,
+                nativeSurface: .appleNative
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAllowAppleNativeCoordinatorFallback(
+                reason: StartupFailureReason.playerItemFailedTransient.rawValue,
+                isNativePlayerActive: true,
+                nativeSurface: .sampleBuffer
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAllowAppleNativeCoordinatorFallback(
+                reason: StartupFailureReason.directPlayPostStartStall.rawValue,
+                isNativePlayerActive: false,
+                nativeSurface: .appleNative
             )
         )
     }

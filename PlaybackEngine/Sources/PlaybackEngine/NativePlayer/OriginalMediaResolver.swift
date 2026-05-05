@@ -23,7 +23,8 @@ public enum OriginalMediaAuthPolicy: Sendable, Equatable {
         }
         switch self {
         case .header:
-            return (url, ["X-Emby-Token": token])
+            let headers = PlaybackAuthenticationHeaders.jellyfin(token: token)
+            return (PlaybackAuthenticatedRequestURL.forInternalURLSession(url, headers: headers), headers)
         case .queryAPIKey:
             guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
                 return (url, [:])

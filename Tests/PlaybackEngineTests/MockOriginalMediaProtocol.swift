@@ -72,13 +72,22 @@ final class MockOriginalMediaProtocol: URLProtocol {
 
     private func parseRange(_ value: String, upperBound: Int) -> Range<Int>? {
         guard value.hasPrefix("bytes=") else { return nil }
-        let parts = value.dropFirst("bytes=".count).split(separator: "-", maxSplits: 1).map(String.init)
+        let parts = value
+            .dropFirst("bytes=".count)
+            .split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+            .map(String.init)
         guard parts.count == 2,
               let start = Int(parts[0]),
-              let end = Int(parts[1]),
-              start >= 0,
-              end >= start else { return nil }
-        let boundedEnd = min(end, max(0, upperBound - 1))
+              start >= 0 else { return nil }
+        let requestedEnd: Int
+        if parts[1].isEmpty {
+            requestedEnd = max(0, upperBound - 1)
+        } else if let end = Int(parts[1]), end >= start {
+            requestedEnd = end
+        } else {
+            return nil
+        }
+        let boundedEnd = min(requestedEnd, max(0, upperBound - 1))
         return start..<(boundedEnd + 1)
     }
 }

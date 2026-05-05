@@ -1565,7 +1565,7 @@ public final class PlaybackSessionController {
                 ? makeServerBaselineTask(selection: selection)
                 : nil
             isNativePlayerActive = false
-            nativePlayerPlaybackSurface = .sampleBuffer
+            nativePlayerPlaybackSurface = .appleNative
             nativePlayerDiagnosticsOverlayLines = []
             nativePlayerPlaybackURL = nil
             nativePlayerPlaybackHeaders = [:]
@@ -1778,15 +1778,15 @@ public final class PlaybackSessionController {
         guard LocalMediaGatewayURLPolicy.isSupportedRemoteURL(selection.assetURL) else { return false }
         guard let configuration = await apiClient.currentConfiguration() else { return false }
 
-        var hasCachedBytes = false
+        var cachedBytes: Int64 = 0
         if let store = mediaGatewayStore, let session = await apiClient.currentSession() {
             let key = mediaGatewayKey(
                 selection: selection,
                 configuration: configuration,
                 session: session
             )
-            hasCachedBytes = ((try? await store.coveredRanges(key: key)) ?? [])
-                .contains { $0.length > 0 }
+            cachedBytes = ((try? await store.coveredRanges(key: key)) ?? [])
+                .reduce(0) { $0 + Int64($1.length) }
         }
 
         return LocalMediaGatewayRoutePolicy.shouldUseGateway(
@@ -1795,7 +1795,8 @@ public final class PlaybackSessionController {
             mediaCacheMode: configuration.mediaCacheMode,
             isTVOS: Self.isTvOSPlatform,
             resumeSeconds: resumeSeconds,
-            hasCachedBytes: hasCachedBytes
+            hasCachedBytes: cachedBytes > 0,
+            cachedBytes: cachedBytes
         )
     }
 
@@ -3557,7 +3558,8 @@ public final class PlaybackSessionController {
             mediaCacheMode: configuration.mediaCacheMode,
             isTVOS: Self.isTvOSPlatform,
             resumeSeconds: resumeSeconds,
-            hasCachedBytes: cachedBytes > 0
+            hasCachedBytes: cachedBytes > 0,
+            cachedBytes: cachedBytes
         ) else {
             stopLocalMediaGateway(reason: "gateway_policy_skip")
             return selection
@@ -4262,6 +4264,28 @@ public final class PlaybackSessionController {
     ) async -> Bool {
         if Self.shouldAttemptSameRouteDirectPlayRecovery(reason: reason),
            Self.shouldPreserveDirectPlayRecovery(route: lastPreparedSelection?.decision.route) {
+            if let selection = lastPreparedSelection,
+               Self.shouldBypassSameRouteDirectPlayRecovery(
+                reason: reason,
+                preparedSelection: selection,
+                hasMarkedFirstFrame: hasMarkedFirstFrame,
+                failureDomain: lastFailureDomain,
+                failureCode: lastFailureCode
+               ) {
+                localMediaGatewayDisabledSourceIDs.insert(selection.source.id)
+                stopLocalMediaGateway(reason: "directplay_recovery_transport_failure")
+                AppLog.playback.warning(
+                    "playback.cache.gateway.bypassed — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=directplay_avfoundation_transport_failure"
+                )
+                AppLog.playback.warning(
+                    "playback.directplay.same_route_recovery_skipped — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public) failureDomain=\(self.lastFailureDomain ?? "unknown", privacy: .public) failureCode=\(self.lastFailureCode ?? 0, privacy: .public)"
+                )
+                return await attemptRecovery(
+                    reason: reason,
+                    userMessage: userMessage,
+                    retryDelayNanoseconds: retryDelayNanoseconds
+                )
+            }
             if await attemptDirectPlaySameRouteRecoveryIfAvailable(reason: reason) {
                 return true
             }
@@ -4292,6 +4316,15 @@ public final class PlaybackSessionController {
         guard !didAttemptDirectPlayStallRecovery else { return false }
         guard let selection = lastPreparedSelection else { return false }
         guard case .directPlay = selection.decision.route else { return false }
+        guard Self.canAttemptSameRouteDirectPlayRecovery(
+            preparedSelection: selection,
+            gatewayRemoteSelection: localMediaGatewayRemoteSelection
+        ) else {
+            AppLog.playback.warning(
+                "playback.directplay.same_route_recovery_skipped — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public) detail=local_gateway_remote_unavailable"
+            )
+            return false
+        }
 
         didAttemptDirectPlayStallRecovery = true
         AppLog.playback.warning(
@@ -5180,10 +5213,7 @@ public final class PlaybackSessionController {
         let mode: PlaybackMode = usesDirectRemuxOnly ? .performance : .balanced
         let allowTranscodingFallback = !usesDirectRemuxOnly
         let allowDirectRoutes = !Self.shouldDisableDirectRoutesForRecovery(reason: reason)
-        let nativeEngineFallbackReason = Self.shouldAllowNativeModeCoordinatorFallback(
-            reason: reason,
-            rootReason: nativeModeCoordinatorFallbackRootReason
-        ) ? reason : nil
+        let nativeEngineFallbackReason = nativeCoordinatorFallbackReason(forRecoveryReason: reason)
 
         var lastError: Error?
         for profile in recoveryProfiles(for: reason, attempt: attempt) {
@@ -5304,6 +5334,24 @@ public final class PlaybackSessionController {
             playbackErrorMessage = "Cannot play in HDR/DV without downgrade."
         }
         return false
+    }
+
+    private func nativeCoordinatorFallbackReason(forRecoveryReason reason: String) -> String? {
+        if Self.shouldAllowNativeModeCoordinatorFallback(
+            reason: reason,
+            rootReason: nativeModeCoordinatorFallbackRootReason
+        ) {
+            return reason
+        }
+
+        guard Self.shouldAllowAppleNativeCoordinatorFallback(
+            reason: reason,
+            isNativePlayerActive: isNativePlayerActive,
+            nativeSurface: nativePlayerPlaybackSurface
+        ) else {
+            return nil
+        }
+        return reason
     }
 
     private func suspendCurrentItemForProfileRecovery(reason: String) {
@@ -6756,11 +6804,64 @@ public final class PlaybackSessionController {
         }
     }
 
+    nonisolated static func shouldBypassSameRouteDirectPlayRecovery(
+        reason: String,
+        preparedSelection: PlaybackAssetSelection,
+        hasMarkedFirstFrame: Bool,
+        failureDomain: String?,
+        failureCode: Int?
+    ) -> Bool {
+        guard !hasMarkedFirstFrame else { return false }
+        guard isLocalMediaGatewayURL(preparedSelection.assetURL) else { return false }
+        guard StartupFailureReason(rawValue: reason) == .playerItemFailedTransient else {
+            return false
+        }
+        return failureDomain == AVFoundationErrorDomain
+            && failureCode == AVError.serverIncorrectlyConfigured.rawValue
+    }
+
+    nonisolated static func canAttemptSameRouteDirectPlayRecovery(
+        preparedSelection: PlaybackAssetSelection,
+        gatewayRemoteSelection: PlaybackAssetSelection?
+    ) -> Bool {
+        guard isLocalMediaGatewayURL(preparedSelection.assetURL) else { return true }
+        guard let gatewayRemoteSelection else { return false }
+        return !isLocalMediaGatewayURL(gatewayRemoteSelection.assetURL)
+    }
+
     nonisolated static func shouldBlockLegacyCoordinatorRecovery(
         isNativePlayerActive: Bool,
         nativeSurface: NativePlayerPlaybackSurface
     ) -> Bool {
         isNativePlayerActive && nativeSurface == .sampleBuffer
+    }
+
+    nonisolated static func shouldAllowAppleNativeCoordinatorFallback(
+        reason: String,
+        isNativePlayerActive: Bool,
+        nativeSurface: NativePlayerPlaybackSurface
+    ) -> Bool {
+        guard !shouldBlockLegacyCoordinatorRecovery(
+            isNativePlayerActive: isNativePlayerActive,
+            nativeSurface: nativeSurface
+        ) else {
+            return false
+        }
+        guard nativeSurface == .appleNative else { return false }
+
+        switch StartupFailureReason(rawValue: reason) {
+        case .playerItemFailedTransient,
+             .playerItemFailed,
+             .startupVideoPrerollTimeout,
+             .startupWatchdogExpired,
+             .decodedFrameWatchdog,
+             .audioOnlyNoVideo,
+             .readyButNoVideoFrame,
+             .presentationSizeZero:
+            return true
+        default:
+            return false
+        }
     }
 
     nonisolated static func shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(reason: String) -> Bool {
@@ -6843,7 +6944,9 @@ public final class PlaybackSessionController {
              .readyButNoVideoFrame,
              .decoderStall,
              .presentationSizeZero,
-             .playerItemFailed:
+             .playerItemFailed,
+             .playerItemFailedTransient,
+             .startupWatchdogExpired:
             return true
         default:
             return false
@@ -6860,7 +6963,9 @@ public final class PlaybackSessionController {
              .readyButNoVideoFrame,
              .decoderStall,
              .presentationSizeZero,
-             .playerItemFailed:
+             .playerItemFailed,
+             .playerItemFailedTransient,
+             .startupWatchdogExpired:
             return true
         default:
             return false

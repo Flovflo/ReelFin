@@ -194,6 +194,7 @@ final class NativePlayerConfigurationTests: XCTestCase {
 
         controller.configure(
             url: url,
+            headers: [:],
             startTimeSeconds: 12.0,
             seekRequest: nil,
             baseDiagnostics: [],
@@ -206,6 +207,7 @@ final class NativePlayerConfigurationTests: XCTestCase {
 
         controller.configure(
             url: url,
+            headers: [:],
             startTimeSeconds: 20.0,
             seekRequest: nil,
             baseDiagnostics: [],

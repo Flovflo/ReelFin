@@ -23,6 +23,7 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     ("URL_TIMEOUT", "NSURLErrorDomain Code=-1001"),
     ("LOCAL_GATEWAY_LOOPBACK_FAILURE", "NSErrorFailingURLStringKey=http://127.0.0.1"),
     ("LOCAL_GATEWAY_WRAP_PREVENTED", "playback.cache.gateway.wrap_prevented"),
+    ("LEGACY_NATIVEPLAYER_BRANCH_LOG", "branch=feature/native-swift-player"),
 )
 
 FORBIDDEN_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -36,6 +37,10 @@ FORBIDDEN_TEXT_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "LOCAL_GATEWAY_CONNECTION_REFUSED",
         re.compile(r"(?is)(?:127\.0\.0\.1|localhost).{0,500}connection refused|connection refused.{0,500}(?:127\.0\.0\.1|localhost)"),
+    ),
+    (
+        "DIRECTPLAY_RECOVERY_RELOADED_LOCAL_GATEWAY",
+        re.compile(r"(?im)^.*playback\.directplay\.recovery_reloaded\b.*\burl=http://(?:127\.0\.0\.1|localhost)\b.*$"),
     ),
 )
 

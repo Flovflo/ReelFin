@@ -23,11 +23,12 @@ public struct DemuxerFactory: Sendable {
     public func makeDemuxer(
         format: ContainerFormat,
         source: any MediaByteSource,
-        sourceURL: URL
+        sourceURL: URL,
+        sourceHeaders: [String: String] = [:]
     ) throws -> any MediaDemuxer {
         switch format {
         case .mp4, .mov:
-            return try MP4Demuxer(url: sourceURL, format: format)
+            return try MP4Demuxer(url: sourceURL, format: format, headers: sourceHeaders)
         case .matroska, .webm:
             guard allowCustomDemuxers, enableExperimentalMKV else {
                 throw DemuxerFactoryError.noLocalDemuxer(format)

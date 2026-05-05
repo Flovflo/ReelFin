@@ -56,6 +56,7 @@ struct NativePlayerView: View {
                     } else {
                         NativeMP4SampleBufferPlayerView(
                             url: playbackURL,
+                            headers: playbackHeaders,
                             startTimeSeconds: resolvedStartTime,
                             seekRequest: seekRequest,
                             baseDiagnostics: diagnostics,

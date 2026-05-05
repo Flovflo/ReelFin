@@ -3,6 +3,7 @@ import Shared
 
 public enum LocalMediaGatewayRoutePolicy {
     private static let iOSHighBitrateThreshold = 18_000_000
+    private static let maxMaterializedGatewayBytes: Int64 = 128 * 1_024 * 1_024
     private static let appleContainers: Set<String> = ["mp4", "m4v", "mov"]
 
     public static func shouldUseGateway(
@@ -11,11 +12,15 @@ public enum LocalMediaGatewayRoutePolicy {
         mediaCacheMode: MediaCacheMode,
         isTVOS: Bool,
         resumeSeconds: Double?,
-        hasCachedBytes: Bool
+        hasCachedBytes: Bool,
+        cachedBytes: Int64 = 0
     ) -> Bool {
         guard mediaCacheMode != .off, case let .directPlay(url) = route else { return false }
         guard LocalMediaGatewayURLPolicy.isSupportedRemoteURL(url) else { return false }
         guard isAppleCompatible(source: source) else { return false }
+        if let fileSize = source?.fileSize, fileSize > maxMaterializedGatewayBytes {
+            guard cachedBytes >= fileSize else { return false }
+        }
 
         if isTVOS {
             return true

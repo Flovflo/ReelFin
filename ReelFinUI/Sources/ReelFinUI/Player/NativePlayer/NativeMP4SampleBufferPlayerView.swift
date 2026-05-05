@@ -7,6 +7,7 @@ import UIKit
 
 struct NativeMP4SampleBufferPlayerView: UIViewControllerRepresentable {
     let url: URL
+    let headers: [String: String]
     let startTimeSeconds: Double
     let seekRequest: NativePlayerSeekRequest?
     let baseDiagnostics: [String]
@@ -18,6 +19,7 @@ struct NativeMP4SampleBufferPlayerView: UIViewControllerRepresentable {
         let controller = NativeMP4SampleBufferPlayerController()
         controller.configure(
             url: url,
+            headers: headers,
             startTimeSeconds: startTimeSeconds,
             seekRequest: seekRequest,
             baseDiagnostics: baseDiagnostics,
@@ -31,6 +33,7 @@ struct NativeMP4SampleBufferPlayerView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: NativeMP4SampleBufferPlayerController, context: Context) {
         controller.configure(
             url: url,
+            headers: headers,
             startTimeSeconds: startTimeSeconds,
             seekRequest: seekRequest,
             baseDiagnostics: baseDiagnostics,
@@ -54,6 +57,7 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
     private let metricsLock = NSLock()
 
     private var currentURL: URL?
+    private var currentHeaders: [String: String] = [:]
     private var currentStartTimeSeconds: Double = 0
     private var appliedSeekRequestID: Int?
     private var baseDiagnostics: [String] = []
@@ -108,6 +112,7 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
 
     func configure(
         url: URL,
+        headers: [String: String],
         startTimeSeconds: Double,
         seekRequest: NativePlayerSeekRequest?,
         baseDiagnostics: [String],
@@ -120,24 +125,26 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
         self.onPlaybackTime = onPlaybackTime
         pendingPause = isPaused
         isTornDown = false
-        if currentURL != url {
+        if currentURL != url || currentHeaders != headers {
             currentURL = url
+            currentHeaders = headers
             currentStartTimeSeconds = startTimeSeconds
             appliedSeekRequestID = seekRequest?.id
-            startPlayback(url: url, startTimeSeconds: startTimeSeconds)
+            startPlayback(url: url, headers: headers, startTimeSeconds: startTimeSeconds)
         } else if let seekRequest, appliedSeekRequestID != seekRequest.id {
             appliedSeekRequestID = seekRequest.id
-            startPlayback(url: url, startTimeSeconds: seekRequest.targetSeconds)
+            startPlayback(url: url, headers: headers, startTimeSeconds: seekRequest.targetSeconds)
         }
         setPaused(isPaused)
         publishDiagnostics()
     }
 
-    private func startPlayback(url: URL, startTimeSeconds: Double) {
+    private func startPlayback(url: URL, headers: [String: String], startTimeSeconds: Double) {
         stopPlayback(publishFinalPlaybackTime: false)
         playbackGeneration += 1
         pauseStateGate.reset()
         currentURL = url
+        currentHeaders = headers
         currentStartTimeSeconds = startTimeSeconds
         updateMetrics { $0 = NativeMP4SampleBufferMetrics() }
         updateMetrics { $0.state = "openingAsset" }
@@ -145,7 +152,7 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
             self?.publishDiagnostics()
         }
         openTask = Task { [weak self] in
-            await self?.openAssetAndStart(url: url, startTimeSeconds: startTimeSeconds)
+            await self?.openAssetAndStart(url: url, headers: headers, startTimeSeconds: startTimeSeconds)
         }
     }
 
@@ -173,12 +180,12 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
         pauseStateGate.reset()
     }
 
-    private func openAssetAndStart(url: URL, startTimeSeconds: Double) async {
+    private func openAssetAndStart(url: URL, headers: [String: String], startTimeSeconds: Double) async {
         do {
             AppLog.playback.notice("nativeplayer.sampleReader.start — backend=AVAssetReader")
             let readableURL = try AVFoundationReadableMediaURL(originalURL: url, format: .mp4)
             self.readableURL = readableURL
-            let asset = AVURLAsset(url: readableURL.assetURL)
+            let asset = AVURLAsset(url: readableURL.assetURL, options: assetOptions(headers: headers))
             let tracks = try await asset.load(.tracks)
             let duration = try await asset.load(.duration)
             let videoHDRMetadata: HDRMetadata?
@@ -212,6 +219,10 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
             }
             publishDiagnostics()
         }
+    }
+
+    private func assetOptions(headers: [String: String]) -> [String: Any]? {
+        headers.isEmpty ? nil : ["AVURLAssetHTTPHeaderFieldsKey": headers]
     }
 
     private func addOutputs(to reader: AVAssetReader, tracks: [AVAssetTrack]) throws {

@@ -154,6 +154,16 @@ final class PlaybackPolicyTests: XCTestCase {
                 reason: StartupFailureReason.playerItemFailed.rawValue
             )
         )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.playerItemFailedTransient.rawValue
+            )
+        )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
+                reason: StartupFailureReason.startupWatchdogExpired.rawValue
+            )
+        )
     }
 
     func testDirectPlayRecoveryPreservesDirectPlayRoute() {

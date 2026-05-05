@@ -4,7 +4,7 @@ import NativeMediaCore
 struct LocalMediaGatewayHTTPRequest {
     let method: String
     let path: String
-    let range: ByteRange?
+    let range: LocalMediaGatewayRequestedRange?
 
     init?(_ data: Data) {
         guard let text = String(data: data, encoding: .utf8),
@@ -19,18 +19,32 @@ struct LocalMediaGatewayHTTPRequest {
         self.range = lines.compactMap(Self.range(fromHeaderLine:)).first
     }
 
-    private static func range(fromHeaderLine line: String) -> ByteRange? {
+    private static func range(fromHeaderLine line: String) -> LocalMediaGatewayRequestedRange? {
         let pair = line.split(separator: ":", maxSplits: 1).map(String.init)
         guard pair.count == 2, pair[0].lowercased() == "range" else { return nil }
         let value = pair[1].trimmingCharacters(in: .whitespaces)
         guard value.hasPrefix("bytes=") else { return nil }
-        let bounds = value.dropFirst(6).split(separator: "-", maxSplits: 1).map(String.init)
-        guard bounds.count == 2,
-              let start = Int64(bounds[0]),
-              let end = Int64(bounds[1]),
-              end >= start else { return nil }
-        return ByteRange(offset: start, length: Int(end - start + 1))
+        let bounds = value
+            .dropFirst(6)
+            .split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+            .map(String.init)
+        guard bounds.count == 2 else { return nil }
+        if bounds[0].isEmpty, let suffixLength = Int(bounds[1]), suffixLength > 0 {
+            return .suffix(length: suffixLength)
+        }
+        guard let start = Int64(bounds[0]), start >= 0 else { return nil }
+        if bounds[1].isEmpty {
+            return .openEnded(offset: start)
+        }
+        guard let end = Int64(bounds[1]), end >= start else { return nil }
+        return .bounded(ByteRange(offset: start, length: Int(end - start + 1)))
     }
+}
+
+enum LocalMediaGatewayRequestedRange: Equatable {
+    case bounded(ByteRange)
+    case openEnded(offset: Int64)
+    case suffix(length: Int)
 }
 
 enum LocalMediaGatewayHTTPResponse {

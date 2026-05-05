@@ -62,7 +62,7 @@ public actor NativePlayerPlaybackController {
 
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
-        resolver: OriginalMediaResolver = OriginalMediaResolver(),
+        resolver: OriginalMediaResolver = OriginalMediaResolver(authPolicy: .header),
         mediaGatewayStore: MediaGatewayStore? = nil
     ) {
         self.apiClient = apiClient
@@ -114,8 +114,10 @@ public actor NativePlayerPlaybackController {
         nativeConfig: NativePlayerConfig,
         startTimeTicks: Int64?
     ) async throws -> NativePlayerPlaybackSnapshot {
+        let originalHeaders = authenticatedOriginalHeaders(resolution: resolution, session: session)
+        let originalURL = authenticatedOriginalURL(resolution: resolution, headers: originalHeaders)
         let shouldUseAppleNativeSurface = nativeConfig.surfacePreference == .directPlayWhenPossible
-            && Self.shouldUseAppleNativeSurface(source: resolution.mediaSource, url: resolution.url)
+            && Self.shouldUseAppleNativeSurface(source: resolution.mediaSource, url: originalURL)
 
         if shouldUseAppleNativeSurface {
             let audio = resolution.mediaSource.audioTracks
@@ -145,7 +147,9 @@ public actor NativePlayerPlaybackController {
         let byteSource = makeByteSource(
             resolution: resolution,
             configuration: configuration,
-            session: session
+            session: session,
+            originalURL: originalURL,
+            originalHeaders: originalHeaders
         )
         let source = byteSource.source
         AppLog.playback.notice(
@@ -165,7 +169,7 @@ public actor NativePlayerPlaybackController {
             demuxer = try DemuxerFactory(
                 allowCustomDemuxers: nativeConfig.allowCustomDemuxers,
                 enableExperimentalMKV: nativeConfig.enableExperimentalMKV
-            ).makeDemuxer(format: probe.format, source: source, sourceURL: resolution.url)
+            ).makeDemuxer(format: probe.format, source: source, sourceURL: originalURL, sourceHeaders: originalHeaders)
             AppLog.playback.notice(
                 "nativeplayer.demuxer.selected — source=\(resolution.mediaSource.id, privacy: .public) demuxer=\(String(describing: type(of: demuxer)), privacy: .public)"
             )
@@ -247,7 +251,7 @@ public actor NativePlayerPlaybackController {
             )
         }
 
-        let playbackURL = plan.canStartLocalPlayback ? resolution.url : nil
+        let playbackURL = plan.canStartLocalPlayback ? originalURL : nil
         AppLog.playback.notice(
             "nativeplayer.sampleBuffer.route.selected — source=\(resolution.mediaSource.id, privacy: .public) avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
         )
@@ -256,7 +260,7 @@ public actor NativePlayerPlaybackController {
             routeDescription: "NativeEngine(\(probe.format.rawValue))",
             surface: .sampleBuffer,
             playbackURL: playbackURL,
-            playbackHeaders: resolution.headers,
+            playbackHeaders: originalHeaders,
             startTimeSeconds: startTimeSeconds,
             playbackErrorMessage: plan.canStartLocalPlayback ? nil : diagnostics.failureReason,
             audioTracks: audio,
@@ -269,9 +273,11 @@ public actor NativePlayerPlaybackController {
     private func makeByteSource(
         resolution: OriginalMediaResolution,
         configuration: ServerConfiguration,
-        session: UserSession
+        session: UserSession,
+        originalURL: URL,
+        originalHeaders: [String: String]
     ) -> (source: any MediaByteSource, type: String) {
-        let upstream = HTTPRangeByteSource(url: resolution.url, headers: resolution.headers)
+        let upstream = HTTPRangeByteSource(url: originalURL, headers: originalHeaders)
         guard configuration.mediaCacheMode != .off, let mediaGatewayStore else {
             return (upstream, "HTTPRangeByteSource")
         }
@@ -281,11 +287,25 @@ public actor NativePlayerPlaybackController {
             serverID: configuration.serverURL.host ?? configuration.serverURL.absoluteString,
             itemID: resolution.mediaSource.itemID,
             sourceID: resolution.mediaSource.id,
-            routeURL: resolution.url,
-            routeHeaders: resolution.headers
+            routeURL: originalURL,
+            routeHeaders: originalHeaders
         )
         let cached = CachingMediaByteSource(upstream: upstream, store: mediaGatewayStore, key: key)
         return (cached, "CachingMediaByteSource(HTTPRangeByteSource)")
+    }
+
+    private nonisolated func authenticatedOriginalHeaders(
+        resolution: OriginalMediaResolution,
+        session: UserSession
+    ) -> [String: String] {
+        resolution.headers.merging(PlaybackAuthenticationHeaders.jellyfin(token: session.token)) { current, _ in current }
+    }
+
+    private nonisolated func authenticatedOriginalURL(
+        resolution: OriginalMediaResolution,
+        headers: [String: String]
+    ) -> URL {
+        PlaybackAuthenticatedRequestURL.forInternalURLSession(resolution.url, headers: headers)
     }
 
     private func plannerOptions(from config: NativePlayerConfig) -> NativePlaybackPlannerOptions {
@@ -330,6 +350,12 @@ public actor NativePlayerPlaybackController {
         source: MediaSource,
         url: URL
     ) -> Bool {
+        if !url.isFileURL,
+           let fileSize = source.fileSize,
+           fileSize > maxRemoteAppleNativeProgressiveBytes {
+            return false
+        }
+
         let capabilities = DeviceCapabilities()
         let containers = normalizedContainers(source.container, fallbackURL: url)
         guard containers.contains(where: { capabilities.directPlayableContainers.contains($0) }) else {
@@ -349,6 +375,8 @@ public actor NativePlayerPlaybackController {
         }
         return sourceAudioSupported || anyTrackSupported
     }
+
+    private static let maxRemoteAppleNativeProgressiveBytes: Int64 = 8 * 1_024 * 1_024 * 1_024
 
     public nonisolated static func originalPlaybackInfoOptions(
         nativeConfig: NativePlayerConfig,
@@ -372,10 +400,11 @@ public actor NativePlayerPlaybackController {
         session: UserSession
     ) -> PlaybackAssetSelection {
         var headers = resolution.headers
-        headers["X-Emby-Token"] = session.token
+        headers.merge(PlaybackAuthenticationHeaders.jellyfin(token: session.token)) { current, _ in current }
+        let assetURL = PlaybackAuthenticatedRequestURL.forInternalURLSession(resolution.url, headers: headers)
         let source = resolution.mediaSource
         let debugInfo = PlaybackDebugInfo(
-            container: source.container ?? resolution.url.pathExtension,
+            container: source.container ?? assetURL.pathExtension,
             videoCodec: source.videoCodec ?? "unknown",
             videoBitDepth: source.videoBitDepth,
             hdrMode: hdrMode(for: source),
@@ -385,8 +414,8 @@ public actor NativePlayerPlaybackController {
         )
         return PlaybackAssetSelection(
             source: source,
-            decision: PlaybackDecision(sourceID: source.id, route: .directPlay(resolution.url)),
-            assetURL: resolution.url,
+            decision: PlaybackDecision(sourceID: source.id, route: .directPlay(assetURL)),
+            assetURL: assetURL,
             headers: headers,
             debugInfo: debugInfo
         )
@@ -398,7 +427,16 @@ public actor NativePlayerPlaybackController {
         startTimeTicks: Int64?
     ) -> NativePlayerPlaybackSnapshot {
         var preparedSelection = selection
-        preparedSelection.headers["X-Emby-Token"] = session.token
+        preparedSelection.headers.merge(PlaybackAuthenticationHeaders.jellyfin(token: session.token)) { current, _ in current }
+        preparedSelection.assetURL = PlaybackAuthenticatedRequestURL.forInternalURLSession(
+            preparedSelection.assetURL,
+            headers: preparedSelection.headers
+        )
+        preparedSelection.decision = PlaybackDecision(
+            sourceID: preparedSelection.source.id,
+            route: .directPlay(preparedSelection.assetURL),
+            playbackPlan: preparedSelection.decision.playbackPlan
+        )
         let audio = preparedSelection.source.audioTracks
         let subtitles = preparedSelection.source.subtitleTracks
         return NativePlayerPlaybackSnapshot(

@@ -29,6 +29,50 @@ final class HTTPRangeByteSourceTests: XCTestCase {
         XCTAssertEqual(metrics.rangeRequestCount, 1)
     }
 
+    func testTruncatesIgnoredZeroOffsetRangeResponseToRequestedLength() async throws {
+        MockRangeProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=0-3")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Length": "10"]
+            )!
+            return (response, Data([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockRangeProtocol.self]
+        let source = HTTPRangeByteSource(url: URL(string: "https://example.com/movie.mp4")!, sessionConfiguration: config)
+
+        let data = try await source.read(range: ByteRange(offset: 0, length: 4))
+
+        XCTAssertEqual(data, Data([0, 1, 2, 3]))
+    }
+
+    func testRejectsIgnoredNonZeroOffsetRangeResponse() async throws {
+        MockRangeProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=4-6")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Length": "10"]
+            )!
+            return (response, Data([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockRangeProtocol.self]
+        let source = HTTPRangeByteSource(url: URL(string: "https://example.com/movie.mp4")!, sessionConfiguration: config)
+
+        do {
+            _ = try await source.read(range: ByteRange(offset: 4, length: 3))
+            XCTFail("Expected non-zero ignored range to fail")
+        } catch MediaAccessError.httpStatus(200) {
+        } catch {
+            XCTFail("Expected HTTP status 200 error, got \(error)")
+        }
+    }
+
     func testReadsByteRangeFromLocalFileWithoutLoadingWholeFile() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

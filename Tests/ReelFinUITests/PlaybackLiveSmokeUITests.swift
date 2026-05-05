@@ -121,8 +121,20 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
 
         let playerScreen = app.otherElements["native_player_screen"].firstMatch
         XCTAssertTrue(playerScreen.waitForExistence(timeout: 15))
-        sleep(2)
+        observePlaybackStartup()
         captureScreenshot(of: app, name: "\(scenario)-player-after-play")
+    }
+
+    private func observePlaybackStartup() {
+        let seconds = playbackObservationSeconds()
+        guard seconds > 0 else { return }
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    private func playbackObservationSeconds() -> TimeInterval {
+        let raw = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_OBSERVE_SECONDS"] ?? "12"
+        guard let seconds = TimeInterval(raw) else { return 12 }
+        return min(max(seconds, 0), 120)
     }
 
     private func selectCard(

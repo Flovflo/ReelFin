@@ -333,7 +333,7 @@ public actor PlaybackCoordinator {
         assetURL = injectingAPIKeyIfNeeded(assetURL, token: session.token)
 
         var headers = source.requiredHTTPHeaders
-        headers["X-Emby-Token"] = session.token
+        headers.merge(PlaybackAuthenticationHeaders.jellyfin(token: session.token)) { current, _ in current }
 
         let debug = PlaybackDebugInfo(
             container: source.container ?? "unknown",

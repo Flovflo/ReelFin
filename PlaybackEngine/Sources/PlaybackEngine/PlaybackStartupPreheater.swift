@@ -220,19 +220,16 @@ public enum PlaybackStartupPreheater {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
+        let rangeStart = requestPlan.rangeStart ?? 0
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(requestPlan.url, headers: headers))
         request.timeoutInterval = requestPlan.timeout
         request.setValue("*/*", forHTTPHeaderField: "Accept")
+        request.setValue("bytes=\(rangeStart)-", forHTTPHeaderField: "Range")
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        if let rangeStart = requestPlan.rangeStart {
-            let end = rangeStart + Int64(requestPlan.rangeLength) - 1
-            request.setValue("bytes=\(rangeStart)-\(end)", forHTTPHeaderField: "Range")
-        }
-
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AppError.network("Startup preheat returned a non-HTTP response.")
         }
@@ -240,9 +237,17 @@ public enum PlaybackStartupPreheater {
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             throw AppError.network("Startup preheat failed (\(httpResponse.statusCode)).")
         }
+        guard httpResponse.statusCode == 206 || rangeStart == 0 else {
+            throw AppError.network("Startup preheat ignored a non-zero range request.")
+        }
 
-        if requestPlan.rangeStart == nil, data.count > requestPlan.rangeLength {
-            return Data(data.prefix(requestPlan.rangeLength))
+        var data = Data()
+        data.reserveCapacity(requestPlan.rangeLength)
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count >= requestPlan.rangeLength {
+                break
+            }
         }
 
         return data

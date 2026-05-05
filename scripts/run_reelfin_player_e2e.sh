@@ -6,6 +6,7 @@ ENV_FILE="${REELFIN_E2E_ENV_FILE:-${ROOT_DIR}/.artifacts/secrets/reelfin-e2e.env
 ARTIFACT_ROOT="${ROOT_DIR}/.artifacts/player-e2e"
 TIMESTAMP="$(date +"%Y%m%d-%H%M%S")"
 RUN_DIR="${ARTIFACT_ROOT}/${TIMESTAMP}"
+DERIVED_DATA_PATH="${RUN_DIR}/DerivedData"
 IOS_DESTINATION="${REELFIN_E2E_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 17,OS=26.3.1}"
 TVOS_DESTINATION="${REELFIN_E2E_TVOS_DESTINATION:-platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2}"
 LOOPS="${REELFIN_TEST_LOOPS:-2}"
@@ -114,6 +115,7 @@ export REELFIN_TEST_SAMPLE_SIZE="${SAMPLE_SIZE}"
 export REELFIN_TEST_MAX_FAILURES="${MAX_FAILURES}"
 export REELFIN_TEST_EXPLICIT_ONLY="${REELFIN_TEST_EXPLICIT_ONLY:-1}"
 export REELFIN_TEST_DIRECTPLAY_ONLY="${REELFIN_TEST_DIRECTPLAY_ONLY:-1}"
+export REELFIN_LIVE_UI_OBSERVE_SECONDS="${REELFIN_LIVE_UI_OBSERVE_SECONDS:-12}"
 export SIMCTL_CHILD_REELFIN_TEST_SERVER_URL="${REELFIN_TEST_SERVER_URL}"
 export SIMCTL_CHILD_REELFIN_TEST_USERNAME="${REELFIN_TEST_USERNAME}"
 export SIMCTL_CHILD_REELFIN_TEST_PASSWORD="${REELFIN_TEST_PASSWORD}"
@@ -122,6 +124,7 @@ export SIMCTL_CHILD_REELFIN_TEST_SAMPLE_SIZE="${REELFIN_TEST_SAMPLE_SIZE}"
 export SIMCTL_CHILD_REELFIN_TEST_MAX_FAILURES="${REELFIN_TEST_MAX_FAILURES}"
 export SIMCTL_CHILD_REELFIN_TEST_EXPLICIT_ONLY="${REELFIN_TEST_EXPLICIT_ONLY}"
 export SIMCTL_CHILD_REELFIN_TEST_DIRECTPLAY_ONLY="${REELFIN_TEST_DIRECTPLAY_ONLY}"
+export SIMCTL_CHILD_REELFIN_LIVE_UI_OBSERVE_SECONDS="${REELFIN_LIVE_UI_OBSERVE_SECONDS}"
 export SIMCTL_CHILD_TEST_DIRECTPLAY_MP4_ITEM_ID="${TEST_DIRECTPLAY_MP4_ITEM_ID:-}"
 export SIMCTL_CHILD_TEST_MKV_ITEM_ID="${TEST_MKV_ITEM_ID:-}"
 export SIMCTL_CHILD_TEST_HDR_ITEM_ID="${TEST_HDR_ITEM_ID:-}"
@@ -152,10 +155,40 @@ for line in sys.stdin:
 '
 }
 
+ios_simulator_name() {
+  sed -E 's/.*(^|,)name=([^,]+).*/\2/' <<< "${IOS_DESTINATION}"
+}
+
+ensure_ios_simulator_booted_for_logs() {
+  local simulator_name
+  simulator_name="$(ios_simulator_name)"
+  xcrun simctl boot "${simulator_name}" >/dev/null 2>&1 || true
+  xcrun simctl bootstatus "${simulator_name}" -b >/dev/null
+}
+
 settle_ios_simulator_for_ui_test() {
+  ensure_ios_simulator_booted_for_logs
   xcrun simctl terminate booted com.reelfin.app >/dev/null 2>&1 || true
   xcrun simctl terminate booted com.reelfin.ui.tests.xctrunner >/dev/null 2>&1 || true
   sleep 2
+}
+
+start_ios_runtime_log_capture() {
+  local output_file="$1"
+  : > "${output_file}"
+  xcrun simctl spawn booted log stream \
+    --style compact \
+    --level debug \
+    --predicate 'process == "ReelFin" OR process == "ReelFinUITests-Runner"' \
+    > "${output_file}" 2>&1 &
+  echo "$!"
+}
+
+stop_ios_runtime_log_capture() {
+  local pid="${1:-}"
+  [[ -z "${pid}" ]] && return 0
+  kill "${pid}" >/dev/null 2>&1 || true
+  wait "${pid}" >/dev/null 2>&1 || true
 }
 
 run_live_ui_smoke_test() {
@@ -164,6 +197,7 @@ run_live_ui_smoke_test() {
     -project ReelFin.xcodeproj \
     -scheme ReelFin \
     -destination "${IOS_DESTINATION}" \
+    -derivedDataPath "${DERIVED_DATA_PATH}" \
     -resultBundlePath "${result_bundle}" \
     -only-testing:ReelFinUITests/PlaybackLiveSmokeUITests/testLiveLoginAndStartPlayback
 }
@@ -219,6 +253,7 @@ xcodebuild test \
   -project ReelFin.xcodeproj \
   -scheme ReelFin \
   -destination "${IOS_DESTINATION}" \
+  -derivedDataPath "${DERIVED_DATA_PATH}" \
   -resultBundlePath "${RUN_DIR}/PlaybackEngine.xcresult" \
   -only-testing:PlaybackEngineTests/NativePlayerSessionRoutingTests \
   -only-testing:PlaybackEngineTests/NativePlayerPlaybackControllerEndToEndTests \
@@ -236,6 +271,9 @@ if [[ "${RUN_UI}" -eq 1 ]]; then
   echo
   echo "Running live iOS UI smoke test..."
   settle_ios_simulator_for_ui_test
+  ui_runtime_log="${RUN_DIR}/ios-live-ui-runtime.stream"
+  ui_log_pid="$(start_ios_runtime_log_capture "${ui_runtime_log}")"
+  trap 'stop_ios_runtime_log_capture "${ui_log_pid:-}"' EXIT
   set +e
   run_live_ui_smoke_test "${RUN_DIR}/LiveUI.xcresult" \
     | redact_xcode_ui_log \
@@ -250,9 +288,12 @@ if [[ "${RUN_UI}" -eq 1 ]]; then
         | redact_xcode_ui_log \
         | tee "${RUN_DIR}/xcodebuild-live-ui-retry.log"
     else
+      stop_ios_runtime_log_capture "${ui_log_pid}"
       exit "${ui_status}"
     fi
   fi
+  stop_ios_runtime_log_capture "${ui_log_pid}"
+  trap - EXIT
 fi
 
 if [[ "${RUN_TVOS}" -eq 1 ]]; then
@@ -262,6 +303,7 @@ if [[ "${RUN_TVOS}" -eq 1 ]]; then
     -project ReelFin.xcodeproj \
     -scheme ReelFinTV \
     -destination "${TVOS_DESTINATION}" \
+    -derivedDataPath "${DERIVED_DATA_PATH}-tvos" \
     | tee "${RUN_DIR}/xcodebuild-tvos-build.log"
 fi
 
