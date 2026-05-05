@@ -13,6 +13,12 @@ enum HomeSectionMoveDirection {
     case down
 }
 
+enum NativePlayerSettingsMode: String, CaseIterable, Hashable {
+    case disabled
+    case directPlayWhenPossible
+    case customPlayer
+}
+
 @MainActor
 final class ServerSettingsViewModel: ObservableObject {
     @Published var serverURLText = ""
@@ -27,6 +33,7 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var preferredSubtitleLanguage = ""
     @Published var forceH264FallbackWhenNotDirectPlay = true
     @Published var nativePlayerEnabled = false
+    @Published var nativePlayerSurfacePreference: NativePlayerSurfacePreference = .directPlayWhenPossible
     @Published var episodeReleaseNotificationsEnabled = false
     @Published var homeOrderedSectionKinds: [HomeSectionKind] = HomeViewModel.defaultSectionOrder
     @Published var homeHiddenSectionKinds: Set<HomeSectionKind> = []
@@ -64,16 +71,18 @@ final class ServerSettingsViewModel: ObservableObject {
             allowSDRFallback = config.allowSDRFallback
             preferAudioTranscodeOnly = config.preferAudioTranscodeOnly
             forceH264FallbackWhenNotDirectPlay = config.forceH264FallbackWhenNotDirectPlay
-            nativePlayerEnabled = config.nativePlayerConfig
+            let nativeConfig = config.nativePlayerConfig
                 .applyingRuntimeOverride(userDefaults: defaults)
-                .enabled
+            nativePlayerEnabled = nativeConfig.enabled
+            nativePlayerSurfacePreference = nativeConfig.surfacePreference
             preferredAudioLanguage = config.preferredAudioLanguage ?? ""
             preferredSubtitleLanguage = config.preferredSubtitleLanguage ?? ""
             customBitrateMbpsText = Self.formatBitrateInput(from: config.maxStreamingBitrateOverride)
         } else {
-            nativePlayerEnabled = NativePlayerConfig()
+            let nativeConfig = NativePlayerConfig()
                 .applyingRuntimeOverride(userDefaults: defaults)
-                .enabled
+            nativePlayerEnabled = nativeConfig.enabled
+            nativePlayerSurfacePreference = nativeConfig.surfacePreference
         }
 
         let storedHomePreferences = HomeSectionPreferencesStore.load(defaults: defaults)
@@ -142,8 +151,20 @@ final class ServerSettingsViewModel: ObservableObject {
     var advancedPlaybackSummary: String {
         let bridge = localPlaybackBridgeEnabled ? "Local bridge on" : "Server-only playback"
         let startup = fasterVideoOnlyStartupEnabled ? "fast startup" : "full startup"
-        let native = nativePlayerEnabled ? "Native Player on" : "Native Player off"
+        let native = Self.nativeModeLabel(for: nativePlayerSettingsMode)
         return "\(native) | \(bridge) | \(startup) | \(Self.dolbyVisionLabel(for: dolbyVisionPackagingMode))"
+    }
+
+    var nativePlayerSettingsMode: NativePlayerSettingsMode {
+        guard nativePlayerEnabled else {
+            return .disabled
+        }
+        switch nativePlayerSurfacePreference {
+        case .directPlayWhenPossible:
+            return .directPlayWhenPossible
+        case .customPlayer:
+            return .customPlayer
+        }
     }
 
     var canSave: Bool {
@@ -179,6 +200,7 @@ final class ServerSettingsViewModel: ObservableObject {
             || preferAudioTranscodeOnly != (saved?.preferAudioTranscodeOnly ?? true)
             || forceH264FallbackWhenNotDirectPlay != (saved?.forceH264FallbackWhenNotDirectPlay ?? false)
             || nativePlayerEnabled != (saved?.nativePlayerConfig.enabled ?? false)
+            || nativePlayerSurfacePreference != (saved?.nativePlayerConfig.surfacePreference ?? .directPlayWhenPossible)
             || normalizedLanguageCode(from: preferredAudioLanguage) != saved?.preferredAudioLanguage
             || normalizedLanguageCode(from: preferredSubtitleLanguage) != saved?.preferredSubtitleLanguage
             || parsedCustomBitrateOverride() != saved?.maxStreamingBitrateOverride
@@ -234,10 +256,10 @@ final class ServerSettingsViewModel: ObservableObject {
             let savedAllowCellularStreaming = saved?.allowCellularStreaming ?? true
             var nativeConfig = saved?.nativePlayerConfig ?? NativePlayerConfig()
             nativeConfig.enabled = nativePlayerEnabled
+            nativeConfig.surfacePreference = nativePlayerSurfacePreference
             nativeConfig.alwaysRequestOriginalFile = true
             nativeConfig.allowServerTranscodeFallback = false
-            defaults.set(nativePlayerEnabled, forKey: NativePlayerRuntimeDefaults.enabledKey)
-            defaults.set(true, forKey: NativePlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
+            persistNativePlayerRuntimeDefaults()
 
             let configuration = ServerConfiguration(
                 serverURL: url,
@@ -319,11 +341,26 @@ final class ServerSettingsViewModel: ObservableObject {
 
     func setNativePlayerEnabled(_ enabled: Bool) {
         nativePlayerEnabled = enabled
-        defaults.set(enabled, forKey: NativePlayerRuntimeDefaults.enabledKey)
-        defaults.set(true, forKey: NativePlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
         if enabled {
             forceH264FallbackWhenNotDirectPlay = false
         }
+        persistNativePlayerRuntimeDefaults()
+    }
+
+    func setNativePlayerSettingsMode(_ mode: NativePlayerSettingsMode) {
+        switch mode {
+        case .disabled:
+            nativePlayerEnabled = false
+        case .directPlayWhenPossible:
+            nativePlayerEnabled = true
+            nativePlayerSurfacePreference = .directPlayWhenPossible
+            forceH264FallbackWhenNotDirectPlay = false
+        case .customPlayer:
+            nativePlayerEnabled = true
+            nativePlayerSurfacePreference = .customPlayer
+            forceH264FallbackWhenNotDirectPlay = false
+        }
+        persistNativePlayerRuntimeDefaults()
     }
 
     func setHomeSectionVisibility(_ kind: HomeSectionKind, isVisible: Bool) {
@@ -722,6 +759,26 @@ final class ServerSettingsViewModel: ObservableObject {
             return "HDR10 Fallback"
         case .primaryDolbyVisionExperimental:
             return "Experimental DV-First"
+        }
+    }
+
+    private func persistNativePlayerRuntimeDefaults() {
+        defaults.set(nativePlayerEnabled, forKey: NativePlayerRuntimeDefaults.enabledKey)
+        NativePlayerRuntimeDefaults.setSurfacePreference(
+            nativePlayerSurfacePreference,
+            userDefaults: defaults
+        )
+        defaults.set(true, forKey: NativePlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
+    }
+
+    private static func nativeModeLabel(for mode: NativePlayerSettingsMode) -> String {
+        switch mode {
+        case .disabled:
+            return "Native Player off"
+        case .directPlayWhenPossible:
+            return "Native auto Direct Play"
+        case .customPlayer:
+            return "Native custom player"
         }
     }
 }

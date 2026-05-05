@@ -18,6 +18,7 @@ final class NativePlayerConfigTests: XCTestCase {
         XCTAssertTrue(config.enableExperimentalPGS)
         XCTAssertTrue(config.enableExperimentalTrueHD)
         XCTAssertTrue(config.enableExperimentalDTS)
+        XCTAssertEqual(config.surfacePreference, .directPlayWhenPossible)
     }
 
     func testServerConfigurationDecodesMissingNativeConfigAsDefault() throws {
@@ -27,6 +28,55 @@ final class NativePlayerConfigTests: XCTestCase {
 
         XCTAssertFalse(config.nativePlayerConfig.enabled)
         XCTAssertTrue(config.nativePlayerConfig.alwaysRequestOriginalFile)
+        XCTAssertEqual(config.nativePlayerConfig.surfacePreference, .directPlayWhenPossible)
+    }
+
+    func testNativePlayerConfigDecodesMissingSurfacePreferenceAsDefault() throws {
+        let json = #"{"enabled":true}"#.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(NativePlayerConfig.self, from: json)
+
+        XCTAssertTrue(config.enabled)
+        XCTAssertTrue(config.alwaysRequestOriginalFile)
+        XCTAssertEqual(config.surfacePreference, .directPlayWhenPossible)
+    }
+
+    func testRuntimeOverrideUsesStoredSurfacePreferenceWhenNativeModeEnabled() throws {
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: NativePlayerRuntimeDefaults.enabledKey)
+        defaults.set(
+            NativePlayerSurfacePreference.customPlayer.rawValue,
+            forKey: NativePlayerRuntimeDefaults.surfacePreferenceKey
+        )
+
+        let effective = NativePlayerConfig(
+            enabled: false,
+            surfacePreference: .directPlayWhenPossible
+        ).applyingRuntimeOverride(
+            environment: ["XCTestConfigurationFilePath": "/tmp/ReelFin.xctestconfiguration"],
+            userDefaults: defaults
+        )
+
+        XCTAssertTrue(effective.enabled)
+        XCTAssertEqual(effective.surfacePreference, .customPlayer)
+        XCTAssertTrue(effective.alwaysRequestOriginalFile)
+        XCTAssertFalse(effective.allowServerTranscodeFallback)
+    }
+
+    func testExplicitRuntimeDisableOverridesPersistedNativeMode() throws {
+        let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
+
+        let effective = NativePlayerConfig(enabled: true).applyingRuntimeOverride(
+            environment: ["XCTestConfigurationFilePath": "/tmp/ReelFin.xctestconfiguration"],
+            userDefaults: defaults
+        )
+
+        XCTAssertFalse(effective.enabled)
     }
 
     func testRuntimeDefaultsCanEnableNativeModeWithoutChangingPersistedConfig() throws {
@@ -91,7 +141,7 @@ final class NativePlayerConfigTests: XCTestCase {
         #endif
     }
 
-    func testRuntimeDefaultsForceNativeModeOnDebugBranchAfterMigration() throws {
+    func testRuntimeDefaultsRespectStoredChoiceAfterCurrentBranchMigration() throws {
         let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -103,14 +153,10 @@ final class NativePlayerConfigTests: XCTestCase {
             userDefaults: defaults
         )
 
-        #if DEBUG
-        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
-        #else
         XCTAssertFalse(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
-        #endif
     }
 
-    func testDebugRuntimeOverrideIgnoresSettingsToggleUnlessEnvironmentOptsOut() throws {
+    func testDebugRuntimeOverrideRespectsStoredSettingsToggle() throws {
         let suiteName = "NativePlayerConfigTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -121,13 +167,7 @@ final class NativePlayerConfigTests: XCTestCase {
             userDefaults: defaults
         )
 
-        #if DEBUG
-        XCTAssertTrue(effective.enabled)
-        XCTAssertTrue(effective.alwaysRequestOriginalFile)
-        XCTAssertFalse(effective.allowServerTranscodeFallback)
-        #else
         XCTAssertFalse(effective.enabled)
-        #endif
     }
 
     func testRuntimeOverrideLetsXCTestControlNativeModeWithDefaults() throws {

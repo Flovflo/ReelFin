@@ -109,7 +109,10 @@ public actor NativePlayerPlaybackController {
         nativeConfig: NativePlayerConfig,
         startTimeTicks: Int64?
     ) async throws -> NativePlayerPlaybackSnapshot {
-        if Self.shouldUseAppleNativeSurface(source: resolution.mediaSource, url: resolution.url) {
+        let shouldUseAppleNativeSurface = nativeConfig.surfacePreference == .directPlayWhenPossible
+            && Self.shouldUseAppleNativeSurface(source: resolution.mediaSource, url: resolution.url)
+
+        if shouldUseAppleNativeSurface {
             let audio = resolution.mediaSource.audioTracks
             let subtitles = resolution.mediaSource.subtitleTracks
             let selection = makeAppleNativeSelection(
@@ -211,7 +214,7 @@ public actor NativePlayerPlaybackController {
         let startTimeSeconds = startTimeTicks.map { Double($0) / 10_000_000 }
 
         if plan.canStartLocalPlayback,
-           Self.shouldUseAppleNativeSurface(source: resolution.mediaSource, url: resolution.url) {
+           shouldUseAppleNativeSurface {
             let selection = makeAppleNativeSelection(
                 resolution: resolution,
                 session: session

@@ -81,17 +81,18 @@ struct ServerSettingsView: View {
                         }
                         .tint(.white)
 
-                        Toggle(
-                            isOn: Binding(
-                                get: { viewModel.nativePlayerEnabled },
-                                set: { viewModel.setNativePlayerEnabled($0) }
-                            )
+                        tvMenuRow(
+                            title: "Native Playback",
+                            value: viewModel.nativePlayerSettingsMode.settingsLabel
                         ) {
-                            Text("Use native local player")
-                                .font(.system(size: 14, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white)
+                            ForEach(NativePlayerSettingsMode.allCases, id: \.self) { mode in
+                                Button {
+                                    viewModel.setNativePlayerSettingsMode(mode)
+                                } label: {
+                                    Text(mode.settingsLabel)
+                                }
+                            }
                         }
-                        .tint(.white)
 
                         Toggle(isOn: $viewModel.forceH264FallbackWhenNotDirectPlay) {
                             Text("Use H.264 compatibility fallback")
@@ -99,6 +100,8 @@ struct ServerSettingsView: View {
                                 .foregroundStyle(.white)
                         }
                         .tint(.white)
+                        .disabled(viewModel.nativePlayerEnabled)
+                        .opacity(viewModel.nativePlayerEnabled ? 0.55 : 1)
                     }
 
                     tvSection(title: "Notifications") {
@@ -290,17 +293,9 @@ struct ServerSettingsView: View {
             }
 
             Section {
-                Toggle(
-                    isOn: Binding(
-                        get: { viewModel.nativePlayerEnabled },
-                        set: { viewModel.setNativePlayerEnabled($0) }
-                    )
-                ) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Native Local Player")
-                        Text("Experimental original-file path. Server transcoding is blocked while this is on.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                Picker("Native Playback", selection: nativePlayerModeSelection) {
+                    ForEach(NativePlayerSettingsMode.allCases, id: \.self) { mode in
+                        Text(mode.settingsLabel).tag(mode)
                     }
                 }
 
@@ -323,7 +318,7 @@ struct ServerSettingsView: View {
             } header: {
                 Text("Playback")
             } footer: {
-                Text("Native mode asks Jellyfin for the original file and refuses HLS transcode URLs.")
+                Text("Auto uses Apple Direct Play when possible, then ReelFin's custom player. Always Custom Player bypasses AVKit for compatible originals.")
             }
 
             Section {
@@ -432,6 +427,13 @@ struct ServerSettingsView: View {
 
     private var currentDisplayDensity: ReelFinDisplayDensity {
         ReelFinDisplayDensity(rawStoredValue: displayDensityRawValue)
+    }
+
+    private var nativePlayerModeSelection: Binding<NativePlayerSettingsMode> {
+        Binding(
+            get: { viewModel.nativePlayerSettingsMode },
+            set: { viewModel.setNativePlayerSettingsMode($0) }
+        )
     }
 
     private var displayDensitySelection: Binding<String> {
@@ -622,6 +624,19 @@ private struct SettingsActionButtonStyle: ButtonStyle {
                 .opacity(configuration.isPressed ? 0.75 : 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private extension NativePlayerSettingsMode {
+    var settingsLabel: String {
+        switch self {
+        case .disabled:
+            return "Off"
+        case .directPlayWhenPossible:
+            return "Auto: Direct Play When Possible"
+        case .customPlayer:
+            return "Always Custom Player"
+        }
     }
 }
 

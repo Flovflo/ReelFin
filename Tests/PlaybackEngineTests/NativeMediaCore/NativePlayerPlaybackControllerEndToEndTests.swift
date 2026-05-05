@@ -50,6 +50,45 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
     }
 
+    func testPrepareRoutesOriginalMP4ToCustomPlayerWhenForced() async throws {
+        let itemID = "item-force-custom"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream.mp4")
+        try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let nativeConfig = NativePlayerConfig(enabled: true, surfacePreference: .customPlayer)
+        let configuration = ServerConfiguration(serverURL: root, nativePlayerConfig: nativeConfig)
+        let apiClient = NativePlaybackControllerAPIClient(source: MediaSource(
+            id: "source-force-custom",
+            itemID: itemID,
+            name: "Original",
+            fileSize: Int64((try? Data(contentsOf: streamURL).count) ?? 0),
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
+        ))
+        let controller = NativePlayerPlaybackController(apiClient: apiClient)
+
+        let snapshot = try await controller.prepare(
+            itemID: itemID,
+            configuration: configuration,
+            session: UserSession(userID: "user", username: "user", token: "secret"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: nil
+        )
+
+        XCTAssertEqual(snapshot.surface, .sampleBuffer)
+        XCTAssertEqual(snapshot.playbackURL?.path, streamURL.path)
+        XCTAssertNil(snapshot.applePlaybackSelection)
+        XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("renderer=AVSampleBufferDisplayLayer") })
+        XCTAssertFalse(snapshot.overlayLines.joined().contains("AVPlayerViewController"))
+    }
+
     func testCompatibleCommaSeparatedMOVSourceUsesAppleNativeWithoutProbe() {
         let source = MediaSource(
             id: "source-dv",

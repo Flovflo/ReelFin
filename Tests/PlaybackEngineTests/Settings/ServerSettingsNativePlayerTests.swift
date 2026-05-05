@@ -29,6 +29,47 @@ final class ServerSettingsNativePlayerTests: XCTestCase {
         XCTAssertFalse(saved.forceH264FallbackWhenNotDirectPlay)
     }
 
+    func testCustomPlayerSurfacePreferencePersistsWithNativePlayerConfig() async throws {
+        let defaults = makeDefaults()
+        defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
+        let dependencies = ReelFinPreviewFactory.dependencies()
+        dependencies.settingsStore.serverConfiguration = ServerConfiguration(
+            serverURL: URL(string: "https://jellyfin.example")!,
+            nativePlayerConfig: NativePlayerConfig(enabled: true)
+        )
+        let viewModel = ServerSettingsViewModel(dependencies: dependencies, defaults: defaults)
+
+        viewModel.nativePlayerSurfacePreference = .customPlayer
+        let result = await viewModel.save()
+
+        XCTAssertEqual(result, .saved)
+        let saved = try XCTUnwrap(dependencies.settingsStore.serverConfiguration)
+        XCTAssertEqual(saved.nativePlayerConfig.surfacePreference, .customPlayer)
+        XCTAssertFalse(viewModel.hasPendingChanges)
+    }
+
+    func testNativePlayerModeWritesRuntimeDefaultsImmediately() {
+        let defaults = makeDefaults()
+        defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
+        let dependencies = ReelFinPreviewFactory.dependencies()
+        dependencies.settingsStore.serverConfiguration = ServerConfiguration(
+            serverURL: URL(string: "https://jellyfin.example")!,
+            nativePlayerConfig: NativePlayerConfig(enabled: false)
+        )
+        let viewModel = ServerSettingsViewModel(dependencies: dependencies, defaults: defaults)
+
+        viewModel.setNativePlayerSettingsMode(.customPlayer)
+
+        XCTAssertTrue(viewModel.nativePlayerEnabled)
+        XCTAssertEqual(viewModel.nativePlayerSurfacePreference, .customPlayer)
+        XCTAssertEqual(viewModel.nativePlayerSettingsMode, .customPlayer)
+        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
+        XCTAssertEqual(
+            defaults.string(forKey: NativePlayerRuntimeDefaults.surfacePreferenceKey),
+            NativePlayerSurfacePreference.customPlayer.rawValue
+        )
+    }
+
     func testExperimentalDefaultsMigrateStaleDisableOnce() {
         let defaults = makeDefaults()
         defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
@@ -46,7 +87,7 @@ final class ServerSettingsNativePlayerTests: XCTestCase {
         #endif
     }
 
-    func testExperimentalDefaultsForceNativeModeOnDebugBranchAfterMigration() {
+    func testExperimentalDefaultsRespectStoredChoiceAfterCurrentBranchMigration() {
         let defaults = makeDefaults()
         defaults.set(false, forKey: NativePlayerRuntimeDefaults.enabledKey)
         defaults.set(true, forKey: NativePlayerRuntimeDefaults.experimentalBranchDefaultAppliedKey)
@@ -56,11 +97,7 @@ final class ServerSettingsNativePlayerTests: XCTestCase {
             userDefaults: defaults
         )
 
-        #if DEBUG
-        XCTAssertTrue(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
-        #else
         XCTAssertFalse(defaults.bool(forKey: NativePlayerRuntimeDefaults.enabledKey))
-        #endif
     }
 
     private func makeDefaults() -> UserDefaults {

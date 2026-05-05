@@ -69,6 +69,66 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
         XCTAssertEqual(controller.routeDescription, "Direct Play")
     }
 
+    func testRuntimeCustomPlayerModeUsesSampleBufferForCompatibleMP4Original() async throws {
+        let enabledKey = NativePlayerRuntimeDefaults.enabledKey
+        let surfaceKey = NativePlayerRuntimeDefaults.surfacePreferenceKey
+        let previousEnabledOverride = UserDefaults.standard.object(forKey: enabledKey)
+        let previousSurfaceOverride = UserDefaults.standard.object(forKey: surfaceKey)
+        UserDefaults.standard.set(true, forKey: enabledKey)
+        UserDefaults.standard.set(NativePlayerSurfacePreference.customPlayer.rawValue, forKey: surfaceKey)
+        defer {
+            if let previousEnabledOverride {
+                UserDefaults.standard.set(previousEnabledOverride, forKey: enabledKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: enabledKey)
+            }
+            if let previousSurfaceOverride {
+                UserDefaults.standard.set(previousSurfaceOverride, forKey: surfaceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: surfaceKey)
+            }
+        }
+
+        let itemID = "item-custom-runtime"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream.mp4")
+        try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let apiClient = NativeSessionRoutingAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: root,
+                nativePlayerConfig: NativePlayerConfig(
+                    enabled: false,
+                    surfacePreference: .directPlayWhenPossible
+                )
+            ),
+            source: MediaSource(
+                id: "source-custom-runtime",
+                itemID: itemID,
+                name: "Original",
+                fileSize: Int64((try? FileManager.default.attributesOfItem(atPath: streamURL.path)[.size] as? NSNumber)?.intValue ?? 0),
+                container: "mp4",
+                videoCodec: "h264",
+                audioCodec: "aac",
+                supportsDirectPlay: false,
+                supportsDirectStream: false,
+                transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264&RequireAvc=true")
+            )
+        )
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: NativeSessionRoutingRepository())
+
+        try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: false)
+
+        XCTAssertTrue(controller.isNativePlayerActive)
+        XCTAssertEqual(controller.nativePlayerPlaybackSurface, .sampleBuffer)
+        XCTAssertEqual(controller.nativePlayerPlaybackURL?.path, streamURL.path)
+        XCTAssertNil(controller.player.currentItem)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
+    }
+
     func testNativeDirectPlayResumeSeeksWhenItemBecomesReadyBeforeAutoplay() async throws {
         let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
         let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
