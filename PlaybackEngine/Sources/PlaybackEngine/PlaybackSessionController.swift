@@ -6431,19 +6431,15 @@ public final class PlaybackSessionController {
         maxStreamingBitrate: Int,
         isTVOS: Bool
     ) -> Bool {
-        guard !isTVOS else { return false }
-        guard playbackPolicy == .auto, allowSDRFallback, !usesDirectRemuxOnly else { return false }
-        guard case let .directPlay(url) = route else { return false }
-        guard url.pathExtension.lowercased() != "m3u8" else { return false }
-        guard let source else { return false }
-        guard (source.bitrate ?? 0) >= 18_000_000 else { return false }
-        guard source.isPremiumVideoSource || source.isLikelyHDRorDV else { return false }
-
-        let audio = source.normalizedAudioCodec
-        let audioLikelyNeedsTranscode = audio.contains("eac3")
-            || audio.contains("truehd")
-            || audio.contains("dts")
-        return audioLikelyNeedsTranscode
+        // Keep original Direct Play until measured startup or session health proves it is unsafe.
+        _ = route
+        _ = source
+        _ = playbackPolicy
+        _ = allowSDRFallback
+        _ = usesDirectRemuxOnly
+        _ = maxStreamingBitrate
+        _ = isTVOS
+        return false
     }
 
     nonisolated static func variantURLStrippingResumeQuery(

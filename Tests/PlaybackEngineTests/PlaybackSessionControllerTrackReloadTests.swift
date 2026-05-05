@@ -1318,7 +1318,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertTrue(shouldBlock)
     }
 
-    func testIPhoneHighRiskProgressiveDirectPlayPreemptsToStableHLS() {
+    func testIPhoneHighRiskProgressiveDirectPlayKeepsNativePathUntilMeasuredFailure() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -1345,7 +1345,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertTrue(shouldPreempt)
+        XCTAssertFalse(shouldPreempt)
     }
 
     func testIPhoneHighRiskStrictQualityDirectPlayKeepsNativePath() {
