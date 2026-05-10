@@ -194,6 +194,7 @@ final class NativePlayerConfigurationTests: XCTestCase {
 
         controller.configure(
             url: url,
+            headers: [:],
             startTimeSeconds: 12.0,
             seekRequest: nil,
             baseDiagnostics: [],
@@ -206,6 +207,7 @@ final class NativePlayerConfigurationTests: XCTestCase {
 
         controller.configure(
             url: url,
+            headers: [:],
             startTimeSeconds: 20.0,
             seekRequest: nil,
             baseDiagnostics: [],
@@ -336,6 +338,24 @@ final class NativePlayerConfigurationTests: XCTestCase {
             isBuffering: false,
             showsDiagnostics: false,
             hasError: false
+        ))
+    }
+
+    func testNativePlayerChromeVisibilityPolicyPinsAutomationChrome() {
+        XCTAssertTrue(NativePlayerChromeVisibilityPolicy.shouldShowChrome(
+            isUserActive: false,
+            isPaused: false,
+            isBuffering: false,
+            showsDiagnostics: false,
+            hasError: false,
+            isPinnedForAutomation: true
+        ))
+        XCTAssertFalse(NativePlayerChromeVisibilityPolicy.shouldAutoHide(
+            isPaused: false,
+            isBuffering: false,
+            showsDiagnostics: false,
+            hasError: false,
+            isPinnedForAutomation: true
         ))
     }
 

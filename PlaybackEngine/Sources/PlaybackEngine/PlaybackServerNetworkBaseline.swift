@@ -110,10 +110,10 @@ public enum PlaybackServerNetworkBaseline {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(url, headers: headers))
         request.timeoutInterval = timeout
         request.setValue("*/*", forHTTPHeaderField: "Accept")
-        request.setValue("bytes=0-\(byteCount - 1)", forHTTPHeaderField: "Range")
+        request.setValue("bytes=0-", forHTTPHeaderField: "Range")
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
@@ -122,7 +122,7 @@ public enum PlaybackServerNetworkBaseline {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AppError.network("Server baseline returned a non-HTTP response.")
         }
-        guard httpResponse.statusCode == 206 else {
+        guard httpResponse.statusCode == 206 || httpResponse.statusCode == 200 else {
             throw AppError.network("Server baseline failed (\(httpResponse.statusCode)).")
         }
 

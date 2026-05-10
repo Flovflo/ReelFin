@@ -60,7 +60,7 @@ struct PlaybackControlsModel: Equatable {
         skipSuggestion: PlaybackSkipSuggestion?
     ) -> PlaybackControlsModel {
         let audioOptions: [PlaybackTrackOption]
-        if audioTracks.count > 1 {
+        if !audioTracks.isEmpty {
             audioOptions = audioTracks.map { track in
                 PlaybackTrackOption(
                     trackID: track.id,

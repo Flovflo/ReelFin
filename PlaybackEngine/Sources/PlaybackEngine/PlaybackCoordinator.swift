@@ -43,6 +43,7 @@ public struct PlaybackAssetSelection: Sendable {
     public var assetURL: URL
     public var headers: [String: String]
     public var debugInfo: PlaybackDebugInfo
+    public var routeGuarantees: PlaybackRouteGuarantees
 
     public init(
         source: MediaSource,
@@ -50,7 +51,8 @@ public struct PlaybackAssetSelection: Sendable {
         playbackPlan: PlaybackPlan? = nil,
         assetURL: URL,
         headers: [String: String],
-        debugInfo: PlaybackDebugInfo
+        debugInfo: PlaybackDebugInfo,
+        routeGuarantees: PlaybackRouteGuarantees = .unknown
     ) {
         self.source = source
         self.decision = decision
@@ -58,6 +60,7 @@ public struct PlaybackAssetSelection: Sendable {
         self.assetURL = assetURL
         self.headers = headers
         self.debugInfo = debugInfo
+        self.routeGuarantees = routeGuarantees
     }
 }
 
@@ -213,7 +216,7 @@ public actor PlaybackCoordinator {
         allowDirectRoutes: Bool,
         allowDedicatedProfileRefetch: Bool = true
     ) async throws -> PlaybackAssetSelection? {
-        guard let decision = decisionEngine.decide(
+        guard var decision = decisionEngine.decide(
             itemID: itemID,
             sources: sources,
             configuration: configuration,
@@ -333,7 +336,7 @@ public actor PlaybackCoordinator {
         assetURL = injectingAPIKeyIfNeeded(assetURL, token: session.token)
 
         var headers = source.requiredHTTPHeaders
-        headers["X-Emby-Token"] = session.token
+        headers.merge(PlaybackAuthenticationHeaders.jellyfin(token: session.token)) { current, _ in current }
 
         let debug = PlaybackDebugInfo(
             container: source.container ?? "unknown",
@@ -345,6 +348,13 @@ public actor PlaybackCoordinator {
             playMethod: decision.playMethod
         )
 
+        let routeGuarantees = PlaybackRouteGuaranteeResolver.resolve(
+            source: source,
+            route: decision.route,
+            finalURL: assetURL
+        )
+        decision.routeGuarantees = routeGuarantees
+
         let profileLabel: String
         if case .nativeBridge = decision.route {
             profileLabel = "nativeBridge"
@@ -355,7 +365,7 @@ public actor PlaybackCoordinator {
         }
         let bitrateLabel = debug.bitrate.map(String.init) ?? "unknown"
         AppLog.playback.info(
-            "playback.selection — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) hdr=\(debug.hdrMode.rawValue, privacy: .public) bitrate=\(bitrateLabel, privacy: .public) profile=\(profileLabel, privacy: .public) url=\(assetURL.reelfinCompactLogString, privacy: .public)"
+            "playback.selection — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) hdr=\(debug.hdrMode.rawValue, privacy: .public) bitrate=\(bitrateLabel, privacy: .public) profile=\(profileLabel, privacy: .public) guarantee=\(routeGuarantees.userVisibleSummary, privacy: .public) url=\(assetURL.reelfinCompactLogString, privacy: .public)"
         )
 
         return PlaybackAssetSelection(
@@ -364,7 +374,8 @@ public actor PlaybackCoordinator {
             playbackPlan: decision.playbackPlan,
             assetURL: assetURL,
             headers: headers,
-            debugInfo: debug
+            debugInfo: debug,
+            routeGuarantees: routeGuarantees
         )
     }
 
@@ -739,48 +750,17 @@ public actor PlaybackCoordinator {
             return .forceH264Transcode
         }
 
-        // Apple-safe default for problematic sources:
-        // MKV-family + HEVC/DV should avoid initial video stream copy.
         let container = source.normalizedContainer
         let mkvFamily = container == "mkv" || container == "matroska" || container == "webm"
-        let codec = source.normalizedVideoCodec
-        let hevcFamily = codec.contains("hevc") || codec.contains("h265") || codec.contains("dvhe") || codec.contains("dvh1")
 
-        #if os(tvOS)
-        // tvOS: ALL MKV transcodes must use H264 TS (forceH264Transcode).
-        //
-        // Root cause: Jellyfin does NOT produce real fMP4 segments for HEVC HLS.
-        // Despite SegmentContainer=fmp4, the actual bytes are MPEG-TS (0x47 sync byte).
-        // Apple AVPlayer requires fMP4/CMAF for HEVC HLS — HEVC in TS segments is
-        // not supported. AVPlayer reaches readyToPlay but never decodes a frame.
-        //
-        // This affects ALL MKV transcodes:
-        //   - conservativeCompatibility (stream copy HEVC fMP4) → broken
-        //   - appleOptimizedHEVC (re-encode HEVC fMP4) → broken
-        //   - forceH264Transcode (H264 TS) → WORKS
-        //
-        // H264 in TS is the only Jellyfin transcode path that produces decodable
-        // segments on tvOS. DirectPlay (MOV/MP4) is unaffected.
-        if mkvFamily {
-            return .forceH264Transcode
-        }
-        #else
-        if mkvFamily && hevcFamily {
-            return .appleOptimizedHEVC
-        }
-        #endif
-
-        // Guardrail for URLs already carrying HEVC + video copy on server-default profile.
-        // This avoids unstable startup loops on some Jellyfin/Apple combinations.
+        // Do not silently convert MKV HEVC/HDR/DV to a video transcode. If the
+        // server URL already advertises video copy, preserve that route and let
+        // route guarantees/health diagnostics handle unsupported fMP4 evidence or stalls.
         let query = queryMap(from: url)
         let queryCodec = query["videocodec"] ?? ""
         let allowVideoCopy = query["allowvideostreamcopy"] == "true"
         if allowVideoCopy, queryCodec.contains("hevc"), mkvFamily {
-            #if os(tvOS)
-            return .conservativeCompatibility
-            #else
-            return .appleOptimizedHEVC
-            #endif
+            return requestedProfile
         }
 
         return requestedProfile

@@ -6,18 +6,20 @@ import Foundation
 public actor MP4Demuxer: MediaDemuxer {
     private let url: URL
     private let readableURL: AVFoundationReadableMediaURL
+    private let assetOptions: [String: Any]?
     private var info: DemuxerStreamInfo?
     private var packetReader: MP4PacketReaderState?
     private var packetStartTime: CMTime?
 
-    public init(url: URL, format: ContainerFormat = .mp4) throws {
+    public init(url: URL, format: ContainerFormat = .mp4, headers: [String: String] = [:]) throws {
         self.url = url
         self.readableURL = try AVFoundationReadableMediaURL(originalURL: url, format: format)
+        self.assetOptions = headers.isEmpty ? nil : [Self.assetHTTPHeaderFieldsOptionKey: headers]
     }
 
     public func open() async throws -> DemuxerStreamInfo {
         if let info { return info }
-        let asset = AVURLAsset(url: readableURL.assetURL)
+        let asset = AVURLAsset(url: readableURL.assetURL, options: assetOptions)
         let duration = try await asset.load(.duration)
         let tracks = try await asset.load(.tracks)
         var mapped: [MediaTrack] = []
@@ -167,7 +169,7 @@ public actor MP4Demuxer: MediaDemuxer {
 
     private func startPacketReaderIfNeeded() async throws {
         guard packetReader == nil else { return }
-        let asset = AVURLAsset(url: readableURL.assetURL)
+        let asset = AVURLAsset(url: readableURL.assetURL, options: assetOptions)
         let tracks = try await asset.load(.tracks)
         let duration = try await asset.load(.duration)
         let reader = try AVAssetReader(asset: asset)
@@ -213,6 +215,8 @@ public actor MP4Demuxer: MediaDemuxer {
             return nil
         }
     }
+
+    private static let assetHTTPHeaderFieldsOptionKey = "AVURLAssetHTTPHeaderFieldsKey"
 }
 
 private struct MP4TrackOutput {

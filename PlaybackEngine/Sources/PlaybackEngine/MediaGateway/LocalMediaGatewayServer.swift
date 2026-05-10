@@ -1,14 +1,19 @@
 import Foundation
 import NativeMediaCore
 import Network
+import Shared
 
 public final class LocalMediaGatewayServer: @unchecked Sendable {
+    public typealias RequestObserver = (_ method: String, _ rangeDescription: String) -> Void
+
     private let session: LocalMediaGatewaySession
+    private let requestObserver: RequestObserver?
     private let queue = DispatchQueue(label: "reelfin.local-media-gateway")
     private var listener: NWListener?
 
-    public init(session: LocalMediaGatewaySession) {
+    public init(session: LocalMediaGatewaySession, requestObserver: RequestObserver? = nil) {
         self.session = session
+        self.requestObserver = requestObserver
     }
 
     public func start() throws -> URL {
@@ -69,20 +74,31 @@ public final class LocalMediaGatewayServer: @unchecked Sendable {
         guard request.path == "/media/\(session.id)" else {
             return LocalMediaGatewayHTTPResponse.notFound()
         }
+        requestObserver?(request.method, String(describing: request.range))
         do {
             if request.method == "HEAD" {
-                return LocalMediaGatewayHTTPResponse.head(totalLength: try await session.size())
+                return LocalMediaGatewayHTTPResponse.head(
+                    totalLength: try await session.size(),
+                    contentType: try await session.contentType()
+                )
             }
-            guard request.method == "GET", let range = request.range else {
+            guard request.method == "GET" else {
                 return LocalMediaGatewayHTTPResponse.badRequest()
             }
-            let result = try await session.response(for: range)
+            let result = try await session.response(for: request.range)
             return LocalMediaGatewayHTTPResponse.partial(
                 data: result.data,
-                range: range,
-                totalLength: result.totalLength
+                range: result.range,
+                totalLength: result.totalLength,
+                contentType: result.contentType
             )
         } catch {
+            if let mediaError = error as? MediaAccessError, case .invalidRange = mediaError {
+                return LocalMediaGatewayHTTPResponse.rangeNotSatisfiable(totalLength: try? await session.size())
+            }
+            AppLog.playback.debug(
+                "playback.cache.gateway.response_failed — request=\(request.method, privacy: .public) range=\(String(describing: request.range), privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
             return LocalMediaGatewayHTTPResponse.serverError()
         }
     }

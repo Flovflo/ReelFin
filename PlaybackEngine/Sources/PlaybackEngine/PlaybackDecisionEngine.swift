@@ -12,11 +12,18 @@ public struct PlaybackDecision: Equatable, Sendable {
     public var sourceID: String
     public var route: PlaybackRoute
     public var playbackPlan: PlaybackPlan?
+    public var routeGuarantees: PlaybackRouteGuarantees
 
-    public init(sourceID: String, route: PlaybackRoute, playbackPlan: PlaybackPlan? = nil) {
+    public init(
+        sourceID: String,
+        route: PlaybackRoute,
+        playbackPlan: PlaybackPlan? = nil,
+        routeGuarantees: PlaybackRouteGuarantees = .unknown
+    ) {
         self.sourceID = sourceID
         self.route = route
         self.playbackPlan = playbackPlan
+        self.routeGuarantees = routeGuarantees
     }
 
     public var playMethod: String {
@@ -454,11 +461,55 @@ public struct SubtitleCompatibilityPolicy: Sendable {
     public init() {}
 
     public func shouldBlockSubtitleSelection(track: MediaTrack, strictMode: Bool, sourceIsHDRorDV: Bool) -> Bool {
-        guard strictMode, sourceIsHDRorDV else { return false }
-        let lower = "\(track.title) \(track.codec ?? "")".lowercased()
-        let isBitmapSubtitle = lower.contains("pgs") || lower.contains("hdmv") || lower.contains("vobsub")
-        return isBitmapSubtitle
+        shouldBlockSubtitleSelection(
+            track: track,
+            strictMode: strictMode,
+            sourceIsHDRorDV: sourceIsHDRorDV,
+            sourceIs4K: false
+        )
     }
+
+    public func shouldBlockSubtitleSelection(
+        track: MediaTrack,
+        strictMode: Bool,
+        sourceIsHDRorDV: Bool,
+        sourceIs4K: Bool
+    ) -> Bool {
+        guard sourceIsHDRorDV else { return false }
+        let impact = qualityImpact(track: track, sourceIs4K: sourceIs4K, sourceIsHDRorDV: sourceIsHDRorDV)
+        if strictMode {
+            return impact == .requiresBurnIn || impact == .riskyStyledText
+        }
+        return sourceIs4K && (impact == .requiresBurnIn || impact == .riskyStyledText)
+    }
+
+    public func qualityImpact(track: MediaTrack, source: MediaSource) -> SubtitleQualityImpact {
+        qualityImpact(track: track, sourceIs4K: source.isLikely4K, sourceIsHDRorDV: source.isLikelyHDRorDV)
+    }
+
+    private func qualityImpact(track: MediaTrack, sourceIs4K: Bool, sourceIsHDRorDV: Bool) -> SubtitleQualityImpact {
+        let lower = "\(track.title) \(track.codec ?? "")".lowercased()
+        if lower.contains("srt") || lower.contains("webvtt") || lower.contains("vtt") {
+            return .clientSideText
+        }
+        if lower.contains("pgs") || lower.contains("hdmv") || lower.contains("vobsub") || lower.contains("dvdsub") || lower.contains("dvb") {
+            return .requiresBurnIn
+        }
+        if lower.contains("ass") || lower.contains("ssa") {
+            return (sourceIs4K && sourceIsHDRorDV) ? .riskyStyledText : .clientSideText
+        }
+        if lower.contains("subrip") || lower.contains("text") {
+            return .clientSideText
+        }
+        return .unknown
+    }
+}
+
+public enum SubtitleQualityImpact: String, Codable, Sendable, Equatable {
+    case clientSideText
+    case riskyStyledText
+    case requiresBurnIn
+    case unknown
 }
 
 public struct AssetURLValidator: Sendable {
@@ -559,11 +610,7 @@ public struct PlaybackDecisionEngine: Sendable {
                 .max(by: { $0.score < $1.score })
 
             if let directBest {
-                return PlaybackDecision(
-                    sourceID: directBest.source.id,
-                    route: .directPlay(directBest.url),
-                    playbackPlan: playbackPlan
-                )
+                return makeDecision(source: directBest.source, route: .directPlay(directBest.url), playbackPlan: playbackPlan)
             }
 
             if Self.isNativeBridgeEnabled, !NativeBridgeFailureCache.isDisabled(itemID: itemID) {
@@ -572,11 +619,7 @@ public struct PlaybackDecisionEngine: Sendable {
                     .max(by: { $0.score < $1.score })
 
                 if let bridgeBest {
-                    return PlaybackDecision(
-                        sourceID: bridgeBest.source.id,
-                        route: .nativeBridge(bridgeBest.plan),
-                        playbackPlan: playbackPlan
-                    )
+                    return makeDecision(source: bridgeBest.source, route: .nativeBridge(bridgeBest.plan), playbackPlan: playbackPlan)
                 }
             }
 
@@ -585,11 +628,7 @@ public struct PlaybackDecisionEngine: Sendable {
                 .max(by: { $0.score < $1.score })
 
             if let remuxBest {
-                return PlaybackDecision(
-                    sourceID: remuxBest.source.id,
-                    route: .remux(remuxBest.url),
-                    playbackPlan: playbackPlan
-                )
+                return makeDecision(source: remuxBest.source, route: .remux(remuxBest.url), playbackPlan: playbackPlan)
             }
         }
 
@@ -602,11 +641,7 @@ public struct PlaybackDecisionEngine: Sendable {
             .max(by: { $0.score < $1.score })
 
         if let transcodeBest {
-            return PlaybackDecision(
-                sourceID: transcodeBest.source.id,
-                route: .transcode(transcodeBest.url),
-                playbackPlan: playbackPlan
-            )
+            return makeDecision(source: transcodeBest.source, route: .transcode(transcodeBest.url), playbackPlan: playbackPlan)
         }
 
         guard let fallbackSource = bestFallbackSource(from: sources) else { return nil }
@@ -620,11 +655,7 @@ public struct PlaybackDecisionEngine: Sendable {
             token: token
         )
 
-        return PlaybackDecision(
-            sourceID: fallbackSource.id,
-            route: .transcode(fallbackURL),
-            playbackPlan: playbackPlan
-        )
+        return makeDecision(source: fallbackSource, route: .transcode(fallbackURL), playbackPlan: playbackPlan)
     }
 
     private func rawDirectPlayDecision(
@@ -654,10 +685,34 @@ public struct PlaybackDecisionEngine: Sendable {
                 continue
             }
 
-            return PlaybackDecision(sourceID: source.id, route: .directPlay(rawURL))
+            return makeDecision(source: source, route: .directPlay(rawURL))
         }
 
         return nil
+    }
+
+    private func makeDecision(
+        source: MediaSource,
+        route: PlaybackRoute,
+        playbackPlan: PlaybackPlan? = nil
+    ) -> PlaybackDecision {
+        let finalURL: URL
+        switch route {
+        case .directPlay(let url), .remux(let url), .transcode(let url):
+            finalURL = url
+        case .nativeBridge(let plan):
+            finalURL = plan.sourceURL
+        }
+        return PlaybackDecision(
+            sourceID: source.id,
+            route: route,
+            playbackPlan: playbackPlan,
+            routeGuarantees: PlaybackRouteGuaranteeResolver.resolve(
+                source: source,
+                route: route,
+                finalURL: finalURL
+            )
+        )
     }
 
     private func rawDirectURL(
@@ -704,7 +759,7 @@ public struct PlaybackDecisionEngine: Sendable {
                    !isStrictRouteAllowed(source: source, route: .directPlay(url)) {
                     return nil
                 }
-                return PlaybackDecision(sourceID: sourceID, route: .directPlay(url), playbackPlan: plan)
+                return makeDecision(source: source, route: .directPlay(url), playbackPlan: plan)
             }
 
             guard allowTranscoding else { return nil }
@@ -718,7 +773,7 @@ public struct PlaybackDecisionEngine: Sendable {
                !isStrictRouteAllowed(source: source, route: .transcode(fallbackURL)) {
                 return nil
             }
-            return PlaybackDecision(sourceID: sourceID, route: .transcode(fallbackURL), playbackPlan: plan)
+            return makeDecision(source: source, route: .transcode(fallbackURL), playbackPlan: plan)
         case .jitRepackageHLS:
             // For Apple-native containers, do not force a transcode lane just because
             // the planner selected jit packaging. Prefer direct play/remux when valid.
@@ -731,14 +786,14 @@ public struct PlaybackDecisionEngine: Sendable {
                        !isStrictRouteAllowed(source: source, route: .directPlay(directURL)) {
                         return nil
                     }
-                    return PlaybackDecision(sourceID: sourceID, route: .directPlay(directURL), playbackPlan: plan)
+                    return makeDecision(source: source, route: .directPlay(directURL), playbackPlan: plan)
                 }
                 if source.supportsDirectStream, let remuxURL = source.directStreamURL, isRemuxPlayable(source: source, url: remuxURL) {
                     if qualityMode(for: source, configuration: configuration) == .strictQuality,
                        !isStrictRouteAllowed(source: source, route: .remux(remuxURL)) {
                         return nil
                     }
-                    return PlaybackDecision(sourceID: sourceID, route: .remux(remuxURL), playbackPlan: plan)
+                    return makeDecision(source: source, route: .remux(remuxURL), playbackPlan: plan)
                 }
             }
 
@@ -747,14 +802,14 @@ public struct PlaybackDecisionEngine: Sendable {
             // lets Jellyfin repackage MKV→MP4 without re-encoding video/audio.
             // Only fall back to transcode when codecs are truly incompatible.
             if allowDirectRoutes, source.supportsDirectStream, let remuxURL = source.directStreamURL {
-                let codecsCompatible = hasCompatibleCodecs(source: source)
-                if codecsCompatible,
+                let videoCompatible = hasCompatibleVideoCodec(source: source)
+                if videoCompatible,
                    !shouldAvoidRemuxForReliability(source: source, url: remuxURL) {
                     if qualityMode(for: source, configuration: configuration) == .strictQuality,
                        !isStrictRouteAllowed(source: source, route: .remux(remuxURL)) {
                         return nil
                     }
-                    return PlaybackDecision(sourceID: sourceID, route: .remux(remuxURL), playbackPlan: plan)
+                    return makeDecision(source: source, route: .remux(remuxURL), playbackPlan: plan)
                 }
             }
 
@@ -764,7 +819,7 @@ public struct PlaybackDecisionEngine: Sendable {
                    !isStrictRouteAllowed(source: source, route: .transcode(transcodeURL)) {
                     return nil
                 }
-                return PlaybackDecision(sourceID: sourceID, route: .transcode(transcodeURL), playbackPlan: plan)
+                return makeDecision(source: source, route: .transcode(transcodeURL), playbackPlan: plan)
             }
 
             if let remuxURL = source.directStreamURL, isHLS(url: remuxURL) {
@@ -772,7 +827,7 @@ public struct PlaybackDecisionEngine: Sendable {
                    !isStrictRouteAllowed(source: source, route: .remux(remuxURL)) {
                     return nil
                 }
-                return PlaybackDecision(sourceID: sourceID, route: .remux(remuxURL), playbackPlan: plan)
+                return makeDecision(source: source, route: .remux(remuxURL), playbackPlan: plan)
             }
 
             // Last resort: force a server transcode URL build instead of exposing raw MKV.
@@ -786,14 +841,14 @@ public struct PlaybackDecisionEngine: Sendable {
                !isStrictRouteAllowed(source: source, route: .transcode(fallbackURL)) {
                 return nil
             }
-            return PlaybackDecision(sourceID: sourceID, route: .transcode(fallbackURL), playbackPlan: plan)
+            return makeDecision(source: source, route: .transcode(fallbackURL), playbackPlan: plan)
         case .surgicalFallback:
             if let url = source.transcodeURL ?? plan.targetURL {
                 if qualityMode(for: source, configuration: configuration) == .strictQuality,
                    !isStrictRouteAllowed(source: source, route: .transcode(url)) {
                     return nil
                 }
-                return PlaybackDecision(sourceID: sourceID, route: .transcode(url), playbackPlan: plan)
+                return makeDecision(source: source, route: .transcode(url), playbackPlan: plan)
             }
             let fallbackURL = buildTranscodeURL(
                 itemID: itemID,
@@ -805,7 +860,7 @@ public struct PlaybackDecisionEngine: Sendable {
                !isStrictRouteAllowed(source: source, route: .transcode(fallbackURL)) {
                 return nil
             }
-            return PlaybackDecision(sourceID: sourceID, route: .transcode(fallbackURL), playbackPlan: plan)
+            return makeDecision(source: source, route: .transcode(fallbackURL), playbackPlan: plan)
         case .rejected:
             return nil
         }
@@ -1032,14 +1087,21 @@ public struct PlaybackDecisionEngine: Sendable {
         let codec = source.normalizedVideoCodec
         guard !codec.isEmpty else { return false }
 
-        let isH264Family = codec.contains("h264") || codec.contains("avc1")
-        return !isH264Family
+        let isAppleVideoCopyCandidate = codec.contains("h264")
+            || codec.contains("avc1")
+            || codec.contains("hevc")
+            || codec.contains("h265")
+            || codec.contains("hvc1")
+            || codec.contains("hev1")
+            || codec.contains("dvh1")
+            || codec.contains("dvhe")
+        return !isAppleVideoCopyCandidate
     }
 
     /// Check if the source video and audio codecs are natively supported by the device,
     /// regardless of container. Used to decide remux (container swap) vs transcode (re-encode).
     private func hasCompatibleCodecs(source: MediaSource) -> Bool {
-        let videoOK = source.normalizedVideoCodec.isEmpty || capabilities.videoCodecs.contains(source.normalizedVideoCodec)
+        let videoOK = hasCompatibleVideoCodec(source: source)
         guard videoOK else { return false }
 
         let sourceAudioSupported = source.normalizedAudioCodec.isEmpty || capabilities.audioCodecs.contains(source.normalizedAudioCodec)
@@ -1048,6 +1110,10 @@ public struct PlaybackDecisionEngine: Sendable {
             return capabilities.audioCodecs.contains(codec)
         }
         return sourceAudioSupported || anyTrackSupported
+    }
+
+    private func hasCompatibleVideoCodec(source: MediaSource) -> Bool {
+        source.normalizedVideoCodec.isEmpty || capabilities.videoCodecs.contains(source.normalizedVideoCodec)
     }
 
     private func normalizedContainers(_ rawContainer: String?, fallbackURL: URL) -> [String] {
@@ -1266,10 +1332,9 @@ public struct PlaybackDecisionEngine: Sendable {
         case .directPlay:
             let ext = url.pathExtension.lowercased()
             return source.normalizedContainer != "mkv" && ext != "mkv"
-        case .remux:
-            return url.pathExtension.lowercased() == "m3u8" || source.supportsDirectStream
-        case .transcode:
-            return hdrdvPolicy.transcodeLooksHDRSafe(url: url)
+        case .remux, .transcode:
+            let guarantees = PlaybackRouteGuaranteeResolver.resolve(source: source, route: route, finalURL: url)
+            return guarantees.preservesOriginalVideo && guarantees.hdrIntegrity != .sdrToneMapped
         case .nativeBridge:
             return true
         }

@@ -37,6 +37,7 @@ class BenchmarkResult:
     first_byte_ms: float
     range_p50_ms: float
     range_p95_ms: float
+    startup_zero_range_ignored: bool
     samples: list[RangeSample]
     checks: list[str]
     failures: list[str]
@@ -51,6 +52,86 @@ def parse_content_length(headers: Dict[str, str]) -> Optional[int]:
     if content_length and content_length.isdigit():
         return int(content_length)
     return None
+
+
+def parse_content_range_start(headers: Dict[str, str]) -> Optional[int]:
+    content_range = headers.get("Content-Range") or headers.get("content-range") or ""
+    match = re.match(r"bytes\s+(\d+)-\d+/(?:\d+|\*)", content_range.strip(), re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def stream_codec(source: dict[str, Any], stream_type: str) -> str:
+    source_key = f"{stream_type}Codec"
+    direct_value = source.get(source_key)
+    if direct_value:
+        return str(direct_value).lower()
+
+    for stream in source.get("MediaStreams") or []:
+        if str(stream.get("Type") or "").lower() != stream_type.lower():
+            continue
+        codec = stream.get("Codec")
+        if codec:
+            return str(codec).lower()
+    return "unknown"
+
+
+def source_codecs(source: dict[str, Any]) -> tuple[str, str]:
+    return stream_codec(source, "Video"), stream_codec(source, "Audio")
+
+
+def validate_codec_metadata(
+    video_codec: str,
+    audio_codec: str,
+    failures: list[str],
+    checks: list[str],
+) -> None:
+    if video_codec == "unknown":
+        failures.append("missing_video_codec_metadata")
+    else:
+        checks.append("video_codec_metadata_present")
+
+    if audio_codec == "unknown":
+        failures.append("missing_audio_codec_metadata")
+    else:
+        checks.append("audio_codec_metadata_present")
+
+
+def range_not_partial_failure(offset: int) -> str:
+    if offset == 0:
+        return "first_range_not_partial_content"
+    return f"seek_range_not_partial_content@{offset}"
+
+
+def range_mismatch_failure(offset: int) -> str:
+    if offset == 0:
+        return "first_content_range_mismatch"
+    return f"seek_content_range_mismatch@{offset}"
+
+
+def validate_range_contract(
+    sample: RangeSample,
+    response_headers: Dict[str, str],
+    content_length: Optional[int],
+    byte_count: int,
+    failures: list[str],
+    warnings: Optional[list[str]] = None,
+) -> None:
+    if sample.status not in (200, 206) or sample.bytes_read == 0:
+        return
+
+    content_range_start = parse_content_range_start(response_headers)
+    requested_partial = content_length is None or content_length > byte_count
+    if requested_partial and sample.status == 200:
+        if sample.offset == 0 and warnings is not None:
+            warnings.append("startup_zero_range_ignored")
+            return
+        failures.append(range_not_partial_failure(sample.offset))
+        return
+
+    if sample.status == 206 and content_range_start != sample.offset:
+        failures.append(range_mismatch_failure(sample.offset))
 
 
 def timed_range(
@@ -136,7 +217,9 @@ def benchmark_target(
     url = probe.stream_url(server_url, target.item_id, source, session.token)
     headers = source.get("RequiredHttpHeaders") or {}
     container = str(source.get("Container") or "")
+    video_codec, audio_codec = source_codecs(source)
     failures: list[str] = []
+    warnings: list[str] = []
     checks: list[str] = []
 
     first_sample, response_headers, body = timed_range(url, session, headers, 0, byte_count)
@@ -151,6 +234,8 @@ def benchmark_target(
         failures.append(f"original_stream_returned_hls content_type={content_type}")
 
     assert_container_magic(target.label, container, body, failures, checks)
+    validate_range_contract(first_sample, response_headers, content_length, byte_count, failures, warnings)
+    validate_codec_metadata(video_codec, audio_codec, failures, checks)
 
     supports_direct_play = bool(source.get("SupportsDirectPlay"))
     api_contract = expected_api_contract(target.label, container)
@@ -160,6 +245,8 @@ def benchmark_target(
         checks.append("apple_native_directplay_contract")
     elif api_contract == "NativeEngine+AVSampleBufferDisplayLayer":
         checks.append("native_samplebuffer_original_contract")
+    else:
+        failures.append("unknown_player_api_contract")
 
     if target.require_hdr and not probe.has_hdr_metadata(source):
         failures.append("missing_hdr_metadata")
@@ -173,12 +260,14 @@ def benchmark_target(
     samples = [first_sample]
     for _ in range(range_loops):
         for offset in seek_offsets(content_length):
-            sample, _, _ = timed_range(url, session, headers, offset, byte_count)
+            sample, sample_headers, _ = timed_range(url, session, headers, offset, byte_count)
             samples.append(sample)
             if sample.status not in (200, 206):
                 failures.append(f"seek_http_{sample.status}@{offset}")
             if sample.bytes_read == 0:
                 failures.append(f"seek_empty@{offset}")
+            sample_content_length = parse_content_length(sample_headers) or content_length
+            validate_range_contract(sample, sample_headers, sample_content_length, byte_count, failures)
 
     elapsed = [sample.elapsed_ms for sample in samples]
     range_p50 = statistics.median(elapsed)
@@ -192,8 +281,8 @@ def benchmark_target(
         label=target.label,
         item_id=target.item_id[:8],
         container=container or "unknown",
-        video_codec=str(source.get("VideoCodec") or "unknown"),
-        audio_codec=str(source.get("AudioCodec") or "unknown"),
+        video_codec=video_codec,
+        audio_codec=audio_codec,
         api_contract=api_contract,
         supports_direct_play=supports_direct_play,
         content_type=content_type or "unknown",
@@ -201,6 +290,7 @@ def benchmark_target(
         first_byte_ms=first_sample.elapsed_ms,
         range_p50_ms=range_p50,
         range_p95_ms=range_p95,
+        startup_zero_range_ignored="startup_zero_range_ignored" in warnings,
         samples=samples,
         checks=checks,
         failures=sorted(set(failures)),
@@ -215,7 +305,8 @@ def print_result(result: BenchmarkResult) -> None:
         f"container={result.container} video={result.video_codec} audio={result.audio_codec} "
         f"size={size} first={result.first_byte_ms:.1f}ms "
         f"p50={result.range_p50_ms:.1f}ms p95={result.range_p95_ms:.1f}ms "
-        f"samples={len(result.samples)} checks={','.join(result.checks) or 'none'}"
+        f"samples={len(result.samples)} startupZeroRangeIgnored={str(result.startup_zero_range_ignored).lower()} "
+        f"checks={','.join(result.checks) or 'none'}"
     )
     for failure in result.failures:
         print(f"  - {failure}")
@@ -233,7 +324,7 @@ def main() -> int:
     try:
         server_url, username, password = probe.validate_environment()
         session = probe.authenticate(server_url, username, password)
-        print(f"Authenticated as '{username}'. Benchmarking explicit original streams.")
+        print("Authenticated. Benchmarking explicit original streams.")
         results = [
             benchmark_target(
                 server_url=server_url,
@@ -259,6 +350,8 @@ def main() -> int:
 
     failures = sum(1 for result in results if result.failures)
     print(f"Summary: {len(results) - failures}/{len(results)} benchmark targets passed.")
+    zero_ignored = [result.label for result in results if result.startup_zero_range_ignored]
+    print(f"startupZeroRangeIgnored={str(bool(zero_ignored)).lower()} labels={','.join(zero_ignored) or 'none'}")
     return 1 if failures else 0
 
 

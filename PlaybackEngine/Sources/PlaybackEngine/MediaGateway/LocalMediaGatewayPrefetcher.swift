@@ -40,6 +40,7 @@ actor LocalMediaGatewayPrefetcher {
     private var knownTotalLength: Int64?
     private var firstScheduleDate: Date?
     private let chunkLength = 1 * 1_024 * 1_024
+    private let minimumServedBytesBeforePrefetch = 4
 
     init(
         remoteURL: URL,
@@ -68,6 +69,7 @@ actor LocalMediaGatewayPrefetcher {
     func schedule(after servedRange: ByteRange, totalLength: Int64?) {
         knownTotalLength = totalLength ?? knownTotalLength
         firstScheduleDate = firstScheduleDate ?? Date()
+        guard servedRange.length >= minimumServedBytesBeforePrefetch else { return }
         guard activeTask == nil || activeTask?.isCancelled == true else { return }
         activeTask = Task { [weak self] in
             await self?.prefetch(startOffset: servedRange.offset + Int64(servedRange.length))
@@ -135,7 +137,7 @@ actor LocalMediaGatewayPrefetcher {
     }
 
     private func fetchAndStore(range: ByteRange) async throws -> Int {
-        var request = URLRequest(url: remoteURL)
+        var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
         request.httpMethod = "GET"
         request.setValue("bytes=\(range.offset)-\(range.offset + Int64(range.length) - 1)", forHTTPHeaderField: "Range")
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }

@@ -236,7 +236,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
                         startTimeTicks: nil
                     )
                     let sources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: options)
-                    let resolution = try OriginalMediaResolver().resolve(
+                    let resolution = try OriginalMediaResolver(authPolicy: .header).resolve(
                         request: OriginalMediaRequest(itemID: itemID),
                         sources: sources,
                         configuration: configuration,

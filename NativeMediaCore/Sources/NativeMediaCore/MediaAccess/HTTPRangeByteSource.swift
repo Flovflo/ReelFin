@@ -90,13 +90,25 @@ public actor HTTPRangeByteSource: MediaByteSource {
         request.setValue("bytes=\(range.offset)-\(range.offset + Int64(range.length) - 1)", forHTTPHeaderField: "Range")
         applyHeaders(to: &request)
         snapshot.rangeRequestCount += 1
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw MediaAccessError.nonHTTPResponse }
         if let total = totalSize(from: http.value(forHTTPHeaderField: "Content-Range")) {
             cachedSize = total
         }
+        if http.statusCode == 200, let length = http.value(forHTTPHeaderField: "Content-Length"), let value = Int64(length) {
+            cachedSize = value
+        }
         guard http.statusCode == 206 || http.statusCode == 200 else {
             throw MediaAccessError.httpStatus(http.statusCode)
+        }
+        guard http.statusCode != 200 || range.offset == 0 else {
+            throw MediaAccessError.httpStatus(http.statusCode)
+        }
+        var data = Data()
+        data.reserveCapacity(range.length)
+        var iterator = bytes.makeAsyncIterator()
+        while data.count < range.length, let byte = try await iterator.next() {
+            data.append(byte)
         }
         return data
     }

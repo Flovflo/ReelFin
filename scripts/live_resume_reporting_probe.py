@@ -120,7 +120,7 @@ def main() -> int:
                 )
             print(
                 "PASS resume_reporting "
-                f"item={item_id[:8]} user={username} "
+                f"item={item_id[:8]} "
                 f"targetSeconds={target_ticks / TICKS_PER_SECOND:.3f} "
                 f"actualSeconds={actual_ticks / TICKS_PER_SECOND:.3f}"
             )

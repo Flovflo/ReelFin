@@ -35,6 +35,14 @@ public struct ReelFinRootView: View {
             } else if viewModel.isAuthenticated {
                 #if os(tvOS)
                 tvLayout
+                #elseif targetEnvironment(macCatalyst)
+                if shouldUseMacRootLayout {
+                    macLayout
+                } else if shouldUseSplitLayout {
+                    splitLayout
+                } else {
+                    mainTabs
+                }
                 #else
                 if shouldUseSplitLayout {
                     splitLayout
@@ -68,6 +76,14 @@ public struct ReelFinRootView: View {
     #if os(tvOS)
     private var tvLayout: some View {
         TVRootShellView(dependencies: dependencies)
+    }
+    #endif
+
+    #if targetEnvironment(macCatalyst)
+    private var macLayout: some View {
+        MacRootShellView(dependencies: dependencies) {
+            signOut()
+        }
     }
     #endif
 
@@ -136,10 +152,19 @@ public struct ReelFinRootView: View {
     }
 
     private var shouldUseSplitLayout: Bool {
-        if AppMetadata.current.isScreenshotModeEnabled {
-            return false
-        }
-        return UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
+        RootLayoutPlatformPolicy.shouldUseSplitLayout(
+            isScreenshotMode: AppMetadata.current.isScreenshotModeEnabled,
+            isRegularHorizontalSizeClass: horizontalSizeClass == .regular,
+            isPadIdiom: UIDevice.current.userInterfaceIdiom == .pad,
+            isMacCatalyst: RootLayoutPlatformPolicy.isMacCatalystRuntime
+        )
+    }
+
+    private var shouldUseMacRootLayout: Bool {
+        RootLayoutPlatformPolicy.shouldUseMacRootLayout(
+            isScreenshotMode: AppMetadata.current.isScreenshotModeEnabled,
+            isMacCatalyst: RootLayoutPlatformPolicy.isMacCatalystRuntime
+        )
     }
     #endif
 

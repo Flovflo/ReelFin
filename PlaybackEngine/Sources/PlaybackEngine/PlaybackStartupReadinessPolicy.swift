@@ -92,6 +92,10 @@ public enum PlaybackStartupReadinessPolicy {
             && requirement.preferredBufferDuration <= 0
     }
 
+    static func allowsFirstFrameStartupReadiness(requirement: Requirement) -> Bool {
+        requirement.allowsTimeoutStart
+    }
+
     private static func isProgressiveDirectPlay(route: PlaybackRoute) -> Bool {
         guard case let .directPlay(url) = route else { return false }
         return !isPlaylistURL(url)

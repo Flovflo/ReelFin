@@ -19,7 +19,7 @@ struct ReelFinApp: App {
         NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults()
         if NativePlayerConfig.runtimeOverrideEnabled() {
             PlaybackSessionController.clearStoredPreferredTranscodeProfiles()
-            AppLog.playback.notice("nativeplayer.runtime.enabled — platform=iOS branch=feature/native-swift-player storedTranscodePinsCleared=true")
+            AppLog.playback.notice("nativeplayer.runtime.enabled — platform=iOS storedTranscodePinsCleared=true")
         }
         let metadata = AppMetadata.current
         self.metadata = metadata
@@ -31,20 +31,33 @@ struct ReelFinApp: App {
     }
 
     var body: some Scene {
+        #if targetEnvironment(macCatalyst)
         WindowGroup {
-            ReelFinRootView(dependencies: dependencies)
-                .preferredColorScheme(.dark)
-                .onAppear {
-                    appDelegate.configure(dependencies: dependencies)
-                }
-                .onChange(of: scenePhase) { _, newValue in
-                    if newValue == .active {
-                        Task {
-                            await dependencies.syncEngine.sync(reason: .appForeground)
-                        }
+            rootContent
+        }
+        .commands {
+            ReelFinMacCommands()
+        }
+        #else
+        WindowGroup {
+            rootContent
+        }
+        #endif
+    }
+
+    private var rootContent: some View {
+        ReelFinRootView(dependencies: dependencies)
+            .preferredColorScheme(.dark)
+            .onAppear {
+                appDelegate.configure(dependencies: dependencies)
+            }
+            .onChange(of: scenePhase) { _, newValue in
+                if newValue == .active {
+                    Task {
+                        await dependencies.syncEngine.sync(reason: .appForeground)
                     }
                 }
-        }
+            }
     }
 
 #if os(iOS)

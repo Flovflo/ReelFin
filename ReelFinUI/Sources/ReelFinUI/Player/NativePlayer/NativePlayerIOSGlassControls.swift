@@ -52,6 +52,8 @@ struct NativePlayerIOSIconButton: View {
 
     let systemName: String
     let size: Size
+    var accessibilityLabel: String?
+    var accessibilityIdentifier: String?
     let action: () -> Void
 
     var body: some View {
@@ -63,6 +65,9 @@ struct NativePlayerIOSIconButton: View {
                 .modifier(NativePlayerIOSIconChrome(size: size))
         }
         .buttonStyle(NativePlayerIOSButtonStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(accessibilityLabel ?? systemName))
+        .accessibilityIdentifier(accessibilityIdentifier ?? systemName)
     }
 }
 

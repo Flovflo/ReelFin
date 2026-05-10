@@ -1,3 +1,4 @@
+import Foundation
 import PlaybackEngine
 import Shared
 import SwiftUI
@@ -1083,6 +1084,7 @@ struct HomeView: View {
     @State private var showPlayer = false
     @State private var isPreparingPlayback = false
     @State private var playbackErrorMessage: String?
+    @State private var liveUITestTargetOpenAttempted = false
     @State private var warmupTask: Task<Void, Never>?
     @State private var appleOptimizationStatuses: [String: ApplePlaybackOptimizationStatus] = [:]
 
@@ -1152,6 +1154,9 @@ struct HomeView: View {
         .task {
             await viewModel.load()
             await preloadOptimizationStatuses()
+#if os(iOS)
+            await openLiveUITestTargetIfRequested()
+#endif
 #if os(tvOS)
             if let item = viewModel.feed.featured.first {
                 tvScreenState.scheduleNavigationAppearance(for: item)
@@ -1198,7 +1203,7 @@ struct HomeView: View {
         } message: {
             Text("Home customization will be available in an upcoming update.")
         }
-#if os(iOS)
+#if os(iOS) && !targetEnvironment(macCatalyst)
         .toolbar(.hidden, for: .navigationBar)
 #endif
     }
@@ -1783,6 +1788,72 @@ struct HomeView: View {
 #endif
     }
 
+#if os(iOS)
+    private var liveUITestTargetItemID: String? {
+        if let argumentValue = liveUITestArgumentValue(after: "-reelfin-live-ui-open-target") {
+            return normalizedLiveUITestItemID(argumentValue)
+        }
+        guard isLiveUITestDirectTargetOpenEnabled else { return nil }
+        let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_TARGET_ITEM_ID"] ?? ""
+        return normalizedLiveUITestItemID(rawValue)
+    }
+
+    private var isLiveUITestDirectTargetOpenEnabled: Bool {
+        if liveUITestArgumentValue(after: "-reelfin-live-ui-open-target") != nil {
+            return true
+        }
+        let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] ?? ""
+        return ["1", "true", "yes", "on"].contains(rawValue.lowercased())
+    }
+
+    private func liveUITestArgumentValue(after flag: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard
+            let flagIndex = arguments.firstIndex(of: flag),
+            arguments.indices.contains(arguments.index(after: flagIndex))
+        else {
+            return nil
+        }
+        let rawValue = arguments[arguments.index(after: flagIndex)]
+        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedValue.isEmpty ? nil : trimmedValue
+    }
+
+    private func normalizedLiveUITestItemID(_ rawValue: String) -> String? {
+        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty else { return nil }
+
+        let patterns = [
+            #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
+            #"[0-9a-fA-F]{32}"#
+        ]
+        for pattern in patterns {
+            if let range = trimmedValue.range(of: pattern, options: .regularExpression) {
+                return trimmedValue[range].filter { $0 != "-" }.lowercased()
+            }
+        }
+        return trimmedValue
+    }
+
+    @MainActor
+    private func openLiveUITestTargetIfRequested() async {
+        guard !liveUITestTargetOpenAttempted, let itemID = liveUITestTargetItemID else { return }
+        liveUITestTargetOpenAttempted = true
+
+        do {
+            let item = try await dependencies.detailRepository.refreshItem(id: itemID)
+            selectedDetailNamespace = nil
+            selectedDetailTransitionSourceID = nil
+            selectedDetailContextItems = [item]
+            selectedDetailContextTitle = "Live UI Target"
+            AppLog.ui.info("live_ui_target.open item=\(AppLogFormat.shortIdentifier(item.id), privacy: .public)")
+            presentDetail(item)
+        } catch {
+            AppLog.ui.error("live_ui_target.open_failed item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+#endif
+
 #if os(tvOS)
     private func presentedDetailItemID(for item: MediaItem) -> String {
         if item.mediaType == .episode, let parentID = item.parentID {
@@ -2342,12 +2413,12 @@ private struct HomeCustomizationSheet: View {
                 }
             }
             .environment(\.editMode, $editMode)
-#if os(iOS)
+#if os(iOS) && !targetEnvironment(macCatalyst)
             .scrollContentBackground(.hidden)
 #endif
             .background(ReelFinTheme.pageGradient.ignoresSafeArea())
             .navigationTitle("Customize Home")
-#if os(iOS)
+#if os(iOS) && !targetEnvironment(macCatalyst)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

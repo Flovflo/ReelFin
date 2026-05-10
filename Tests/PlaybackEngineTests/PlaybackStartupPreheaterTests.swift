@@ -85,6 +85,53 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
     }
 
+    func testInitialHighBitrateIPhoneProgressiveDirectPlayUsesNonZeroRangeProbe() async throws {
+        let selection = makeDirectPlaySelection(
+            sourceFileSize: 100 * 1_048_576,
+            sourceBitrate: 22_000_000,
+            headers: ["X-Auth-Token": "token-123"]
+        )
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 100 * 1_048_576))
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 0,
+            runtimeSeconds: 100,
+            isTVOS: false,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
+        )
+
+        XCTAssertEqual(result?.byteCount, 12 * 1_048_576)
+        XCTAssertEqual(result?.rangeStart, 12 * 1_048_576)
+        XCTAssertEqual(result?.reason, "directplay_range_deep")
+
+        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=12582912-25165823")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
+    }
+
+    func testInitialHighBitrateIPhoneProgressiveDirectPlayRejectsIgnoredNonZeroRangeProbe() async {
+        let selection = makeDirectPlaySelection(
+            sourceFileSize: 100 * 1_048_576,
+            sourceBitrate: 22_000_000
+        )
+        PlaybackStartupFixtureURLProtocol.reset(
+            storage: Data(repeating: 0xAB, count: 100 * 1_048_576),
+            ignoresNonZeroRanges: true
+        )
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 0,
+            runtimeSeconds: 100,
+            isTVOS: false,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 1)
+    }
+
     func testPreheatUsesTvOSProgressiveDirectPlayRangeProbe() async throws {
         let selection = makeDirectPlaySelection(
             sourceFileSize: 10 * 1_048_576,
@@ -290,6 +337,7 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
     private static var storage = Data()
     private static var _capturedRequest: URLRequest?
     private static var _requestCount = 0
+    private static var ignoresNonZeroRanges = false
 
     static var capturedRequest: URLRequest? {
         lock.lock()
@@ -303,10 +351,11 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
         return _requestCount
     }
 
-    static func reset(storage: Data) {
+    static func reset(storage: Data, ignoresNonZeroRanges: Bool = false) {
         lock.lock()
         defer { lock.unlock() }
         self.storage = storage
+        self.ignoresNonZeroRanges = ignoresNonZeroRanges
         _capturedRequest = nil
         _requestCount = 0
     }
@@ -325,6 +374,10 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
         let data = Self.storageSnapshot()
         if let rangeHeader = request.value(forHTTPHeaderField: "Range"),
            let range = parseRange(rangeHeader, upperBound: data.count) {
+            if range.lowerBound > 0, Self.shouldIgnoreNonZeroRanges {
+                sendFullResponse(data)
+                return
+            }
             let slice = data[range]
             let response = HTTPURLResponse(
                 url: request.url!,
@@ -341,6 +394,12 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
             return
         }
 
+        sendFullResponse(data)
+    }
+
+    override func stopLoading() {}
+
+    private func sendFullResponse(_ data: Data) {
         let response = HTTPURLResponse(
             url: request.url!,
             statusCode: 200,
@@ -351,8 +410,6 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
     }
-
-    override func stopLoading() {}
 
     private static func record(_ request: URLRequest) {
         lock.lock()
@@ -365,6 +422,12 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
         lock.lock()
         defer { lock.unlock() }
         return storage
+    }
+
+    private static var shouldIgnoreNonZeroRanges: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ignoresNonZeroRanges
     }
 
     private func parseRange(_ value: String, upperBound: Int) -> Range<Int>? {

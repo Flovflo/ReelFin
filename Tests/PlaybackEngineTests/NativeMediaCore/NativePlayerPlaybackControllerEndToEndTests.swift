@@ -94,6 +94,7 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
             id: "source-dv",
             itemID: "item-dv",
             name: "Dolby Vision Original",
+            fileSize: 512 * 1_024 * 1_024,
             container: "mov,mp4,m4a,3gp,3g2,mj2",
             videoCodec: "hvc1",
             audioCodec: "eac3",
@@ -110,6 +111,100 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         ))
     }
 
+    func testVeryLargeRemoteMOVSourceStillUsesAppleNativeWhenCompatible() {
+        let source = MediaSource(
+            id: "source-large-mov",
+            itemID: "item-large-mov",
+            name: "Large MOV Original",
+            fileSize: 17_000_000_000,
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            videoCodec: "hvc1",
+            audioCodec: "eac3",
+            bitrate: 21_868_794,
+            videoBitDepth: 10,
+            videoRangeType: "HDR10",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+
+        XCTAssertTrue(NativePlayerPlaybackController.shouldUseAppleNativeSurface(
+            source: source,
+            url: URL(string: "https://example.com/Videos/item-large-mov/stream.mov?static=true")!
+        ))
+    }
+
+    func testDirectPlayWhenPossibleDoesNotSampleBufferAppleContainerWithUnsupportedVideo() async throws {
+        let itemID = "item-unsupported-mp4"
+        let nativeConfig = NativePlayerConfig(enabled: true)
+        let configuration = ServerConfiguration(
+            serverURL: URL(string: "https://jellyfin.example")!,
+            nativePlayerConfig: nativeConfig
+        )
+        let apiClient = NativePlaybackControllerAPIClient(source: MediaSource(
+            id: "source-unsupported-mp4",
+            itemID: itemID,
+            name: "Unsupported MP4 Original",
+            fileSize: 512 * 1_024 * 1_024,
+            container: "mp4",
+            videoCodec: "vp9",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
+        ))
+        let controller = NativePlayerPlaybackController(apiClient: apiClient)
+
+        do {
+            _ = try await controller.prepare(
+                itemID: itemID,
+                configuration: configuration,
+                session: UserSession(userID: "user", username: "user", token: "secret"),
+                nativeConfig: nativeConfig,
+                startTimeTicks: nil
+            )
+            XCTFail("Expected coordinator fallback instead of sample-buffer playback")
+        } catch let error as NativePlayerPreparationError {
+            XCTAssertEqual(
+                error,
+                .appleNativeContainerRequiresCoordinatorFallback("unsupported_video_codec:vp9")
+            )
+        }
+    }
+
+    func testAppleNativeSelectionStripsQueryAPIKeyWhenHeaderAuthExists() throws {
+        let source = MediaSource(
+            id: "source-secret",
+            itemID: "item-secret",
+            name: "Secret URL Original",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let resolution = OriginalMediaResolution(
+            url: try XCTUnwrap(URL(string: "https://jellyfin.example/Videos/item-secret/stream.mp4?static=true&MediaSourceId=source-secret&api_key=secret")),
+            headers: ["X-Emby-Token": "secret"],
+            mediaSource: source,
+            selectedPath: "static-original-stream",
+            originalMediaRequested: true,
+            serverTranscodeUsed: false
+        )
+
+        let selection = NativePlayerPlaybackController.makeAppleNativeSelection(
+            resolution: resolution,
+            session: UserSession(userID: "user", username: "user", token: "secret")
+        )
+
+        XCTAssertFalse(selection.assetURL.absoluteString.contains("api_key"))
+        if case let .directPlay(url) = selection.decision.route {
+            XCTAssertFalse(url.absoluteString.contains("api_key"))
+        } else {
+            XCTFail("Expected Direct Play route")
+        }
+        XCTAssertEqual(selection.headers["X-Emby-Token"], "secret")
+    }
+
     func testPrepareRoutesDolbyVisionMOVToAppleNativePlaybackWithoutProbe() async throws {
         let itemID = "item-dv"
         let nativeConfig = NativePlayerConfig(enabled: true)
@@ -121,6 +216,7 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
             id: "source-dv",
             itemID: itemID,
             name: "Dolby Vision Original",
+            fileSize: 512 * 1_024 * 1_024,
             container: "mov,mp4,m4a,3gp,3g2,mj2",
             videoCodec: "hvc1",
             audioCodec: "eac3",
@@ -144,6 +240,8 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         XCTAssertEqual(snapshot.surface, .appleNative)
         XCTAssertEqual(snapshot.routeDescription, "Direct Play (Apple Native)")
         XCTAssertEqual(snapshot.applePlaybackSelection?.debugInfo.playMethod, "DirectPlay")
+        XCTAssertEqual(snapshot.applePlaybackSelection?.headers["X-Emby-Token"], "secret")
+        XCTAssertTrue(snapshot.applePlaybackSelection?.headers["X-Emby-Authorization"]?.contains("Token=\"secret\"") == true)
         XCTAssertNil(snapshot.playbackURL)
         XCTAssertNil(snapshot.nativeBridgePlan)
         XCTAssertEqual(try XCTUnwrap(snapshot.startTimeSeconds), 1200, accuracy: 0.001)
@@ -194,7 +292,17 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
             audioCodec: "aac",
             supportsDirectPlay: false,
             supportsDirectStream: false,
-            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
+            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264"),
+            audioTracks: [
+                MediaTrack(
+                    id: "track-1",
+                    title: "French AAC",
+                    language: "fra",
+                    codec: "aac",
+                    isDefault: true,
+                    index: 1
+                )
+            ]
         ))
         let controller = NativePlayerPlaybackController(apiClient: apiClient)
 
@@ -218,6 +326,10 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("audioRenderer=AVSampleBufferAudioRenderer") })
         XCTAssertFalse(snapshot.overlayLines.joined().contains("AVPlayerViewController"))
         XCTAssertFalse(snapshot.overlayLines.joined().contains("LocalFMP4HLS"))
+        XCTAssertEqual(snapshot.audioTracks.map(\.id), ["2"])
+        XCTAssertEqual(snapshot.audioTracks.first?.title, "French AAC")
+        XCTAssertEqual(snapshot.audioTracks.first?.language, "fra")
+        XCTAssertEqual(snapshot.selectedAudioTrackID, "2")
         XCTAssertGreaterThan(snapshot.overlayLines.videoPacketCount, 0)
         XCTAssertGreaterThan(snapshot.overlayLines.audioPacketCount, 0)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)

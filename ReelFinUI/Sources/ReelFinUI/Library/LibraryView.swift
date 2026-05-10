@@ -84,7 +84,7 @@ struct LibraryView: View {
 #if os(tvOS)
         .toolbar(.hidden, for: .navigationBar)
         .preference(key: TVTopNavigationAppearancePreferenceKey.self, value: .neutral)
-#elseif os(iOS)
+#elseif os(iOS) && !targetEnvironment(macCatalyst)
         .toolbar(.hidden, for: .navigationBar)
 #endif
     }

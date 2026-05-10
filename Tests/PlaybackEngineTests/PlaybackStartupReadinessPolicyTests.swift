@@ -27,7 +27,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         XCTAssertNil(requirement)
     }
 
-    func testRequirementUsesGuardedFastGateForIPhoneHighBitrateResume() throws {
+    func testRequirementUsesStrictGuardedGateForIPhoneHighBitrateResume() throws {
         let requirement = PlaybackStartupReadinessPolicy.requirement(
             route: .directPlay(URL(string: "https://example.com/Videos/item/stream?static=true")!),
             sourceBitrate: 22_000_000,
@@ -36,12 +36,12 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertEqual(requirement?.minimumBufferDuration, 2)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 2)
-        XCTAssertEqual(requirement?.timeout, 4)
+        XCTAssertEqual(requirement?.minimumBufferDuration, 8)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 12)
+        XCTAssertEqual(requirement?.timeout, 30)
         XCTAssertEqual(requirement?.pollInterval, 0.15)
         XCTAssertEqual(requirement?.reason, "ios_resume_directplay_ready")
-        XCTAssertEqual(requirement?.allowsTimeoutStart, true)
+        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
         XCTAssertFalse(
             PlaybackStartupReadinessPolicy.shouldStart(
                 bufferedDuration: 1.3,
@@ -50,7 +50,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
                 requirement: try XCTUnwrap(requirement)
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             PlaybackStartupReadinessPolicy.shouldStart(
                 bufferedDuration: 2,
                 likelyToKeepUp: true,
@@ -58,17 +58,25 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
                 requirement: try XCTUnwrap(requirement)
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             PlaybackStartupReadinessPolicy.shouldStart(
                 bufferedDuration: 0,
                 likelyToKeepUp: false,
-                elapsedSeconds: 4.1,
+                elapsedSeconds: 30.1,
                 requirement: try XCTUnwrap(requirement)
             )
         )
         XCTAssertTrue(
             PlaybackStartupReadinessPolicy.shouldStart(
-                bufferedDuration: 2,
+                bufferedDuration: 8,
+                likelyToKeepUp: true,
+                elapsedSeconds: 6,
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.shouldStart(
+                bufferedDuration: 12,
                 likelyToKeepUp: false,
                 elapsedSeconds: 16,
                 requirement: try XCTUnwrap(requirement)
@@ -76,6 +84,11 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
         XCTAssertFalse(
             PlaybackStartupReadinessPolicy.allowsImmediateStartBeforeReadyToPlay(
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+        XCTAssertFalse(
+            PlaybackStartupReadinessPolicy.allowsFirstFrameStartupReadiness(
                 requirement: try XCTUnwrap(requirement)
             )
         )
@@ -192,6 +205,11 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
                 requirement: try XCTUnwrap(requirement)
             )
         )
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.allowsFirstFrameStartupReadiness(
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
     }
 
     func testTvOSHighBitrateDirectPlayStillStartsWithMeasuredBuffer() throws {
@@ -249,6 +267,11 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
         XCTAssertTrue(
             PlaybackStartupReadinessPolicy.allowsImmediateStartBeforeReadyToPlay(
+                requirement: requirement
+            )
+        )
+        XCTAssertTrue(
+            PlaybackStartupReadinessPolicy.allowsFirstFrameStartupReadiness(
                 requirement: requirement
             )
         )

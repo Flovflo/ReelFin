@@ -33,10 +33,14 @@ enum DirectPlaySessionPolicy {
         pendingResumeSeconds: Double?,
         currentTime: Double,
         itemStatus: AVPlayerItem.Status,
-        transcodeStartOffset: Double
+        transcodeStartOffset: Double,
+        isPlaybackActive: Bool = false
     ) -> Bool {
         guard hasMarkedFirstFrame else { return false }
         guard itemStatus == .readyToPlay else { return false }
+        if case .directPlay = route {
+            guard isPlaybackActive else { return false }
+        }
         return !shouldDelayFirstFrameUntilResumePosition(
             route: route,
             pendingResumeSeconds: pendingResumeSeconds,
@@ -126,8 +130,19 @@ enum DirectPlaySessionPolicy {
     }
 
     static func postStartStallWaitsToMinimizeStalling(isTVOS: Bool) -> Bool {
-        _ = isTVOS
-        return true
+        isTVOS
+    }
+
+    static func shouldPauseForPostStartStallRebuffer(isTVOS: Bool) -> Bool {
+        !isTVOS
+    }
+
+    static func postStartStallRebufferTimeout(
+        recentStallCount: Int,
+        isTVOS: Bool
+    ) -> Double {
+        guard !isTVOS else { return 0 }
+        return recentStallCount >= 3 ? 45 : 30
     }
 
     static func isIPhoneNoStallGuardedDirectPlay(route: PlaybackRoute, source: MediaSource?) -> Bool {

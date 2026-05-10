@@ -13,7 +13,7 @@ struct ReelFinTVApp: App {
         NativePlayerRuntimeDefaults.registerExperimentalBranchDefaults()
         if NativePlayerConfig.runtimeOverrideEnabled() {
             PlaybackSessionController.clearStoredPreferredTranscodeProfiles()
-            AppLog.playback.notice("nativeplayer.runtime.enabled — platform=tvOS branch=feature/native-swift-player storedTranscodePinsCleared=true")
+            AppLog.playback.notice("nativeplayer.runtime.enabled — platform=tvOS storedTranscodePinsCleared=true")
         }
         let metadata = AppMetadata.current
         self.metadata = metadata

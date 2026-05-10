@@ -49,17 +49,24 @@ struct NativePlayerIOSTransportOverlayView: View {
 
     private func topControls(volumeWidth: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 16) {
-            NativePlayerIOSIconButton(systemName: "xmark", size: .large) {
+            NativePlayerIOSIconButton(
+                systemName: "xmark",
+                size: .large,
+                accessibilityLabel: "Fermer le lecteur",
+                accessibilityIdentifier: "native_player_close_button"
+            ) {
                 onInteraction()
                 onDismiss()
             }
-            .accessibilityLabel("Fermer le lecteur")
 
             NativePlayerIOSGlassGroup(spacing: 14, height: 44) {
-                NativePlayerIOSIconButton(systemName: "rectangle.on.rectangle", size: .compact) {
+                NativePlayerIOSIconButton(
+                    systemName: "rectangle.on.rectangle",
+                    size: .compact,
+                    accessibilityLabel: "Picture in Picture"
+                ) {
                     onInteraction()
                 }
-                .accessibilityLabel("Picture in Picture")
 
                 NativePlayerRoutePickerButton()
                     .frame(width: 28, height: 28)
@@ -75,23 +82,35 @@ struct NativePlayerIOSTransportOverlayView: View {
 
     private func centerTransportControls(spacing: CGFloat) -> some View {
         HStack(spacing: spacing) {
-            NativePlayerIOSIconButton(systemName: "gobackward.10", size: .transport) {
+            NativePlayerIOSIconButton(
+                systemName: "gobackward.10",
+                size: .transport,
+                accessibilityLabel: "Reculer de 10 secondes",
+                accessibilityIdentifier: "native_player_seek_backward_10"
+            ) {
                 onInteraction()
                 onSeekRelative(-10)
             }
-            .accessibilityLabel("Reculer de 10 secondes")
 
-            NativePlayerIOSIconButton(systemName: isPaused ? "play.fill" : "pause.fill", size: .primaryTransport) {
+            NativePlayerIOSIconButton(
+                systemName: isPaused ? "play.fill" : "pause.fill",
+                size: .primaryTransport,
+                accessibilityLabel: isPaused ? "Lire" : "Pause",
+                accessibilityIdentifier: "native_player_play_pause_button"
+            ) {
                 onInteraction()
                 isPaused.toggle()
             }
-            .accessibilityLabel(isPaused ? "Lire" : "Pause")
 
-            NativePlayerIOSIconButton(systemName: "goforward.10", size: .transport) {
+            NativePlayerIOSIconButton(
+                systemName: "goforward.10",
+                size: .transport,
+                accessibilityLabel: "Avancer de 10 secondes",
+                accessibilityIdentifier: "native_player_seek_forward_10"
+            ) {
                 onInteraction()
                 onSeekRelative(10)
             }
-            .accessibilityLabel("Avancer de 10 secondes")
         }
     }
 
@@ -166,17 +185,25 @@ private struct NativePlayerIOSBottomChrome: View {
 
     private var bottomTrackControls: some View {
         NativePlayerIOSGlassGroup(spacing: 18, height: 44) {
-            NativePlayerIOSIconButton(systemName: "text.bubble", size: .compact) {
+            NativePlayerIOSIconButton(
+                systemName: "text.bubble",
+                size: .compact,
+                accessibilityLabel: "Sous-titres",
+                accessibilityIdentifier: "native_player_subtitles_button"
+            ) {
                 onInteraction()
                 onShowTrackPicker(.subtitles)
             }
-            .accessibilityLabel("Sous-titres")
 
-            NativePlayerIOSIconButton(systemName: "waveform", size: .compact) {
+            NativePlayerIOSIconButton(
+                systemName: "waveform",
+                size: .compact,
+                accessibilityLabel: "Audio",
+                accessibilityIdentifier: "native_player_audio_button"
+            ) {
                 onInteraction()
                 onShowTrackPicker(.audio)
             }
-            .accessibilityLabel("Audio")
         }
     }
 }

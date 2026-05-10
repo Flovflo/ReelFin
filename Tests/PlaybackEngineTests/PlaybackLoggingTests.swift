@@ -55,4 +55,16 @@ final class PlaybackLoggingTests: XCTestCase {
         XCTAssertTrue(compact.contains("subtitlemethod=External"))
         XCTAssertTrue(compact.contains("transcodereasons=ContainerNotSupported"))
     }
+
+    func testPlaylistURILoggingRedactsRelativeSegmentAPIKey() {
+        let segment = "hls1/main/0.ts?AllowAudioStreamCopy=false&ApiKey=SECRET&api_key=SECRET2&VideoCodec=h264"
+
+        let redacted = PlaybackSessionController.redactedPlaylistURIForLog(segment)
+
+        XCTAssertFalse(redacted.contains("SECRET"))
+        XCTAssertFalse(redacted.contains("SECRET2"))
+        XCTAssertTrue(redacted.contains("ApiKey=REDACTED"))
+        XCTAssertTrue(redacted.contains("api_key=REDACTED"))
+        XCTAssertTrue(redacted.contains("VideoCodec=h264"))
+    }
 }
