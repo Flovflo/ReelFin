@@ -5,6 +5,7 @@ struct LocalMediaGatewayRangeResponse: Sendable {
     let data: Data
     let range: ByteRange
     let totalLength: Int64?
+    let contentType: String?
 }
 
 public actor LocalMediaGatewaySession {
@@ -19,6 +20,8 @@ public actor LocalMediaGatewaySession {
     private let rangeSessionConfiguration: URLSessionConfiguration
     private let prefetcher: LocalMediaGatewayPrefetcher?
     private var cachedSize: Int64?
+    private var cachedContentType: String?
+    private var latestObservedBitrate: Int?
     private var inFlight: [ByteRange: Task<LocalMediaGatewayRangeResponse, Error>] = [:]
 
     public init(
@@ -65,7 +68,12 @@ public actor LocalMediaGatewaySession {
             } else {
                 totalLength = try? await size()
             }
-            let response = LocalMediaGatewayRangeResponse(data: data, range: range, totalLength: totalLength)
+            let response = LocalMediaGatewayRangeResponse(
+                data: data,
+                range: range,
+                totalLength: totalLength,
+                contentType: cachedContentType
+            )
             await prefetcher?.schedule(after: ByteRange(offset: range.offset, length: data.count), totalLength: totalLength)
             return response
         }
@@ -85,6 +93,9 @@ public actor LocalMediaGatewaySession {
     private func resolveRange(_ requestedRange: LocalMediaGatewayRequestedRange?) async throws -> ByteRange {
         switch requestedRange {
         case .bounded(let range):
+            if let totalLength = try await size(), range.offset >= totalLength {
+                throw MediaAccessError.invalidRange(range)
+            }
             return range
         case .openEnded(let offset):
             return try await boundedImplicitRange(offset: offset)
@@ -121,7 +132,22 @@ public actor LocalMediaGatewaySession {
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { return nil }
         cachedSize = http.mediaGatewayContentLength
+        cachedContentType = http.value(forHTTPHeaderField: "Content-Type") ?? cachedContentType
         return cachedSize
+    }
+
+    func contentType() async throws -> String? {
+        if let cachedContentType { return cachedContentType }
+        _ = try await size()
+        return cachedContentType
+    }
+
+    public func diagnostics() async -> LocalMediaGatewayDiagnostics {
+        LocalMediaGatewayDiagnostics(
+            contentType: cachedContentType,
+            totalLength: cachedSize,
+            observedBitrate: latestObservedBitrate
+        )
     }
 
     public func cancel() async {
@@ -139,7 +165,7 @@ public actor LocalMediaGatewaySession {
         defer { rangeSession.invalidateAndCancel() }
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
         request.httpMethod = "GET"
-        request.setValue("bytes=\(range.offset)-", forHTTPHeaderField: "Range")
+        request.setValue("bytes=\(range.offset)-\(range.offset + Int64(range.length) - 1)", forHTTPHeaderField: "Range")
         applyHeaders(to: &request)
         let (bytes, response) = try await rangeSession.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw MediaAccessError.nonHTTPResponse }
@@ -152,17 +178,23 @@ public actor LocalMediaGatewaySession {
         if let total = http.mediaGatewayContentRangeTotal ?? http.mediaGatewayContentLength {
             cachedSize = total
         }
+        cachedContentType = http.value(forHTTPHeaderField: "Content-Type") ?? cachedContentType
         let payload = try await readPrefix(from: bytes, maxLength: range.length)
         try await store.write(range: ByteRange(offset: range.offset, length: payload.count), data: payload, key: key)
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 0 {
+            latestObservedBitrate = max(latestObservedBitrate ?? 0, Int(Double(payload.count * 8) / elapsed))
+        }
         await prefetcher?.recordRemoteFetch(
             byteCount: payload.count,
-            elapsedSeconds: Date().timeIntervalSince(start),
+            elapsedSeconds: elapsed,
             totalLength: cachedSize
         )
         return LocalMediaGatewayRangeResponse(
             data: payload,
             range: ByteRange(offset: range.offset, length: payload.count),
-            totalLength: cachedSize
+            totalLength: cachedSize,
+            contentType: cachedContentType
         )
     }
 
@@ -183,4 +215,10 @@ public actor LocalMediaGatewaySession {
             request.setValue(value, forHTTPHeaderField: name)
         }
     }
+}
+
+public struct LocalMediaGatewayDiagnostics: Sendable, Equatable {
+    public let contentType: String?
+    public let totalLength: Int64?
+    public let observedBitrate: Int?
 }

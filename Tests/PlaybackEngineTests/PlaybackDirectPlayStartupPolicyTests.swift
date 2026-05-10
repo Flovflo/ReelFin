@@ -3,7 +3,7 @@ import Foundation
 import XCTest
 
 final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
-    func testHighBitrateDirectPlayUsesFastModeWhenServerBaselineHasClearFreshHeadroom() {
+    func testIPhoneHighBitrateDirectPlayUsesGuardedModeEvenWhenServerBaselineHasClearFreshHeadroom() {
         let baseline = PlaybackServerNetworkBaseline.Result(
             byteCount: 4 * 1_024 * 1_024,
             elapsedSeconds: 0.42,
@@ -19,6 +19,33 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
             itemPreheatResult: nil,
             serverBaselineResult: baseline,
             isTVOS: false,
+            now: Date(timeIntervalSince1970: 120)
+        )
+
+        XCTAssertEqual(decision.mode, .guarded)
+        XCTAssertEqual(decision.minimumBufferDuration, 8)
+        XCTAssertEqual(decision.preferredBufferDuration, 12)
+        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertFalse(decision.allowsTimeoutStart)
+        XCTAssertNil(decision.failureReason)
+    }
+
+    func testTvOSHighBitrateDirectPlayCanUseFastModeWhenServerBaselineHasClearFreshHeadroom() {
+        let baseline = PlaybackServerNetworkBaseline.Result(
+            byteCount: 4 * 1_024 * 1_024,
+            elapsedSeconds: 0.42,
+            observedBitrate: 79_000_000,
+            createdAt: Date(timeIntervalSince1970: 100),
+            serverKey: "https://example.com",
+            networkScope: "default"
+        )
+
+        let decision = DirectPlayStartupPolicy.decision(
+            route: .directPlay(URL(string: "https://example.com/Videos/item/stream.mp4?static=true")!),
+            sourceBitrate: 21_868_794,
+            itemPreheatResult: nil,
+            serverBaselineResult: baseline,
+            isTVOS: true,
             now: Date(timeIntervalSince1970: 120)
         )
 
@@ -103,7 +130,7 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         XCTAssertEqual(decision.failureReason, .directPlayPreflightInsufficient)
     }
 
-    func testHighBitrateDirectPlayUsesFastModeWhenPreheatHasClearHeadroom() {
+    func testIPhoneHighBitrateDirectPlayUsesGuardedModeEvenWhenPreheatHasClearHeadroom() {
         let preheat = PlaybackStartupPreheater.Result(
             byteCount: 12 * 1_024 * 1_024,
             elapsedSeconds: 1.2,
@@ -119,10 +146,34 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
             isTVOS: false
         )
 
+        XCTAssertEqual(decision.mode, .guarded)
+        XCTAssertEqual(decision.minimumBufferDuration, 8)
+        XCTAssertEqual(decision.preferredBufferDuration, 12)
+        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertFalse(decision.allowsTimeoutStart)
+        XCTAssertNil(decision.failureReason)
+    }
+
+    func testTvOSHighBitrateDirectPlayCanUseFastModeWhenPreheatHasClearHeadroom() {
+        let preheat = PlaybackStartupPreheater.Result(
+            byteCount: 12 * 1_024 * 1_024,
+            elapsedSeconds: 1.2,
+            observedBitrate: 84_000_000,
+            rangeStart: 2_048,
+            reason: "directplay_range_deep"
+        )
+
+        let decision = DirectPlayStartupPolicy.decision(
+            route: .directPlay(URL(string: "https://example.com/Videos/item/stream.mp4?static=true")!),
+            sourceBitrate: 21_868_794,
+            preheatResult: preheat,
+            isTVOS: true
+        )
+
         XCTAssertEqual(decision.mode, .fast)
         XCTAssertEqual(decision.minimumBufferDuration, 0)
         XCTAssertEqual(decision.preferredBufferDuration, 0)
-        XCTAssertEqual(decision.timeout, 2)
+        XCTAssertEqual(decision.timeout, 3)
         XCTAssertTrue(decision.allowsTimeoutStart)
         XCTAssertNil(decision.failureReason)
     }
@@ -144,10 +195,10 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(decision.mode, .guarded)
-        XCTAssertEqual(decision.minimumBufferDuration, 2)
-        XCTAssertEqual(decision.preferredBufferDuration, 2)
-        XCTAssertEqual(decision.timeout, 4)
-        XCTAssertTrue(decision.allowsTimeoutStart)
+        XCTAssertEqual(decision.minimumBufferDuration, 8)
+        XCTAssertEqual(decision.preferredBufferDuration, 12)
+        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertFalse(decision.allowsTimeoutStart)
         XCTAssertNil(decision.failureReason)
     }
 
@@ -194,6 +245,10 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(decision.mode, .guarded)
+        XCTAssertEqual(decision.minimumBufferDuration, 8)
+        XCTAssertEqual(decision.preferredBufferDuration, 12)
+        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertFalse(decision.allowsTimeoutStart)
         XCTAssertNil(decision.failureReason)
     }
 }

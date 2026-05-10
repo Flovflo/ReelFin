@@ -48,16 +48,24 @@ enum LocalMediaGatewayRequestedRange: Equatable {
 }
 
 enum LocalMediaGatewayHTTPResponse {
-    static func head(totalLength: Int64?) -> Data {
-        response(status: "200 OK", headers: commonHeaders(totalLength: totalLength), body: nil)
+    static func head(totalLength: Int64?, contentType: String?) -> Data {
+        response(status: "200 OK", headers: commonHeaders(totalLength: totalLength, contentType: contentType), body: nil)
     }
 
-    static func partial(data: Data, range: ByteRange, totalLength: Int64?) -> Data {
-        var headers = commonHeaders(totalLength: Int64(data.count))
+    static func partial(data: Data, range: ByteRange, totalLength: Int64?, contentType: String?) -> Data {
+        var headers = commonHeaders(totalLength: Int64(data.count), contentType: contentType)
         let total = totalLength.map(String.init) ?? "*"
         let end = range.offset + Int64(data.count) - 1
         headers["Content-Range"] = "bytes \(range.offset)-\(end)/\(total)"
         return response(status: "206 Partial Content", headers: headers, body: data)
+    }
+
+    static func rangeNotSatisfiable(totalLength: Int64?) -> Data {
+        var headers = ["Content-Length": "0"]
+        if let totalLength {
+            headers["Content-Range"] = "bytes */\(totalLength)"
+        }
+        return response(status: "416 Range Not Satisfiable", headers: headers, body: nil)
     }
 
     static func notFound() -> Data {
@@ -72,13 +80,13 @@ enum LocalMediaGatewayHTTPResponse {
         response(status: "502 Bad Gateway", headers: ["Content-Length": "0"], body: nil)
     }
 
-    private static func commonHeaders(totalLength: Int64?) -> [String: String] {
+    private static func commonHeaders(totalLength: Int64?, contentType: String?) -> [String: String] {
         [
             "Accept-Ranges": "bytes",
             "Cache-Control": "no-store",
             "Connection": "close",
             "Content-Length": "\(max(0, totalLength ?? 0))",
-            "Content-Type": "video/mp4"
+            "Content-Type": contentType ?? "application/octet-stream"
         ]
     }
 

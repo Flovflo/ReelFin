@@ -176,7 +176,9 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         let decision = engine.decide(itemID: "item", sources: sources, configuration: server, token: "abc")
 
         XCTAssertEqual(decision?.sourceID, "remux")
-        XCTAssertEqual(decision?.route, .transcode(URL(string: "https://example.com/transcode.m3u8")!))
+        XCTAssertEqual(decision?.route, .remux(URL(string: "https://example.com/remux/master.m3u8")!))
+        XCTAssertEqual(decision?.routeGuarantees.videoIntegrity, .videoCopyRemux)
+        XCTAssertTrue(decision?.routeGuarantees.preservesOriginalVideo == true)
     }
 
     func testNativeBridgeDisabledDefaultsToServerRoute() {
@@ -202,7 +204,8 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         ]
 
         let decision = engine.decide(itemID: "item-bad", sources: sources, configuration: server, token: "abc")
-        XCTAssertEqual(decision?.route, .transcode(URL(string: "https://example.com/transcode.m3u8")!))
+        XCTAssertEqual(decision?.route, .remux(URL(string: "https://example.com/remux/master.m3u8")!))
+        XCTAssertEqual(decision?.routeGuarantees.videoIntegrity, .videoCopyRemux)
     }
 
     func testJitPlanKeepsDirectPlayForAppleContainers() {
@@ -819,7 +822,7 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertEqual(queryMap["AudioCodec"], "aac")
     }
 
-    func testCoordinatorServerDefaultUpgradesMKVHEVCToAppleOptimizedHEVC() async throws {
+    func testCoordinatorServerDefaultPreservesMKVHEVCVideoCopy() async throws {
         let source = MediaSource(
             id: "source-server-default-mkv-hevc",
             itemID: "item-server-default-mkv-hevc",
@@ -850,10 +853,12 @@ final class PlaybackDecisionEngineTests: XCTestCase {
 
         let queryMap = queryMap(from: selection.assetURL)
         XCTAssertEqual(queryMap["VideoCodec"], "hevc")
-        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "false")
+        XCTAssertEqual(queryMap["AllowVideoStreamCopy"], "true")
         XCTAssertEqual(queryMap["Container"], "fmp4")
         XCTAssertEqual(queryMap["SegmentContainer"], "fmp4")
-        XCTAssertEqual(queryMap["BreakOnNonKeyFrames"], "False")
+        XCTAssertNil(queryMap["BreakOnNonKeyFrames"])
+        XCTAssertEqual(selection.routeGuarantees.videoIntegrity, .videoCopyRemux)
+        XCTAssertTrue(selection.routeGuarantees.preservesOriginalVideo)
     }
 
     func testCoordinatorForceH264ProfileDisablesVideoCopy() async throws {

@@ -110,7 +110,13 @@ public enum PlaybackStartupPreheater {
                 fileSize: selection.source.fileSize,
                 runtimeSeconds: runtimeSeconds,
                 resumeSeconds: resumeSeconds,
-                alignment: Int64(plannedLength)
+                alignment: Int64(plannedLength),
+                prefersNonZeroHealthProbe: prefersNonZeroDirectPlayHealthProbe(
+                    fileSize: selection.source.fileSize,
+                    sourceBitrate: selection.source.bitrate,
+                    rangeLength: plannedLength,
+                    isTVOS: isTVOS
+                )
             )
             let length = cappedRangeLength(
                 plannedLength,
@@ -186,8 +192,14 @@ public enum PlaybackStartupPreheater {
         fileSize: Int64?,
         runtimeSeconds: Double?,
         resumeSeconds: Double,
-        alignment: Int64
+        alignment: Int64,
+        prefersNonZeroHealthProbe: Bool = false
     ) -> Int64 {
+        let startupProbeOffset = nonZeroStartupProbeOffset(
+            fileSize: fileSize,
+            alignment: alignment,
+            prefersNonZeroHealthProbe: prefersNonZeroHealthProbe
+        )
         guard
             let fileSize,
             fileSize > 0,
@@ -196,12 +208,39 @@ public enum PlaybackStartupPreheater {
             runtimeSeconds > 0,
             resumeSeconds > 0
         else {
-            return 0
+            return startupProbeOffset
         }
 
         let ratio = min(max(resumeSeconds / runtimeSeconds, 0), 0.98)
         let rawOffset = Int64(Double(fileSize) * ratio)
-        return max(0, (rawOffset / alignment) * alignment)
+        let resumeOffset = max(0, (rawOffset / alignment) * alignment)
+        return max(startupProbeOffset, resumeOffset)
+    }
+
+    private static func prefersNonZeroDirectPlayHealthProbe(
+        fileSize: Int64?,
+        sourceBitrate: Int?,
+        rangeLength: Int,
+        isTVOS: Bool
+    ) -> Bool {
+        guard !isTVOS else { return false }
+        guard let sourceBitrate, sourceBitrate >= highBitrateDirectPlayThreshold else { return false }
+        guard let fileSize else { return false }
+        return fileSize >= Int64(rangeLength * 2)
+    }
+
+    private static func nonZeroStartupProbeOffset(
+        fileSize: Int64?,
+        alignment: Int64,
+        prefersNonZeroHealthProbe: Bool
+    ) -> Int64 {
+        guard prefersNonZeroHealthProbe, let fileSize, fileSize > alignment else {
+            return 0
+        }
+
+        let maxOffset = max(0, fileSize - alignment)
+        guard maxOffset >= alignment else { return 0 }
+        return alignment
     }
 
     private static func fetch(
@@ -220,11 +259,13 @@ public enum PlaybackStartupPreheater {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
-        let rangeStart = requestPlan.rangeStart ?? 0
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(requestPlan.url, headers: headers))
         request.timeoutInterval = requestPlan.timeout
         request.setValue("*/*", forHTTPHeaderField: "Accept")
-        request.setValue("bytes=\(rangeStart)-", forHTTPHeaderField: "Range")
+        if let rangeStart = requestPlan.rangeStart {
+            let rangeEnd = rangeStart + Int64(max(1, requestPlan.rangeLength)) - 1
+            request.setValue("bytes=\(rangeStart)-\(rangeEnd)", forHTTPHeaderField: "Range")
+        }
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
@@ -237,7 +278,7 @@ public enum PlaybackStartupPreheater {
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             throw AppError.network("Startup preheat failed (\(httpResponse.statusCode)).")
         }
-        guard httpResponse.statusCode == 206 || rangeStart == 0 else {
+        guard httpResponse.statusCode == 206 || requestPlan.rangeStart == nil || requestPlan.rangeStart == 0 else {
             throw AppError.network("Startup preheat ignored a non-zero range request.")
         }
 

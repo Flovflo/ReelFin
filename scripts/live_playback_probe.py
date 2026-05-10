@@ -372,7 +372,7 @@ def run_loop(
     total = 0
     failures = 0
 
-    print(f"Authenticated as '{username}'. Running {loops} loop(s), sample={sample_size}.")
+    print(f"Authenticated. Running {loops} loop(s), sample={sample_size}.")
 
     for loop_index in range(1, loops + 1):
         print(f"\n=== LIVE LOOP {loop_index}/{loops} ===")

@@ -77,7 +77,10 @@ public final class LocalMediaGatewayServer: @unchecked Sendable {
         requestObserver?(request.method, String(describing: request.range))
         do {
             if request.method == "HEAD" {
-                return LocalMediaGatewayHTTPResponse.head(totalLength: try await session.size())
+                return LocalMediaGatewayHTTPResponse.head(
+                    totalLength: try await session.size(),
+                    contentType: try await session.contentType()
+                )
             }
             guard request.method == "GET" else {
                 return LocalMediaGatewayHTTPResponse.badRequest()
@@ -86,9 +89,13 @@ public final class LocalMediaGatewayServer: @unchecked Sendable {
             return LocalMediaGatewayHTTPResponse.partial(
                 data: result.data,
                 range: result.range,
-                totalLength: result.totalLength
+                totalLength: result.totalLength,
+                contentType: result.contentType
             )
         } catch {
+            if let mediaError = error as? MediaAccessError, case .invalidRange = mediaError {
+                return LocalMediaGatewayHTTPResponse.rangeNotSatisfiable(totalLength: try? await session.size())
+            }
             AppLog.playback.debug(
                 "playback.cache.gateway.response_failed — request=\(request.method, privacy: .public) range=\(String(describing: request.range), privacy: .public) error=\(String(describing: error), privacy: .public)"
             )

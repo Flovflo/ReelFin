@@ -35,7 +35,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertTrue(model.subtitleOptions.first?.isSelected == true)
     }
 
-    func testPlaybackControlsModelHidesSingleAudioTrackButKeepsSubtitleToggle() {
+    func testPlaybackControlsModelExposesSingleAudioTrackAndSubtitleToggle() {
         let model = PlaybackControlsModel.make(
             audioTracks: [
                 MediaTrack(id: "audio-fr", title: "French AAC", language: "fra", codec: "aac", isDefault: true, index: 1)
@@ -49,7 +49,8 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
 
         XCTAssertTrue(model.hasSelectableTracks)
-        XCTAssertTrue(model.audioOptions.isEmpty)
+        XCTAssertEqual(model.audioOptions.map(\.trackID), ["audio-fr"])
+        XCTAssertTrue(model.audioOptions.first?.isSelected == true)
         XCTAssertEqual(model.subtitleOptions.count, 2)
         XCTAssertTrue(model.subtitleOptions.first { $0.trackID == "sub-fr" }?.isSelected == true)
     }
@@ -427,7 +428,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertNil(policy.reason)
     }
 
-    func testHighBitrateProgressiveDirectPlayKeepsFastStartupBufferingOniOS() {
+    func testHighBitrateProgressiveDirectPlayUsesGuardedStartupBufferingOniOS() {
         let source = MediaSource(
             id: "high-bitrate-source",
             itemID: "item-high-bitrate",
@@ -450,9 +451,60 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             isTVOS: false
         )
 
+        XCTAssertEqual(policy.forwardBufferDuration, 12)
+        XCTAssertTrue(policy.waitsToMinimizeStalling)
+        XCTAssertEqual(policy.reason, "ios_guarded_directplay_startup")
+    }
+
+    func testMeasuredHeadroomFastStartWaitsForDirectPlayItemReadyBeforeAutoplay() {
+        let route = PlaybackRoute.directPlay(URL(string: "https://example.com/Videos/item-high-bitrate/stream.mp4?static=true&MediaSourceId=source")!)
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldWaitForItemReadyBeforeAutoplayAfterStartupSkip(
+                route: route,
+                itemStatus: .unknown
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldWaitForItemReadyBeforeAutoplayAfterStartupSkip(
+                route: route,
+                itemStatus: .readyToPlay
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldWaitForItemReadyBeforeAutoplayAfterStartupSkip(
+                route: .transcode(URL(string: "https://example.com/videos/master.m3u8")!),
+                itemStatus: .unknown
+            )
+        )
+    }
+
+    func testMeasuredHeadroomFastStartRestoresRemoteDirectPlaybackBuffering() {
+        let policy = PlaybackSessionController.measuredHeadroomDirectPlayStartupPolicy(
+            startupClass: .remoteDirect
+        )
+
         XCTAssertEqual(policy.forwardBufferDuration, 2)
         XCTAssertFalse(policy.waitsToMinimizeStalling)
-        XCTAssertNil(policy.reason)
+        XCTAssertEqual(policy.reason, "directplay_measured_headroom_fast_start")
+    }
+
+    func testIPhonePostStartDirectPlayStallDoesNotForceWaitingMode() {
+        XCTAssertFalse(
+            DirectPlaySessionPolicy.postStartStallWaitsToMinimizeStalling(isTVOS: false)
+        )
+        XCTAssertTrue(
+            DirectPlaySessionPolicy.postStartStallWaitsToMinimizeStalling(isTVOS: true)
+        )
+    }
+
+    func testIPhonePostStartDirectPlayStallPausesForMeasuredRebuffer() {
+        XCTAssertTrue(
+            DirectPlaySessionPolicy.shouldPauseForPostStartStallRebuffer(isTVOS: false)
+        )
+        XCTAssertFalse(
+            DirectPlaySessionPolicy.shouldPauseForPostStartStallRebuffer(isTVOS: true)
+        )
     }
 
     func testHighBitrateProgressiveDirectPlayUsesGuardedStartupBufferingOnTvOS() {
@@ -888,10 +940,10 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
-    func testVisibleDirectPlayFrameAtPendingResumeSatisfiesStartupReadiness() {
+    func testVisibleDirectPlayFrameAtPendingResumeDoesNotBypassBufferedStartupReadiness() {
         let url = URL(string: "https://example.com/Videos/premium-source/stream?static=true&MediaSourceId=premium-source")!
 
-        XCTAssertTrue(
+        XCTAssertFalse(
             PlaybackSessionController.shouldTreatStartupReadinessAsSatisfiedAfterFirstFrame(
                 route: .directPlay(url),
                 hasMarkedFirstFrame: true,
@@ -929,6 +981,32 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
                 currentTime: 1_590.417,
                 itemStatus: .unknown,
                 transcodeStartOffset: 0
+            )
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldTreatStartupReadinessAsSatisfiedAfterFirstFrame(
+                route: .directPlay(url),
+                hasMarkedFirstFrame: true,
+                pendingResumeSeconds: nil,
+                currentTime: 0,
+                itemStatus: .readyToPlay,
+                transcodeStartOffset: 0
+            )
+        )
+    }
+
+    func testActiveDirectPlayFrameAtPendingResumeSatisfiesStartupReadiness() {
+        let url = URL(string: "https://example.com/Videos/premium-source/stream?static=true&MediaSourceId=premium-source")!
+
+        XCTAssertTrue(
+            PlaybackSessionController.shouldTreatStartupReadinessAsSatisfiedAfterFirstFrame(
+                route: .directPlay(url),
+                hasMarkedFirstFrame: true,
+                pendingResumeSeconds: 1_590.071,
+                currentTime: 1_590.417,
+                itemStatus: .readyToPlay,
+                transcodeStartOffset: 0,
+                isPlaybackActive: true
             )
         )
     }
@@ -1474,7 +1552,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         XCTAssertFalse(shouldBlock)
     }
 
-    func testIPhoneHighBitrateResumeDirectPlayDoesNotBlockAutoplayOnGuardedStartupTimeout() {
+    func testIPhoneHighBitrateResumeDirectPlayBlocksAutoplayOnGuardedStartupTimeout() {
         let source = MediaSource(
             id: "premium-source",
             itemID: "item-premium",
@@ -1497,7 +1575,7 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertFalse(shouldBlock)
+        XCTAssertTrue(shouldBlock)
     }
 
     func testIPhoneHighRiskProgressiveDirectPlayDoesNotPreemptToStableHLSWithoutMeasurement() {

@@ -34,6 +34,7 @@ final class LocalMediaGatewayServerTests: XCTestCase {
         XCTAssertEqual(first.data, Data([4, 5, 6, 7]))
         XCTAssertEqual(first.response.value(forHTTPHeaderField: "Accept-Ranges"), "bytes")
         XCTAssertEqual(first.response.value(forHTTPHeaderField: "Content-Range"), "bytes 4-7/32")
+        XCTAssertEqual(first.response.value(forHTTPHeaderField: "Content-Type"), "video/mp4")
         XCTAssertEqual(MockOriginalMediaProtocol.rangeRequestCount, 1)
 
         let second = try await fetchRange(url: assetURL, range: "bytes=4-7")
@@ -88,6 +89,50 @@ final class LocalMediaGatewayServerTests: XCTestCase {
         XCTAssertEqual(response.statusCode, 206)
         XCTAssertEqual(response.data, Data((60..<64).map(UInt8.init)))
         XCTAssertEqual(response.response.value(forHTTPHeaderField: "Content-Range"), "bytes 60-63/64")
+    }
+
+    func testGatewayPreservesUpstreamContentType() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        MockOriginalMediaProtocol.storage = Data((0..<32).map(UInt8.init))
+        MockOriginalMediaProtocol.contentType = "video/x-matroska"
+        let session = LocalMediaGatewaySession(
+            remoteURL: URL(string: "https://media.example.com/video.mkv?api_key=secret")!,
+            headers: ["X-Emby-Token": "secret"],
+            key: makeKey(),
+            store: try MediaGatewayStore(directoryURL: directory),
+            sessionConfiguration: makeMockSessionConfiguration()
+        )
+        let server = LocalMediaGatewayServer(session: session)
+        let assetURL = try server.start()
+        defer { server.stop(reason: "test_teardown_content_type") }
+
+        let head = try await fetchHead(url: assetURL)
+        let response = try await fetchRange(url: assetURL, range: "bytes=0-3")
+
+        XCTAssertEqual(head.response.value(forHTTPHeaderField: "Content-Type"), "video/x-matroska")
+        XCTAssertEqual(response.response.value(forHTTPHeaderField: "Content-Type"), "video/x-matroska")
+    }
+
+    func testInvalidRangeReturns416() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        MockOriginalMediaProtocol.storage = Data((0..<16).map(UInt8.init))
+        let session = LocalMediaGatewaySession(
+            remoteURL: URL(string: "https://media.example.com/video.mp4?api_key=secret")!,
+            headers: ["X-Emby-Token": "secret"],
+            key: makeKey(),
+            store: try MediaGatewayStore(directoryURL: directory),
+            sessionConfiguration: makeMockSessionConfiguration()
+        )
+        let server = LocalMediaGatewayServer(session: session)
+        let assetURL = try server.start()
+        defer { server.stop(reason: "test_teardown_invalid_range") }
+
+        let response = try await fetchRange(url: assetURL, range: "bytes=99-120")
+
+        XCTAssertEqual(response.statusCode, 416)
+        XCTAssertEqual(response.response.value(forHTTPHeaderField: "Content-Range"), "bytes */16")
     }
 
     func testMissingRangeServesInitialPartialResponseForAVPlayerProbe() async throws {
@@ -358,7 +403,7 @@ final class LocalMediaGatewayServerTests: XCTestCase {
             }
         )
         XCTAssertTrue(MockOriginalMediaProtocol.requestedHeaders.contains { $0["X-Emby-Token"] == "secret" })
-        XCTAssertTrue(MockOriginalMediaProtocol.requestedHeaders.contains { $0["Range"] == "bytes=4-" })
+        XCTAssertTrue(MockOriginalMediaProtocol.requestedHeaders.contains { $0["Range"] == "bytes=4-7" })
     }
 
     private func fetchRange(url: URL, range: String) async throws -> (data: Data, response: HTTPURLResponse, statusCode: Int) {

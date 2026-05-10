@@ -6,6 +6,8 @@ public enum PlaybackDiagnosticEventKind: String, Sendable, Codable {
     case fragmentValidation
     case seekRecovery
     case planDecision
+    case routeGuarantee
+    case health
 }
 
 public struct PlaybackDiagnosticEvent: Sendable, Equatable, Codable, Identifiable {
@@ -80,5 +82,63 @@ public struct PlaybackDiagnostics: Sendable {
                 )
             )
         }
+    }
+
+    public func recordRouteGuarantees(_ guarantees: PlaybackRouteGuarantees) {
+        Task {
+            await store.record(
+                PlaybackDiagnosticEvent(
+                    kind: .routeGuarantee,
+                    attributes: [
+                        "videoIntegrity": guarantees.videoIntegrity.rawValue,
+                        "hdrIntegrity": guarantees.hdrIntegrity.rawValue,
+                        "startupClass": guarantees.startupClass.rawValue,
+                        "preservesOriginalVideo": String(guarantees.preservesOriginalVideo),
+                        "preservesDolbyVision": String(guarantees.preservesDolbyVision),
+                        "summary": guarantees.userVisibleSummary,
+                        "reason": guarantees.debugReason
+                    ]
+                )
+            )
+        }
+    }
+
+    public func recordStartupTrace(_ trace: PlaybackStartupTrace, guarantees: PlaybackRouteGuarantees) {
+        Task {
+            await store.record(
+                PlaybackDiagnosticEvent(
+                    kind: .startup,
+                    attributes: [
+                        "tapToFirstFrameMs": format(trace.milliseconds(from: trace.userTappedPlayAt, to: trace.firstFrameAt)),
+                        "assetToReadyMs": format(trace.milliseconds(from: trace.assetCreatedAt, to: trace.itemReadyAt)),
+                        "route": guarantees.startupClass.rawValue,
+                        "videoIntegrity": guarantees.videoIntegrity.rawValue,
+                        "hdrIntegrity": guarantees.hdrIntegrity.rawValue
+                    ]
+                )
+            )
+        }
+    }
+
+    public func recordHealth(_ health: PlaybackHealthSnapshot) {
+        Task {
+            await store.record(
+                PlaybackDiagnosticEvent(
+                    kind: .health,
+                    attributes: [
+                        "state": health.state.rawValue,
+                        "stallCount": String(health.stallCount),
+                        "observedBitrate": health.observedBitrate.map(String.init) ?? "unknown",
+                        "requiredBitrate": health.requiredBitrate.map(String.init) ?? "unknown",
+                        "safetyRatio": format(health.safetyRatio)
+                    ]
+                )
+            )
+        }
+    }
+
+    private func format(_ value: Double?) -> String {
+        guard let value else { return "unknown" }
+        return String(format: "%.1f", value)
     }
 }

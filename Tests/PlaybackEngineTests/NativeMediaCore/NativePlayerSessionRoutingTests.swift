@@ -66,7 +66,102 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
         XCTAssertEqual(asset.url, streamURL)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
-        XCTAssertEqual(controller.routeDescription, "Direct Play")
+        XCTAssertEqual(controller.routeGuarantees.videoIntegrity, .originalBitstream)
+        XCTAssertEqual(controller.routeGuarantees.startupClass, .directLocal)
+    }
+
+    func testDebugRuntimeNativeModeUsesAppleNativeForLargeRemoteMP4Original() async throws {
+        let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
+        let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
+        UserDefaults.standard.set(true, forKey: defaultsKey)
+        defer {
+            if let previousOverride {
+                UserDefaults.standard.set(previousOverride, forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let itemID = "item-large-remote"
+        let apiClient = NativeSessionRoutingAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: URL(string: "https://jellyfin.example")!,
+                nativePlayerConfig: NativePlayerConfig(enabled: false)
+            ),
+            source: MediaSource(
+                id: "source-large-remote",
+                itemID: itemID,
+                name: "Large Original",
+                fileSize: 17_000_000_000,
+                container: "mp4",
+                videoCodec: "h264",
+                audioCodec: "aac",
+                supportsDirectPlay: true,
+                supportsDirectStream: true,
+                transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
+            )
+        )
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: NativeSessionRoutingRepository())
+
+        try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: false)
+
+        XCTAssertFalse(controller.isNativePlayerActive)
+        XCTAssertEqual(controller.nativePlayerPlaybackSurface, .appleNative)
+        XCTAssertNil(controller.nativePlayerPlaybackURL)
+        let asset = try XCTUnwrap(controller.player.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(asset.url.path, "/Videos/\(itemID)/stream.mp4")
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
+    }
+
+    func testDebugRuntimeNativeModeUsesCoordinatorFallbackForUnsupportedMP4Original() async throws {
+        let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
+        let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
+        UserDefaults.standard.set(true, forKey: defaultsKey)
+        defer {
+            if let previousOverride {
+                UserDefaults.standard.set(previousOverride, forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let itemID = "item-unsupported-mp4"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let hlsURL = root.appendingPathComponent("videos").appendingPathComponent(itemID).appendingPathComponent("master.m3u8")
+        try FileManager.default.createDirectory(at: hlsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#EXTM3U\n#EXT-X-VERSION:7\n".write(to: hlsURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let apiClient = NativeSessionRoutingAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: root,
+                nativePlayerConfig: NativePlayerConfig(enabled: false)
+            ),
+            source: MediaSource(
+                id: "source-unsupported-mp4",
+                itemID: itemID,
+                name: "Unsupported MP4 Original",
+                fileSize: 512 * 1_024 * 1_024,
+                container: "mp4",
+                videoCodec: "vp9",
+                audioCodec: "aac",
+                supportsDirectPlay: false,
+                supportsDirectStream: false,
+                transcodeURL: hlsURL
+            )
+        )
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: NativeSessionRoutingRepository())
+
+        try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: false)
+
+        XCTAssertFalse(controller.isNativePlayerActive)
+        XCTAssertEqual(controller.nativePlayerPlaybackSurface, .appleNative)
+        XCTAssertNil(controller.nativePlayerPlaybackURL)
+        let asset = try XCTUnwrap(controller.player.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(asset.url.path, hlsURL.path)
+        XCTAssertEqual(controller.routeGuarantees.videoIntegrity, .videoTranscode)
+        XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, true)
     }
 
     func testRuntimeCustomPlayerModeUsesSampleBufferForCompatibleMP4Original() async throws {

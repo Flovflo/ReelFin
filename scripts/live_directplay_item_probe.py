@@ -177,17 +177,6 @@ def preferred_static_stream_extension(source: dict) -> Optional[str]:
     return None
 
 
-def redact_url(url: str) -> str:
-    parts = urllib.parse.urlsplit(url)
-    query = [
-        (key, "<redacted>" if key.lower() == "api_key" else value)
-        for key, value in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
-    ]
-    return urllib.parse.urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment)
-    )
-
-
 def media_streams(source: dict, stream_type: str) -> list[dict]:
     return [
         stream
@@ -267,6 +256,7 @@ def run_target(server_url: str, session: Session, target: ProbeTarget) -> None:
 
     url = stream_url(server_url, target.item_id, source, session.token)
     status, content_type, byte_count = probe_static_stream(url, session, required_headers)
+    stream_extension = preferred_static_stream_extension(source) or "original"
 
     print(
         "PASS "
@@ -274,7 +264,7 @@ def run_target(server_url: str, session: Session, target: ProbeTarget) -> None:
         f"container={container or 'unknown'} video={video_codec or 'unknown'} audio={audio_codec or 'unknown'} "
         f"supportsDirectPlay={supports_direct_play} supportsDirectStream={supports_direct_stream} "
         f"staticStatus={status} bytes={byte_count} contentType={content_type or 'unknown'} "
-        f"url={redact_url(url)}"
+        f"stream=static_original extension={stream_extension}"
     )
 
 

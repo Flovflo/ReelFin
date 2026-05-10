@@ -31,6 +31,8 @@ struct NativePlayerView: View {
     @State private var isChromeUserActive = true
     @State private var chromeAutoHideTask: Task<Void, Never>?
     @State private var isViewActive = false
+    @State private var lastDeepEvidenceLogDate: Date?
+    @State private var lastDeepEvidencePlaybackTime: Double?
 #if os(tvOS)
     @FocusState private var remoteInputFocused: Bool
 #endif
@@ -117,16 +119,21 @@ struct NativePlayerView: View {
             activeTrackMenu = nil
             revealChrome()
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native_engine_player_screen")
         .onAppear {
             isViewActive = true
             localStartTimeSeconds = startTimeSeconds ?? 0
             playbackTime = startTimeSeconds ?? 0
+            lastDeepEvidenceLogDate = nil
+            lastDeepEvidencePlaybackTime = nil
             revealChrome()
         }
         .onChange(of: playbackURL) { _, _ in
             localStartTimeSeconds = startTimeSeconds ?? 0
             playbackTime = startTimeSeconds ?? 0
+            lastDeepEvidenceLogDate = nil
+            lastDeepEvidencePlaybackTime = nil
             seekGeneration = 0
             seekRequest = nil
             pendingSeekTask?.cancel()
@@ -211,8 +218,22 @@ struct NativePlayerView: View {
             isPaused: isPaused,
             isBuffering: isBuffering,
             showsDiagnostics: shouldShowDiagnosticsPanel,
-            hasError: visibleErrorMessage != nil
+            hasError: visibleErrorMessage != nil,
+            isPinnedForAutomation: keepsChromeVisibleForAutomation
         )
+    }
+
+    private var keepsChromeVisibleForAutomation: Bool {
+#if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        let values = [
+            environment["REELFIN_LIVE_UI_EXPECT_CUSTOM_CONTROLS"],
+            environment["REELFIN_PLAYER_DEEP_EVIDENCE"]
+        ].compactMap { $0?.lowercased() }
+        return values.contains { ["1", "true", "yes", "on"].contains($0) }
+#else
+        return false
+#endif
     }
 
     private var playbackControls: PlaybackControlsModel {
@@ -282,6 +303,11 @@ struct NativePlayerView: View {
             playbackTime = nextPlaybackTime
             clearSatisfiedSeekHold(for: nextPlaybackTime)
             onPlaybackTime(nextPlaybackTime)
+            emitDeepSampleBufferEvidenceIfNeeded(
+                seconds: nextPlaybackTime,
+                rows: activeDiagnostics,
+                now: now
+            )
         }
     }
 
@@ -384,6 +410,79 @@ struct NativePlayerView: View {
         seekDisplayHoldUntil = nil
     }
 
+    private func emitDeepSampleBufferEvidenceIfNeeded(
+        seconds: Double,
+        rows: [String],
+        now: Date
+    ) {
+        guard Self.isDeepPlaybackEvidenceEnabled, seconds.isFinite else { return }
+        if let lastLogDate = lastDeepEvidenceLogDate,
+           now.timeIntervalSince(lastLogDate) < Self.deepEvidenceIntervalSeconds {
+            return
+        }
+
+        let delta = lastDeepEvidencePlaybackTime.map { seconds - $0 } ?? 0
+        lastDeepEvidenceLogDate = now
+        lastDeepEvidencePlaybackTime = seconds
+
+        let packetLine = Self.firstLine(containing: "packets video=", in: rows)
+        let audioLine = Self.firstLine(containing: "audioSamples rendered=", in: rows)
+        let underrunLine = Self.firstLine(containing: "audioUnderruns=", in: rows)
+        let driftLine = Self.firstLine(containing: "avDriftMs=", in: rows)
+        let hdrLine = Self.firstLine(containing: "hdr=", in: rows)
+        let videoPackets = Self.intValue(named: "video", in: packetLine) ?? 0
+        let audioPackets = Self.intValue(named: "audio", in: packetLine) ?? 0
+        let audioSamples = Self.intValue(named: "rendered", in: audioLine) ?? 0
+        let audioRenderer = Self.value(named: "audioRendererBackend", in: rows) ?? "unknown"
+        let droppedFrames = Self.intValue(named: "droppedFrames", in: rows) ?? 0
+        let audioUnderruns = Self.intValue(named: "audioUnderruns", in: underrunLine) ?? 0
+        let audioRebuffers = Self.intValue(named: "audioRebuffers", in: underrunLine) ?? 0
+        let avDriftMs = Self.value(named: "avDriftMs", in: driftLine) ?? "unknown"
+        let hdr = Self.value(named: "hdr", in: hdrLine) ?? "unknown"
+        let dvProfile = Self.value(named: "dvProfile", in: hdrLine) ?? "none"
+        PlayerDeepEvidenceSink.append(
+            "nativeplayer.deep.tick — item=\(AppLogFormat.shortIdentifier(item.id)) current=\(String(format: "%.3f", seconds)) delta=\(String(format: "%.3f", delta)) state=\(Self.value(named: "state", in: rows) ?? "unknown") videoPackets=\(videoPackets) audioPackets=\(audioPackets) audioSamples=\(audioSamples) audioRenderer=\(audioRenderer) droppedFrames=\(droppedFrames) audioUnderruns=\(audioUnderruns) audioRebuffers=\(audioRebuffers) avDriftMs=\(avDriftMs) hdr=\(hdr) dvProfile=\(dvProfile)"
+        )
+
+        AppLog.playback.info(
+            "nativeplayer.deep.tick — item=\(AppLogFormat.shortIdentifier(item.id), privacy: .public) current=\(seconds, format: .fixed(precision: 3)) delta=\(delta, format: .fixed(precision: 3)) state=\(Self.value(named: "state", in: rows) ?? "unknown", privacy: .public) videoPackets=\(Self.intValue(named: "video", in: packetLine) ?? 0, privacy: .public) audioPackets=\(Self.intValue(named: "audio", in: packetLine) ?? 0, privacy: .public) audioSamples=\(Self.intValue(named: "rendered", in: audioLine) ?? 0, privacy: .public) audioRenderer=\(Self.value(named: "audioRendererBackend", in: rows) ?? "unknown", privacy: .public) droppedFrames=\(Self.intValue(named: "droppedFrames", in: rows) ?? 0, privacy: .public) audioUnderruns=\(Self.intValue(named: "audioUnderruns", in: underrunLine) ?? 0, privacy: .public) audioRebuffers=\(Self.intValue(named: "audioRebuffers", in: underrunLine) ?? 0, privacy: .public) avDriftMs=\(Self.value(named: "avDriftMs", in: driftLine) ?? "unknown", privacy: .public) hdr=\(Self.value(named: "hdr", in: hdrLine) ?? "unknown", privacy: .public) dvProfile=\(Self.value(named: "dvProfile", in: hdrLine) ?? "none", privacy: .public)"
+        )
+    }
+
+    private static var deepEvidenceIntervalSeconds: TimeInterval {
+        5
+    }
+
+    private static var isDeepPlaybackEvidenceEnabled: Bool {
+        let value = ProcessInfo.processInfo.environment["REELFIN_PLAYER_DEEP_EVIDENCE"] ?? ""
+        return ["1", "true", "yes", "on"].contains(value.lowercased())
+    }
+
+    private static func firstLine(containing token: String, in rows: [String]) -> String? {
+        rows.first { $0.contains(token) }
+    }
+
+    private static func value(named name: String, in rows: [String]) -> String? {
+        rows.lazy.compactMap { value(named: name, in: $0) }.first
+    }
+
+    private static func intValue(named name: String, in rows: [String]) -> Int? {
+        rows.lazy.compactMap { intValue(named: name, in: $0) }.first
+    }
+
+    private static func intValue(named name: String, in line: String?) -> Int? {
+        guard let value = value(named: name, in: line) else { return nil }
+        return Int(value)
+    }
+
+    private static func value(named name: String, in line: String?) -> String? {
+        guard let line, let range = line.range(of: "\(name)=") else { return nil }
+        let suffix = line[range.upperBound...]
+        let end = suffix.firstIndex { $0 == " " || $0 == "\t" } ?? suffix.endIndex
+        let value = String(suffix[..<end])
+        return value.isEmpty ? nil : value
+    }
+
     private func revealChrome() {
         isChromeUserActive = true
 #if os(tvOS)
@@ -404,7 +503,8 @@ struct NativePlayerView: View {
             isPaused: isPaused,
             isBuffering: isBuffering,
             showsDiagnostics: shouldShowDiagnosticsPanel,
-            hasError: visibleErrorMessage != nil
+            hasError: visibleErrorMessage != nil,
+            isPinnedForAutomation: keepsChromeVisibleForAutomation
         ), activeTrackMenu == nil else {
             return
         }

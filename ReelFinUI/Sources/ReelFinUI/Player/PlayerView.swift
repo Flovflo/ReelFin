@@ -46,6 +46,7 @@ struct PlayerView: View {
                 .frame(width: 1, height: 1)
 #endif
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native_player_screen")
         .onDisappear {
 #if os(iOS)

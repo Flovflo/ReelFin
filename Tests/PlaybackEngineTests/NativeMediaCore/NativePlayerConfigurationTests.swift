@@ -341,6 +341,24 @@ final class NativePlayerConfigurationTests: XCTestCase {
         ))
     }
 
+    func testNativePlayerChromeVisibilityPolicyPinsAutomationChrome() {
+        XCTAssertTrue(NativePlayerChromeVisibilityPolicy.shouldShowChrome(
+            isUserActive: false,
+            isPaused: false,
+            isBuffering: false,
+            showsDiagnostics: false,
+            hasError: false,
+            isPinnedForAutomation: true
+        ))
+        XCTAssertFalse(NativePlayerChromeVisibilityPolicy.shouldAutoHide(
+            isPaused: false,
+            isBuffering: false,
+            showsDiagnostics: false,
+            hasError: false,
+            isPinnedForAutomation: true
+        ))
+    }
+
     func testNativePlayerRemoteControlPolicySeeksWithHorizontalMovesOnly() {
         XCTAssertEqual(
             NativePlayerRemoteControlPolicy.relativeSeekSeconds(for: .left),

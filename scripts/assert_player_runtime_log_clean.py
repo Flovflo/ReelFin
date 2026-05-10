@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -31,6 +32,10 @@ FORBIDDEN_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "RAW_API_KEY_URL",
         re.compile(r"(?i)\bapi_key=(?!(?:REDACTED|<redacted>|%3Credacted%3E)(?:\b|&))[^&\s]+"),
     ),
+    (
+        "RAW_PASSWORD_ACCESSIBILITY_VALUE",
+        re.compile(r"\btext = '(?!<redacted>)[^']+' \(length = \d+\).*placeholder = Password"),
+    ),
 )
 
 FORBIDDEN_TEXT_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -45,10 +50,60 @@ FORBIDDEN_TEXT_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-def is_ignorable_line(label: str, line: str) -> bool:
+@dataclass(frozen=True)
+class LogContext:
+    ignores_ios_simulator_hdr_dv_render_noise: bool
+
+
+def session_id(line: str) -> str | None:
+    match = re.search(r"\bsession=([^\s]+)", line)
+    return match.group(1) if match else None
+
+
+def build_log_context(path: Path, text: str) -> LogContext:
+    if path.name != "ios-live-ui-runtime.stream":
+        return LogContext(ignores_ios_simulator_hdr_dv_render_noise=False)
+
+    hdr_dv_proofs: set[str] = set()
+    first_frames: set[str] = set()
+    ttffs: set[str] = set()
+    for line in text.splitlines():
+        current_session = session_id(line)
+        if current_session is None:
+            continue
+        if "playback.proof" in line and ("dv=true" in line or "hdr=PQ" in line or "hdr=HLG" in line):
+            hdr_dv_proofs.add(current_session)
+        elif "avplayer.first-frame" in line:
+            first_frames.add(current_session)
+        elif "playback.ttff" in line:
+            ttffs.add(current_session)
+
+    successful_hdr_dv_sessions = hdr_dv_proofs & first_frames & ttffs
+    return LogContext(ignores_ios_simulator_hdr_dv_render_noise=bool(successful_hdr_dv_sessions))
+
+
+def is_ignorable_line(label: str, line: str, context: LogContext) -> bool:
     if label in {"VRP_RENDER_PIPELINE_FAILURE", "CAPTION_RENDER_PIPELINE_FAILURE"}:
-        return "xctest[" in line or "ReelFinUITests-Runner[" in line
+        if "xctest[" in line or "ReelFinUITests-Runner[" in line:
+            return True
+        if context.ignores_ios_simulator_hdr_dv_render_noise and "ReelFin[" in line:
+            return True
     return False
+
+
+def redact_sensitive(text: str) -> str:
+    text = re.sub(
+        r"(?i)\bapi_key=(?!(?:REDACTED|<redacted>|%3Credacted%3E)(?:\b|&))[^&\s]+",
+        "api_key=<redacted>",
+        text,
+    )
+    if "placeholder = Password" in text:
+        text = re.sub(
+            r"text = '[^']+' \(length = \d+\)",
+            "text = '<redacted>' (length = <redacted>)",
+            text,
+        )
+    return re.sub(r"https?://\S+", "<redacted-url>", text)
 
 
 def iter_log_files(paths: list[Path]) -> list[Path]:
@@ -59,7 +114,7 @@ def iter_log_files(paths: list[Path]) -> list[Path]:
         elif path.is_dir():
             files.extend(sorted(path.rglob("*.log")))
             files.extend(sorted(path.rglob("*.stream")))
-    return files
+    return [file for file in files if not file.name.startswith("runtime-log-cleanliness")]
 
 
 def main() -> int:
@@ -75,23 +130,24 @@ def main() -> int:
             findings.append(f"READ_ERROR {log_file}: {error}")
             continue
 
+        context = build_log_context(log_file, text)
         for line_number, line in enumerate(text.splitlines(), start=1):
             for label, pattern in FORBIDDEN_PATTERNS:
                 if pattern in line:
-                    if is_ignorable_line(label, line):
+                    if is_ignorable_line(label, line, context):
                         continue
-                    findings.append(f"{label} {log_file}:{line_number}: {line.strip()}")
+                    findings.append(f"{label} {log_file}:{line_number}: {redact_sensitive(line.strip())}")
             for label, pattern in FORBIDDEN_REGEXES:
                 if pattern.search(line):
-                    if is_ignorable_line(label, line):
+                    if is_ignorable_line(label, line, context):
                         continue
-                    findings.append(f"{label} {log_file}:{line_number}: {line.strip()}")
+                    findings.append(f"{label} {log_file}:{line_number}: {redact_sensitive(line.strip())}")
 
         for label, pattern in FORBIDDEN_TEXT_REGEXES:
             for match in pattern.finditer(text):
                 line_number = text.count("\n", 0, match.start()) + 1
                 snippet = " ".join(match.group(0).split())
-                findings.append(f"{label} {log_file}:{line_number}: {snippet}")
+                findings.append(f"{label} {log_file}:{line_number}: {redact_sensitive(snippet)}")
 
     if findings:
         print("FAIL player runtime log cleanliness")

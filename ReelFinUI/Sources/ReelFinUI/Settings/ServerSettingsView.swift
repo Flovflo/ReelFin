@@ -17,6 +17,8 @@ struct ServerSettingsView: View {
     var body: some View {
         #if os(tvOS)
         tvBody
+        #elseif targetEnvironment(macCatalyst)
+        macBody
         #else
         iosBody
         #endif
@@ -243,6 +245,13 @@ struct ServerSettingsView: View {
     #if !os(tvOS)
     private static let reelTranscodeRepositoryURL = URL(string: "https://github.com/Flovflo/ReelTranscode")!
 
+    #if targetEnvironment(macCatalyst)
+    private var macBody: some View {
+        iosBody
+            .frame(maxWidth: 820, maxHeight: .infinity, alignment: .topLeading)
+    }
+    #endif
+
     private var iosBody: some View {
         Form {
             iosStatusSection
@@ -397,7 +406,11 @@ struct ServerSettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        #if targetEnvironment(macCatalyst)
+        .navigationBarTitleDisplayMode(.inline)
+        #else
         .navigationBarTitleDisplayMode(.large)
+        #endif
         .accessibilityIdentifier("settings_screen")
         .task {
             await viewModel.refreshEpisodeReleaseNotificationsState()

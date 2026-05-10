@@ -1676,7 +1676,6 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
         .opacity(selected ? 1 : neighborPreviewOpacity)
         .allowsHitTesting(selected || neighborPreviewOpacity > 0.98)
         .offset(y: selected ? metrics.heroLift : 18 + (topInsetProgress * 12))
-        .accessibilityIdentifier("detail_top_card_\(entry.id)")
         .accessibilityElement(children: .contain)
     }
 
@@ -1930,6 +1929,7 @@ private struct IOSDetailHeroContent: View {
             HStack(spacing: spacing(isCompactHeroLayout ? 12 : 14)) {
                 IOSDetailHeroPrimaryButton(
                     title: iosPlayButtonLabel,
+                    accessibilityIdentifier: "detail_primary_play_button",
                     isLoading: isLoadingPlayback,
                     minHeight: visualSize(isCompactHeroLayout ? 48 : 56),
                     fontSize: textSize(isCompactHeroLayout ? 15.5 : 17),
@@ -2423,6 +2423,7 @@ private struct IOSDetailHeroPrimaryButton: View {
     @Environment(\.isFocused) private var isFocused
 
     let title: String
+    let accessibilityIdentifier: String
     let isLoading: Bool
     let minHeight: CGFloat
     let fontSize: CGFloat
@@ -2454,6 +2455,9 @@ private struct IOSDetailHeroPrimaryButton: View {
         }
         .buttonStyle(.plain)
         .disabled(isLoading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(isLoading ? "Preparing" : title))
+        .accessibilityIdentifier(accessibilityIdentifier)
         .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 }
@@ -3146,12 +3150,13 @@ private struct PrimaryActionsRow: View {
         tvActionsRow
 #else
         HStack(spacing: 18) {
-            HeroPrimaryButton(
-                title: playButtonLabel,
-                isLoading: isLoadingPlayback,
-                action: onPlay
-            )
-            .focused(focusedAction, equals: .play)
+        HeroPrimaryButton(
+            title: playButtonLabel,
+            isLoading: isLoadingPlayback,
+            action: onPlay
+        )
+        .accessibilityIdentifier("detail_primary_play_button")
+        .focused(focusedAction, equals: .play)
 
             HeroIconActionButton(
                 systemImage: isInWatchlist ? "checkmark" : "plus",

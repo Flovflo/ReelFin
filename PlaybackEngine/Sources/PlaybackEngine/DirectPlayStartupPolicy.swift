@@ -18,6 +18,9 @@ enum DirectPlayStartupPolicy {
     private static let baselineBadHeadroomRatio = 1.05
     private static let baselineGuardedHeadroomRatio = 1.25
     private static let baselineFastHeadroomRatio = 3.0
+    private static let iOSMeasuredHeadroomRequiresAVPlayerBufferThreshold = 18_000_000
+    private static let iOSGuardedMinimumBufferDuration: Double = 8
+    private static let iOSGuardedPreferredBufferDuration: Double = 12
 
     static func decision(
         route: PlaybackRoute,
@@ -82,6 +85,9 @@ enum DirectPlayStartupPolicy {
 
         let headroom = observedBitrate / Double(sourceBitrate)
         if headroom < badHeadroomRatio { return blockedDecision(isTVOS: isTVOS) }
+        if requiresMeasuredAVPlayerBufferForFastStart(sourceBitrate: sourceBitrate, isTVOS: isTVOS) {
+            return guardedDecision(isTVOS: isTVOS)
+        }
         if headroom >= fastHeadroomRatio { return fastDecision(isTVOS: isTVOS) }
         return guardedDecision(isTVOS: isTVOS)
     }
@@ -98,6 +104,9 @@ enum DirectPlayStartupPolicy {
 
         let headroom = observedBitrate / Double(sourceBitrate)
         if headroom < baselineBadHeadroomRatio { return blockedDecision(isTVOS: isTVOS) }
+        if requiresMeasuredAVPlayerBufferForFastStart(sourceBitrate: sourceBitrate, isTVOS: isTVOS) {
+            return guardedDecision(isTVOS: isTVOS)
+        }
         if headroom >= baselineFastHeadroomRatio { return fastDecision(isTVOS: isTVOS) }
         if headroom >= baselineGuardedHeadroomRatio { return guardedDecision(isTVOS: isTVOS) }
         return blockedDecision(isTVOS: isTVOS)
@@ -106,10 +115,10 @@ enum DirectPlayStartupPolicy {
     static func guardedDecision(isTVOS: Bool) -> Decision {
         Decision(
             mode: .guarded,
-            minimumBufferDuration: isTVOS ? 4 : 2,
-            preferredBufferDuration: isTVOS ? 4 : 2,
-            timeout: isTVOS ? 6 : 4,
-            allowsTimeoutStart: true,
+            minimumBufferDuration: isTVOS ? 4 : iOSGuardedMinimumBufferDuration,
+            preferredBufferDuration: isTVOS ? 4 : iOSGuardedPreferredBufferDuration,
+            timeout: isTVOS ? 6 : 30,
+            allowsTimeoutStart: isTVOS,
             failureReason: nil
         )
     }
@@ -128,8 +137,8 @@ enum DirectPlayStartupPolicy {
     private static func blockedDecision(isTVOS: Bool) -> Decision {
         Decision(
             mode: .blocked,
-            minimumBufferDuration: isTVOS ? 4 : 2,
-            preferredBufferDuration: isTVOS ? 4 : 2,
+            minimumBufferDuration: isTVOS ? 4 : iOSGuardedMinimumBufferDuration,
+            preferredBufferDuration: isTVOS ? 4 : iOSGuardedPreferredBufferDuration,
             timeout: 0,
             allowsTimeoutStart: false,
             failureReason: .directPlayPreflightInsufficient
@@ -139,5 +148,12 @@ enum DirectPlayStartupPolicy {
     private static func isProgressiveDirectPlay(_ route: PlaybackRoute) -> Bool {
         guard case let .directPlay(url) = route else { return false }
         return !["m3u8", "m3u"].contains(url.pathExtension.lowercased())
+    }
+
+    private static func requiresMeasuredAVPlayerBufferForFastStart(
+        sourceBitrate: Int,
+        isTVOS: Bool
+    ) -> Bool {
+        !isTVOS && sourceBitrate >= iOSMeasuredHeadroomRequiresAVPlayerBufferThreshold
     }
 }

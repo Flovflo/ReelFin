@@ -33,7 +33,7 @@ final class PlaybackPolicyTests: XCTestCase {
             allowSDRFallback: false
         )
 
-        XCTAssertEqual(profiles, [.appleOptimizedHEVC])
+        XCTAssertEqual(profiles, [.conservativeCompatibility])
         XCTAssertFalse(profiles.contains(.forceH264Transcode))
     }
 
@@ -44,7 +44,7 @@ final class PlaybackPolicyTests: XCTestCase {
             allowSDRFallback: true
         )
 
-        XCTAssertEqual(profiles, [.appleOptimizedHEVC, .forceH264Transcode])
+        XCTAssertEqual(profiles, [.conservativeCompatibility, .appleOptimizedHEVC, .forceH264Transcode])
     }
 
     func testTvOSSimulatorCompatibilityPlaybackOptionsPreferH264Startup() {
@@ -200,7 +200,7 @@ final class PlaybackPolicyTests: XCTestCase {
         )
     }
 
-    func testInitialProfilePromotesStoredH264FallbackToHEVCForDolbyVisionItems() {
+    func testInitialProfileResetsStoredH264FallbackToServerDefaultForDolbyVisionItems() {
         let profile = PlaybackSessionController.initialProfile(
             stored: .forceH264Transcode,
             playbackPolicy: .auto,
@@ -208,7 +208,7 @@ final class PlaybackPolicyTests: XCTestCase {
             itemHasDolbyVision: true
         )
 
-        XCTAssertEqual(profile, .appleOptimizedHEVC)
+        XCTAssertEqual(profile, .serverDefault)
     }
 
     func testInitialProfileKeepsStoredH264FallbackForNonDolbyVisionItems() {
@@ -220,6 +220,94 @@ final class PlaybackPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(profile, .forceH264Transcode)
+    }
+
+    func testQualitySafeRecoveryRemovesVideoTranscodeProfilesFor4KHDR() {
+        let source = MediaSource(
+            id: "source-hdr",
+            itemID: "item-hdr",
+            name: "HDR",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 80_000_000,
+            videoBitDepth: 10,
+            videoRange: "HDR10",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            videoWidth: 3840,
+            videoHeight: 2160
+        )
+
+        let profiles = PlaybackSessionController.qualitySafeRecoveryProfiles(
+            [.conservativeCompatibility, .appleOptimizedHEVC, .forceH264Transcode],
+            source: source
+        )
+
+        XCTAssertEqual(profiles, [.conservativeCompatibility])
+    }
+
+    func testAutomaticDestructiveFallbackBlocksUnknownOrVideoTranscodeFor4KHDR() {
+        let source = MediaSource(
+            id: "source-dv-4k",
+            itemID: "item-dv-4k",
+            name: "DV",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 70_000_000,
+            videoBitDepth: 10,
+            videoRange: "DolbyVision",
+            dvProfile: 5,
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            videoWidth: 3840,
+            videoHeight: 2160
+        )
+        let videoTranscode = PlaybackRouteGuarantees(
+            videoIntegrity: .videoTranscode,
+            hdrIntegrity: .sdrToneMapped,
+            startupClass: .transcode,
+            userVisibleSummary: "loss",
+            debugReason: "test"
+        )
+        let unknownTranscode = PlaybackRouteGuarantees(
+            videoIntegrity: .unknown,
+            hdrIntegrity: .unknown,
+            startupClass: .transcode,
+            userVisibleSummary: "unknown",
+            debugReason: "test"
+        )
+
+        XCTAssertTrue(PlaybackSessionController.shouldBlockAutomaticDestructiveFallback(source: source, guarantees: videoTranscode))
+        XCTAssertTrue(PlaybackSessionController.shouldBlockAutomaticDestructiveFallback(source: source, guarantees: unknownTranscode))
+    }
+
+    func testAutomaticDestructiveFallbackAllows4KHDRVideoCopyRemux() {
+        let source = MediaSource(
+            id: "source-hdr-copy",
+            itemID: "item-hdr-copy",
+            name: "HDR Copy",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 70_000_000,
+            videoBitDepth: 10,
+            videoRange: "HDR10",
+            supportsDirectPlay: false,
+            supportsDirectStream: false,
+            videoWidth: 3840,
+            videoHeight: 2160
+        )
+        let remux = PlaybackRouteGuarantees(
+            videoIntegrity: .videoCopyRemux,
+            hdrIntegrity: .hdr10,
+            startupClass: .hlsRemux,
+            userVisibleSummary: "copy",
+            debugReason: "test"
+        )
+
+        XCTAssertFalse(PlaybackSessionController.shouldBlockAutomaticDestructiveFallback(source: source, guarantees: remux))
     }
 
     func testPreemptiveH264FallbackTriggersForUnsafeHEVCFMP4Packaging() {
@@ -463,10 +551,11 @@ final class PlaybackPolicyTests: XCTestCase {
 
         let api = CapturePlaybackAPIClient(configuration: configuration, sources: ["item-2": [source]])
         let coordinator = PlaybackCoordinator(apiClient: api)
-        _ = try await coordinator.resolvePlayback(itemID: "item-2", mode: .balanced, transcodeProfile: .serverDefault)
+        let selection = try await coordinator.resolvePlayback(itemID: "item-2", mode: .balanced, transcodeProfile: .serverDefault)
 
         XCTAssertEqual(api.optionsHistory.first?.allowVideoStreamCopy, true)
-        XCTAssertEqual(api.optionsHistory.last?.deviceProfile, .iosOptimizedHEVC)
+        XCTAssertEqual(api.optionsHistory.last?.deviceProfile, .automatic)
+        XCTAssertEqual(selection.routeGuarantees.videoIntegrity, .videoCopyRemux)
     }
 
     private func lowercasedQueryMap(from url: URL) -> [String: String] {

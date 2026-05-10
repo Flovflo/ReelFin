@@ -7,6 +7,17 @@ public enum NativePlayerPlaybackSurface: String, Sendable, Equatable {
     case sampleBuffer
 }
 
+public enum NativePlayerPreparationError: LocalizedError, Sendable, Equatable {
+    case appleNativeContainerRequiresCoordinatorFallback(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .appleNativeContainerRequiresCoordinatorFallback(reason):
+            return "Apple-native container requires coordinator fallback: \(reason)"
+        }
+    }
+}
+
 public struct NativePlayerPlaybackSnapshot: Sendable {
     public var overlayLines: [String]
     public var routeDescription: String
@@ -116,7 +127,8 @@ public actor NativePlayerPlaybackController {
     ) async throws -> NativePlayerPlaybackSnapshot {
         let originalHeaders = authenticatedOriginalHeaders(resolution: resolution, session: session)
         let originalURL = authenticatedOriginalURL(resolution: resolution, headers: originalHeaders)
-        let shouldUseAppleNativeSurface = nativeConfig.surfacePreference == .directPlayWhenPossible
+        let prefersDirectAppleSurface = nativeConfig.surfacePreference == .directPlayWhenPossible
+        let shouldUseAppleNativeSurface = prefersDirectAppleSurface
             && Self.shouldUseAppleNativeSurface(source: resolution.mediaSource, url: originalURL)
 
         if shouldUseAppleNativeSurface {
@@ -142,6 +154,15 @@ public actor NativePlayerPlaybackController {
                 selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
                 selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
             )
+        }
+
+        if prefersDirectAppleSurface,
+           Self.isAppleNativeContainer(source: resolution.mediaSource, url: originalURL) {
+            let reason = Self.appleNativeSurfaceRejectionReason(source: resolution.mediaSource, url: originalURL)
+            AppLog.playback.warning(
+                "nativeplayer.apple.route.rejected — source=\(resolution.mediaSource.id, privacy: .public) fallback=coordinator reason=\(reason, privacy: .public)"
+            )
+            throw NativePlayerPreparationError.appleNativeContainerRequiresCoordinatorFallback(reason)
         }
 
         let byteSource = makeByteSource(
@@ -199,6 +220,9 @@ public actor NativePlayerPlaybackController {
             stream: stream,
             access: metrics
         )
+        PlayerDeepEvidenceSink.append(
+            "nativeplayer.playbackPlan.created — source=\(resolution.mediaSource.id) canStart=\(plan.canStartLocalPlayback) demuxer=\(plan.demux.backend) video=\(plan.video?.backend ?? "none") audio=\(plan.audio?.backend ?? "none")"
+        )
         AppLog.playback.notice(
             "nativeplayer.playbackPlan.created — source=\(resolution.mediaSource.id, privacy: .public) canStart=\(plan.canStartLocalPlayback, privacy: .public) demuxer=\(plan.demux.backend, privacy: .public) video=\(plan.video?.backend ?? "none", privacy: .public) audio=\(plan.audio?.backend ?? "none", privacy: .public)"
         )
@@ -222,9 +246,14 @@ public actor NativePlayerPlaybackController {
             diagnostics.videoPacketCount = packetCounts?.video ?? 0
             diagnostics.audioPacketCount = packetCounts?.audio ?? 0
         }
-        let sharedTracks = stream.tracks.map(sharedTrack)
-        let audio = sharedTracks.filter { track in stream.tracks.first(where: { "\($0.trackId)" == track.id })?.kind == .audio }
-        let subtitles = sharedTracks.filter { track in stream.tracks.first(where: { "\($0.trackId)" == track.id })?.kind == .subtitle }
+        let audio = Self.presentableNativeTracks(
+            stream.tracks.filter { $0.kind == .audio },
+            metadataTracks: resolution.mediaSource.audioTracks
+        )
+        let subtitles = Self.presentableNativeTracks(
+            stream.tracks.filter { $0.kind == .subtitle },
+            metadataTracks: resolution.mediaSource.subtitleTracks
+        )
         let startTimeSeconds = startTimeTicks.map { Double($0) / 10_000_000 }
 
         if plan.canStartLocalPlayback,
@@ -252,6 +281,9 @@ public actor NativePlayerPlaybackController {
         }
 
         let playbackURL = plan.canStartLocalPlayback ? originalURL : nil
+        PlayerDeepEvidenceSink.append(
+            "nativeplayer.sampleBuffer.route.selected — source=\(resolution.mediaSource.id) avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=\(resolution.serverTranscodeUsed)"
+        )
         AppLog.playback.notice(
             "nativeplayer.sampleBuffer.route.selected — source=\(resolution.mediaSource.id, privacy: .public) avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
         )
@@ -350,15 +382,8 @@ public actor NativePlayerPlaybackController {
         source: MediaSource,
         url: URL
     ) -> Bool {
-        if !url.isFileURL,
-           let fileSize = source.fileSize,
-           fileSize > maxRemoteAppleNativeProgressiveBytes {
-            return false
-        }
-
         let capabilities = DeviceCapabilities()
-        let containers = normalizedContainers(source.container, fallbackURL: url)
-        guard containers.contains(where: { capabilities.directPlayableContainers.contains($0) }) else {
+        guard isAppleNativeContainer(source: source, url: url, capabilities: capabilities) else {
             return false
         }
 
@@ -376,7 +401,12 @@ public actor NativePlayerPlaybackController {
         return sourceAudioSupported || anyTrackSupported
     }
 
-    private static let maxRemoteAppleNativeProgressiveBytes: Int64 = 8 * 1_024 * 1_024 * 1_024
+    public nonisolated static func isAppleNativeContainer(
+        source: MediaSource,
+        url: URL
+    ) -> Bool {
+        isAppleNativeContainer(source: source, url: url, capabilities: DeviceCapabilities())
+    }
 
     public nonisolated static func originalPlaybackInfoOptions(
         nativeConfig: NativePlayerConfig,
@@ -471,6 +501,40 @@ public actor NativePlayerPlaybackController {
         return false
     }
 
+    private nonisolated static func isAppleNativeContainer(
+        source: MediaSource,
+        url: URL,
+        capabilities: DeviceCapabilities
+    ) -> Bool {
+        normalizedContainers(source.container, fallbackURL: url)
+            .contains { capabilities.directPlayableContainers.contains($0) }
+    }
+
+    private nonisolated static func appleNativeSurfaceRejectionReason(
+        source: MediaSource,
+        url: URL
+    ) -> String {
+        let capabilities = DeviceCapabilities()
+        guard isAppleNativeContainer(source: source, url: url, capabilities: capabilities) else {
+            return "container_not_apple_native"
+        }
+
+        let videoCodec = source.normalizedVideoCodec
+        if !videoCodec.isEmpty, !isAppleNativeVideoCodec(videoCodec, capabilities: capabilities) {
+            return "unsupported_video_codec:\(videoCodec)"
+        }
+
+        let audioCodec = source.normalizedAudioCodec
+        if audioCodec.isEmpty || capabilities.audioCodecs.contains(audioCodec) {
+            return "unknown"
+        }
+        let supportedTrack = source.audioTracks.contains { track in
+            guard let codec = track.codec?.lowercased(), !codec.isEmpty else { return false }
+            return capabilities.audioCodecs.contains(codec)
+        }
+        return supportedTrack ? "unknown" : "unsupported_audio_codec:\(audioCodec)"
+    }
+
     private nonisolated static func normalizedContainers(_ rawContainer: String?, fallbackURL: URL) -> [String] {
         if let rawContainer, !rawContainer.isEmpty {
             let tokens = rawContainer
@@ -540,15 +604,28 @@ public actor NativePlayerPlaybackController {
         return .sdr
     }
 
-    private func sharedTrack(_ track: NativeMediaCore.MediaTrack) -> Shared.MediaTrack {
-        Shared.MediaTrack(
-            id: "\(track.trackId)",
-            title: track.title ?? "\(track.kind.rawValue.capitalized) \(track.trackId)",
-            language: track.language,
-            codec: track.codec,
-            isDefault: track.isDefault,
-            isForced: track.isForced,
-            index: track.trackId
-        )
+    nonisolated static func presentableNativeTracks(
+        _ nativeTracks: [NativeMediaCore.MediaTrack],
+        metadataTracks: [Shared.MediaTrack]
+    ) -> [Shared.MediaTrack] {
+        nativeTracks.enumerated().map { index, nativeTrack in
+            let metadata = metadataTracks[safe: index]
+            return Shared.MediaTrack(
+                id: "\(nativeTrack.trackId)",
+                title: metadata?.title ?? nativeTrack.title ?? "\(nativeTrack.kind.rawValue.capitalized) \(nativeTrack.trackId)",
+                language: metadata?.language ?? nativeTrack.language,
+                codec: metadata?.codec ?? nativeTrack.codec,
+                isDefault: metadata?.isDefault ?? nativeTrack.isDefault,
+                isForced: metadata?.isForced ?? nativeTrack.isForced,
+                index: nativeTrack.trackId
+            )
+        }
+    }
+
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

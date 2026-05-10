@@ -2,12 +2,14 @@ import Foundation
 
 final class MockOriginalMediaProtocol: URLProtocol {
     static var storage = Data()
+    static var contentType = "video/mp4"
     static var rangeRequestCount = 0
     static var requestedURLs: [URL] = []
     static var requestedHeaders: [[String: String]] = []
 
     static func reset() {
         storage = Data()
+        contentType = "video/mp4"
         rangeRequestCount = 0
         requestedURLs = []
         requestedHeaders = []
@@ -31,7 +33,8 @@ final class MockOriginalMediaProtocol: URLProtocol {
         if method == "HEAD" {
             send(statusCode: 200, data: nil, headers: [
                 "Content-Length": "\(data.count)",
-                "Accept-Ranges": "bytes"
+                "Accept-Ranges": "bytes",
+                "Content-Type": Self.contentType
             ])
             return
         }
@@ -43,7 +46,8 @@ final class MockOriginalMediaProtocol: URLProtocol {
         else {
             send(statusCode: 200, data: data, headers: [
                 "Content-Length": "\(data.count)",
-                "Accept-Ranges": "bytes"
+                "Accept-Ranges": "bytes",
+                "Content-Type": Self.contentType
             ])
             return
         }
@@ -52,7 +56,8 @@ final class MockOriginalMediaProtocol: URLProtocol {
         send(statusCode: 206, data: Data(slice), headers: [
             "Content-Range": "bytes \(parsed.lowerBound)-\(parsed.upperBound - 1)/\(data.count)",
             "Content-Length": "\(slice.count)",
-            "Accept-Ranges": "bytes"
+            "Accept-Ranges": "bytes",
+            "Content-Type": Self.contentType
         ])
     }
 

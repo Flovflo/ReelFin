@@ -90,18 +90,20 @@ struct NativePlayerChromeVisibilityPolicy: Equatable {
         isPaused: Bool,
         isBuffering: Bool,
         showsDiagnostics: Bool,
-        hasError: Bool
+        hasError: Bool,
+        isPinnedForAutomation: Bool = false
     ) -> Bool {
-        isUserActive || isPaused || isBuffering || showsDiagnostics || hasError
+        isPinnedForAutomation || isUserActive || isPaused || isBuffering || showsDiagnostics || hasError
     }
 
     static func shouldAutoHide(
         isPaused: Bool,
         isBuffering: Bool,
         showsDiagnostics: Bool,
-        hasError: Bool
+        hasError: Bool,
+        isPinnedForAutomation: Bool = false
     ) -> Bool {
-        !isPaused && !isBuffering && !showsDiagnostics && !hasError
+        !isPinnedForAutomation && !isPaused && !isBuffering && !showsDiagnostics && !hasError
     }
 }
 

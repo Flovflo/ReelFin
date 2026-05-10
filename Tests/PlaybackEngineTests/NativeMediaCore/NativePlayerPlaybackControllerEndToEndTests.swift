@@ -111,7 +111,7 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         ))
     }
 
-    func testVeryLargeRemoteMOVSourceDoesNotUseAppleNativeByMetadataOnly() {
+    func testVeryLargeRemoteMOVSourceStillUsesAppleNativeWhenCompatible() {
         let source = MediaSource(
             id: "source-large-mov",
             itemID: "item-large-mov",
@@ -127,10 +127,48 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
             supportsDirectStream: true
         )
 
-        XCTAssertFalse(NativePlayerPlaybackController.shouldUseAppleNativeSurface(
+        XCTAssertTrue(NativePlayerPlaybackController.shouldUseAppleNativeSurface(
             source: source,
             url: URL(string: "https://example.com/Videos/item-large-mov/stream.mov?static=true")!
         ))
+    }
+
+    func testDirectPlayWhenPossibleDoesNotSampleBufferAppleContainerWithUnsupportedVideo() async throws {
+        let itemID = "item-unsupported-mp4"
+        let nativeConfig = NativePlayerConfig(enabled: true)
+        let configuration = ServerConfiguration(
+            serverURL: URL(string: "https://jellyfin.example")!,
+            nativePlayerConfig: nativeConfig
+        )
+        let apiClient = NativePlaybackControllerAPIClient(source: MediaSource(
+            id: "source-unsupported-mp4",
+            itemID: itemID,
+            name: "Unsupported MP4 Original",
+            fileSize: 512 * 1_024 * 1_024,
+            container: "mp4",
+            videoCodec: "vp9",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
+        ))
+        let controller = NativePlayerPlaybackController(apiClient: apiClient)
+
+        do {
+            _ = try await controller.prepare(
+                itemID: itemID,
+                configuration: configuration,
+                session: UserSession(userID: "user", username: "user", token: "secret"),
+                nativeConfig: nativeConfig,
+                startTimeTicks: nil
+            )
+            XCTFail("Expected coordinator fallback instead of sample-buffer playback")
+        } catch let error as NativePlayerPreparationError {
+            XCTAssertEqual(
+                error,
+                .appleNativeContainerRequiresCoordinatorFallback("unsupported_video_codec:vp9")
+            )
+        }
     }
 
     func testAppleNativeSelectionStripsQueryAPIKeyWhenHeaderAuthExists() throws {
@@ -254,7 +292,17 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
             audioCodec: "aac",
             supportsDirectPlay: false,
             supportsDirectStream: false,
-            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264")
+            transcodeURL: URL(string: "https://jellyfin.example/videos/item/master.m3u8?VideoCodec=h264"),
+            audioTracks: [
+                MediaTrack(
+                    id: "track-1",
+                    title: "French AAC",
+                    language: "fra",
+                    codec: "aac",
+                    isDefault: true,
+                    index: 1
+                )
+            ]
         ))
         let controller = NativePlayerPlaybackController(apiClient: apiClient)
 
@@ -278,6 +326,10 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("audioRenderer=AVSampleBufferAudioRenderer") })
         XCTAssertFalse(snapshot.overlayLines.joined().contains("AVPlayerViewController"))
         XCTAssertFalse(snapshot.overlayLines.joined().contains("LocalFMP4HLS"))
+        XCTAssertEqual(snapshot.audioTracks.map(\.id), ["2"])
+        XCTAssertEqual(snapshot.audioTracks.first?.title, "French AAC")
+        XCTAssertEqual(snapshot.audioTracks.first?.language, "fra")
+        XCTAssertEqual(snapshot.selectedAudioTrackID, "2")
         XCTAssertGreaterThan(snapshot.overlayLines.videoPacketCount, 0)
         XCTAssertGreaterThan(snapshot.overlayLines.audioPacketCount, 0)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
