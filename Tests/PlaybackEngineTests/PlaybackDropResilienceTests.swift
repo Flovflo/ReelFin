@@ -289,6 +289,44 @@ final class PlaybackDropResilienceTests: XCTestCase {
             "After the initial resume buffering, cached playback must not keep cutting.")
     }
 
+    /// CacheProxySession (clean-engine composition) must build a DEEP reservoir ahead of the
+    /// playhead and report its depth in SECONDS — the cache-depth signal the loading bar + the
+    /// keep-original decisions rely on. Dynamic per file (reservoir measured in seconds of the
+    /// file's own bitrate, not a hardcoded byte budget).
+    @MainActor
+    func testCacheProxySessionBuildsDeepReservoirAndReportsSeconds() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1024) // 8x — comfortably faster than realtime
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("CacheProxySession.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "proxysession", sourceID: "src", routeURL: origin)
+
+        let session = CacheProxySession(
+            originURL: origin, headers: [:], key: key, store: store,
+            sourceBitrate: Int(Self.clipBitrate), overrideMIMEType: "video/mp4")
+        defer { session.stop() }
+
+        let localURL = try session.start()
+        XCTAssertEqual(localURL.host, "127.0.0.1", "Proxy must hand AVPlayer a localhost URL (DV-safe transport).")
+
+        // The downloader fills ahead of offset 0; the reservoir-seconds should climb well past a
+        // shallow buffer within a few seconds on a fast link.
+        let built = await waitUntil(timeout: 20) { await session.reservoirSecondsAhead(atSeconds: 0) >= 20 }
+        let depth = await session.reservoirSecondsAhead(atSeconds: 0)
+        print("cacheproxysession.reservoir — secondsAhead=\(depth) target=\(session.targetReservoirSeconds)")
+        XCTAssertTrue(built, "CacheProxySession must build a deep reservoir (>=20s) on a fast link; got \(depth)s.")
+    }
+
     @MainActor
     private func runProxyScenario(
         dropWindows: [(start: TimeInterval, duration: TimeInterval)],
