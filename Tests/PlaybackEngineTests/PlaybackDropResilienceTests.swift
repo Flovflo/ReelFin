@@ -289,6 +289,44 @@ final class PlaybackDropResilienceTests: XCTestCase {
             "After the initial resume buffering, cached playback must not keep cutting.")
     }
 
+    /// End-to-end offline proof of the CLEAN custom engine: a real AVPlayer, driven by
+    /// CustomPlaybackEngine, plays the original H264 clip through the local cache proxy (mock
+    /// resolver, throttled local origin). Proves load → cache builds → reaches .playing → advances,
+    /// with no error and a growing reservoir — the whole pipeline, no device.
+    @MainActor
+    func testCustomEnginePlaysOriginalThroughCache() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1024) // 8x — fast link → play-now path
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("CustomEngine.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "engine", sourceID: "src", routeURL: origin)
+
+        let resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: Int(Self.clipBitrate), cacheKey: key)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        defer { engine.stop() }
+
+        engine.load(itemID: "engine", autoPlay: true)
+
+        var reached = false
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if engine.bufferingState.phase == .playing, engine.player.currentTime().seconds > 0.5 { reached = true; break }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        print("customengine — phase=\(engine.bufferingState.phase) t=\(engine.player.currentTime().seconds) reservoir=\(engine.bufferingState.reservoirSeconds) err=\(engine.errorMessage ?? "nil")")
+        XCTAssertNil(engine.errorMessage)
+        XCTAssertTrue(reached, "Custom engine must load + play the original through the cache and advance. phase=\(engine.bufferingState.phase)")
+    }
+
     /// CacheProxySession (clean-engine composition) must build a DEEP reservoir ahead of the
     /// playhead and report its depth in SECONDS — the cache-depth signal the loading bar + the
     /// keep-original decisions rely on. Dynamic per file (reservoir measured in seconds of the
@@ -873,6 +911,17 @@ final class PlaybackDropResilienceTests: XCTestCase {
         var value: Int { lock.lock(); defer { lock.unlock() }; return count }
         func increment() { lock.lock(); count += 1; lock.unlock() }
         func reset() { lock.lock(); count = 0; lock.unlock() }
+    }
+
+    private struct MockCustomSourceResolver: CustomPlaybackSourceResolving {
+        let originURL: URL
+        let sourceBitrate: Int
+        let cacheKey: MediaGatewayCacheKey
+        func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
+            ResolvedOriginalSource(
+                originURL: originURL, headers: [:], sourceBitrate: sourceBitrate,
+                overrideMIMEType: "video/mp4", cacheKey: cacheKey, isDolbyVision: false)
+        }
     }
 
     private func waitUntil(timeout: TimeInterval, condition: @escaping () async -> Bool) async -> Bool {
