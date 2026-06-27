@@ -1,0 +1,294 @@
+import Foundation
+import NativeMediaCore
+import Network
+import Shared
+
+/// Localhost HTTP/1.1 server that feeds AVPlayer raw original bytes from the `MediaGatewayStore`
+/// (filled by the parallel `OriginDownloader`), over an `http://127.0.0.1:port` URL.
+///
+/// Why this exists: the never-stall cache (`OriginDownloader` + `MediaGatewayStore`) is proven, but
+/// delivering it through the custom `reelfin-cache://` resource-loader scheme black-screens Dolby
+/// Vision. A plain localhost HTTP URL is indistinguishable from the origin to AVFoundation (native
+/// HTTP stack, same MIME override) — so DV renders exactly as in direct play, while AVPlayer reads
+/// from the deep local cache instead of the flaky origin. Origin dropouts can no longer drain
+/// AVPlayer's buffer, because the buffer is fed from disk: this is the Infuse-class never-cut path.
+///
+/// The serve path NEVER opens a connection to the origin — that is the downloader's sole job. A
+/// request being cancelled (a seek) or AVPlayer closing the connection can never cut playback: the
+/// bytes are already on disk or arriving on the downloader's keep-alive parallel connections.
+final class LocalCacheHTTPServer: @unchecked Sendable {
+    private let store: MediaGatewayStore
+    private let downloader: OriginDownloader
+    private let key: MediaGatewayCacheKey
+    private let overrideMIMEType: String?
+    private let pathToken: String
+    // For low-latency on-demand serving: the serve loop fetches a cache-missed range DIRECTLY from
+    // the origin (so AVPlayer's first read / a seek is served at direct-play speed) while the
+    // background downloader builds the deep buffer ahead. v1 lacked this and waited on the windowed
+    // downloader → 17.5s startup on a deep resume.
+    private let remoteURL: URL
+    private let headers: [String: String]
+    private let onDemandSession: URLSession
+
+    private let queue = DispatchQueue(label: "reelfin.local-cache-http", attributes: .concurrent)
+    private var listener: NWListener?
+
+    private let serveChunk = 4 * 1_024 * 1_024
+    private let pollInterval: UInt64 = 40_000_000      // 40 ms
+    private let livenessDeadline: TimeInterval = 20
+
+    // Per active serve loop: its current offset + whether it is STARVED (waiting for bytes not yet
+    // cached). The downloader fills the lowest starved offset first (unblock the most-behind reader —
+    // moov/metadata at startup, playback after), and only builds cushion ahead of the furthest
+    // reader when nothing is starved. This is what stops a concurrent metadata read near offset 0
+    // from yanking the fill back to the file head while playback needs bytes far ahead.
+    private let lock = NSLock()
+    private var activeServes: [UUID: (offset: Int64, waiting: Bool)] = [:]
+
+    init(
+        store: MediaGatewayStore,
+        downloader: OriginDownloader,
+        key: MediaGatewayCacheKey,
+        remoteURL: URL,
+        headers: [String: String],
+        overrideMIMEType: String?,
+        onDemandTimeout: TimeInterval = 15
+    ) {
+        self.store = store
+        self.downloader = downloader
+        self.key = key
+        self.remoteURL = remoteURL
+        self.headers = headers
+        self.overrideMIMEType = overrideMIMEType
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = onDemandTimeout
+        config.timeoutIntervalForResource = onDemandTimeout * 2
+        config.httpMaximumConnectionsPerHost = 4
+        self.onDemandSession = URLSession(configuration: config)
+        // Opaque, stable path so the URL is extensionless (the asset's overrideMIMEType supplies the
+        // type, exactly like the extensionless direct-play origin URL).
+        self.pathToken = "media/\(key.itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "item")"
+    }
+
+    /// Starts the listener and returns the localhost URL AVPlayer should play.
+    func start() throws -> URL {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let ready = DispatchSemaphore(value: 0)
+        var startError: Error?
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.handle(connection)
+        }
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready: ready.signal()
+            case .failed(let error): startError = error; ready.signal()
+            default: break
+            }
+        }
+        self.listener = listener
+        listener.start(queue: queue)
+        _ = ready.wait(timeout: .now() + 4)
+        if let startError { throw startError }
+        guard let port = listener.port else { throw MediaAccessError.cannotDetermineSize }
+        guard let url = URL(string: "http://127.0.0.1:\(port.rawValue)/\(pathToken)") else {
+            throw MediaAccessError.cannotDetermineSize
+        }
+        return url
+    }
+
+    func stop(reason: String) {
+        listener?.cancel()
+        listener = nil
+        Task { await downloader.stop() }
+    }
+
+    // MARK: - Connection handling
+
+    private func handle(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        Task { [weak self] in
+            guard let self else { connection.cancel(); return }
+            defer { connection.cancel() }
+            guard let requestData = await self.receiveRequestHead(connection),
+                  let request = LocalMediaGatewayHTTPRequest(requestData) else {
+                await self.trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
+                return
+            }
+            await self.serve(request, over: connection)
+        }
+    }
+
+    /// Accumulate bytes until the end of the HTTP header block (`\r\n\r\n`). GET/HEAD have no body,
+    /// so that is the whole request.
+    private func receiveRequestHead(_ connection: NWConnection) async -> Data? {
+        var buffer = Data()
+        let terminator = Data("\r\n\r\n".utf8)
+        while buffer.count < 64 * 1_024 {
+            let chunk: Data? = await withCheckedContinuation { continuation in
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1_024) { data, _, isComplete, _ in
+                    if let data, !data.isEmpty {
+                        continuation.resume(returning: data)
+                    } else {
+                        continuation.resume(returning: isComplete ? nil : Data())
+                    }
+                }
+            }
+            guard let chunk else { return buffer.isEmpty ? nil : buffer }
+            buffer.append(chunk)
+            if buffer.range(of: terminator) != nil { return buffer }
+            if chunk.isEmpty { try? await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        return buffer
+    }
+
+    private func serve(_ request: LocalMediaGatewayHTTPRequest, over connection: NWConnection) async {
+        let (total, resolvedType) = await downloader.contentInfo()
+        guard let total, total > 0 else {
+            await trySend(LocalMediaGatewayHTTPResponse.serverError(), over: connection)
+            return
+        }
+        let contentType = overrideMIMEType ?? resolvedType
+
+        if request.method == "HEAD" {
+            await trySend(LocalMediaGatewayHTTPResponse.head(totalLength: total, contentType: contentType), over: connection)
+            return
+        }
+        guard request.method == "GET" else {
+            await trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
+            return
+        }
+
+        let (start, end) = byteRange(for: request.range, total: total)
+        guard start >= 0, start < total, end > start else {
+            await trySend(LocalMediaGatewayHTTPResponse.rangeNotSatisfiable(totalLength: total), over: connection)
+            return
+        }
+
+        let header = LocalMediaGatewayHTTPResponse.partialHeaders(
+            range: ByteRange(offset: start, length: Int(end - start)),
+            totalLength: total,
+            contentType: contentType
+        )
+        guard await trySend(header, over: connection) else { return }
+
+        await streamBody(from: start, to: end, over: connection)
+    }
+
+    /// Streams `[start, end)` from the cache, waiting for the downloader to fill any gap. Mirrors the
+    /// proven `CacheResourceLoaderDelegate.serve` loop, but writes to the socket instead of an
+    /// `AVAssetResourceLoadingDataRequest`.
+    private func streamBody(from start: Int64, to end: Int64, over connection: NWConnection) async {
+        let id = UUID()
+        defer { finishServe(id) }
+        var offset = start
+        var lastProgress = Date()
+        while offset < end {
+            let want = Int(min(Int64(serveChunk), end - offset))
+            // 1. Cache hit — serve instantly from the deep local buffer (survives origin dropouts).
+            if want > 0,
+               let data = try? await store.readAvailablePrefix(from: offset, maxLength: want, key: key),
+               !data.isEmpty {
+                await publish(id: id, offset: offset, waiting: false)
+                guard await trySend(data, over: connection) else { return } // AVPlayer closed (seek/stop)
+                offset += Int64(data.count)
+                lastProgress = Date()
+                continue
+            }
+            // Mark the playhead so the background downloader builds the deep cushion from here.
+            await publish(id: id, offset: offset, waiting: true)
+            // 2. Cache miss — fetch this exact range DIRECTLY (low latency, = direct-play speed for
+            // the first read / a seek) instead of waiting for the windowed downloader. The result is
+            // written to the store so it is cached for any re-read, and the background downloader
+            // keeps building ahead in parallel.
+            if want > 0, let data = await fetchRangeOnDemand(from: offset, length: want), !data.isEmpty {
+                guard await trySend(data, over: connection) else { return }
+                offset += Int64(data.count)
+                lastProgress = Date()
+                continue
+            }
+            // 3. On-demand fetch failed too (origin dropping) — wait briefly for the background
+            // downloader to fill from cache; close on a genuinely sustained outage so AVPlayer
+            // surfaces a stall and the session's recovery path (watchable SDR) takes over.
+            if Date().timeIntervalSince(lastProgress) > livenessDeadline {
+                AppLog.playback.warning(
+                    "playback.cachehttp.serve.liveness_timeout — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
+                )
+                return
+            }
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
+    }
+
+    /// Fetches `[from, from+length)` directly from the origin (a single ranged GET), writes it to
+    /// the store, and returns it. Used to serve a cache miss at direct-play latency. Returns nil on
+    /// any failure (a dropout) so the caller falls back to waiting for the background downloader.
+    private func fetchRangeOnDemand(from: Int64, length: Int) async -> Data? {
+        guard length > 0 else { return nil }
+        var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
+        request.httpMethod = "GET"
+        request.setValue("bytes=\(from)-\(from + Int64(length) - 1)", forHTTPHeaderField: "Range")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        do {
+            let (data, response) = try await onDemandSession.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 206 || http.statusCode == 200, !data.isEmpty else {
+                return nil
+            }
+            try? await store.write(range: ByteRange(offset: from, length: data.count), data: data, key: key)
+            return data
+        } catch {
+            return nil
+        }
+    }
+
+    private func byteRange(for range: LocalMediaGatewayRequestedRange?, total: Int64) -> (Int64, Int64) {
+        switch range {
+        case .bounded(let r):
+            return (r.offset, min(total, r.offset + Int64(r.length)))
+        case .openEnded(let offset):
+            return (offset, total)
+        case .suffix(let length):
+            return (max(0, total - Int64(length)), total)
+        case nil:
+            return (0, total)
+        }
+    }
+
+    // MARK: - Downloader playhead targeting
+
+    private func publish(id: UUID, offset: Int64, waiting: Bool) async {
+        lock.lock()
+        activeServes[id] = (offset, waiting)
+        let target = downloaderTargetLocked()
+        lock.unlock()
+        if let target { await downloader.setPlayhead(target) }
+    }
+
+    private func finishServe(_ id: UUID) {
+        lock.lock()
+        activeServes[id] = nil
+        let target = downloaderTargetLocked()
+        lock.unlock()
+        if let target {
+            Task { await downloader.setPlayhead(target) }
+        }
+    }
+
+    /// Caller must hold `lock`. Lowest starved offset (unblock the most-behind reader), else the
+    /// furthest active offset (build cushion ahead of playback).
+    private func downloaderTargetLocked() -> Int64? {
+        let starved = activeServes.values.filter { $0.waiting }.map { $0.offset }
+        if let lowestStarved = starved.min() { return lowestStarved }
+        return activeServes.values.map { $0.offset }.max()
+    }
+
+    // MARK: - Socket send
+
+    @discardableResult
+    private func trySend(_ data: Data, over connection: NWConnection) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                continuation.resume(returning: error == nil)
+            })
+        }
+    }
+}

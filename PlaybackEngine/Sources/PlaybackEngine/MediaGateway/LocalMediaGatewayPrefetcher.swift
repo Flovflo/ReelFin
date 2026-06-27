@@ -28,6 +28,12 @@ public struct LocalMediaGatewayPrefetchConfiguration: Sendable {
         self.isConstrainedNetwork = isConstrainedNetwork
     }
 }
+
+enum LocalMediaGatewayPrefetchPriority: Int, Sendable {
+    case rangeProbe = 0
+    case streamingPlayback = 1
+}
+
 actor LocalMediaGatewayPrefetcher {
     private let remoteURL: URL
     private let headers: [String: String]
@@ -35,12 +41,17 @@ actor LocalMediaGatewayPrefetcher {
     private let store: MediaGatewayStore
     private let configuration: LocalMediaGatewayPrefetchConfiguration
     private let session: URLSession
+    private let sessionConfiguration: URLSessionConfiguration
     private var activeTask: Task<Void, Never>?
+    private var activeTaskStartOffset: Int64?
+    private var activeTaskEndOffset: Int64?
+    private var activeTaskPriority: LocalMediaGatewayPrefetchPriority?
     private var observedBitrate = 0
     private var knownTotalLength: Int64?
     private var firstScheduleDate: Date?
     private let chunkLength = 1 * 1_024 * 1_024
     private let minimumServedBytesBeforePrefetch = 4
+    private let reanchorDistance = 1 * 1_024 * 1_024
 
     init(
         remoteURL: URL,
@@ -56,6 +67,7 @@ actor LocalMediaGatewayPrefetcher {
         self.store = store
         self.configuration = configuration
         sessionConfiguration.networkServiceType = .background
+        self.sessionConfiguration = sessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral
         self.session = URLSession(configuration: sessionConfiguration)
     }
 
@@ -66,13 +78,62 @@ actor LocalMediaGatewayPrefetcher {
         knownTotalLength = totalLength ?? knownTotalLength
     }
 
-    func schedule(after servedRange: ByteRange, totalLength: Int64?) {
+    func observedBitrateSnapshot() -> Int {
+        observedBitrate
+    }
+
+    func diagnosticsSnapshot() -> (
+        observedBitrate: Int,
+        activeStartOffset: Int64?,
+        activeEndOffset: Int64?,
+        activePriority: LocalMediaGatewayPrefetchPriority?
+    ) {
+        (
+            observedBitrate,
+            activeTaskStartOffset,
+            activeTaskEndOffset,
+            activeTaskPriority
+        )
+    }
+
+    nonisolated static func shouldReanchorPrefetch(
+        activeStartOffset: Int64?,
+        activeEndOffset: Int64? = nil,
+        newStartOffset: Int64,
+        reanchorDistance: Int64,
+        activePriority: LocalMediaGatewayPrefetchPriority,
+        newPriority: LocalMediaGatewayPrefetchPriority
+    ) -> Bool {
+        guard let activeStartOffset else { return true }
+        if newPriority.rawValue > activePriority.rawValue { return true }
+        if newPriority.rawValue < activePriority.rawValue { return false }
+        if newStartOffset < activeStartOffset {
+            return activeStartOffset - newStartOffset > reanchorDistance
+        }
+        if let activeEndOffset {
+            guard newStartOffset > activeEndOffset else { return false }
+            return newStartOffset - activeEndOffset <= reanchorDistance
+        }
+        return newStartOffset - activeStartOffset > reanchorDistance
+    }
+
+    func schedule(
+        after servedRange: ByteRange,
+        totalLength: Int64?,
+        priority: LocalMediaGatewayPrefetchPriority = .rangeProbe
+    ) {
         knownTotalLength = totalLength ?? knownTotalLength
         firstScheduleDate = firstScheduleDate ?? Date()
         guard servedRange.length >= minimumServedBytesBeforePrefetch else { return }
-        guard activeTask == nil || activeTask?.isCancelled == true else { return }
+        let startOffset = servedRange.offset + Int64(servedRange.length)
+        if let activeTask, !activeTask.isCancelled {
+            guard shouldReanchorPrefetch(to: startOffset, priority: priority) else { return }
+            activeTask.cancel()
+        }
+        activeTaskStartOffset = startOffset
+        activeTaskPriority = priority
         activeTask = Task { [weak self] in
-            await self?.prefetch(startOffset: servedRange.offset + Int64(servedRange.length))
+            await self?.prefetch(startOffset: startOffset)
         }
     }
 
@@ -83,8 +144,18 @@ actor LocalMediaGatewayPrefetcher {
     }
 
     private func prefetch(startOffset: Int64) async {
-        defer { activeTask = nil }
+        defer {
+            if activeTaskStartOffset == startOffset {
+                activeTask = nil
+                activeTaskStartOffset = nil
+                activeTaskEndOffset = nil
+                activeTaskPriority = nil
+            }
+        }
         guard startOffset >= 0, let targetEnd = await targetEndOffset(from: startOffset), targetEnd > startOffset else { return }
+        if activeTaskStartOffset == startOffset {
+            activeTaskEndOffset = targetEnd
+        }
         AppLog.playback.notice(
             "playback.cache.prefetch.start — item=\(self.key.itemID.prefix(8), privacy: .public) source=\(self.key.sourceID.prefix(8), privacy: .public) start=\(startOffset, privacy: .public) targetEnd=\(targetEnd, privacy: .public)"
         )
@@ -106,6 +177,20 @@ actor LocalMediaGatewayPrefetcher {
                 return
             }
         }
+    }
+
+    private func shouldReanchorPrefetch(
+        to startOffset: Int64,
+        priority: LocalMediaGatewayPrefetchPriority
+    ) -> Bool {
+        Self.shouldReanchorPrefetch(
+            activeStartOffset: activeTaskStartOffset,
+            activeEndOffset: activeTaskEndOffset,
+            newStartOffset: startOffset,
+            reanchorDistance: Int64(reanchorDistance),
+            activePriority: activeTaskPriority ?? .rangeProbe,
+            newPriority: priority
+        )
     }
 
     private func targetEndOffset(from startOffset: Int64) async -> Int64? {
@@ -137,16 +222,32 @@ actor LocalMediaGatewayPrefetcher {
     }
 
     private func fetchAndStore(range: ByteRange) async throws -> Int {
+        let start = Date()
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
         request.httpMethod = "GET"
-        request.setValue("bytes=\(range.offset)-\(range.offset + Int64(range.length) - 1)", forHTTPHeaderField: "Range")
+        request.setValue(Self.upstreamRangeHeader(for: range), forHTTPHeaderField: "Range")
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw MediaAccessError.nonHTTPResponse }
-        guard http.statusCode == 206 || http.statusCode == 200 else { throw MediaAccessError.httpStatus(http.statusCode) }
+        // Bulk chunked read instead of byte-by-byte AsyncBytes iteration, bounded to the
+        // prefetch window so an open-ended upstream response stops at range.length.
+        let (payload, http) = try await HTTPChunkedRangeReader.collect(
+            request: request,
+            configuration: sessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral,
+            maxLength: range.length
+        )
+        guard http.statusCode == 206 || (http.statusCode == 200 && range.offset == 0) else {
+            throw MediaAccessError.httpStatus(http.statusCode)
+        }
         knownTotalLength = http.mediaGatewayContentRangeTotal ?? http.mediaGatewayContentLength ?? knownTotalLength
-        let payload = http.statusCode == 200 && data.count > range.length ? Data(data.prefix(range.length)) : data
         try await store.write(range: ByteRange(offset: range.offset, length: payload.count), data: payload, key: key)
+        let elapsed = Date().timeIntervalSince(start)
+        recordRemoteFetch(byteCount: payload.count, elapsedSeconds: elapsed, totalLength: knownTotalLength)
         return payload.count
+    }
+
+    private static func upstreamRangeHeader(for range: ByteRange) -> String {
+        if range.offset > 0 {
+            return "bytes=\(range.offset)-"
+        }
+        return "bytes=0-\(range.offset + Int64(range.length) - 1)"
     }
 }

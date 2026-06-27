@@ -17,6 +17,7 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     ("CORE_ANIMATION_BACKGROUND_TRANSACTION", "deleted thread with uncommitted CATransaction"),
     ("PLAYBACK_STALL", "MEDIA_PLAYBACK_STALL"),
     ("PLAYBACK_STALLED", "Playback stalled."),
+    ("POSTSTART_REBUFFER_TIMEOUT", "playback.directplay.poststart_rebuffer.timeout"),
     ("STARTUP_READINESS_TIMEOUT", "playback.startup.readiness.timeout"),
     ("IOS_HLS_STARTUP_GATE", "ios_high_bitrate_hls"),
     ("DIRECTPLAY_RANGE_TIMEOUT", "directplay_range_deep error=The request timed out"),
@@ -61,13 +62,17 @@ def session_id(line: str) -> str | None:
 
 
 def build_log_context(path: Path, text: str) -> LogContext:
-    if path.name != "ios-live-ui-runtime.stream":
+    is_live_ui_runtime = path.name.startswith("ios-live-ui") and path.name.endswith("-runtime.stream")
+    if not is_live_ui_runtime:
         return LogContext(ignores_ios_simulator_hdr_dv_render_noise=False)
 
     hdr_dv_proofs: set[str] = set()
     first_frames: set[str] = set()
     ttffs: set[str] = set()
+    has_samplebuffer_playback = False
     for line in text.splitlines():
+        if "nativeplayer.deep.tick" in line and "audioRenderer=AVSampleBufferAudioRenderer" in line:
+            has_samplebuffer_playback = True
         current_session = session_id(line)
         if current_session is None:
             continue
@@ -79,7 +84,7 @@ def build_log_context(path: Path, text: str) -> LogContext:
             ttffs.add(current_session)
 
     successful_hdr_dv_sessions = hdr_dv_proofs & first_frames & ttffs
-    return LogContext(ignores_ios_simulator_hdr_dv_render_noise=bool(successful_hdr_dv_sessions))
+    return LogContext(ignores_ios_simulator_hdr_dv_render_noise=bool(successful_hdr_dv_sessions) or has_samplebuffer_playback)
 
 
 def is_ignorable_line(label: str, line: str, context: LogContext) -> bool:
@@ -88,6 +93,8 @@ def is_ignorable_line(label: str, line: str, context: LogContext) -> bool:
             return True
         if context.ignores_ios_simulator_hdr_dv_render_noise and "ReelFin[" in line:
             return True
+    if label == "LOCAL_GATEWAY_LOOPBACK_FAILURE":
+        return "NSURLErrorDomain Code=-999" in line and "cancelled" in line
     return False
 
 

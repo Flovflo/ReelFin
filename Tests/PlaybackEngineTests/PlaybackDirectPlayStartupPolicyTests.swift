@@ -23,9 +23,9 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(decision.mode, .guarded)
-        XCTAssertEqual(decision.minimumBufferDuration, 8)
-        XCTAssertEqual(decision.preferredBufferDuration, 12)
-        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertEqual(decision.minimumBufferDuration, 20)
+        XCTAssertEqual(decision.preferredBufferDuration, 30)
+        XCTAssertEqual(decision.timeout, 45)
         XCTAssertFalse(decision.allowsTimeoutStart)
         XCTAssertNil(decision.failureReason)
     }
@@ -147,9 +147,9 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(decision.mode, .guarded)
-        XCTAssertEqual(decision.minimumBufferDuration, 8)
-        XCTAssertEqual(decision.preferredBufferDuration, 12)
-        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertEqual(decision.minimumBufferDuration, 20)
+        XCTAssertEqual(decision.preferredBufferDuration, 30)
+        XCTAssertEqual(decision.timeout, 45)
         XCTAssertFalse(decision.allowsTimeoutStart)
         XCTAssertNil(decision.failureReason)
     }
@@ -195,9 +195,9 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(decision.mode, .guarded)
-        XCTAssertEqual(decision.minimumBufferDuration, 8)
-        XCTAssertEqual(decision.preferredBufferDuration, 12)
-        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertEqual(decision.minimumBufferDuration, 20)
+        XCTAssertEqual(decision.preferredBufferDuration, 30)
+        XCTAssertEqual(decision.timeout, 45)
         XCTAssertFalse(decision.allowsTimeoutStart)
         XCTAssertNil(decision.failureReason)
     }
@@ -234,6 +234,23 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         XCTAssertNil(decision.failureReason)
     }
 
+    func testLowBitrateHDRDolbyVisionDirectPlayUsesGuardedModeWithoutPreheat() {
+        let decision = DirectPlayStartupPolicy.decision(
+            route: .directPlay(URL(string: "https://example.com/Videos/item/stream.mp4?static=true")!),
+            sourceBitrate: 7_947_759,
+            sourceIsHDRorDV: true,
+            preheatResult: nil,
+            isTVOS: false
+        )
+
+        XCTAssertEqual(decision.mode, .guarded)
+        XCTAssertEqual(decision.minimumBufferDuration, 20)
+        XCTAssertEqual(decision.preferredBufferDuration, 30)
+        XCTAssertEqual(decision.timeout, 45)
+        XCTAssertFalse(decision.allowsTimeoutStart)
+        XCTAssertNil(decision.failureReason)
+    }
+
     func testHighBitrateDirectPlayUsesGuardedModeWithoutMeasuredEvidence() {
         let decision = DirectPlayStartupPolicy.decision(
             route: .directPlay(URL(string: "https://example.com/Videos/item/stream.mp4?static=true")!),
@@ -245,9 +262,9 @@ final class PlaybackDirectPlayStartupPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(decision.mode, .guarded)
-        XCTAssertEqual(decision.minimumBufferDuration, 8)
-        XCTAssertEqual(decision.preferredBufferDuration, 12)
-        XCTAssertEqual(decision.timeout, 30)
+        XCTAssertEqual(decision.minimumBufferDuration, 20)
+        XCTAssertEqual(decision.preferredBufferDuration, 30)
+        XCTAssertEqual(decision.timeout, 45)
         XCTAssertFalse(decision.allowsTimeoutStart)
         XCTAssertNil(decision.failureReason)
     }

@@ -149,8 +149,8 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         let playerScreen = app.otherElements["native_player_screen"].firstMatch
         XCTAssertTrue(playerScreen.waitForExistence(timeout: 15))
         let playerChromeSurface = chromeInteractionSurface(in: app, fallback: playerScreen)
-        try exercisePlayerControls(in: app, playerScreen: playerChromeSurface)
         observePlaybackStartup()
+        try exercisePlayerControls(in: app, playerScreen: playerChromeSurface)
         captureScreenshot(of: app, name: "\(scenario)-player-after-play")
         try dismissPlayer(in: app, playerScreen: playerChromeSurface)
     }
@@ -714,14 +714,14 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         var values = readEnvFile(repoRoot.appendingPathComponent(".artifacts/secrets/reelfin-e2e.env"))
+        ProcessInfo.processInfo.environment.forEach { key, value in
+            values[key] = value
+        }
         let liveUITargetURL = repoRoot.appendingPathComponent(".artifacts/player-e2e/live-ui-target.env")
         if isFreshLiveUITargetEnv(liveUITargetURL) {
             readEnvFile(liveUITargetURL).forEach { key, value in
                 values[key] = value
             }
-        }
-        ProcessInfo.processInfo.environment.forEach { key, value in
-            values[key] = value
         }
         return values
     }

@@ -539,6 +539,98 @@ If playback has advanced but no decoded frame appears quickly enough:
 
 This is specifically aimed at zombie startup states.
 
+### 9.4 Steady-state buffering (post-first-frame)
+
+Startup is deliberately latency-biased: a tiny forward buffer and
+`automaticallyWaitsToMinimizeStalling = false` so the first frame appears fast.
+That same configuration is fatal *during* playback — a 0.75–2 s buffer with
+`waits == false` drains on the first network dip below real-time bitrate and AVPlayer
+freezes to rebuffer (the "it cuts to reload after ~1 min" symptom). The local cache
+gateway makes this worse: its loopback URL is classified as `directLocal` (thinnest
+0.75 s buffer) even though the bytes are streamed from a remote server through the proxy.
+
+To fix this, `markFirstFrameIfNeeded()` calls `applyDirectPlaySteadyStateBufferingIfNeeded()`
+once a frame has actually rendered. For direct play it switches to a stability-biased
+buffer (`DirectPlaySessionPolicy.steadyStateBuffering`), **shared by iOS and tvOS** so both
+platforms run the same anti-stall base:
+
+- `automaticallyWaitsToMinimizeStalling = true`
+- `preferredForwardBufferDuration = max(current, 30 s)`
+
+This is the proactive counterpart to `handlePostStartDirectPlayStallOnCurrentItem`,
+which only reacted *after* the first stall (i.e. after the user already saw a freeze).
+HLS/transcode routes (which manage their own buffering) are left untouched. On tvOS the
+30 s steady-state floor and the adaptive caching ramp (`PlaybackTVOSCachingPolicy`) cooperate
+rather than fight: the ramp only ever *raises* the buffer (it applies a higher target when
+`targetBufferDuration > current + 15 s`; warm/hot/deep/flood stages reach 24/90/300/900 s), and
+the 30 s floor blocks the warm phase from lowering it — so the effective buffer is always the
+larger of the two.
+
+### 9.5 Media-gateway throughput
+
+All upstream byte reads in the media-access layer use bulk, chunked HTTP reads via
+`HTTPChunkedRangeReader` — never byte-by-byte `URLSession.AsyncBytes` iteration. The
+byte-by-byte pattern (`for try await byte in bytes { data.append(byte) }`) is CPU-bound
+and was measured around 7–10 MB/s against a real 26 Mbps stream (≈0.2× a bulk read),
+which is below what high-bitrate originals need, so the player buffer starved. The
+chunked reader is bounded to the requested length, so an open-ended upstream request
+can never pull more than the current window into memory. Affected paths:
+`LocalMediaGatewaySession`, `LocalMediaGatewayPrefetcher`, `HTTPRangeByteSource`,
+`PlaybackStartupPreheater`, and `PlaybackServerNetworkBaseline`.
+
+### 9.5.1 Gateway is cache-serving only (not on the uncached hot path)
+
+`LocalMediaGatewayRoutePolicy.shouldUseGateway` returns true **only when bytes are already
+cached** (`hasCachedBytes`). Uncached direct play — first play *or* resume, iOS *or* tvOS — points
+AVPlayer straight at the origin.
+
+The origin (Jellyfin `/Videos/{id}/stream`) was verified to serve HTTP range requests correctly
+(`206 Partial Content`, `Accept-Ranges: bytes`, correct `Content-Range`). AVPlayer's native HTTP
+stack streams that far more robustly than proxying through the local gateway. Interposing the
+gateway on the uncached path made AVPlayer reconnect per range (the gateway closes the connection
+after each response) while the gateway opened a fresh upstream `URLSession` — a new TLS handshake
+to the remote origin — per 16 MB window and cancelled in-flight windows on every disconnect. On a
+large DV/4K original (≈26 Mbps, ~12 GB) that churn starved the buffer and cut playback after
+~1 minute; device logs showed it as a flood of
+`playback.cache.gateway.stream_failed_after_headers — Broken pipe`. Even chunked reads (§9.5)
+could not overcome the per-window-handshake + per-reconnect-cancel pattern.
+
+Trade-off: the background cache-fill (`LocalMediaGatewayPrefetcher`, which only runs while the
+gateway is on the playback path) does not populate on first play, so disk caching of fresh
+direct-play content is paused. This was the subsystem causing the stalls; "never cut once started"
+takes priority over opportunistic caching. A genuine origin range failure
+(`serverIncorrectlyConfigured`) is caught by recovery, which falls through to the transcode
+profiles — never a permanent black screen. Re-introducing churn-free read-ahead caching (a single
+persistent upstream session + windows that finish caching past an AVPlayer disconnect) is tracked
+as a follow-up requiring on-device throughput validation. See `LocalMediaGatewayRoutePolicyTests`.
+
+### 9.6 HDR / Dolby Vision surface routing
+
+The experimental sample-buffer renderer wires no EDR / DV tone-mapping on **iOS**, so HDR/DV
+frames render very dark there. The Apple-native surface (`AVPlayerViewController` / AVPlayer)
+renders HDR/DV correctly on both platforms; on **tvOS** the sample-buffer surface is acceptable
+because dynamic range is driven by `AVDisplayCriteria` (`NativeDisplayCriteriaCoordinator`).
+
+Routing (`NativePlayerPlaybackController.prepareResolved`):
+
+- An HDR/DV source in an Apple-native container (`mp4`/`m4v`/`mov`) is forced onto the
+  Apple-native surface (`mustUseAppleForHDR`), overriding even an "Always Custom Player"
+  preference. If the audio codec is unsupported there, it throws to the DV-aware coordinator
+  (`reason = hdr_dv_requires_apple_surface`) rather than rendering a broken AVPlayer.
+- On iOS, any HDR/DV source that would otherwise reach the sample buffer (e.g. MKV) is rejected
+  to the coordinator (`sampleBufferShouldRejectHDR` → `hdr_dv_unsupported_on_sample_buffer`).
+- On tvOS, the sample buffer is kept for HDR/DV (`AVDisplayCriteria`).
+
+**Detection is signalling-based, never bit-depth-based.** `MediaSource.hasExplicitHDRorDVSignaling`
+keys off colour range (PQ/HLG/Dolby), `videoRangeType` (HDR10/HLG/DOVI), DV profile, HDR10+, or a
+DV codec tag — and deliberately **excludes** `videoBitDepth >= 10`, because 10-bit HEVC (Main10) is
+routine for plain SDR. This is what drives both the surface decision (`hdrMode`,
+`sampleBufferShouldRejectHDR`) and `isPremiumVideoSource`. The broader `isLikelyHDRorDV` (which
+*does* include the 10-bit hint) is retained for telemetry / strict-quality / tone-mapping call
+sites, but must not gate surface or "premium/stall-resistant" decisions — otherwise 10-bit SDR is
+wrongly diverted off the fast sample-buffer path and needlessly forced through the stall-resistant
+gateway + guarded startup. See `NativePlayerHDRSurfaceRoutingTests`.
+
 ---
 
 ## 10. Recovery and failure model

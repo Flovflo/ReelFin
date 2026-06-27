@@ -13,6 +13,7 @@ public enum PlaybackStartupReadinessPolicy {
     static func requirement(
         route: PlaybackRoute,
         sourceBitrate: Int?,
+        sourceIsHDRorDV: Bool = false,
         runtimeSeconds: Double?,
         resumeSeconds: Double,
         isTVOS: Bool
@@ -26,6 +27,7 @@ public enum PlaybackStartupReadinessPolicy {
             base = directPlayRequirement(
                 route: route,
                 bitrate: bitrate,
+                sourceIsHDRorDV: sourceIsHDRorDV,
                 isResume: isResume,
                 isTVOS: isTVOS
             )
@@ -45,6 +47,7 @@ public enum PlaybackStartupReadinessPolicy {
     public static func requiresStartupPreheat(
         route: PlaybackRoute,
         sourceBitrate: Int?,
+        sourceIsHDRorDV: Bool = false,
         runtimeSeconds: Double?,
         resumeSeconds: Double,
         isTVOS: Bool
@@ -52,6 +55,7 @@ public enum PlaybackStartupReadinessPolicy {
         return requirement(
             route: route,
             sourceBitrate: sourceBitrate,
+            sourceIsHDRorDV: sourceIsHDRorDV,
             runtimeSeconds: runtimeSeconds,
             resumeSeconds: resumeSeconds,
             isTVOS: isTVOS
@@ -104,6 +108,7 @@ public enum PlaybackStartupReadinessPolicy {
     private static func directPlayRequirement(
         route: PlaybackRoute,
         bitrate: Int,
+        sourceIsHDRorDV: Bool,
         isResume: Bool,
         isTVOS: Bool
     ) -> Requirement? {
@@ -113,7 +118,7 @@ public enum PlaybackStartupReadinessPolicy {
         }
 
         guard isTVOS else {
-            guard bitrate >= 18_000_000 || (isResume && bitrate >= 12_000_000) else {
+            guard sourceIsHDRorDV || bitrate >= 18_000_000 || (isResume && bitrate >= 12_000_000) else {
                 return nil
             }
             let decision = DirectPlayStartupPolicy.guardedDecision(isTVOS: false)
@@ -122,7 +127,10 @@ public enum PlaybackStartupReadinessPolicy {
                 preferredBufferDuration: decision.preferredBufferDuration,
                 timeout: decision.timeout,
                 pollInterval: 0.15,
-                reason: isResume ? "ios_resume_directplay_ready" : "ios_high_bitrate_directplay_ready",
+                reason: directPlayIPhoneReason(
+                    sourceIsHDRorDV: sourceIsHDRorDV,
+                    isResume: isResume
+                ),
                 allowsTimeoutStart: decision.allowsTimeoutStart
             )
         }
@@ -150,6 +158,13 @@ public enum PlaybackStartupReadinessPolicy {
             reason: isResume ? "tvos_resume_directplay_ready" : "tvos_directplay_ready",
             allowsTimeoutStart: true
         )
+    }
+
+    private static func directPlayIPhoneReason(sourceIsHDRorDV: Bool, isResume: Bool) -> String {
+        if sourceIsHDRorDV {
+            return isResume ? "ios_hdr_dv_resume_directplay_ready" : "ios_hdr_dv_directplay_ready"
+        }
+        return isResume ? "ios_resume_directplay_ready" : "ios_high_bitrate_directplay_ready"
     }
 
     private static func nativeBridgeRequirement(isTVOS: Bool) -> Requirement {

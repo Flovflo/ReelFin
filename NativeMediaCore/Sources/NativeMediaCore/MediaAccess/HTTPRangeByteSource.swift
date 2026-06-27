@@ -16,6 +16,7 @@ public actor HTTPRangeByteSource: MediaByteSource {
     public nonisolated let url: URL
     private let headers: [String: String]
     private let session: URLSession
+    private let rangeConfiguration: URLSessionConfiguration
     private let configuration: Configuration
     private var cachedSize: Int64?
     private var cache: [ByteRange: Data] = [:]
@@ -35,6 +36,7 @@ public actor HTTPRangeByteSource: MediaByteSource {
         sessionConfiguration.timeoutIntervalForRequest = configuration.timeout
         sessionConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: sessionConfiguration)
+        self.rangeConfiguration = (sessionConfiguration.copy() as? URLSessionConfiguration) ?? sessionConfiguration
     }
 
     public func read(range: ByteRange) async throws -> Data {
@@ -90,25 +92,24 @@ public actor HTTPRangeByteSource: MediaByteSource {
         request.setValue("bytes=\(range.offset)-\(range.offset + Int64(range.length) - 1)", forHTTPHeaderField: "Range")
         applyHeaders(to: &request)
         snapshot.rangeRequestCount += 1
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else { throw MediaAccessError.nonHTTPResponse }
-        if let total = totalSize(from: http.value(forHTTPHeaderField: "Content-Range")) {
+        // Bulk chunked read (not byte-by-byte): bounded to range.length so an unexpected
+        // 200 cannot pull the whole file. See HTTPChunkedRangeReader for why.
+        let (data, response) = try await HTTPChunkedRangeReader.collect(
+            request: request,
+            configuration: rangeConfiguration,
+            maxLength: range.length
+        )
+        if let total = totalSize(from: response.value(forHTTPHeaderField: "Content-Range")) {
             cachedSize = total
         }
-        if http.statusCode == 200, let length = http.value(forHTTPHeaderField: "Content-Length"), let value = Int64(length) {
+        if response.statusCode == 200, let length = response.value(forHTTPHeaderField: "Content-Length"), let value = Int64(length) {
             cachedSize = value
         }
-        guard http.statusCode == 206 || http.statusCode == 200 else {
-            throw MediaAccessError.httpStatus(http.statusCode)
+        guard response.statusCode == 206 || response.statusCode == 200 else {
+            throw MediaAccessError.httpStatus(response.statusCode)
         }
-        guard http.statusCode != 200 || range.offset == 0 else {
-            throw MediaAccessError.httpStatus(http.statusCode)
-        }
-        var data = Data()
-        data.reserveCapacity(range.length)
-        var iterator = bytes.makeAsyncIterator()
-        while data.count < range.length, let byte = try await iterator.next() {
-            data.append(byte)
+        guard response.statusCode != 200 || range.offset == 0 else {
+            throw MediaAccessError.httpStatus(response.statusCode)
         }
         return data
     }

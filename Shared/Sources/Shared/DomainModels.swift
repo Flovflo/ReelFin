@@ -537,13 +537,17 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
         (videoWidth ?? 0) >= 3_840 || (videoHeight ?? 0) >= 2_160
     }
 
-    public var isLikelyHDRorDV: Bool {
+    /// Strict HDR/Dolby Vision detection based on actual signalling — colour range (PQ/HLG/
+    /// Dolby), `videoRangeType` (HDR10/HLG/DOVI), DV profile, HDR10+, or a DV codec tag.
+    /// Deliberately excludes bit depth: 10-bit HEVC (Main10) is routine for plain SDR, so bit
+    /// depth alone is NOT an HDR signal. Use this for surface / rendering / "premium" decisions
+    /// where a false HDR positive on 10-bit SDR is harmful (wrong renderer, needless gateway).
+    public var hasExplicitHDRorDVSignaling: Bool {
         let range = (videoRange ?? "").lowercased()
         let rangeType = (videoRangeType ?? "").lowercased()
         let profile = (videoProfile ?? "").lowercased()
         let codec = normalizedVideoCodec
-        return (videoBitDepth ?? 8) >= 10
-            || range.contains("hdr")
+        return range.contains("hdr")
             || rangeType.contains("dovi")
             || rangeType.contains("hdr10")
             || rangeType.contains("hlg")
@@ -559,6 +563,13 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
             || codec.contains("dvh1")
     }
 
+    /// Broad HDR-or-10-bit hint. Includes bit depth, so it is `true` for 10-bit SDR too. Kept for
+    /// the many telemetry / strict-quality / tone-mapping call sites that intentionally treat
+    /// 10-bit as "wide-gamut-ish". For surface/premium decisions prefer ``hasExplicitHDRorDVSignaling``.
+    public var isLikelyHDRorDV: Bool {
+        hasExplicitHDRorDVSignaling || (videoBitDepth ?? 8) >= 10
+    }
+
     public var isPremiumVideoSource: Bool {
         let codec = normalizedVideoCodec
         let hevcLike = codec.contains("hevc")
@@ -567,7 +578,10 @@ public struct MediaSource: Codable, Hashable, Identifiable, Sendable {
             || codec.contains("dvhe")
             || codec.contains("hvc1")
             || codec.contains("hev1")
-        return hevcLike && (isLikely4K || isLikelyHDRorDV)
+        // Use strict HDR/DV signalling here: 10-bit SDR must NOT be treated as "premium",
+        // otherwise low-bitrate 10-bit SDR is needlessly forced through the stall-resistant
+        // gateway + guarded startup, hurting fast start.
+        return hevcLike && (isLikely4K || hasExplicitHDRorDVSignaling)
     }
 }
 

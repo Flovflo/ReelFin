@@ -92,6 +92,84 @@ final class MediaGatewayStoreTests: XCTestCase {
         XCTAssertEqual(covered, [])
     }
 
+    // MARK: - Never-cut serve primitives (cache resource loader foundation)
+
+    func testReadAvailablePrefixServesPartialContiguousCoverage() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 1024)
+        )
+        let key = makeKey(suffix: "prefix")
+
+        // Cache [0,8) but leave a gap at [8,12), then [12,16).
+        try await store.write(range: ByteRange(offset: 0, length: 8), data: Data([0, 1, 2, 3, 4, 5, 6, 7]), key: key)
+        try await store.write(range: ByteRange(offset: 12, length: 4), data: Data([12, 13, 14, 15]), key: key)
+
+        // Asking for 16 bytes from 0 returns only the contiguous prefix [0,8) — never spans the gap.
+        let prefix = try await store.readAvailablePrefix(from: 0, maxLength: 16, key: key)
+        XCTAssertEqual(prefix, Data([0, 1, 2, 3, 4, 5, 6, 7]))
+
+        // maxLength caps the slice even when more contiguous bytes exist.
+        let capped = try await store.readAvailablePrefix(from: 2, maxLength: 3, key: key)
+        XCTAssertEqual(capped, Data([2, 3, 4]))
+
+        // Offset inside the gap → nil (nothing to serve right now).
+        let inGap = try await store.readAvailablePrefix(from: 8, maxLength: 4, key: key)
+        XCTAssertNil(inGap)
+
+        // After the gap, the later island serves on its own.
+        let island = try await store.readAvailablePrefix(from: 12, maxLength: 8, key: key)
+        XCTAssertEqual(island, Data([12, 13, 14, 15]))
+    }
+
+    func testContiguousEndStopsAtFirstGap() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 1024)
+        )
+        let key = makeKey(suffix: "cend")
+
+        try await store.write(range: ByteRange(offset: 0, length: 4), data: Data([0, 1, 2, 3]), key: key)
+        try await store.write(range: ByteRange(offset: 4, length: 4), data: Data([4, 5, 6, 7]), key: key)
+        try await store.write(range: ByteRange(offset: 12, length: 4), data: Data([12, 13, 14, 15]), key: key)
+
+        // Contiguous from 0 runs through the two adjacent writes and stops at the gap (8).
+        let end = try await store.contiguousEnd(from: 0, key: key)
+        XCTAssertEqual(end, 8)
+
+        // From a missing offset, the cursor doesn't advance.
+        let stuck = try await store.contiguousEnd(from: 8, key: key)
+        XCTAssertEqual(stuck, 8)
+    }
+
+    func testWriteEmitsCoverageEvent() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 4, maxBytes: 1024)
+        )
+        let key = makeKey(suffix: "cov")
+
+        // Subscribe before writing so the event is observed.
+        let events = store.coverageEvents
+        let collector = Task<Int64?, Never> {
+            for await event in events {
+                return event.advancedToOffset
+            }
+            return nil
+        }
+
+        try await store.write(range: ByteRange(offset: 0, length: 4), data: Data([0, 1, 2, 3]), key: key)
+
+        let advancedTo = await collector.value
+        XCTAssertEqual(advancedTo, 4)
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MediaGatewayStoreTests.\(UUID().uuidString)", isDirectory: true)

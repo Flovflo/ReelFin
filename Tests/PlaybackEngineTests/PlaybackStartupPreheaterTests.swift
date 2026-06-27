@@ -85,6 +85,58 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
     }
 
+    /// A timed-out probe on a high-bitrate / DV source must return a ZERO-throughput Result (not
+    /// nil) so the startup decision blocks direct play and routes to watchable SDR — instead of
+    /// nil → guarded → starting DV that stalls then cuts. (Device: preheat -1001 on a 26 Mbps DV
+    /// source kept starting DV and freezing for ~10-15s.)
+    func testPreheatTimeoutReturnsZeroThroughputForDolbyVisionSourceToBlockDirectPlay() async throws {
+        let selection = makeDirectPlaySelection(
+            sourceFileSize: 200 * 1_048_576,
+            sourceBitrate: 26_000_000,
+            videoRangeType: "DOVIWithHDR10",
+            dvProfile: 8
+        )
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(), simulatedErrorCode: NSURLErrorTimedOut)
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 300,
+            runtimeSeconds: 3_600,
+            isTVOS: false,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
+        )
+
+        let unwrapped = try XCTUnwrap(result, "A failed probe for a DV source must return a zero result, not nil.")
+        XCTAssertEqual(unwrapped.observedBitrate, 0, "A timed-out probe must report zero throughput so the decision blocks.")
+        XCTAssertEqual(unwrapped.byteCount, 0)
+        XCTAssertTrue(unwrapped.reason.hasSuffix("_failed"))
+
+        // The decision chain: zero throughput → blocked → .directPlayPreflightInsufficient (route SDR).
+        let decision = DirectPlayStartupPolicy.decision(
+            route: .directPlay(selection.assetURL),
+            sourceBitrate: selection.source.bitrate,
+            sourceIsHDRorDV: true,
+            preheatResult: unwrapped,
+            isTVOS: false
+        )
+        XCTAssertEqual(decision.failureReason, .directPlayPreflightInsufficient,
+            "A zero-throughput preheat must block direct play (route to watchable SDR), not start DV.")
+    }
+
+    /// A CANCELLED probe (playback proceeded / superseded) is NOT a connection verdict → nil
+    /// (decision stays optimistic). Distinguishes cancellation from a genuine failure.
+    func testPreheatCancellationReturnsNil() async throws {
+        let selection = makeDirectPlaySelection(
+            sourceFileSize: 200 * 1_048_576, sourceBitrate: 26_000_000, videoRangeType: "DOVIWithHDR10", dvProfile: 8)
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(), simulatedErrorCode: NSURLErrorCancelled)
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection, resumeSeconds: 300, runtimeSeconds: 3_600, isTVOS: false,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self])
+
+        XCTAssertNil(result, "Cancellation is not a connection failure — must return nil (stay optimistic).")
+    }
+
     func testInitialHighBitrateIPhoneProgressiveDirectPlayUsesNonZeroRangeProbe() async throws {
         let selection = makeDirectPlaySelection(
             sourceFileSize: 100 * 1_048_576,
@@ -131,6 +183,37 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         XCTAssertNil(result)
         XCTAssertEqual(PlaybackStartupFixtureURLProtocol.requestCount, 1)
     }
+
+    func testIPhoneHDRDolbyVisionResumeUsesNonZeroRangeProbeBelowBitrateThreshold() async throws {
+        let selection = makeDirectPlaySelection(
+            sourceFileSize: 100 * 1_048_576,
+            sourceBitrate: 7_947_759,
+            videoRangeType: "DOVIWithHDR10",
+            dvProfile: 8,
+            headers: ["X-Auth-Token": "token-123"]
+        )
+        PlaybackStartupFixtureURLProtocol.reset(storage: Data(repeating: 0xAB, count: 100 * 1_048_576))
+
+        let result = await PlaybackStartupPreheater.preheat(
+            selection: selection,
+            resumeSeconds: 20,
+            runtimeSeconds: 100,
+            isTVOS: false,
+            urlProtocolClasses: [PlaybackStartupFixtureURLProtocol.self]
+        )
+
+        // DV sources use a fixed 4 MB connection-warming probe (intentionally reduced from a
+        // bitrate-derived size to avoid -1001 timeouts on a momentarily-dipping link — see
+        // directPlayRangeLength). Offset = resume ratio 20/100 of a 100 MB file, aligned to 4 MB.
+        XCTAssertEqual(result?.byteCount, 4 * 1_048_576)
+        XCTAssertEqual(result?.rangeStart, 20 * 1_048_576)
+        XCTAssertEqual(result?.reason, "directplay_range_deep")
+
+        let request = try XCTUnwrap(PlaybackStartupFixtureURLProtocol.capturedRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Range"), "bytes=20971520-25165823")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Auth-Token"), "token-123")
+    }
+
 
     func testPreheatUsesTvOSProgressiveDirectPlayRangeProbe() async throws {
         let selection = makeDirectPlaySelection(
@@ -250,6 +333,8 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
         assetURL: URL = URL(string: "https://fixture.local/video.mp4")!,
         sourceFileSize: Int64 = 10 * 1_048_576,
         sourceBitrate: Int? = 12_000_000,
+        videoRangeType: String? = nil,
+        dvProfile: Int? = nil,
         headers: [String: String] = [:]
     ) -> PlaybackAssetSelection {
         PlaybackAssetSelection(
@@ -258,7 +343,12 @@ final class PlaybackStartupPreheaterTests: XCTestCase {
                 itemID: "item-1",
                 name: "Test Item",
                 fileSize: sourceFileSize,
+                container: "mp4",
+                videoCodec: "hevc",
                 bitrate: sourceBitrate,
+                videoBitDepth: videoRangeType == nil ? nil : 10,
+                videoRangeType: videoRangeType,
+                dvProfile: dvProfile,
                 supportsDirectPlay: true,
                 supportsDirectStream: true,
                 directStreamURL: URL(string: "https://fixture.local/master.m3u8"),
@@ -351,13 +441,22 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
         return _requestCount
     }
 
-    static func reset(storage: Data, ignoresNonZeroRanges: Bool = false) {
+    private static var simulatedErrorCode: Int?
+
+    static func reset(storage: Data, ignoresNonZeroRanges: Bool = false, simulatedErrorCode: Int? = nil) {
         lock.lock()
         defer { lock.unlock() }
         self.storage = storage
         self.ignoresNonZeroRanges = ignoresNonZeroRanges
+        self.simulatedErrorCode = simulatedErrorCode
         _capturedRequest = nil
         _requestCount = 0
+    }
+
+    private static var failureCode: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return simulatedErrorCode
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -370,6 +469,12 @@ private final class PlaybackStartupFixtureURLProtocol: URLProtocol {
 
     override func startLoading() {
         Self.record(request)
+
+        if let code = Self.failureCode {
+            // Simulate a real connection failure (e.g. -1001 timeout, -1005 reset).
+            client?.urlProtocol(self, didFailWithError: NSError(domain: NSURLErrorDomain, code: code))
+            return
+        }
 
         let data = Self.storageSnapshot()
         if let rangeHeader = request.value(forHTTPHeaderField: "Range"),

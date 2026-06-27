@@ -19,18 +19,20 @@ enum DirectPlayStartupPolicy {
     private static let baselineGuardedHeadroomRatio = 1.25
     private static let baselineFastHeadroomRatio = 3.0
     private static let iOSMeasuredHeadroomRequiresAVPlayerBufferThreshold = 18_000_000
-    private static let iOSGuardedMinimumBufferDuration: Double = 8
-    private static let iOSGuardedPreferredBufferDuration: Double = 12
+    private static let iOSGuardedMinimumBufferDuration: Double = 20
+    private static let iOSGuardedPreferredBufferDuration: Double = 30
 
     static func decision(
         route: PlaybackRoute,
         sourceBitrate: Int?,
+        sourceIsHDRorDV: Bool = false,
         preheatResult: PlaybackStartupPreheater.Result?,
         isTVOS: Bool
     ) -> Decision {
         decision(
             route: route,
             sourceBitrate: sourceBitrate,
+            sourceIsHDRorDV: sourceIsHDRorDV,
             itemPreheatResult: preheatResult,
             serverBaselineResult: nil,
             isTVOS: isTVOS
@@ -40,6 +42,7 @@ enum DirectPlayStartupPolicy {
     static func decision(
         route: PlaybackRoute,
         sourceBitrate: Int?,
+        sourceIsHDRorDV: Bool = false,
         itemPreheatResult: PlaybackStartupPreheater.Result?,
         serverBaselineResult: PlaybackServerNetworkBaseline.Result?,
         isTVOS: Bool,
@@ -50,14 +53,19 @@ enum DirectPlayStartupPolicy {
         }
 
         let bitrate = sourceBitrate ?? 0
-        guard bitrate >= guardedBitrateThreshold else {
+        let requiresGuardedStartup = sourceIsHDRorDV || bitrate >= guardedBitrateThreshold
+        guard requiresGuardedStartup else {
             return fastDecision(isTVOS: isTVOS)
+        }
+        guard bitrate > 0 else {
+            return guardedDecision(isTVOS: isTVOS)
         }
 
         if let itemPreheatResult {
             return decisionFromItemPreheat(
                 itemPreheatResult,
                 sourceBitrate: bitrate,
+                sourceIsHDRorDV: sourceIsHDRorDV,
                 isTVOS: isTVOS
             )
         }
@@ -66,6 +74,7 @@ enum DirectPlayStartupPolicy {
             return decisionFromServerBaseline(
                 serverBaselineResult,
                 sourceBitrate: bitrate,
+                sourceIsHDRorDV: sourceIsHDRorDV,
                 isTVOS: isTVOS
             )
         }
@@ -76,6 +85,7 @@ enum DirectPlayStartupPolicy {
     private static func decisionFromItemPreheat(
         _ preheatResult: PlaybackStartupPreheater.Result,
         sourceBitrate: Int,
+        sourceIsHDRorDV: Bool,
         isTVOS: Bool
     ) -> Decision {
         let observedBitrate = preheatResult.observedBitrate
@@ -85,7 +95,11 @@ enum DirectPlayStartupPolicy {
 
         let headroom = observedBitrate / Double(sourceBitrate)
         if headroom < badHeadroomRatio { return blockedDecision(isTVOS: isTVOS) }
-        if requiresMeasuredAVPlayerBufferForFastStart(sourceBitrate: sourceBitrate, isTVOS: isTVOS) {
+        if requiresMeasuredAVPlayerBufferForFastStart(
+            sourceBitrate: sourceBitrate,
+            sourceIsHDRorDV: sourceIsHDRorDV,
+            isTVOS: isTVOS
+        ) {
             return guardedDecision(isTVOS: isTVOS)
         }
         if headroom >= fastHeadroomRatio { return fastDecision(isTVOS: isTVOS) }
@@ -95,6 +109,7 @@ enum DirectPlayStartupPolicy {
     private static func decisionFromServerBaseline(
         _ baselineResult: PlaybackServerNetworkBaseline.Result,
         sourceBitrate: Int,
+        sourceIsHDRorDV: Bool,
         isTVOS: Bool
     ) -> Decision {
         let observedBitrate = baselineResult.observedBitrate
@@ -104,7 +119,11 @@ enum DirectPlayStartupPolicy {
 
         let headroom = observedBitrate / Double(sourceBitrate)
         if headroom < baselineBadHeadroomRatio { return blockedDecision(isTVOS: isTVOS) }
-        if requiresMeasuredAVPlayerBufferForFastStart(sourceBitrate: sourceBitrate, isTVOS: isTVOS) {
+        if requiresMeasuredAVPlayerBufferForFastStart(
+            sourceBitrate: sourceBitrate,
+            sourceIsHDRorDV: sourceIsHDRorDV,
+            isTVOS: isTVOS
+        ) {
             return guardedDecision(isTVOS: isTVOS)
         }
         if headroom >= baselineFastHeadroomRatio { return fastDecision(isTVOS: isTVOS) }
@@ -117,7 +136,7 @@ enum DirectPlayStartupPolicy {
             mode: .guarded,
             minimumBufferDuration: isTVOS ? 4 : iOSGuardedMinimumBufferDuration,
             preferredBufferDuration: isTVOS ? 4 : iOSGuardedPreferredBufferDuration,
-            timeout: isTVOS ? 6 : 30,
+            timeout: isTVOS ? 6 : 45,
             allowsTimeoutStart: isTVOS,
             failureReason: nil
         )
@@ -152,8 +171,9 @@ enum DirectPlayStartupPolicy {
 
     private static func requiresMeasuredAVPlayerBufferForFastStart(
         sourceBitrate: Int,
+        sourceIsHDRorDV: Bool,
         isTVOS: Bool
     ) -> Bool {
-        !isTVOS && sourceBitrate >= iOSMeasuredHeadroomRequiresAVPlayerBufferThreshold
+        !isTVOS && (sourceIsHDRorDV || sourceBitrate >= iOSMeasuredHeadroomRequiresAVPlayerBufferThreshold)
     }
 }

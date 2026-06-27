@@ -6,6 +6,10 @@ final class MockOriginalMediaProtocol: URLProtocol {
     static var rangeRequestCount = 0
     static var requestedURLs: [URL] = []
     static var requestedHeaders: [[String: String]] = []
+    static var ignoresNonZeroRangeRequests = false
+    static var ignoresBoundedNonZeroRangeRequests = false
+    static var responseDelayNanoseconds: UInt64 = 0
+    static var responseDelayNanosecondsForRangeStart: [Int: UInt64] = [:]
 
     static func reset() {
         storage = Data()
@@ -13,6 +17,10 @@ final class MockOriginalMediaProtocol: URLProtocol {
         rangeRequestCount = 0
         requestedURLs = []
         requestedHeaders = []
+        ignoresNonZeroRangeRequests = false
+        ignoresBoundedNonZeroRangeRequests = false
+        responseDelayNanoseconds = 0
+        responseDelayNanosecondsForRangeStart = [:]
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -24,6 +32,33 @@ final class MockOriginalMediaProtocol: URLProtocol {
     }
 
     override func startLoading() {
+        let delay = Self.delayNanoseconds(for: request)
+        guard delay > 0 else {
+            performStartLoading()
+            return
+        }
+        Thread.sleep(forTimeInterval: Double(delay) / 1_000_000_000)
+        performStartLoading()
+    }
+
+    private static func delayNanoseconds(for request: URLRequest) -> UInt64 {
+        guard
+            let range = request.value(forHTTPHeaderField: "Range"),
+            range.hasPrefix("bytes=")
+        else {
+            return responseDelayNanoseconds
+        }
+        let parts = range
+            .dropFirst("bytes=".count)
+            .split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+            .map(String.init)
+        guard parts.count == 2, let start = Int(parts[0]) else {
+            return responseDelayNanoseconds
+        }
+        return responseDelayNanosecondsForRangeStart[start] ?? responseDelayNanoseconds
+    }
+
+    private func performStartLoading() {
         if let url = request.url {
             Self.requestedURLs.append(url)
         }
@@ -44,6 +79,24 @@ final class MockOriginalMediaProtocol: URLProtocol {
             let range = request.value(forHTTPHeaderField: "Range"),
             let parsed = parseRange(range, upperBound: data.count)
         else {
+            send(statusCode: 200, data: data, headers: [
+                "Content-Length": "\(data.count)",
+                "Accept-Ranges": "bytes",
+                "Content-Type": Self.contentType
+            ])
+            return
+        }
+
+        let isOpenEndedRange = range.hasSuffix("-")
+        if Self.ignoresNonZeroRangeRequests, parsed.lowerBound > 0 {
+            send(statusCode: 200, data: data, headers: [
+                "Content-Length": "\(data.count)",
+                "Accept-Ranges": "bytes",
+                "Content-Type": Self.contentType
+            ])
+            return
+        }
+        if Self.ignoresBoundedNonZeroRangeRequests, parsed.lowerBound > 0, !isOpenEndedRange {
             send(statusCode: 200, data: data, headers: [
                 "Content-Length": "\(data.count)",
                 "Accept-Ranges": "bytes",

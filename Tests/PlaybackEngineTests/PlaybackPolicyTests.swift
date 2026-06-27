@@ -124,15 +124,19 @@ final class PlaybackPolicyTests: XCTestCase {
                 reason: StartupFailureReason.directPlayPreflightInsufficient.rawValue
             )
         )
-        XCTAssertFalse(
+        // Adaptive fallback (when enabled) forces a transcode on a sustained direct-play stall
+        // instead of re-resolving to direct play and re-stalling; with it off, direct play is kept.
+        XCTAssertEqual(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.directPlayPostStartStall.rawValue
-            )
+            ),
+            AdaptiveFallbackPolicy.isEnabled
         )
-        XCTAssertFalse(
+        XCTAssertEqual(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
                 reason: StartupFailureReason.directPlayStall.rawValue
-            )
+            ),
+            AdaptiveFallbackPolicy.isEnabled
         )
         XCTAssertTrue(
             PlaybackSessionController.shouldDisableDirectRoutesForRecovery(
@@ -245,6 +249,112 @@ final class PlaybackPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(profiles, [.conservativeCompatibility])
+    }
+
+    private func makeDolbyVision4KSource() -> MediaSource {
+        MediaSource(
+            id: "source-dv-watchable",
+            itemID: "item-dv-watchable",
+            name: "DV",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            bitrate: 80_000_000,
+            videoBitDepth: 10,
+            videoRange: "DolbyVision",
+            dvProfile: 8,
+            supportsDirectPlay: true,
+            supportsDirectStream: false,
+            videoWidth: 3840,
+            videoHeight: 2160
+        )
+    }
+
+    // A Dolby Vision direct-play stall must drop to a WATCHABLE SDR transcode (forceH264Transcode,
+    // tone-mapped to normal brightness) — NOT conservativeCompatibility, which keeps HDR10/PQ but
+    // drops the DV dynamic metadata and renders far too dark (device-confirmed "très très sombre").
+    func testAdaptiveWatchabilityDropsDolbyVisionStallToSDRNotDarkHDR10() {
+        let source = makeDolbyVision4KSource()
+        for reason in [StartupFailureReason.directPlayPostStartStall, .directPlayStall, .directPlayPreflightInsufficient] {
+            let profiles = PlaybackSessionController.adaptiveWatchabilityOverride(
+                reason: reason,
+                source: source,
+                allowSDRFallback: true,
+                adaptiveEnabled: true
+            )
+            XCTAssertEqual(profiles, [.forceH264Transcode], "reason=\(reason.rawValue)")
+            // The dark HDR10 stream-copy must never be the adaptive stall-drop target.
+            XCTAssertFalse(profiles?.contains(.conservativeCompatibility) ?? false)
+        }
+    }
+
+    // Full slow-connection routing chain: a timed-out preheat (zero throughput) on a DV source must
+    // make the PRE-START check route to the watchable SDR transcode (no DV-stall-cut). Locks:
+    // failed preheat → blocked decision → .directPlayPreflightInsufficient → (override) → SDR.
+    func testTimedOutPreheatPreStartRoutesDolbyVisionToWatchableSDR() {
+        let url = URL(string: "https://example.com/Videos/item/stream?static=true")!
+        let failedPreheat = PlaybackStartupPreheater.Result(
+            byteCount: 0, elapsedSeconds: 0.1, observedBitrate: 0, rangeStart: 100, reason: "directplay_range_deep_failed")
+
+        // Pre-start reason from a zero-throughput preheat on a DV source = preflight-insufficient.
+        let reason = PlaybackSessionController.directPlayPrestartRecoveryReason(
+            route: .directPlay(url),
+            sourceBitrate: 26_000_000,
+            sourceIsHDRorDV: true,
+            preheatResult: failedPreheat,
+            serverBaselineResult: nil,
+            isTVOS: false
+        )
+        XCTAssertEqual(reason, .directPlayPreflightInsufficient,
+            "A timed-out (zero-throughput) preheat for a DV source must route pre-start to transcode, not start DV.")
+
+        // And that reason resolves to the WATCHABLE SDR profile (not dark HDR10) for the DV source.
+        let profiles = PlaybackSessionController.adaptiveWatchabilityOverride(
+            reason: .directPlayPreflightInsufficient,
+            source: makeDolbyVision4KSource(),
+            allowSDRFallback: true,
+            adaptiveEnabled: true
+        )
+        XCTAssertEqual(profiles, [.forceH264Transcode])
+    }
+
+    // A FAST preheat (well above source bitrate) keeps full Dolby Vision direct play — no pre-start
+    // fallback. (Guards against the slow-connection routing over-correcting and dropping DV on a
+    // good link.)
+    func testFastPreheatKeepsDolbyVisionDirectPlay() {
+        let url = URL(string: "https://example.com/Videos/item/stream?static=true")!
+        let fastPreheat = PlaybackStartupPreheater.Result(
+            byteCount: 8 * 1_048_576, elapsedSeconds: 0.5, observedBitrate: 60_000_000, rangeStart: 100, reason: "directplay_range_deep")
+        let reason = PlaybackSessionController.directPlayPrestartRecoveryReason(
+            route: .directPlay(url),
+            sourceBitrate: 26_000_000,
+            sourceIsHDRorDV: true,
+            preheatResult: fastPreheat,
+            serverBaselineResult: nil,
+            isTVOS: false
+        )
+        XCTAssertNil(reason, "A fast preheat must keep Dolby Vision direct play (no pre-start transcode fallback).")
+    }
+
+    func testAdaptiveWatchabilityOverrideIsInertWhenNotApplicable() {
+        let source = makeDolbyVision4KSource()
+        // Adaptive disabled → no override (strict native lock owns the path).
+        XCTAssertNil(PlaybackSessionController.adaptiveWatchabilityOverride(
+            reason: .directPlayPostStartStall, source: source, allowSDRFallback: true, adaptiveEnabled: false))
+        // SDR fallback disabled (e.g. originalLockHDRDV) → no forced SDR drop.
+        XCTAssertNil(PlaybackSessionController.adaptiveWatchabilityOverride(
+            reason: .directPlayPostStartStall, source: source, allowSDRFallback: false, adaptiveEnabled: true))
+        // Non-stall reason → normal quality-safe selection.
+        XCTAssertNil(PlaybackSessionController.adaptiveWatchabilityOverride(
+            reason: .decodedFrameWatchdog, source: source, allowSDRFallback: true, adaptiveEnabled: true))
+        // SDR source has no darkness problem → no override.
+        let sdr = MediaSource(
+            id: "source-sdr", itemID: "item-sdr", name: "SDR", container: "mp4",
+            videoCodec: "h264", audioCodec: "aac", bitrate: 8_000_000, videoBitDepth: 8,
+            videoRange: "SDR", supportsDirectPlay: true, supportsDirectStream: false,
+            videoWidth: 1920, videoHeight: 1080)
+        XCTAssertNil(PlaybackSessionController.adaptiveWatchabilityOverride(
+            reason: .directPlayPostStartStall, source: sdr, allowSDRFallback: true, adaptiveEnabled: true))
     }
 
     func testAutomaticDestructiveFallbackBlocksUnknownOrVideoTranscodeFor4KHDR() {

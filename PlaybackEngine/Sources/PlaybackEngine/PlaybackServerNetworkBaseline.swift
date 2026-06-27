@@ -1,4 +1,5 @@
 import Foundation
+import NativeMediaCore
 import Shared
 
 public enum PlaybackServerNetworkBaseline {
@@ -107,9 +108,6 @@ public enum PlaybackServerNetworkBaseline {
         if let urlProtocolClasses {
             configuration.protocolClasses = urlProtocolClasses + (configuration.protocolClasses ?? [])
         }
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(url, headers: headers))
         request.timeoutInterval = timeout
         request.setValue("*/*", forHTTPHeaderField: "Accept")
@@ -118,21 +116,15 @@ public enum PlaybackServerNetworkBaseline {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AppError.network("Server baseline returned a non-HTTP response.")
-        }
+        // Bulk chunked read bounded to byteCount so the measured baseline reflects real
+        // network bandwidth instead of byte-by-byte AsyncBytes overhead.
+        let (data, httpResponse) = try await HTTPChunkedRangeReader.collect(
+            request: request,
+            configuration: configuration,
+            maxLength: byteCount
+        )
         guard httpResponse.statusCode == 206 || httpResponse.statusCode == 200 else {
             throw AppError.network("Server baseline failed (\(httpResponse.statusCode)).")
-        }
-
-        var data = Data()
-        data.reserveCapacity(byteCount)
-        for try await byte in bytes {
-            data.append(byte)
-            if data.count >= byteCount {
-                break
-            }
         }
         return data
     }

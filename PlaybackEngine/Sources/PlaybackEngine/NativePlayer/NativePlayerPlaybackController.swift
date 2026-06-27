@@ -128,7 +128,15 @@ public actor NativePlayerPlaybackController {
         let originalHeaders = authenticatedOriginalHeaders(resolution: resolution, session: session)
         let originalURL = authenticatedOriginalURL(resolution: resolution, headers: originalHeaders)
         let prefersDirectAppleSurface = nativeConfig.surfacePreference == .directPlayWhenPossible
-        let shouldUseAppleNativeSurface = prefersDirectAppleSurface
+        // Dolby Vision / HDR must use the Apple-native surface (AVPlayerViewController). The
+        // experimental sample-buffer renderer has no EDR / DV tone-mapping on iOS and renders
+        // HDR/DV very dark; AVPlayer renders it correctly on both iOS and tvOS. So force the
+        // Apple-native surface for an Apple-native HDR/DV container regardless of the user's
+        // surface preference (e.g. "Always Custom Player").
+        let isHDRorDV = Self.hdrMode(for: resolution.mediaSource) != .sdr
+        let mustUseAppleForHDR = isHDRorDV
+            && Self.isAppleNativeContainer(source: resolution.mediaSource, url: originalURL)
+        let shouldUseAppleNativeSurface = (prefersDirectAppleSurface || mustUseAppleForHDR)
             && Self.shouldUseAppleNativeSurface(source: resolution.mediaSource, url: originalURL)
 
         if shouldUseAppleNativeSurface {
@@ -156,9 +164,11 @@ public actor NativePlayerPlaybackController {
             )
         }
 
-        if prefersDirectAppleSurface,
+        if prefersDirectAppleSurface || mustUseAppleForHDR,
            Self.isAppleNativeContainer(source: resolution.mediaSource, url: originalURL) {
-            let reason = Self.appleNativeSurfaceRejectionReason(source: resolution.mediaSource, url: originalURL)
+            let reason = mustUseAppleForHDR && !prefersDirectAppleSurface
+                ? "hdr_dv_requires_apple_surface"
+                : Self.appleNativeSurfaceRejectionReason(source: resolution.mediaSource, url: originalURL)
             AppLog.playback.warning(
                 "nativeplayer.apple.route.rejected — source=\(resolution.mediaSource.id, privacy: .public) fallback=coordinator reason=\(reason, privacy: .public)"
             )
@@ -278,6 +288,17 @@ public actor NativePlayerPlaybackController {
                 selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
                 selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
             )
+        }
+
+        // Last line of defense for non-Apple-native HDR/DV (e.g. Matroska): the sample-buffer
+        // surface cannot tone-map Dolby Vision/HDR on iOS and would render dark. Route to the
+        // DV-aware coordinator fallback instead. tvOS keeps the sample-buffer surface (its
+        // dynamic range is driven by AVDisplayCriteria).
+        if Self.sampleBufferShouldRejectHDR(for: resolution.mediaSource) {
+            AppLog.playback.warning(
+                "nativeplayer.sampleBuffer.route.rejected_hdr — source=\(resolution.mediaSource.id, privacy: .public) fallback=coordinator reason=hdr_dv_unsupported_on_sample_buffer"
+            )
+            throw NativePlayerPreparationError.appleNativeContainerRequiresCoordinatorFallback("hdr_dv_unsupported_on_sample_buffer")
         }
 
         let playbackURL = plan.canStartLocalPlayback ? originalURL : nil
@@ -587,7 +608,22 @@ public actor NativePlayerPlaybackController {
         ]
     }
 
-    private nonisolated static func hdrMode(for source: MediaSource) -> HDRPlaybackMode {
+    /// Whether the experimental sample-buffer surface would render this source's HDR/DV
+    /// incorrectly and should be refused in favour of the Apple-native coordinator fallback.
+    /// iOS: the renderer wires no EDR / DV tone-mapping, so HDR/DV renders dark — reject.
+    /// tvOS: the display's dynamic range is set via AVDisplayCriteria, so it is acceptable.
+    nonisolated static func sampleBufferShouldRejectHDR(for source: MediaSource) -> Bool {
+        #if os(tvOS)
+        _ = source
+        return false
+        #else
+        // Reject only on genuine HDR/DV signalling. 10-bit SDR (Main10) renders correctly on the
+        // sample-buffer surface, so it must NOT be diverted to the coordinator fallback.
+        return hdrMode(for: source) != .sdr
+        #endif
+    }
+
+    nonisolated static func hdrMode(for source: MediaSource) -> HDRPlaybackMode {
         let rangeType = (source.videoRangeType ?? "").lowercased()
         let range = (source.videoRange ?? "").lowercased()
         let codec = source.normalizedVideoCodec
@@ -598,7 +634,7 @@ public actor NativePlayerPlaybackController {
             || codec.contains("dvh1") {
             return .dolbyVision
         }
-        if source.isLikelyHDRorDV {
+        if source.hasExplicitHDRorDVSignaling {
             return .hdr10
         }
         return .sdr

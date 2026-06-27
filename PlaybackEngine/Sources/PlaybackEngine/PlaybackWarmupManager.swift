@@ -520,6 +520,7 @@ public actor PlaybackWarmupManager: PlaybackWarmupManaging {
         return PlaybackStartupReadinessPolicy.requiresStartupPreheat(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
+            sourceIsHDRorDV: selection.source.isLikelyHDRorDV,
             runtimeSeconds: runtimeSeconds,
             resumeSeconds: resumeSeconds,
             isTVOS: isTVOS

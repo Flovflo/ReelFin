@@ -53,11 +53,17 @@ enum LocalMediaGatewayHTTPResponse {
     }
 
     static func partial(data: Data, range: ByteRange, totalLength: Int64?, contentType: String?) -> Data {
-        var headers = commonHeaders(totalLength: Int64(data.count), contentType: contentType)
+        var response = partialHeaders(range: range, totalLength: totalLength, contentType: contentType)
+        response.append(data)
+        return response
+    }
+
+    static func partialHeaders(range: ByteRange, totalLength: Int64?, contentType: String?) -> Data {
+        var headers = commonHeaders(totalLength: Int64(range.length), contentType: contentType)
         let total = totalLength.map(String.init) ?? "*"
-        let end = range.offset + Int64(data.count) - 1
+        let end = range.offset + Int64(range.length) - 1
         headers["Content-Range"] = "bytes \(range.offset)-\(end)/\(total)"
-        return response(status: "206 Partial Content", headers: headers, body: data)
+        return response(status: "206 Partial Content", headers: headers, body: nil)
     }
 
     static func rangeNotSatisfiable(totalLength: Int64?) -> Data {

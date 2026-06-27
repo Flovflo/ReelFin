@@ -36,9 +36,9 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
             isTVOS: false
         )
 
-        XCTAssertEqual(requirement?.minimumBufferDuration, 8)
-        XCTAssertEqual(requirement?.preferredBufferDuration, 12)
-        XCTAssertEqual(requirement?.timeout, 30)
+        XCTAssertEqual(requirement?.minimumBufferDuration, 20)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 30)
+        XCTAssertEqual(requirement?.timeout, 45)
         XCTAssertEqual(requirement?.pollInterval, 0.15)
         XCTAssertEqual(requirement?.reason, "ios_resume_directplay_ready")
         XCTAssertEqual(requirement?.allowsTimeoutStart, false)
@@ -68,7 +68,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
         XCTAssertTrue(
             PlaybackStartupReadinessPolicy.shouldStart(
-                bufferedDuration: 8,
+                bufferedDuration: 20,
                 likelyToKeepUp: true,
                 elapsedSeconds: 6,
                 requirement: try XCTUnwrap(requirement)
@@ -76,7 +76,7 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
         XCTAssertTrue(
             PlaybackStartupReadinessPolicy.shouldStart(
-                bufferedDuration: 12,
+                bufferedDuration: 30,
                 likelyToKeepUp: false,
                 elapsedSeconds: 16,
                 requirement: try XCTUnwrap(requirement)
@@ -94,12 +94,48 @@ final class PlaybackStartupReadinessPolicyTests: XCTestCase {
         )
     }
 
+    func testRequirementUsesStrictGuardedGateForIPhoneHDRDolbyVisionResumeBelowBitrateThreshold() throws {
+        let requirement = PlaybackStartupReadinessPolicy.requirement(
+            route: .directPlay(URL(string: "https://example.com/Videos/item/stream.mp4?static=true")!),
+            sourceBitrate: 7_947_759,
+            sourceIsHDRorDV: true,
+            runtimeSeconds: nil,
+            resumeSeconds: 550,
+            isTVOS: false
+        )
+
+        XCTAssertEqual(requirement?.minimumBufferDuration, 20)
+        XCTAssertEqual(requirement?.preferredBufferDuration, 30)
+        XCTAssertEqual(requirement?.timeout, 45)
+        XCTAssertEqual(requirement?.pollInterval, 0.15)
+        XCTAssertEqual(requirement?.reason, "ios_hdr_dv_resume_directplay_ready")
+        XCTAssertEqual(requirement?.allowsTimeoutStart, false)
+        XCTAssertFalse(
+            PlaybackStartupReadinessPolicy.allowsFirstFrameStartupReadiness(
+                requirement: try XCTUnwrap(requirement)
+            )
+        )
+    }
+
     func testIPhoneProgressiveDirectPlayRequiresRangePreheatWhenGuarded() {
         let requiresPreheat = PlaybackStartupReadinessPolicy.requiresStartupPreheat(
             route: .directPlay(URL(string: "https://example.com/video.mp4")!),
             sourceBitrate: 22_000_000,
             runtimeSeconds: nil,
             resumeSeconds: 1_039,
+            isTVOS: false
+        )
+
+        XCTAssertTrue(requiresPreheat)
+    }
+
+    func testIPhoneHDRDolbyVisionDirectPlayRequiresRangePreheatBelowBitrateThreshold() {
+        let requiresPreheat = PlaybackStartupReadinessPolicy.requiresStartupPreheat(
+            route: .directPlay(URL(string: "https://example.com/video.mp4")!),
+            sourceBitrate: 7_947_759,
+            sourceIsHDRorDV: true,
+            runtimeSeconds: nil,
+            resumeSeconds: 550,
             isTVOS: false
         )
 

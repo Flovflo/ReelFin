@@ -16,6 +16,12 @@ settings:
     CURRENT_PROJECT_VERSION: 12
     MARKETING_VERSION: 0.1.1
     CLANG_WARN_DOCUMENTATION_COMMENTS: YES
+    # iOS/tvOS 27 + Xcode 26.3 SDK gap: the debug "preview dylib" launcher crashes at
+    # startup on OS 27 with `-[OS_dispatch_mach_msg _setContext:] unrecognized selector`.
+    # A monolithic debug build avoids it. Project-wide so EVERY app target (iOS + tvOS)
+    # inherits it. Trade-off: SwiftUI Preview hot-reload is disabled in Debug.
+    # Remove once building with Xcode 27. No-op for framework/library targets.
+    ENABLE_DEBUG_DYLIB: NO
 packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift.git

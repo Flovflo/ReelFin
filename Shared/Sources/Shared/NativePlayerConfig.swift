@@ -137,6 +137,8 @@ public struct NativePlayerConfig: Codable, Hashable, Sendable {
             config.surfacePreference = storedSurfacePreference
         }
         config.alwaysRequestOriginalFile = true
+        // Reverted to false: enabling transcode availability + the adaptive guard relaxations
+        // caused a black screen on device. Restore the known-good direct-play config.
         config.allowServerTranscodeFallback = false
         return config
     }

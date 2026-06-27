@@ -1,4 +1,5 @@
 import Foundation
+import NativeMediaCore
 import Shared
 
 public enum PlaybackStartupPreheater {
@@ -38,6 +39,7 @@ public enum PlaybackStartupPreheater {
         guard PlaybackStartupReadinessPolicy.requiresStartupPreheat(
             route: selection.decision.route,
             sourceBitrate: selection.source.bitrate,
+            sourceIsHDRorDV: selection.source.isLikelyHDRorDV,
             runtimeSeconds: runtimeSeconds,
             resumeSeconds: resumeSeconds,
             isTVOS: isTVOS
@@ -73,13 +75,60 @@ public enum PlaybackStartupPreheater {
             )
             return result
         } catch where isCancellation(error) {
+            // Cancellation is NOT a connection verdict (playback proceeded / a newer probe replaced
+            // this one) — return nil so the decision stays optimistic.
             return nil
+        } catch where isConnectionFailure(error) {
+            // A genuine CONNECTION failure (timeout -1001, reset -1005, can't-connect) on a route
+            // that REQUIRED this preheat means the link couldn't deliver even the small warming probe
+            // — it cannot sustain a high-bitrate / Dolby Vision direct play right now. Return a
+            // ZERO-throughput result (not nil) so the startup decision BLOCKS direct play (headroom
+            // ≤ 0 → .directPlayPreflightInsufficient) and routes to the watchable SDR transcode from
+            // the start, instead of nil → guardedDecision → starting DV that stalls ~6-12s then cuts.
+            // (Low-bitrate / SDR sources never reach this effect: their decision returns `fast`
+            // before consulting the preheat result.)
+            let elapsed = max(0.001, Date().timeIntervalSince(startedAt))
+            AppLog.playback.notice(
+                "playback.startup.preheat.failed — item=\(selection.source.itemID.prefix(8), privacy: .public) reason=\(requestPlan.reason, privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 3)) error=\(error.localizedDescription, privacy: .public) action=route_watchable_sdr"
+            )
+            return Result(
+                byteCount: 0,
+                elapsedSeconds: elapsed,
+                observedBitrate: 0,
+                rangeStart: requestPlan.rangeStart,
+                reason: requestPlan.reason + "_failed"
+            )
         } catch {
+            // Any OTHER error (non-2xx status, a server that ignores range requests, etc.) is a
+            // capability/protocol issue, not a connection-speed verdict — keep the prior behavior
+            // (nil → the decision falls back to its guarded default).
             AppLog.playback.debug(
                 "playback.startup.preheat.skipped — item=\(selection.source.itemID.prefix(8), privacy: .public) reason=\(requestPlan.reason, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
             return nil
         }
+    }
+
+    /// True for genuine network/connection failures that mean the link cannot carry a high-bitrate
+    /// direct play right now (so the startup decision should route to a watchable lower-bitrate
+    /// transcode rather than start direct play that will stall). Excludes cancellation and HTTP
+    /// capability errors.
+    private static func isConnectionFailure(_ error: Error) -> Bool {
+        let connectionFailureCodes: Set<Int> = [
+            NSURLErrorTimedOut,
+            NSURLErrorNetworkConnectionLost,
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorNotConnectedToInternet,
+            NSURLErrorCannotFindHost,
+            NSURLErrorDNSLookupFailed,
+            NSURLErrorSecureConnectionFailed,
+            NSURLErrorResourceUnavailable
+        ]
+        if let urlError = error as? URLError, connectionFailureCodes.contains(urlError.errorCode) {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && connectionFailureCodes.contains(nsError.code)
     }
 
     private struct RequestPlan: Sendable {
@@ -104,6 +153,7 @@ public enum PlaybackStartupPreheater {
 
             let plannedLength = directPlayRangeLength(
                 sourceBitrate: selection.source.bitrate,
+                sourceIsHDRorDV: selection.source.isLikelyHDRorDV,
                 isTVOS: isTVOS
             )
             let offset = estimatedByteOffset(
@@ -114,6 +164,7 @@ public enum PlaybackStartupPreheater {
                 prefersNonZeroHealthProbe: prefersNonZeroDirectPlayHealthProbe(
                     fileSize: selection.source.fileSize,
                     sourceBitrate: selection.source.bitrate,
+                    sourceIsHDRorDV: selection.source.isLikelyHDRorDV,
                     rangeLength: plannedLength,
                     isTVOS: isTVOS
                 )
@@ -138,9 +189,18 @@ public enum PlaybackStartupPreheater {
 
     private static func directPlayRangeLength(
         sourceBitrate: Int?,
+        sourceIsHDRorDV: Bool,
         isTVOS: Bool
     ) -> Int {
         let baseLength = isTVOS ? 4 * mebibyte : 2 * mebibyte
+        if sourceIsHDRorDV, !isTVOS {
+            // Connection-warming + throughput probe only — NOT a playback-buffer fill (AVPlayer
+            // fills its own forward buffer). A large 12 MB probe on a 26 Mbps DV original needs
+            // ~24 Mbps sustained inside the 4 s timeout; on a link that momentarily dips it times
+            // out (-1001) and adds ~4 s of dead startup latency. A small probe reliably completes
+            // (4 MB / 4 s = 8 Mbps) and still warms the TLS connection + measures throughput.
+            return 4 * mebibyte
+        }
         guard
             !isTVOS,
             let sourceBitrate,
@@ -220,11 +280,13 @@ public enum PlaybackStartupPreheater {
     private static func prefersNonZeroDirectPlayHealthProbe(
         fileSize: Int64?,
         sourceBitrate: Int?,
+        sourceIsHDRorDV: Bool,
         rangeLength: Int,
         isTVOS: Bool
     ) -> Bool {
         guard !isTVOS else { return false }
-        guard let sourceBitrate, sourceBitrate >= highBitrateDirectPlayThreshold else { return false }
+        let needsNonZeroProbe = sourceIsHDRorDV || (sourceBitrate ?? 0) >= highBitrateDirectPlayThreshold
+        guard needsNonZeroProbe else { return false }
         guard let fileSize else { return false }
         return fileSize >= Int64(rangeLength * 2)
     }
@@ -256,9 +318,6 @@ public enum PlaybackStartupPreheater {
         if let urlProtocolClasses {
             configuration.protocolClasses = urlProtocolClasses + (configuration.protocolClasses ?? [])
         }
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(requestPlan.url, headers: headers))
         request.timeoutInterval = requestPlan.timeout
         request.setValue("*/*", forHTTPHeaderField: "Accept")
@@ -270,25 +329,19 @@ public enum PlaybackStartupPreheater {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AppError.network("Startup preheat returned a non-HTTP response.")
-        }
-
+        // Bulk chunked read so the measured throughput reflects the network, not the cost of
+        // byte-by-byte AsyncBytes iteration (which capped the measurement around 8 MB/s and
+        // pushed startup into guarded mode unnecessarily).
+        let (data, httpResponse) = try await HTTPChunkedRangeReader.collect(
+            request: request,
+            configuration: configuration,
+            maxLength: requestPlan.rangeLength
+        )
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             throw AppError.network("Startup preheat failed (\(httpResponse.statusCode)).")
         }
         guard httpResponse.statusCode == 206 || requestPlan.rangeStart == nil || requestPlan.rangeStart == 0 else {
             throw AppError.network("Startup preheat ignored a non-zero range request.")
-        }
-
-        var data = Data()
-        data.reserveCapacity(requestPlan.rangeLength)
-        for try await byte in bytes {
-            data.append(byte)
-            if data.count >= requestPlan.rangeLength {
-                break
-            }
         }
 
         return data

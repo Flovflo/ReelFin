@@ -17,11 +17,25 @@ SECRET_API_KEY_RE = re.compile(
 
 
 @dataclass(frozen=True)
+class RequiredAVPlayerItem:
+    item_id: str
+    min_observed_seconds: float
+    min_ticks: int = 3
+    require_dv: bool = False
+    require_hdr: bool = False
+
+    @property
+    def label(self) -> str:
+        return short_item_id(self.item_id)
+
+
+@dataclass(frozen=True)
 class EvidenceConfig:
     min_observed_seconds: float = 20.0
     min_ticks: int = 3
     require_dv: bool = False
     require_samplebuffer: bool = False
+    required_avplayer_items: tuple[RequiredAVPlayerItem, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -41,6 +55,12 @@ class AVPlayerSessionEvidence:
     proof_hdr: str | None = None
     proof_method: str | None = None
     ticks: list[float] = field(default_factory=list)
+    waiting_ticks: int = 0
+    zero_buffer_ticks: int = 0
+    stalled_ticks: int = 0
+    rebuffer_waits: int = 0
+    rebuffer_ready: int = 0
+    rebuffer_timeout: int = 0
 
     @property
     def observed_seconds(self) -> float:
@@ -61,6 +81,14 @@ class AVPlayerSessionEvidence:
     @property
     def has_proof(self) -> bool:
         return self.proof_method is not None
+
+    @property
+    def unresolved_rebuffer_waits(self) -> int:
+        return max(0, self.rebuffer_waits - self.rebuffer_ready)
+
+    @property
+    def has_hdr(self) -> bool:
+        return (self.proof_hdr or "").lower() not in {"", "unknown", "sdr", "n/a", "none"}
 
 
 @dataclass
@@ -114,6 +142,16 @@ class EvidenceResult:
 def redact_sensitive(text: str) -> str:
     text = SECRET_API_KEY_RE.sub("api_key=<redacted>", text)
     return SECRET_URL_RE.sub("<redacted-url>", text)
+
+
+def short_item_id(value: str | None) -> str:
+    return (value or "")[:8]
+
+
+def matches_item(observed: str | None, expected: str) -> bool:
+    if not observed:
+        return False
+    return observed == expected or observed == short_item_id(expected) or short_item_id(observed) == short_item_id(expected)
 
 
 def strip_quotes(value: str | None) -> str | None:
@@ -188,6 +226,22 @@ def update_avplayer_session(
         current = parse_float(fields.get("current"))
         if current is not None:
             session.ticks.append(current)
+        session.audio_codec = fields.get("audioCodec") or session.audio_codec
+        buffered = parse_float(fields.get("buffered"))
+        rate = parse_float(fields.get("rate"))
+        time_control = (fields.get("timeControl") or "").lower()
+        if buffered is not None and buffered <= 0.05:
+            session.zero_buffer_ticks += 1
+        if time_control == "waiting":
+            session.waiting_ticks += 1
+        if time_control == "waiting" or ((rate or 0) <= 0 and buffered is not None and buffered <= 0.05):
+            session.stalled_ticks += 1
+    elif "playback.directplay.poststart_rebuffer.wait" in line:
+        session.rebuffer_waits += 1
+    elif "playback.directplay.poststart_rebuffer.ready" in line:
+        session.rebuffer_ready += 1
+    elif "playback.directplay.poststart_rebuffer.timeout" in line:
+        session.rebuffer_timeout += 1
 
 
 def update_samplebuffer_evidence(samplebuffer: SampleBufferEvidence, line: str) -> None:
@@ -242,12 +296,16 @@ def scan_files(paths: list[Path]) -> tuple[dict[str, AVPlayerSessionEvidence], S
 
         for line_number, line in enumerate(lines, start=1):
             try:
+                if "Playback stalled." in line:
+                    findings.append(Finding("runtime_playback_stalled", f"{log_file}:{line_number}: {redact_sensitive(line.strip())}"))
+
                 if (
                     "avplayer.first-frame" in line
                     or "playback.ttff" in line
                     or "playback.audio.selection" in line
                     or "playback.proof" in line
                     or "playback.deep.tick" in line
+                    or "playback.directplay.poststart_rebuffer." in line
                 ):
                     update_avplayer_session(sessions, line)
                 update_samplebuffer_evidence(samplebuffer, line)
@@ -262,6 +320,117 @@ def scan_files(paths: list[Path]) -> tuple[dict[str, AVPlayerSessionEvidence], S
     return sessions, samplebuffer, findings
 
 
+def validate_avplayer_session(
+    session: AVPlayerSessionEvidence,
+    min_observed_seconds: float,
+    min_ticks: int,
+    require_dv: bool,
+    require_hdr: bool,
+    label_prefix: str,
+    item_label: str | None = None,
+) -> Finding | None:
+    subject = item_label or session.session_id
+    if not session.has_first_frame or not session.has_ttff:
+        return Finding(
+            f"{label_prefix}_startup_evidence_incomplete",
+            f"AVPlayer session {session.session_id} for {subject} lacks first-frame or TTFF evidence.",
+        )
+    if not session.has_audio:
+        return Finding(
+            f"{label_prefix}_audio_evidence_missing",
+            f"AVPlayer session {session.session_id} for {subject} has no concrete audio codec selection.",
+        )
+    if not session.has_proof:
+        return Finding(
+            f"{label_prefix}_playback_proof_missing",
+            f"AVPlayer session {session.session_id} for {subject} has no playback.proof line.",
+        )
+    if require_dv and not session.has_dv:
+        return Finding(
+            f"{label_prefix}_dolby_vision_evidence_missing",
+            f"AVPlayer session {session.session_id} for {subject} did not report dv=true.",
+        )
+    if require_hdr and not session.has_hdr:
+        return Finding(
+            f"{label_prefix}_hdr_evidence_missing",
+            f"AVPlayer session {session.session_id} for {subject} did not report HDR evidence.",
+        )
+    if len(session.ticks) < min_ticks:
+        return Finding(
+            f"{label_prefix}_deep_ticks_below_minimum",
+            f"AVPlayer session {session.session_id} for {subject} has {len(session.ticks)} ticks; need {min_ticks}.",
+        )
+    if session.observed_seconds < min_observed_seconds:
+        return Finding(
+            f"{label_prefix}_observed_progress_below_minimum",
+            f"AVPlayer session {session.session_id} for {subject} advanced {session.observed_seconds:.1f}s; need {min_observed_seconds:.1f}s.",
+        )
+    if session.rebuffer_timeout > 0:
+        return Finding(
+            f"{label_prefix}_poststart_rebuffer_timeout",
+            f"AVPlayer session {session.session_id} for {subject} hit {session.rebuffer_timeout} post-start rebuffer timeout(s).",
+        )
+    if session.unresolved_rebuffer_waits > 0:
+        return Finding(
+            f"{label_prefix}_poststart_rebuffer_unresolved",
+            f"AVPlayer session {session.session_id} for {subject} has {session.unresolved_rebuffer_waits} post-start rebuffer wait(s) without ready recovery.",
+        )
+    if session.stalled_ticks >= 2:
+        return Finding(
+            f"{label_prefix}_stalled_ticks",
+            f"AVPlayer session {session.session_id} for {subject} reported {session.stalled_ticks} waiting/zero-buffer deep tick(s).",
+        )
+    if session.zero_buffer_ticks >= 2:
+        return Finding(
+            f"{label_prefix}_zero_buffer_ticks",
+            f"AVPlayer session {session.session_id} for {subject} reported {session.zero_buffer_ticks} zero-buffer deep tick(s).",
+        )
+    return None
+
+
+def validate_required_avplayer_item(
+    sessions: dict[str, AVPlayerSessionEvidence],
+    requirement: RequiredAVPlayerItem,
+) -> Finding | None:
+    matching = [
+        session for session in sessions.values()
+        if matches_item(session.item_id, requirement.item_id)
+    ]
+    if not matching:
+        return Finding(
+            "required_avplayer_session_missing",
+            f"No AVPlayer evidence found for required item {requirement.label}.",
+        )
+
+    candidates = sorted(
+        matching,
+        key=lambda session: (
+            session.observed_seconds,
+            len(session.ticks),
+            session.has_first_frame,
+            session.has_ttff,
+            session.has_audio,
+            session.has_dv,
+        ),
+        reverse=True,
+    )
+    best_failure: Finding | None = None
+    for session in candidates:
+        failure = validate_avplayer_session(
+            session,
+            min_observed_seconds=requirement.min_observed_seconds,
+            min_ticks=requirement.min_ticks,
+            require_dv=requirement.require_dv,
+            require_hdr=requirement.require_hdr,
+            label_prefix="required_avplayer",
+            item_label=requirement.label,
+        )
+        if failure is None:
+            return None
+        best_failure = best_failure or failure
+    return best_failure
+
+
 def evaluate_paths(paths: list[Path], config: EvidenceConfig) -> EvidenceResult:
     sessions, samplebuffer, findings = scan_files(paths)
     playable_sessions = [
@@ -269,20 +438,41 @@ def evaluate_paths(paths: list[Path], config: EvidenceConfig) -> EvidenceResult:
         if session.has_first_frame or session.has_ttff or session.ticks
     ]
 
+    for session in playable_sessions:
+        if session.rebuffer_timeout > 0:
+            findings.append(
+                Finding(
+                    "avplayer_poststart_rebuffer_timeout",
+                    f"AVPlayer session {session.session_id} hit {session.rebuffer_timeout} post-start rebuffer timeout(s).",
+                )
+            )
+        elif session.unresolved_rebuffer_waits > 0:
+            findings.append(
+                Finding(
+                    "avplayer_poststart_rebuffer_unresolved",
+                    f"AVPlayer session {session.session_id} has {session.unresolved_rebuffer_waits} post-start rebuffer wait(s) without ready recovery.",
+                )
+            )
+
+    for requirement in config.required_avplayer_items:
+        failure = validate_required_avplayer_item(sessions, requirement)
+        if failure is not None:
+            findings.append(failure)
+
     if not playable_sessions:
         findings.append(Finding("avplayer_session_evidence_missing", "No AVPlayer first-frame/TTFF/tick evidence found."))
-    else:
+    elif not config.required_avplayer_items:
         valid_session = False
         tickiest_session = max(playable_sessions, key=lambda session: len(session.ticks))
         for session in playable_sessions:
-            if (
-                session.has_first_frame
-                and session.has_ttff
-                and session.has_audio
-                and session.has_proof
-                and len(session.ticks) >= config.min_ticks
-                and session.observed_seconds >= config.min_observed_seconds
-            ):
+            if validate_avplayer_session(
+                session,
+                min_observed_seconds=config.min_observed_seconds,
+                min_ticks=config.min_ticks,
+                require_dv=False,
+                require_hdr=False,
+                label_prefix="avplayer",
+            ) is None:
                 valid_session = True
                 break
 
@@ -354,7 +544,19 @@ def main() -> int:
     parser.add_argument("--min-ticks", type=int, default=3)
     parser.add_argument("--require-dv", action="store_true")
     parser.add_argument("--require-samplebuffer", action="store_true")
+    parser.add_argument(
+        "--require-avplayer-item",
+        action="append",
+        default=[],
+        metavar="ITEM[:SECONDS[:TICKS[:DV[:HDR]]]]",
+        help="Require AVPlayer evidence for a specific item. ITEM may be full or short id.",
+    )
     args = parser.parse_args()
+
+    required_avplayer_items = tuple(
+        parse_required_avplayer_item(spec, args.min_observed_seconds, args.min_ticks)
+        for spec in args.require_avplayer_item
+    )
 
     result = evaluate_paths(
         args.paths,
@@ -363,6 +565,7 @@ def main() -> int:
             min_ticks=args.min_ticks,
             require_dv=args.require_dv,
             require_samplebuffer=args.require_samplebuffer,
+            required_avplayer_items=required_avplayer_items,
         ),
     )
 
@@ -382,6 +585,36 @@ def main() -> int:
         f"sampleBufferTicks={result.samplebuffer_tick_count}"
     )
     return 0
+
+
+def parse_required_avplayer_item(
+    spec: str,
+    default_min_observed_seconds: float,
+    default_min_ticks: int,
+) -> RequiredAVPlayerItem:
+    parts = spec.split(":")
+    item_id = parts[0].strip()
+    if not item_id:
+        raise argparse.ArgumentTypeError("--require-avplayer-item needs a non-empty item id")
+    min_seconds = default_min_observed_seconds
+    min_ticks = default_min_ticks
+    require_dv = False
+    require_hdr = False
+    if len(parts) > 1 and parts[1]:
+        min_seconds = float(parts[1])
+    if len(parts) > 2 and parts[2]:
+        min_ticks = int(parts[2])
+    if len(parts) > 3 and parts[3]:
+        require_dv = truthy(parts[3])
+    if len(parts) > 4 and parts[4]:
+        require_hdr = truthy(parts[4])
+    return RequiredAVPlayerItem(
+        item_id=item_id,
+        min_observed_seconds=min_seconds,
+        min_ticks=min_ticks,
+        require_dv=require_dv,
+        require_hdr=require_hdr,
+    )
 
 
 if __name__ == "__main__":

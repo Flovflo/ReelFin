@@ -39,7 +39,8 @@ public final class LocalMediaGatewayServer: @unchecked Sendable {
         _ = ready.wait(timeout: .now() + 4)
         if let startError { throw startError }
         guard let port = listener.port else { throw MediaAccessError.cannotDetermineSize }
-        return URL(string: "http://127.0.0.1:\(port.rawValue)/media/\(session.id)")!
+        let baseURL = URL(string: "http://127.0.0.1:\(port.rawValue)")!
+        return session.localAssetURL(baseURL: baseURL)
     }
 
     public func stop(reason: String) {
@@ -65,13 +66,53 @@ public final class LocalMediaGatewayServer: @unchecked Sendable {
             return
         }
         Task {
+            if await streamResponseIfNeeded(for: request, connection: connection) {
+                return
+            }
             let response = await makeResponse(for: request)
             send(response, connection: connection)
         }
     }
 
+    private func streamResponseIfNeeded(
+        for request: LocalMediaGatewayHTTPRequest,
+        connection: NWConnection
+    ) async -> Bool {
+        guard session.acceptsLocalPath(request.path),
+              request.method == "GET" else {
+            return false
+        }
+        var didSendHeaders = false
+        do {
+            guard let response = try await session.streamingResponse(for: request.range) else {
+                return false
+            }
+            requestObserver?(request.method, String(describing: request.range))
+            let headers = LocalMediaGatewayHTTPResponse.partialHeaders(
+                range: response.range,
+                totalLength: response.totalLength,
+                contentType: response.contentType
+            )
+            try await sendPart(headers, connection: connection)
+            didSendHeaders = true
+            for try await chunk in response.chunks {
+                try await sendPart(chunk, connection: connection)
+            }
+        } catch {
+            if didSendHeaders {
+                AppLog.playback.debug(
+                    "playback.cache.gateway.stream_failed_after_headers — error=\(String(describing: error), privacy: .public)"
+                )
+            } else {
+                await sendStreamingFailure(error, connection: connection)
+            }
+        }
+        connection.cancel()
+        return true
+    }
+
     private func makeResponse(for request: LocalMediaGatewayHTTPRequest) async -> Data {
-        guard request.path == "/media/\(session.id)" else {
+        guard session.acceptsLocalPath(request.path) else {
             return LocalMediaGatewayHTTPResponse.notFound()
         }
         requestObserver?(request.method, String(describing: request.range))
@@ -107,5 +148,28 @@ public final class LocalMediaGatewayServer: @unchecked Sendable {
         connection.send(content: data, completion: .contentProcessed { _ in
             connection.cancel()
         })
+    }
+
+    private func sendPart(_ data: Data, connection: NWConnection) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
+
+    private func sendStreamingFailure(_ error: Error, connection: NWConnection) async {
+        if let mediaError = error as? MediaAccessError, case .invalidRange = mediaError {
+            send(LocalMediaGatewayHTTPResponse.rangeNotSatisfiable(totalLength: try? await session.size()), connection: connection)
+            return
+        }
+        AppLog.playback.debug(
+            "playback.cache.gateway.stream_failed — error=\(String(describing: error), privacy: .public)"
+        )
+        send(LocalMediaGatewayHTTPResponse.serverError(), connection: connection)
     }
 }
