@@ -12,6 +12,7 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
         static let episodeReleaseNotificationsEnabled = "settings.episodeReleaseNotificationsEnabled"
         static let hasCompletedOnboarding = "settings.hasCompletedOnboarding"
         static let completedOnboardingVersion = "settings.completedOnboardingVersion"
+        static let useCustomPlayerEngine = "settings.useCustomPlayerEngine"
     }
 
     private let defaults: UserDefaults
@@ -59,6 +60,11 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
     public var completedOnboardingVersion: Int {
         get { defaults.integer(forKey: Keys.completedOnboardingVersion) }
         set { defaults.set(newValue, forKey: Keys.completedOnboardingVersion) }
+    }
+
+    public var useCustomPlayerEngine: Bool {
+        get { defaults.bool(forKey: Keys.useCustomPlayerEngine) }
+        set { defaults.set(newValue, forKey: Keys.useCustomPlayerEngine) }
     }
 
     private func decode<T: Decodable>(_ type: T.Type, key: String) -> T? {

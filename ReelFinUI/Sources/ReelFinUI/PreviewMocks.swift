@@ -295,6 +295,7 @@ final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
     var episodeReleaseNotificationsEnabled = false
     var hasCompletedOnboarding: Bool
     var completedOnboardingVersion: Int
+    var useCustomPlayerEngine = false
 
     init(authenticated: Bool = true) {
         serverConfiguration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)

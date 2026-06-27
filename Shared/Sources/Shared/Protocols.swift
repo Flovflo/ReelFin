@@ -57,6 +57,9 @@ public protocol SettingsStoreProtocol: AnyObject, Sendable {
     var episodeReleaseNotificationsEnabled: Bool { get set }
     var hasCompletedOnboarding: Bool { get set }
     var completedOnboardingVersion: Int { get set }
+    /// Opt-in to the new custom playback engine (deep local cache, original-first, loading bar).
+    /// Off ⇒ the existing player path is used unchanged.
+    var useCustomPlayerEngine: Bool { get set }
 }
 
 public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {

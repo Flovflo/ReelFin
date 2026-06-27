@@ -41,6 +41,7 @@ final class ServerSettingsViewModel: ObservableObject {
     @Published var localPlaybackBridgeEnabled = true
     @Published var fasterVideoOnlyStartupEnabled = false
     @Published var dolbyVisionPackagingMode: DolbyVisionPackagingMode = .dvProfile81Compatible
+    @Published var useCustomPlayerEngine = false
     @Published var infoMessage: String?
     @Published var errorMessage: String?
     @Published var isRunningDiagnostics = false
@@ -96,6 +97,7 @@ final class ServerSettingsViewModel: ObservableObject {
         localPlaybackBridgeEnabled = defaults.object(forKey: Keys.localPlaybackBridgeEnabled) as? Bool ?? true
         fasterVideoOnlyStartupEnabled = defaults.object(forKey: Keys.fasterVideoOnlyStartupEnabled) as? Bool ?? false
         dolbyVisionPackagingMode = Self.readDolbyVisionPackagingMode(from: defaults)
+        useCustomPlayerEngine = dependencies.settingsStore.useCustomPlayerEngine
         episodeReleaseNotificationsEnabled = dependencies.settingsStore.episodeReleaseNotificationsEnabled
 
         if let session = dependencies.settingsStore.lastSession {
@@ -305,6 +307,11 @@ final class ServerSettingsViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func setUseCustomPlayerEngine(_ enabled: Bool) {
+        useCustomPlayerEngine = enabled
+        dependencies.settingsStore.useCustomPlayerEngine = enabled
     }
 
     func refreshEpisodeReleaseNotificationsState() async {

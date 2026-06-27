@@ -342,6 +342,20 @@ struct ServerSettingsView: View {
                 }
                 .disabled(viewModel.nativePlayerEnabled)
 
+                Toggle(
+                    isOn: Binding(
+                        get: { viewModel.useCustomPlayerEngine },
+                        set: { viewModel.setUseCustomPlayerEngine($0) }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("New Custom Player (beta)")
+                        Text("Deep local cache, keeps the original (Dolby Vision), loading bar instead of cuts.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Button {
                     persistSettings()
                 } label: {

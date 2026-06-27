@@ -42,6 +42,7 @@ struct DetailView: View {
     private let dependencies: ReelFinDependencies
 
     @State private var playerSession: PlaybackSessionController?
+    @State private var customEngine: CustomPlaybackEngine?
     @State private var showPlayer = false
     @State private var isLoadingPlayback = false
     @State private var hasAnimatedIn = false
@@ -222,7 +223,9 @@ struct DetailView: View {
         }
 #endif
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
-            if let playerSession {
+            if let customEngine {
+                CustomPlayerView(engine: customEngine)
+            } else if let playerSession {
                 PlayerView(
                     session: playerSession,
                     item: viewModel.itemToPlay,
@@ -944,6 +947,10 @@ struct DetailView: View {
 
     private func startPlayback(item: MediaItem? = nil) {
         guard !isLoadingPlayback else { return }
+        if dependencies.settingsStore.useCustomPlayerEngine {
+            startCustomPlayback(item: item)
+            return
+        }
         let session = dependencies.makePlaybackSession()
         let targetItem = item ?? viewModel.itemToPlay
         let startPosition: PlaybackStartPosition = item == nil
@@ -976,6 +983,28 @@ struct DetailView: View {
         }
     }
 
+    /// NEW custom engine path (flag-gated): keep the original via the deep local cache, with a
+    /// loading bar instead of cuts. Builds its own coordinator/resolver/store so the legacy path is
+    /// untouched. Resumes primary play from the item's saved position.
+    private func startCustomPlayback(item: MediaItem? = nil) {
+        let targetItem = item ?? viewModel.itemToPlay
+        let startTicks: Int64? = (item == nil) ? targetItem.playbackPositionTicks : nil
+        guard let store = try? MediaGatewayStore() else {
+            viewModel.errorMessage = "Cache local indisponible."
+            return
+        }
+        let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
+        let resolver = JellyfinOriginalSourceResolver(coordinator: coordinator)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        playerSession = nil
+        customEngine = engine
+#if os(iOS)
+        OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
+#endif
+        setPlayerCoverPresented(true)
+        engine.load(itemID: targetItem.id, startTimeTicks: startTicks, autoPlay: true)
+    }
+
     static func showsBlockingPlaybackPreparation(
         isLoadingPlayback: Bool,
         isBackgroundWarmingPlayback: Bool
@@ -991,6 +1020,8 @@ struct DetailView: View {
             viewModel.applyStoppedPlaybackProgress(stoppedProgress)
         }
         playerSession = nil
+        customEngine?.stop()
+        customEngine = nil
         setPlayerCoverPresented(false)
         isLoadingPlayback = false
     }
