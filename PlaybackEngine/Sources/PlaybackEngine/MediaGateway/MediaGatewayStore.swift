@@ -47,6 +47,8 @@ public actor MediaGatewayStore {
         (self.coverageEvents, self.coverageContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(256))
     }
 
+    deinit { coverageContinuation.finish() }
+
     /// The on-disk storage identifier for a key. `CoverageEvent.storageID` carries this value, so
     /// a serve loop subscribed to `coverageEvents` matches events to its key with this. Pure
     /// function of the key (SHA-256 of its storage identity) — safe to call off the actor.

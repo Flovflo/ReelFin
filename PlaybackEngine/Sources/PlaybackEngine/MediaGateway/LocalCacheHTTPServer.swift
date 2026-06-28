@@ -36,6 +36,18 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     private let serveChunk = 4 * 1_024 * 1_024
     private let pollInterval: UInt64 = 40_000_000      // 40 ms
     private let livenessDeadline: TimeInterval = 20
+    /// Close a keep-alive connection that has been IDLE this long (AVPlayer finished with the socket
+    /// but never closed it). Without this, the connection's `handle` Task parks forever in the
+    /// non-cancellation-aware `receiveRequestHead` continuation and leaks across playback sessions.
+    private let idleConnectionTimeout: TimeInterval = 30
+
+    // Every live connection + its handle Task, so `stop()`/`deinit` can FORCE them closed. Cancelling
+    // the NWConnection makes its pending `receive` completion fire, which resumes the parked
+    // continuation so the Task exits its loop and deregisters. (Cancelling the listener alone left
+    // idle keep-alive connections + their Tasks suspended forever → the cross-replay socket/memory
+    // leak that produced the "memory warning before the next play starts" → jetsam.)
+    private var activeConnections: [ObjectIdentifier: NWConnection] = [:]
+    private var connectionTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     // Per active serve loop: its current offset + whether it is STARVED (waiting for bytes not yet
     // cached). The downloader fills the lowest starved offset first (unblock the most-behind reader —
@@ -99,23 +111,76 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     func stop(reason: String) {
         listener?.cancel()
         listener = nil
+        lock.lock()
+        let conns = Array(activeConnections.values)
+        let tasks = Array(connectionTasks.values)
+        activeConnections.removeAll()
+        connectionTasks.removeAll()
+        lock.unlock()
+        // Cancelling the connection unblocks its parked `receive` → the handle Task exits its loop.
+        for connection in conns { connection.cancel() }
+        for task in tasks { task.cancel() }
+        // Capture the downloader value (NOT self) so this escaping Task is safe to spawn from deinit.
+        let downloader = self.downloader
         Task { await downloader.stop() }
     }
+
+    deinit {
+        // Safety net if stop() was never called. Cancel transport synchronously; do NOT touch self in
+        // an escaping Task during deallocation (that crashes) — capture the downloader value instead.
+        listener?.cancel()
+        lock.lock()
+        let conns = Array(activeConnections.values)
+        let tasks = Array(connectionTasks.values)
+        activeConnections.removeAll()
+        connectionTasks.removeAll()
+        lock.unlock()
+        for connection in conns { connection.cancel() }
+        for task in tasks { task.cancel() }
+        let downloader = self.downloader
+        Task { await downloader.stop() }
+    }
+
+#if DEBUG
+    /// Test hook: number of connections the server is currently tracking (must return to 0 after stop).
+    var debugActiveConnectionCount: Int { lock.lock(); defer { lock.unlock() }; return activeConnections.count }
+#endif
 
     // MARK: - Connection handling
 
     private func handle(_ connection: NWConnection) {
         connection.start(queue: queue)
-        Task { [weak self] in
+        let cid = ObjectIdentifier(connection)
+        lock.lock(); activeConnections[cid] = connection; lock.unlock()
+        let task = Task { [weak self] in
             guard let self else { connection.cancel(); return }
-            defer { connection.cancel() }
+            // Deregister + close when this connection's serving ends (client closed, error, or
+            // cancellation from stop()). This is what frees the socket + Task — no cross-session leak.
+            defer {
+                connection.cancel()
+                self.lock.lock()
+                self.activeConnections[cid] = nil
+                self.connectionTasks[cid] = nil
+                self.lock.unlock()
+            }
             // HTTP/1.1 keep-alive: serve sequential requests on ONE connection so AVPlayer reuses a
             // single socket for its ranged reads (instead of opening a new connection per range — which
             // spawned hundreds of active serves and thrashed the downloader's playhead). Loop until the
             // client closes the socket or a serve says the connection can't continue.
             while !Task.isCancelled {
-                guard let requestData = await self.receiveRequestHead(connection) else {
-                    return // client closed the connection (no more requests)
+                // An idle keep-alive socket (AVPlayer done with it but not closed) must NOT park this
+                // Task forever — `receiveRequestHead`'s `receive` continuation is not cancellation-aware,
+                // so we cancel the connection after an idle timeout, which makes the receive complete.
+                let watchdog = Task { [idleConnectionTimeout] in
+                    try? await Task.sleep(nanoseconds: UInt64(idleConnectionTimeout * 1_000_000_000))
+                    // Only fire if we actually reached the timeout. When a request arrives we cancel
+                    // this watchdog, which makes the sleep throw — must NOT then close the live socket.
+                    if !Task.isCancelled { connection.cancel() }
+                }
+                let requestData = await self.receiveRequestHead(connection)
+                watchdog.cancel()
+                guard let requestData else {
+                    return // client closed the connection / idle-timed-out / cancelled
                 }
                 guard let request = LocalMediaGatewayHTTPRequest(requestData) else {
                     await self.trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
@@ -125,6 +190,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                 if !keepAlive { return }
             }
         }
+        lock.lock(); connectionTasks[cid] = task; lock.unlock()
     }
 
     /// Accumulate bytes until the end of the HTTP header block (`\r\n\r\n`). GET/HEAD have no body,

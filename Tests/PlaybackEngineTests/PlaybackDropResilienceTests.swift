@@ -415,6 +415,67 @@ final class PlaybackDropResilienceTests: XCTestCase {
             "Keep-alive: a subsequent range must REUSE the connection. Connection:close opened a new socket per range — the cause of the playhead thrash + stall-despite-cache.")
     }
 
+    /// PRIMARY ROOT-CAUSE REGRESSION (the "800s of cache but it crashes" bug): a keep-alive connection
+    /// that goes IDLE (AVPlayer finished reading but did not close the socket) must be torn down by
+    /// stop(). Before the fix, stop() cancelled only the NWListener; the connection's handle Task was
+    /// parked forever in receiveRequestHead's non-cancellation-aware continuation, leaking a socket +
+    /// Task PER playback session — across replays that piled up into a memory warning at the next
+    /// play's start and a jetsam kill. This asserts the server's tracked-connection count returns to 0.
+    @MainActor
+    func testStopReleasesIdleKeepAliveConnection_noLeakAcrossReplays() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+
+        // 5 "replays" of the same item: each opens an idle keep-alive connection then stops. The
+        // tracked count must come back to 0 every time (no accumulation across sessions).
+        for replay in 0..<5 {
+            let mockOrigin = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4",
+                throttleBytesPerSec: Double(data.count * 8), dropMode: .freeze, keepAlive: true)
+            let port = try mockOrigin.start()
+            defer { mockOrigin.stop() }
+            let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+            let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("LeakTest.\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: storeDir) }
+            let store = try MediaGatewayStore(
+                directoryURL: storeDir,
+                configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+            let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "leak", sourceID: "src", routeURL: origin)
+            let downloader = OriginDownloader(
+                remoteURL: origin, headers: [:], key: key, store: store,
+                overrideContentType: "video/mp4", sessionConfiguration: .ephemeral,
+                aheadBudget: 8 * 1_024 * 1_024, maxParallelWindows: 2)
+            let server = LocalCacheHTTPServer(
+                store: store, downloader: downloader, key: key, remoteURL: origin, headers: [:], overrideMIMEType: "video/mp4")
+            let url = try server.start()
+            await downloader.primeStart()
+
+            // One ranged GET over a single reusable (keep-alive) connection, then leave it idle/pooled.
+            let cfg = URLSessionConfiguration.ephemeral
+            cfg.httpMaximumConnectionsPerHost = 1
+            let urlSession = URLSession(configuration: cfg)
+            var req = URLRequest(url: url)
+            req.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+            _ = try await urlSession.data(for: req)
+
+            // The keep-alive socket is now OPEN + IDLE; its handle Task is parked in receiveRequestHead.
+            XCTAssertGreaterThanOrEqual(server.debugActiveConnectionCount, 1,
+                "Replay \(replay): an open idle keep-alive connection must be tracked by the server.")
+
+            server.stop(reason: "replay_end")
+
+            var count = server.debugActiveConnectionCount
+            for _ in 0..<50 where count != 0 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                count = server.debugActiveConnectionCount
+            }
+            XCTAssertEqual(count, 0,
+                "Replay \(replay): stop() must cancel the idle keep-alive connection (else its Task + socket leak across replays → memory warning at next play's start → jetsam).")
+            urlSession.invalidateAndCancel()
+        }
+    }
+
     @MainActor
     private func runProxyScenario(
         dropWindows: [(start: TimeInterval, duration: TimeInterval)],
