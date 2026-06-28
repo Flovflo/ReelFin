@@ -19,10 +19,11 @@ public enum PlaybackLanePolicy {
     /// At/above this the link can at least carry realtime, so the original is still viable (with a
     /// pre-buffer cushion). Below it, the link cannot sustain realtime and we lean on the reservoir.
     public static let realtimeHeadroom: Double = 1.0
-    /// Pre-buffer cushion (seconds of the original) to build behind the loading bar before starting
-    /// on a non-comfortable link. Scales up the weaker the link is (more cushion when it's tighter).
-    public static let baseStartupPrebufferSeconds: Double = 10
-    public static let maxStartupPrebufferSeconds: Double = 45
+    /// Pre-buffer cushion (seconds of the original) to build behind the loading bar BEFORE starting.
+    /// We always build a real cushion up front (be sure there's enough cache → no cuts), and scale
+    /// it up the weaker the link is. Generous on purpose — not a token few seconds.
+    public static let baseStartupPrebufferSeconds: Double = 30
+    public static let maxStartupPrebufferSeconds: Double = 90
     /// Reservoir depth below which playback is "at risk" (informational; the actual buffer event is
     /// AVPlayer running dry).
     public static let lowReservoirSeconds: Double = 4
@@ -65,16 +66,16 @@ public enum PlaybackLanePolicy {
         reservoirSecondsAlready: Double = 0
     ) -> StartupAction {
         let src = max(0.001, sourceBitrateMbps)
-        guard let measuredMbps, measuredMbps > 0 else {
-            // Unverified link → conservative cushion (use the weak-end target).
-            return .prebufferOriginal(targetSeconds: prebufferTarget(headroom: realtimeHeadroom * 0.6))
-        }
-        let headroom = measuredMbps / src
-        if headroom >= comfortableHeadroom {
-            return .playOriginalNow
+        // Always build a real cushion up front — never an instant start. A strong link just reaches
+        // the (smaller) target fast; a weak/unverified link gets a deeper one. Only skip the wait if
+        // we already hold the cushion (e.g. resuming into an already-cached region).
+        let headroom: Double
+        if let measuredMbps, measuredMbps > 0 {
+            headroom = measuredMbps / src
+        } else {
+            headroom = realtimeHeadroom * 0.6 // unverified probe → conservative
         }
         let target = prebufferTarget(headroom: headroom)
-        // If we somehow already hold the cushion, start now.
         return reservoirSecondsAlready >= target ? .playOriginalNow : .prebufferOriginal(targetSeconds: target)
     }
 

@@ -28,14 +28,17 @@ final class CacheProxySession {
     }
 
     struct Configuration {
-        /// Reference cushion (seconds) the loading bar measures pre-buffer progress against. Does NOT
-        /// cap how deep the cache fills — that's `cacheBudgetBytes`.
+        /// Reference cushion (seconds) the loading bar measures pre-buffer progress against.
         var targetReservoirSeconds: Double = 180
-        /// How much of the ORIGINAL to cache ahead of the playhead (and the disk budget). The cache
-        /// fills toward this, or the whole title if it's smaller. Big = deep dropout immunity.
-        /// Configurable; defaults to the platform budget (4 GB iOS / 10 GB tvOS). Bounded at runtime
-        /// by free disk + the store's own eviction budget.
-        var cacheBudgetBytes: Int64 = CacheProxySession.defaultCacheBudgetBytes
+        /// How far AHEAD of the playhead to keep the original filled, in SECONDS of this file's
+        /// bitrate (dynamic-per-file). A deep cushion (≈5 min) gives huge dropout immunity, then the
+        /// downloader IDLES — it does NOT race to fill the whole multi-GB disk budget at once, which
+        /// was hammering the origin (reset storm) and pressuring memory. The DISK budget (how much
+        /// total stays cached, incl. behind the playhead for instant rewind) is the store's own cap.
+        var reservoirAheadSeconds: Double = 300
+        /// Hard cap on the ahead-fill so a very high-bitrate file can't blow past it (5 min of an
+        /// 80 Mbps file would be ~3 GB → clamp to 2 GB of read-ahead).
+        var maxAheadBytes: Int64 = 2 * 1_024 * 1_024 * 1_024
         var maxParallelWindows: Int = 6
     }
 
@@ -109,11 +112,13 @@ final class CacheProxySession {
         return url
     }
 
-    /// Fill the original ahead of the playhead up to the (generous, configurable) cache budget — the
-    /// whole title if it's smaller. Deep cache = deep dropout immunity. (Free-disk clamp + eviction
-    /// are applied by the store / CacheBudgetManager during fill.)
+    /// How many bytes to keep filled ahead of the playhead: a deep, dynamic-per-file cushion
+    /// (`reservoirAheadSeconds` of this bitrate), clamped to `maxAheadBytes` and floored so even a
+    /// tiny-bitrate file still reads a sane window ahead. Bounded on purpose so the downloader fills
+    /// the cushion then idles instead of racing the whole disk budget (origin reset storm + memory).
     private func dynamicAheadBudget() -> Int64 {
-        max(64 * 1_024 * 1_024, config.cacheBudgetBytes)
+        let bySeconds = Int64(config.reservoirAheadSeconds * bytesPerSecond)
+        return min(config.maxAheadBytes, max(64 * 1_024 * 1_024, bySeconds))
     }
 
     /// Tell the downloader the byte offset playback needs filled forward (drives the read-ahead).

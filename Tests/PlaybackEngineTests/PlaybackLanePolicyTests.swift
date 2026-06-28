@@ -7,15 +7,19 @@ final class PlaybackLanePolicyTests: XCTestCase {
 
     // MARK: Startup — always the original lane; dynamic per file bitrate.
 
-    func testStartupComfortableLinkPlaysOriginalNow() {
-        // 40 Mbps measured on a 26 Mbps file = 1.54x >= comfortable -> start immediately.
-        XCTAssertEqual(
-            PlaybackLanePolicy.startupAction(measuredMbps: 40, sourceBitrateMbps: 26),
-            .playOriginalNow)
-        // Same ratio holds for a totally different file (dynamic): 12 Mbps link, 8 Mbps file = 1.5x.
-        XCTAssertEqual(
-            PlaybackLanePolicy.startupAction(measuredMbps: 12, sourceBitrateMbps: 8),
-            .playOriginalNow)
+    func testStartupAlwaysBuildsACushionEvenOnAComfortableLink() {
+        // We never instant-start cold: a strong link (40 Mbps on a 26 Mbps file = 1.54x) still
+        // pre-buffers a real cushion up front — just the (smaller) base target, reached fast.
+        let strong = PlaybackLanePolicy.startupAction(measuredMbps: 40, sourceBitrateMbps: 26)
+        guard case let .prebufferOriginal(target) = strong else {
+            return XCTFail("Even a comfortable link must build a cushion first. Got \(strong)")
+        }
+        XCTAssertEqual(target, PlaybackLanePolicy.baseStartupPrebufferSeconds, accuracy: 0.001,
+                       "A comfortable link gets the base cushion, not a deeper one.")
+        // Dynamic per file: same 1.5x ratio on a different bitrate also gets the base cushion.
+        guard case .prebufferOriginal = PlaybackLanePolicy.startupAction(measuredMbps: 12, sourceBitrateMbps: 8) else {
+            return XCTFail("expected base-cushion prebuffer for a comfortable link")
+        }
     }
 
     func testStartupWeakLinkPrebuffersOriginalWithDynamicTarget() {

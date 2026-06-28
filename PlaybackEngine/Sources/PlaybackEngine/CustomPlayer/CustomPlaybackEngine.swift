@@ -212,31 +212,24 @@ public final class CustomPlaybackEngine {
     }
 
     private func monitorTick() async {
-        guard let session, let item = player.currentItem else { return }
+        guard let session, player.currentItem != nil else { return }
         let nowSeconds = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
+        // Cache depth for the HUD only — this is a CBR byte↔seconds estimate, fine to *display* but
+        // NOT to gate buffering on (it oscillates on a VBR file).
         let reservoir = await session.reservoirSecondsAhead(atSeconds: nowSeconds)
-        session.setPlayheadOffset(session.byteOffset(forSeconds: nowSeconds))
+        // The localhost server already publishes AVPlayer's REAL read offset to the downloader, so we
+        // do NOT push a CBR-estimated playhead here — that fought the accurate, request-driven one.
 
-        // Fill-rate sample (only meaningful signal we always have) → connection monitor.
-        if var monitor {
-            // Approximate instantaneous throughput from buffer health; refined later with the
-            // downloader's real session metrics. For now, treat a non-empty growing reservoir as
-            // healthy and a draining/empty one as below-bitrate.
-            let healthyMbps = reservoir > PlaybackLanePolicy.lowReservoirSeconds ? sourceBitrateMbps * 1.5 : sourceBitrateMbps * 0.5
-            monitor.record(mbps: healthyMbps, at: Date())
-            self.monitor = monitor
-        }
-        let isEmpty = item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp
-        let belowSeconds = monitor?.sustainedBelowBitrateSeconds(now: Date()) ?? 0
-
-        let action = PlaybackLanePolicy.steadyAction(
-            reservoirSeconds: reservoir, isReservoirEmpty: isEmpty, sustainedBelowBitrateSeconds: belowSeconds)
-        bufferingState = .fromSteady(action, reservoirSeconds: reservoir)
-
-        // NOTE: dropToSDRLastResort lane-swap is wired in the LaneController phase; here we surface
-        // the state so the UI/telemetry reflects it. Original lane keeps running until then.
-        if action == .dropToSDRLastResort {
-            AppLog.playback.warning("customplayer.lastResort.sdr_requested — reservoir=\(reservoir, format: .fixed(precision: 1)) belowSec=\(belowSeconds, format: .fixed(precision: 0))")
+        // Drive the loading bar from AVPlayer's REAL transport state, not the byte estimate. The
+        // estimate dipped below threshold periodically on the VBR original and flashed "buffering"
+        // every ~10s even while playback was perfectly smooth. Only a genuine stall (AVPlayer has run
+        // dry and is waiting for data) shows the bar now.
+        switch player.timeControlStatus {
+        case .waitingToPlayAtSpecifiedRate:
+            bufferingState = PlaybackBufferingState(
+                phase: .buffering, reservoirSeconds: reservoir, targetSeconds: PlaybackLanePolicy.bufferResumeSeconds)
+        default:
+            bufferingState = PlaybackBufferingState(phase: .playing, reservoirSeconds: reservoir)
         }
     }
 
