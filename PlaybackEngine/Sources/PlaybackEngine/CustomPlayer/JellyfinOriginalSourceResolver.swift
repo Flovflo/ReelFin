@@ -43,7 +43,7 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         }
 
         let assetURL = selection.assetURL
-        let overrideMIMEType = Self.overrideMIMEType(for: assetURL, container: selection.source.container)
+        let overrideMIMEType = Self.overrideMIMEType(for: assetURL, source: selection.source)
         let key = MediaGatewayCacheKey(
             scope: "directplay-original",
             userID: nil,
@@ -66,13 +66,34 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         )
     }
 
-    /// Extensionless direct-play origins need a MIME hint so AVPlayer enters the right parser (and,
-    /// crucially, keeps DV + the AC3 audio track). Mirror the PROVEN legacy direct-play behavior,
-    /// which used `video/mp4` for this content — `container` here is the device-profile container
-    /// LIST (e.g. "mov,mp4,m4a,…"), not the real file container, so do NOT branch on it to quicktime
-    /// (that regressed audio after ~10s on device).
-    static func overrideMIMEType(for url: URL, container: String?) -> String? {
+    /// Extensionless direct-play origins need a MIME hint so AVKit picks the RIGHT demuxer — getting
+    /// this wrong on a localhost source makes AVKit grab only one track (device: video/mp4 → audio
+    /// but no image; video/quicktime → image but no audio on an MKV). The legacy gets away with
+    /// video/mp4 because AVKit sniffs the real bytes off the origin; through the localhost cache it
+    /// needs the CORRECT type. Use the real file extension first (`source.filePath`), then the
+    /// container — and crucially recognize **mkv → video/x-matroska** (the legacy MIME table didn't).
+    static func overrideMIMEType(for url: URL, source: MediaSource) -> String? {
         guard url.pathExtension.isEmpty else { return nil }
+        if let filePath = source.filePath {
+            let ext = URL(fileURLWithPath: filePath).pathExtension.lowercased()
+            if let mime = mime(forExtension: ext) { return mime }
+        }
+        let tokens = (source.container ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if tokens.contains("mkv") || tokens.contains("matroska") { return "video/x-matroska" }
+        if tokens.contains("mp4") || tokens.contains("m4v") { return "video/mp4" }
+        if tokens.contains("mov") || tokens.contains("qt") { return "video/quicktime" }
         return "video/mp4"
+    }
+
+    private static func mime(forExtension ext: String) -> String? {
+        switch ext {
+        case "mkv", "matroska": return "video/x-matroska"
+        case "mp4", "m4v": return "video/mp4"
+        case "mov", "qt": return "video/quicktime"
+        case "webm": return "video/webm"
+        default: return nil
+        }
     }
 }
