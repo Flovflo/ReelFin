@@ -113,6 +113,23 @@ public actor MediaGatewayStore {
         return cursor
     }
 
+    /// Source total length persisted alongside the cached chunks, so a previously-played title can
+    /// start straight from the disk cache WITHOUT probing the origin (the offline / never-cut
+    /// promise). Stored as a plain sidecar (no `.cache` extension → ignored by the range scanner).
+    public func persistedContentLength(key: MediaGatewayCacheKey) -> Int64? {
+        let url = directoryURL(for: key).appendingPathComponent("content.length")
+        guard let raw = try? String(contentsOf: url, encoding: .utf8),
+              let value = Int64(raw.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0 else { return nil }
+        return value
+    }
+
+    public func persistContentLength(_ length: Int64, key: MediaGatewayCacheKey) {
+        guard length > 0 else { return }
+        let directory = directoryURL(for: key)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? String(length).data(using: .utf8)?.write(to: directory.appendingPathComponent("content.length"), options: .atomic)
+    }
+
     public func write(range: ByteRange, data: Data, key: MediaGatewayCacheKey) async throws {
         guard range.offset >= 0, range.length == data.count, range.length > 0 else {
             throw MediaAccessError.invalidRange(range)

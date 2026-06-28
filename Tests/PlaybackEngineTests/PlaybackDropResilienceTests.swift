@@ -476,6 +476,40 @@ final class PlaybackDropResilienceTests: XCTestCase {
         }
     }
 
+    /// OFFLINE-FIRST: a previously-played title must start from the disk cache even when the origin
+    /// is unreachable. contentInfo() must reuse the PERSISTED total length instead of probing the
+    /// (dead) origin — this is what makes "I have 800s cached" actually usable when the link is down.
+    @MainActor
+    func testContentInfoUsesPersistedTotalWhenOriginUnreachable() async throws {
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("OfflineMeta.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let deadOrigin = URL(string: "http://127.0.0.1:1/dead.mp4")! // port 1 → connection refused
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "offline", sourceID: "src", routeURL: deadOrigin)
+
+        // Simulate a prior successful probe having persisted the total.
+        await store.persistContentLength(11_788_385_454, key: key)
+        let persisted = await store.persistedContentLength(key: key)
+        XCTAssertEqual(persisted, 11_788_385_454)
+
+        let downloader = OriginDownloader(
+            remoteURL: deadOrigin, headers: [:], key: key, store: store,
+            overrideContentType: "video/mp4", sessionConfiguration: .ephemeral,
+            aheadBudget: 8 * 1_024 * 1_024, maxParallelWindows: 1)
+        defer { Task { await downloader.stop() } }
+
+        let started = Date()
+        let info = await downloader.contentInfo()
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertEqual(info.length, 11_788_385_454, "contentInfo must reuse the persisted total when the origin is unreachable.")
+        XCTAssertEqual(info.contentType, "video/mp4")
+        XCTAssertLessThan(elapsed, 2.0, "It must NOT probe the dead origin — returning from disk is instant (no -1001 wait).")
+    }
+
     @MainActor
     private func runProxyScenario(
         dropWindows: [(start: TimeInterval, duration: TimeInterval)],

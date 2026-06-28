@@ -262,6 +262,19 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         defer { finishServe(id) }
         var offset = start
         var lastProgress = Date()
+        // Diagnostics: only the serves that MISS the cache / hit the origin are logged (so the noise
+        // floor stays low). This is how we see whether AVPlayer is reading cached bytes or landing in
+        // a gap that needs the origin (the "deep cache but it still stalls" question).
+        var hitBytes: Int64 = 0
+        var onDemandBytes: Int64 = 0
+        var onDemandFails = 0
+        var originDown = false
+        func logEnd(_ reason: String, ok: Bool) {
+            guard onDemandBytes > 0 || onDemandFails > 0 || !ok else { return }
+            AppLog.playback.notice(
+                "playback.cachehttp.serve.end — item=\(self.key.itemID.prefix(8), privacy: .public) startMB=\(start / 1_048_576, privacy: .public) reachedMB=\(offset / 1_048_576, privacy: .public) hitKB=\(hitBytes / 1024, privacy: .public) onDemandKB=\(onDemandBytes / 1024, privacy: .public) onDemandFail=\(onDemandFails, privacy: .public) reason=\(reason, privacy: .public)"
+            )
+        }
         while offset < end {
             let want = Int(min(Int64(serveChunk), end - offset))
             // 1. Cache hit — serve instantly from the deep local buffer (survives origin dropouts).
@@ -269,8 +282,9 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                let data = try? await store.readAvailablePrefix(from: offset, maxLength: want, key: key),
                !data.isEmpty {
                 await publish(id: id, offset: offset, waiting: false)
-                guard await trySend(data, over: connection) else { return false } // AVPlayer closed (seek/stop)
+                guard await trySend(data, over: connection) else { logEnd("client_closed", ok: false); return false }
                 offset += Int64(data.count)
+                hitBytes += Int64(data.count)
                 lastProgress = Date()
                 continue
             }
@@ -278,25 +292,35 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
             await publish(id: id, offset: offset, waiting: true)
             // 2. Cache miss — fetch this exact range DIRECTLY (low latency, = direct-play speed for
             // the first read / a seek) instead of waiting for the windowed downloader. The result is
-            // written to the store so it is cached for any re-read, and the background downloader
-            // keeps building ahead in parallel.
-            if want > 0, let data = await fetchRangeOnDemand(from: offset, length: want), !data.isEmpty {
-                guard await trySend(data, over: connection) else { return false }
+            // written to the store so it is cached for any re-read. Once the origin has clearly failed
+            // (a timeout), STOP re-hammering it on every 40 ms poll — just wait for the background
+            // downloader/cache, so an origin outage doesn't block this serve for 15 s per iteration.
+            if want > 0, !originDown, let data = await fetchRangeOnDemand(from: offset, length: want), !data.isEmpty {
+                guard await trySend(data, over: connection) else { logEnd("client_closed", ok: false); return false }
                 offset += Int64(data.count)
+                onDemandBytes += Int64(data.count)
                 lastProgress = Date()
                 continue
             }
-            // 3. On-demand fetch failed too (origin dropping) — wait briefly for the background
-            // downloader to fill from cache; close on a genuinely sustained outage so AVPlayer
-            // surfaces a stall and the session's recovery path (watchable SDR) takes over.
+            if want > 0, !originDown {
+                onDemandFails += 1
+                originDown = true // origin unreachable for this serve → fall back to cache-only polling
+            }
+            // 3. Origin can't serve this byte right now — wait for the background downloader to fill it
+            // from cache; close on a genuinely sustained outage so AVPlayer surfaces a stall and the
+            // session's recovery path takes over.
             if Date().timeIntervalSince(lastProgress) > livenessDeadline {
+                logEnd("liveness_timeout", ok: false)
                 AppLog.playback.warning(
                     "playback.cachehttp.serve.liveness_timeout — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
                 )
                 return false
             }
+            // Cache-only polling now: the background downloader keeps retrying the origin on its own,
+            // so if it recovers the next poll will hit the cache. We don't re-hammer on-demand here.
             try? await Task.sleep(nanoseconds: pollInterval)
         }
+        logEnd("complete", ok: true)
         return true
     }
 

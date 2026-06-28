@@ -93,6 +93,14 @@ actor OriginDownloader {
         if let totalLength {
             return (totalLength, resolvedContentType)
         }
+        // OFFLINE-FIRST: reuse the total length persisted from a prior play, so a previously-cached
+        // title starts straight from disk with NO origin probe. This is what lets the deep cache be
+        // used when the origin is unreachable (the user's "I have 800s cached, why can't I use it?").
+        if let persisted = await store.persistedContentLength(key: key) {
+            totalLength = persisted
+            if resolvedContentType == nil { resolvedContentType = overrideContentType }
+            return (persisted, resolvedContentType)
+        }
         // Coalesce concurrent callers (primeStart + the serve loop both ask) onto one probe so a
         // cold item is warmed exactly once.
         if let contentInfoTask {
@@ -129,6 +137,8 @@ actor OriginDownloader {
                 if let total = http.mediaGatewayContentRangeTotal ?? http.mediaGatewayContentLength {
                     totalLength = total
                     resolvedContentType = overrideContentType ?? http.value(forHTTPHeaderField: "Content-Type")
+                    // Persist so the next play (even with the origin DOWN) starts from the disk cache.
+                    await store.persistContentLength(total, key: key)
                     AppLog.playback.notice(
                         "playback.cacheloader.contentinfo — item=\(self.key.itemID.prefix(8), privacy: .public) attempt=\(attempt, privacy: .public) total=\(total, privacy: .public) type=\(self.resolvedContentType ?? "-", privacy: .public)"
                     )
