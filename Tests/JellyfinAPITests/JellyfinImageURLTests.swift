@@ -29,6 +29,7 @@ private final class TestSettingsStore: SettingsStoreProtocol, @unchecked Sendabl
     var episodeReleaseNotificationsEnabled = false
     var hasCompletedOnboarding = false
     var completedOnboardingVersion = 0
+    var useCustomPlayerEngine = false
 
     init(serverConfiguration: ServerConfiguration?, lastSession: UserSession?) {
         self.serverConfiguration = serverConfiguration

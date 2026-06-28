@@ -17,15 +17,25 @@ import Shared
 /// Pure composition — no new transport. The only genuinely-new cache logic (range-aware eviction)
 /// lives in `CacheBudgetManager`, added separately.
 final class CacheProxySession {
+    /// Default deep-cache budget per platform. Generous on purpose (the user wants lots of cache),
+    /// configurable via `Configuration.cacheBudgetBytes`. iOS 4 GB, tvOS 10 GB.
+    public static var defaultCacheBudgetBytes: Int64 {
+        #if os(tvOS)
+        return 10 * 1_024 * 1_024 * 1_024
+        #else
+        return 4 * 1_024 * 1_024 * 1_024
+        #endif
+    }
+
     struct Configuration {
-        /// Target reservoir depth, in SECONDS of playback ahead of the playhead. Dynamic: converted
-        /// to a byte budget via the file's own bitrate, so a 6 Mbps file and a 90 Mbps file both aim
-        /// for the same *time* cushion. Grows toward `maxReservoirSeconds` on a healthy link.
+        /// Reference cushion (seconds) the loading bar measures pre-buffer progress against. Does NOT
+        /// cap how deep the cache fills — that's `cacheBudgetBytes`.
         var targetReservoirSeconds: Double = 180
-        var maxReservoirSeconds: Double = 360
-        /// Hard ceiling on bytes held ahead, so a very high-bitrate title can't blow the disk budget
-        /// chasing `maxReservoirSeconds`. Clamped again at runtime against free disk.
-        var maxReservoirBytes: Int64 = 2 * 1_024 * 1_024 * 1_024
+        /// How much of the ORIGINAL to cache ahead of the playhead (and the disk budget). The cache
+        /// fills toward this, or the whole title if it's smaller. Big = deep dropout immunity.
+        /// Configurable; defaults to the platform budget (4 GB iOS / 10 GB tvOS). Bounded at runtime
+        /// by free disk + the store's own eviction budget.
+        var cacheBudgetBytes: Int64 = CacheProxySession.defaultCacheBudgetBytes
         var maxParallelWindows: Int = 6
     }
 
@@ -99,11 +109,11 @@ final class CacheProxySession {
         return url
     }
 
-    /// Deep but bounded: target reservoir SECONDS → bytes via this file's bitrate, capped by the
-    /// byte ceiling. (Free-disk clamp is applied by CacheBudgetManager during fill.)
+    /// Fill the original ahead of the playhead up to the (generous, configurable) cache budget — the
+    /// whole title if it's smaller. Deep cache = deep dropout immunity. (Free-disk clamp + eviction
+    /// are applied by the store / CacheBudgetManager during fill.)
     private func dynamicAheadBudget() -> Int64 {
-        let targetBytes = Int64(config.maxReservoirSeconds * bytesPerSecond)
-        return max(8 * 1_024 * 1_024, min(targetBytes, config.maxReservoirBytes))
+        max(64 * 1_024 * 1_024, config.cacheBudgetBytes)
     }
 
     /// Tell the downloader the byte offset playback needs filled forward (drives the read-ahead).
