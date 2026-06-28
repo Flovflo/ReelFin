@@ -42,6 +42,10 @@ public final class CustomPlaybackEngine {
     public private(set) var bufferingState: PlaybackBufferingState = .idle
     public private(set) var errorMessage: String?
 
+    /// Default deep-cache budget (4 GB iOS / 10 GB tvOS). Public so the app can size the store it
+    /// passes in to match the engine's read-ahead budget.
+    public static var defaultCacheBudgetBytes: Int64 { CacheProxySession.defaultCacheBudgetBytes }
+
     private let resolver: CustomPlaybackSourceResolving
     private let store: MediaGatewayStore
 

@@ -989,7 +989,7 @@ struct DetailView: View {
     private func startCustomPlayback(item: MediaItem? = nil) {
         let targetItem = item ?? viewModel.itemToPlay
         let startTicks: Int64? = (item == nil) ? targetItem.playbackPositionTicks : nil
-        let cacheBudget = Int(CacheProxySession.defaultCacheBudgetBytes) // 4 GB iOS / 10 GB tvOS
+        let cacheBudget = Int(CustomPlaybackEngine.defaultCacheBudgetBytes) // 4 GB iOS / 10 GB tvOS
         guard let store = try? MediaGatewayStore(
             configuration: MediaGatewayStore.Configuration(maxBytes: cacheBudget)
         ) else {
