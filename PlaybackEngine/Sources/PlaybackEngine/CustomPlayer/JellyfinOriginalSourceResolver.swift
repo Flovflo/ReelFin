@@ -36,7 +36,11 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             itemID: itemID,
             startTimeTicks: startTimeTicks,
             allowDirectRoutes: true,
-            nativeEngineFallbackReason: "custom_player_engine"
+            nativeEngineFallbackReason: "custom_player_engine",
+            // Prefer a progressive MP4/MOV twin over an MKV: AVKit reads MP4 linearly so it stays
+            // inside the contiguous localhost cache (no index-seek cache-misses → no cuts), keeping
+            // the same HEVC/Dolby-Vision bitstream. Falls back to whatever exists (e.g. MKV-only).
+            preferredContainers: ["mp4", "m4v", "mov"]
         )
         guard case .directPlay = selection.decision.route else {
             throw ResolveError.notDirectPlayable

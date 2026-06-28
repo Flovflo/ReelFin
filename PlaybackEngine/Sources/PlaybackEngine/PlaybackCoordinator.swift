@@ -85,6 +85,36 @@ public actor PlaybackCoordinator {
         self.ttffTuning = decisionEngine.ttffTuning
     }
 
+    /// Restrict the candidate sources to a preferred CONTAINER when one exists (opt-in; `nil`/empty
+    /// preference is a no-op). The custom player uses this to play a title's `.mp4` version over its
+    /// `.mkv` twin: an MKV is read by AVKit's demuxer with index/Cues SEEKS that miss the contiguous
+    /// localhost cache and stall, while a progressive MP4 reads linearly and stays inside the cache —
+    /// same HEVC/Dolby-Vision bitstream, no cuts. If no source matches (e.g. an MKV-only title) we
+    /// keep every source unchanged, so this can never make a title unplayable.
+    static func preferringContainers(_ sources: [MediaSource], _ preferred: [String]?, itemID: String) -> [MediaSource] {
+        guard let preferred, !preferred.isEmpty, sources.count > 1 else { return sources }
+        let wanted = Set(preferred.map { $0.lowercased() })
+        let matching = sources.filter { sourceContainerTokens($0).contains(where: wanted.contains) }
+        guard !matching.isEmpty, matching.count < sources.count else { return sources }
+        AppLog.playback.notice(
+            "playback.source.container_pref — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) kept=\(matching.count, privacy: .public)/\(sources.count, privacy: .public) preferred=\(preferred.joined(separator: ","), privacy: .public)"
+        )
+        return matching
+    }
+
+    /// The real container(s) of a source: the file-path extension is authoritative (`…/x.mkv`),
+    /// falling back to the `Container` field (which can be a comma list).
+    static func sourceContainerTokens(_ source: MediaSource) -> Set<String> {
+        if let filePath = source.filePath {
+            let ext = URL(fileURLWithPath: filePath).pathExtension.lowercased()
+            if !ext.isEmpty { return [ext] }
+        }
+        return Set((source.container ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty })
+    }
+
     public func resolvePlayback(
         itemID: String,
         mode: PlaybackMode = .performance,
@@ -92,7 +122,8 @@ public actor PlaybackCoordinator {
         transcodeProfile: TranscodeURLProfile = .serverDefault,
         startTimeTicks: Int64? = nil,
         allowDirectRoutes: Bool = true,
-        nativeEngineFallbackReason: String? = nil
+        nativeEngineFallbackReason: String? = nil,
+        preferredContainers: [String]? = nil
     ) async throws -> PlaybackAssetSelection {
         guard
             let configuration = await apiClient.currentConfiguration(),
@@ -143,7 +174,8 @@ public actor PlaybackCoordinator {
         let initialOptionBitrate = initialOptions.maxStreamingBitrate ?? maxBitrate
 
         let requestInterval = SignpostInterval(signposter: Signpost.playbackInfo, name: "playback_info_request")
-        let initialSources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: initialOptions)
+        let fetchedInitial = try await apiClient.fetchPlaybackSources(itemID: itemID, options: initialOptions)
+        let initialSources = Self.preferringContainers(fetchedInitial, preferredContainers, itemID: itemID)
         requestInterval.end(name: "playback_info_request", message: "sources_received")
 
         let selectionInterval = SignpostInterval(signposter: Signpost.playbackSelection, name: "playback_url_selection")
@@ -179,7 +211,8 @@ public actor PlaybackCoordinator {
             }
             let fallbackBitrate = fallbackOptions.maxStreamingBitrate ?? maxBitrate
             let fallbackRequest = SignpostInterval(signposter: Signpost.playbackInfo, name: "playback_info_request_fallback")
-            let fallbackSources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: fallbackOptions)
+            let fetchedFallback = try await apiClient.fetchPlaybackSources(itemID: itemID, options: fallbackOptions)
+            let fallbackSources = Self.preferringContainers(fetchedFallback, preferredContainers, itemID: itemID)
             fallbackRequest.end(name: "playback_info_request_fallback", message: "fallback_sources_received")
 
             if let fallbackSelection = try await select(
