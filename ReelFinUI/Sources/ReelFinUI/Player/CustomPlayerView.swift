@@ -13,6 +13,11 @@ struct CustomPlayerView: View {
             Color.black.ignoresSafeArea()
             CustomPlayerSurface(player: engine.player)
                 .ignoresSafeArea()
+            VStack {
+                cacheHUD
+                Spacer()
+            }
+            .padding(.top, 8)
             overlay
         }
         .onAppear {
@@ -50,6 +55,25 @@ struct CustomPlayerView: View {
                 .padding(16)
                 .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
         }
+    }
+
+    /// Always-visible cache HUD so you can watch the deep buffer build in real time. Green bar +
+    /// seconds of the original cached ahead of the playhead (updates every second).
+    private var cacheHUD: some View {
+        let seconds = Int(engine.bufferingState.reservoirSeconds.rounded())
+        let fraction = min(1, engine.bufferingState.reservoirSeconds / 300) // bar spans ~5 min
+        return HStack(spacing: 8) {
+            Image(systemName: "internaldrive")
+            Text("Cache \(seconds)s")
+                .font(.caption.monospacedDigit())
+            ProgressView(value: fraction)
+                .frame(width: 90)
+                .tint(.green)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.45), in: Capsule())
     }
 
     private func label(for state: PlaybackBufferingState) -> String {

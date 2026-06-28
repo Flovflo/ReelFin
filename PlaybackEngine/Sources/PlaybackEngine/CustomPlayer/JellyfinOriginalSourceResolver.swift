@@ -67,11 +67,12 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
     }
 
     /// Extensionless direct-play origins need a MIME hint so AVPlayer enters the right parser (and,
-    /// crucially, keeps DV). Mirror the proven direct-play behavior: video/mp4 for the mp4 family.
+    /// crucially, keeps DV + the AC3 audio track). Mirror the PROVEN legacy direct-play behavior,
+    /// which used `video/mp4` for this content — `container` here is the device-profile container
+    /// LIST (e.g. "mov,mp4,m4a,…"), not the real file container, so do NOT branch on it to quicktime
+    /// (that regressed audio after ~10s on device).
     static func overrideMIMEType(for url: URL, container: String?) -> String? {
         guard url.pathExtension.isEmpty else { return nil }
-        let c = (container ?? "").lowercased()
-        if c.contains("mov") || c.contains("qt") { return "video/quicktime" }
         return "video/mp4"
     }
 }

@@ -55,6 +55,7 @@ public final class CustomPlaybackEngine {
     private var loadTask: Task<Void, Never>?
     private var monitorTask: Task<Void, Never>?
     private var stalledObserver: NSObjectProtocol?
+    private var audioInterruptionObserver: NSObjectProtocol?
 
     private let probeWindow: TimeInterval = 1.5
     private let monitorInterval: UInt64 = 1_000_000_000 // 1s
@@ -130,6 +131,7 @@ public final class CustomPlaybackEngine {
         guard !Task.isCancelled else { return }
 
         Self.configureAudioSessionForPlayback()
+        observeAudioInterruptions()
         sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
         monitor = ConnectionMonitor(sourceBitrateMbps: sourceBitrateMbps)
 
@@ -240,6 +242,26 @@ public final class CustomPlaybackEngine {
 
     // MARK: - Stall observation (reload-averse: just reflect buffering, never rebuild the item)
 
+    /// If the audio session gets interrupted (a call, Siri, another app), reactivate it and resume
+    /// so sound comes back — otherwise the picture keeps playing silently (the "lost sound" symptom).
+    private func observeAudioInterruptions() {
+#if os(iOS)
+        if let observer = audioInterruptionObserver { NotificationCenter.default.removeObserver(observer) }
+        audioInterruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self,
+                  let info = note.userInfo,
+                  let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended
+            else { return }
+            Self.configureAudioSessionForPlayback()
+            let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt).map(AVAudioSession.InterruptionOptions.init(rawValue:))
+            if options?.contains(.shouldResume) ?? true { self.player.play() }
+        }
+#endif
+    }
+
     private func observeStalls(for item: AVPlayerItem) {
         if let stalledObserver { NotificationCenter.default.removeObserver(stalledObserver) }
         stalledObserver = NotificationCenter.default.addObserver(
@@ -256,6 +278,8 @@ public final class CustomPlaybackEngine {
         monitorTask?.cancel(); monitorTask = nil
         if let observer = stalledObserver { NotificationCenter.default.removeObserver(observer) }
         stalledObserver = nil
+        if let observer = audioInterruptionObserver { NotificationCenter.default.removeObserver(observer) }
+        audioInterruptionObserver = nil
         session?.stop(); session = nil
         monitor = nil
         player.replaceCurrentItem(with: nil)
