@@ -62,6 +62,31 @@ public final class CustomPlaybackEngine {
         self.player.automaticallyWaitsToMinimizeStalling = true
     }
 
+    /// Route audio to playback (movie) so there IS sound — and it ignores the silent switch, like a
+    /// video player should. Run off the main thread (AVAudioSession.setActive is synchronous/blocking).
+    private static func configureAudioSessionForPlayback() {
+#if os(iOS)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let session = AVAudioSession.sharedInstance()
+            do {
+#if targetEnvironment(simulator)
+                try session.setCategory(.playback)
+#else
+                try session.setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
+#endif
+                try session.setActive(true)
+            } catch {
+                do {
+                    try session.setCategory(.playback)
+                    try session.setActive(true)
+                } catch {
+                    AppLog.playback.warning("customplayer.audioSession.failed — \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+#endif
+    }
+
     // MARK: - Public control
 
     public func load(itemID: String, startTimeTicks: Int64? = nil, autoPlay: Bool = true) {
@@ -100,6 +125,7 @@ public final class CustomPlaybackEngine {
         }
         guard !Task.isCancelled else { return }
 
+        Self.configureAudioSessionForPlayback()
         sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
         monitor = ConnectionMonitor(sourceBitrateMbps: sourceBitrateMbps)
 

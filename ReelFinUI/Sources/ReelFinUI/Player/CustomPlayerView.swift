@@ -15,7 +15,17 @@ struct CustomPlayerView: View {
                 .ignoresSafeArea()
             overlay
         }
-        .onDisappear { engine.stop() }
+        .onAppear {
+#if os(iOS)
+            OrientationManager.shared.lockLandscapeForPlayerPresentation()
+#endif
+        }
+        .onDisappear {
+            engine.stop()
+#if os(iOS)
+            OrientationManager.shared.restorePortraitAfterPlayerDismissal()
+#endif
+        }
     }
 
     @ViewBuilder
