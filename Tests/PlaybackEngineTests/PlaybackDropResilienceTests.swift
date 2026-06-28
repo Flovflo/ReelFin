@@ -365,6 +365,56 @@ final class PlaybackDropResilienceTests: XCTestCase {
         XCTAssertTrue(built, "CacheProxySession must build a deep reservoir (>=20s) on a fast link; got \(depth)s.")
     }
 
+    /// ROOT-CAUSE REGRESSION: the localhost server must keep ONE connection alive across AVPlayer's
+    /// many ranged reads. With `Connection: close` AVPlayer opened a NEW socket per range (hundreds
+    /// in the device logs); each became a separate active serve and the downloader's playhead
+    /// targeting thrashed between a transient low-offset read and the real playback offset, starving
+    /// playback DESPITE a deep cache (the "900 s of cache but still buffering" bug). Proven here via
+    /// `URLSessionTaskMetrics.isReusedConnection`: subsequent ranges must reuse the connection.
+    @MainActor
+    func testServerReusesOneConnectionAcrossSequentialRanges() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: 50_000_000, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("KeepAlive.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "keepalive", sourceID: "src", routeURL: origin)
+        let session = CacheProxySession(
+            originURL: origin, headers: [:], key: key, store: store,
+            sourceBitrate: Int(Self.clipBitrate), overrideMIMEType: "video/mp4")
+        defer { session.stop() }
+        let localURL = try session.start()
+        _ = await waitUntil(timeout: 10) { await session.reservoirSecondsAhead(atSeconds: 0) >= 1 }
+
+        let collector = ReuseMetricsCollector()
+        let urlSession = URLSession(configuration: .ephemeral, delegate: collector, delegateQueue: nil)
+        defer { urlSession.invalidateAndCancel() }
+
+        func get(_ range: String) async throws -> (Int, Int) {
+            var req = URLRequest(url: localURL)
+            req.setValue(range, forHTTPHeaderField: "Range")
+            let (d, resp) = try await urlSession.data(for: req)
+            return ((resp as? HTTPURLResponse)?.statusCode ?? -1, d.count)
+        }
+        let r1 = try await get("bytes=0-1023")
+        let r2 = try await get("bytes=2048-3071")
+        let r3 = try await get("bytes=4096-5119")
+        XCTAssertEqual([r1.0, r2.0, r3.0], [206, 206, 206], "All ranged reads must return 206 Partial Content.")
+        XCTAssertEqual([r1.1, r2.1, r3.1], [1024, 1024, 1024], "Each ranged read must return exactly the requested bytes.")
+
+        _ = await waitUntil(timeout: 3) { collector.reuseFlags.count >= 3 }
+        XCTAssertTrue(collector.reuseFlags.dropFirst().contains(true),
+            "Keep-alive: a subsequent range must REUSE the connection. Connection:close opened a new socket per range — the cause of the playhead thrash + stall-despite-cache.")
+    }
+
     @MainActor
     private func runProxyScenario(
         dropWindows: [(start: TimeInterval, duration: TimeInterval)],
@@ -932,4 +982,18 @@ final class PlaybackDropResilienceTests: XCTestCase {
         }
         return await condition()
     }
+}
+
+/// Captures `isReusedConnection` per request so a test can assert the server keeps a connection alive
+/// across sequential ranged reads (keep-alive) instead of forcing a new socket per range.
+private final class ReuseMetricsCollector: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var flags: [Bool] = []
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        lock.lock(); defer { lock.unlock() }
+        if let last = metrics.transactionMetrics.last { flags.append(last.isReusedConnection) }
+    }
+
+    var reuseFlags: [Bool] { lock.lock(); defer { lock.unlock() }; return flags }
 }

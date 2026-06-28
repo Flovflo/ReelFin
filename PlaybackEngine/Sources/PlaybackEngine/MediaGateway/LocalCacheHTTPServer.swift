@@ -109,12 +109,21 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         Task { [weak self] in
             guard let self else { connection.cancel(); return }
             defer { connection.cancel() }
-            guard let requestData = await self.receiveRequestHead(connection),
-                  let request = LocalMediaGatewayHTTPRequest(requestData) else {
-                await self.trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
-                return
+            // HTTP/1.1 keep-alive: serve sequential requests on ONE connection so AVPlayer reuses a
+            // single socket for its ranged reads (instead of opening a new connection per range — which
+            // spawned hundreds of active serves and thrashed the downloader's playhead). Loop until the
+            // client closes the socket or a serve says the connection can't continue.
+            while !Task.isCancelled {
+                guard let requestData = await self.receiveRequestHead(connection) else {
+                    return // client closed the connection (no more requests)
+                }
+                guard let request = LocalMediaGatewayHTTPRequest(requestData) else {
+                    await self.trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
+                    return
+                }
+                let keepAlive = await self.serve(request, over: connection)
+                if !keepAlive { return }
             }
-            await self.serve(request, over: connection)
         }
     }
 
@@ -141,43 +150,48 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         return buffer
     }
 
-    private func serve(_ request: LocalMediaGatewayHTTPRequest, over connection: NWConnection) async {
+    /// Serves one request. Returns whether the connection may be REUSED for a subsequent request
+    /// (keep-alive): `true` only when the full response was delivered, `false` when AVPlayer closed
+    /// mid-stream or an error response ended the connection.
+    private func serve(_ request: LocalMediaGatewayHTTPRequest, over connection: NWConnection) async -> Bool {
         let (total, resolvedType) = await downloader.contentInfo()
         guard let total, total > 0 else {
             await trySend(LocalMediaGatewayHTTPResponse.serverError(), over: connection)
-            return
+            return false
         }
         let contentType = overrideMIMEType ?? resolvedType
 
         if request.method == "HEAD" {
-            await trySend(LocalMediaGatewayHTTPResponse.head(totalLength: total, contentType: contentType), over: connection)
-            return
+            return await trySend(LocalMediaGatewayHTTPResponse.head(totalLength: total, contentType: contentType, keepAlive: true), over: connection)
         }
         guard request.method == "GET" else {
             await trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
-            return
+            return false
         }
 
         let (start, end) = byteRange(for: request.range, total: total)
         guard start >= 0, start < total, end > start else {
             await trySend(LocalMediaGatewayHTTPResponse.rangeNotSatisfiable(totalLength: total), over: connection)
-            return
+            return false
         }
 
         let header = LocalMediaGatewayHTTPResponse.partialHeaders(
             range: ByteRange(offset: start, length: Int(end - start)),
             totalLength: total,
-            contentType: contentType
+            contentType: contentType,
+            keepAlive: true
         )
-        guard await trySend(header, over: connection) else { return }
+        guard await trySend(header, over: connection) else { return false }
 
-        await streamBody(from: start, to: end, over: connection)
+        return await streamBody(from: start, to: end, over: connection)
     }
 
     /// Streams `[start, end)` from the cache, waiting for the downloader to fill any gap. Mirrors the
     /// proven `CacheResourceLoaderDelegate.serve` loop, but writes to the socket instead of an
     /// `AVAssetResourceLoadingDataRequest`.
-    private func streamBody(from start: Int64, to end: Int64, over connection: NWConnection) async {
+    /// Returns `true` if the full `[start, end)` range was delivered (so the connection can be kept
+    /// alive for the next request), `false` if AVPlayer closed mid-stream or the serve timed out.
+    private func streamBody(from start: Int64, to end: Int64, over connection: NWConnection) async -> Bool {
         let id = UUID()
         defer { finishServe(id) }
         var offset = start
@@ -189,7 +203,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                let data = try? await store.readAvailablePrefix(from: offset, maxLength: want, key: key),
                !data.isEmpty {
                 await publish(id: id, offset: offset, waiting: false)
-                guard await trySend(data, over: connection) else { return } // AVPlayer closed (seek/stop)
+                guard await trySend(data, over: connection) else { return false } // AVPlayer closed (seek/stop)
                 offset += Int64(data.count)
                 lastProgress = Date()
                 continue
@@ -201,7 +215,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
             // written to the store so it is cached for any re-read, and the background downloader
             // keeps building ahead in parallel.
             if want > 0, let data = await fetchRangeOnDemand(from: offset, length: want), !data.isEmpty {
-                guard await trySend(data, over: connection) else { return }
+                guard await trySend(data, over: connection) else { return false }
                 offset += Int64(data.count)
                 lastProgress = Date()
                 continue
@@ -213,10 +227,11 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                 AppLog.playback.warning(
                     "playback.cachehttp.serve.liveness_timeout — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
                 )
-                return
+                return false
             }
             try? await Task.sleep(nanoseconds: pollInterval)
         }
+        return true
     }
 
     /// Fetches `[from, from+length)` directly from the origin (a single ranged GET), writes it to

@@ -48,18 +48,18 @@ enum LocalMediaGatewayRequestedRange: Equatable {
 }
 
 enum LocalMediaGatewayHTTPResponse {
-    static func head(totalLength: Int64?, contentType: String?) -> Data {
-        response(status: "200 OK", headers: commonHeaders(totalLength: totalLength, contentType: contentType), body: nil)
+    static func head(totalLength: Int64?, contentType: String?, keepAlive: Bool = false) -> Data {
+        response(status: "200 OK", headers: commonHeaders(totalLength: totalLength, contentType: contentType, keepAlive: keepAlive), body: nil)
     }
 
-    static func partial(data: Data, range: ByteRange, totalLength: Int64?, contentType: String?) -> Data {
-        var response = partialHeaders(range: range, totalLength: totalLength, contentType: contentType)
+    static func partial(data: Data, range: ByteRange, totalLength: Int64?, contentType: String?, keepAlive: Bool = false) -> Data {
+        var response = partialHeaders(range: range, totalLength: totalLength, contentType: contentType, keepAlive: keepAlive)
         response.append(data)
         return response
     }
 
-    static func partialHeaders(range: ByteRange, totalLength: Int64?, contentType: String?) -> Data {
-        var headers = commonHeaders(totalLength: Int64(range.length), contentType: contentType)
+    static func partialHeaders(range: ByteRange, totalLength: Int64?, contentType: String?, keepAlive: Bool = false) -> Data {
+        var headers = commonHeaders(totalLength: Int64(range.length), contentType: contentType, keepAlive: keepAlive)
         let total = totalLength.map(String.init) ?? "*"
         let end = range.offset + Int64(range.length) - 1
         headers["Content-Range"] = "bytes \(range.offset)-\(end)/\(total)"
@@ -86,11 +86,14 @@ enum LocalMediaGatewayHTTPResponse {
         response(status: "502 Bad Gateway", headers: ["Content-Length": "0"], body: nil)
     }
 
-    private static func commonHeaders(totalLength: Int64?, contentType: String?) -> [String: String] {
+    private static func commonHeaders(totalLength: Int64?, contentType: String?, keepAlive: Bool = false) -> [String: String] {
         [
             "Accept-Ranges": "bytes",
             "Cache-Control": "no-store",
-            "Connection": "close",
+            // Keep-alive lets AVPlayer reuse ONE socket for its many ranged reads. With "close" it
+            // opened a new connection per range (hundreds), each a separate active serve, which made
+            // the downloader's playhead targeting thrash and starve playback despite a deep cache.
+            "Connection": keepAlive ? "keep-alive" : "close",
             "Content-Length": "\(max(0, totalLength ?? 0))",
             "Content-Type": contentType ?? "application/octet-stream"
         ]
