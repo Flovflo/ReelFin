@@ -101,3 +101,27 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         }
     }
 }
+
+extension JellyfinOriginalSourceResolver: CustomPlaybackAdaptiveFallbackResolving {
+    /// Resolves the clean SDR fallback: Jellyfin H.264 HLS transcode STARTING at `startSeconds`
+    /// (server tone-maps HDR→SDR — never the dark HEVC stream-copy path). Scoped to this call
+    /// only: `allowDirectRoutes=false` flips transcoding on for THIS resolution, startup routing
+    /// is untouched (the global-transcode black-screen lesson). Returns nil when the server offers
+    /// no transcode — the engine then stays on the original with the honest loading bar.
+    public func resolveAdaptiveFallback(itemID: String, startSeconds: Double) async -> URL? {
+        let ticks = Int64(max(0, startSeconds) * 10_000_000)
+        guard let selection = try? await coordinator.resolvePlayback(
+            itemID: itemID,
+            transcodeProfile: .forceH264Transcode,
+            startTimeTicks: ticks > 0 ? ticks : nil,
+            allowDirectRoutes: false,
+            nativeEngineFallbackReason: "custom_player_sdr_fallback"
+        ) else { return nil }
+        switch selection.decision.route {
+        case .transcode, .remux:
+            return selection.assetURL
+        case .directPlay, .nativeBridge:
+            return nil // defense in depth: the fallback lane never plays a direct route
+        }
+    }
+}

@@ -327,6 +327,70 @@ final class PlaybackDropResilienceTests: XCTestCase {
         XCTAssertTrue(reached, "Custom engine must load + play the original through the cache and advance. phase=\(engine.bufferingState.phase)")
     }
 
+    /// LAST-RESORT LANE mechanics: dropping to the SDR fallback swaps the item to the fallback URL
+    /// (phase `.degradedSDR`, DV session kept alive underneath), and returning swaps back to the
+    /// localhost cache at the TITLE position (SDR timeline is 0-based at the drop point). The
+    /// 90s-sustained policy itself is covered by AdaptiveLanePolicyTests; this drives the swaps.
+    @MainActor
+    func testEngineSDRLaneSwapAndReturnMechanics() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1024)
+        let origin = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let originPort = try origin.start()
+        defer { origin.stop() }
+        let sdr = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let sdrPort = try sdr.start()
+        defer { sdr.stop() }
+        let originURL = URL(string: "http://127.0.0.1:\(originPort)/clip.mp4")!
+        let sdrURL = URL(string: "http://127.0.0.1:\(sdrPort)/sdr.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("SDRLane.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "sdrlane", sourceID: "src", routeURL: originURL)
+
+        let resolver = MockCustomSourceResolver(
+            originURL: originURL, sourceBitrate: Int(Self.clipBitrate), cacheKey: key, fallbackURL: sdrURL)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        defer { engine.stop() }
+
+        engine.load(itemID: "sdrlane", autoPlay: true)
+        let playing = await waitUntil(timeout: 30) { @MainActor in
+            engine.bufferingState.phase == .playing && engine.player.currentTime().seconds > 1.0
+        }
+        XCTAssertTrue(playing)
+        let dropPosition = engine.lastObservedSeconds
+
+        await engine.debugForceLaneChange(.dropToSDR)
+
+        let inSDR = await waitUntil(timeout: 15) { @MainActor in
+            guard let asset = engine.player.currentItem?.asset as? AVURLAsset else { return false }
+            return asset.url.port == sdrPort
+                && engine.bufferingState.phase == .degradedSDR
+                && engine.player.currentTime().seconds > 0.3
+        }
+        XCTAssertTrue(inSDR, "drop must swap onto the fallback URL and surface .degradedSDR (phase=\(engine.bufferingState.phase))")
+        // Title position keeps advancing from the drop point (offset + 0-based SDR time).
+        let titlePositionInSDR = await waitUntil(timeout: 10) { @MainActor in
+            engine.lastObservedSeconds >= dropPosition
+        }
+        XCTAssertTrue(titlePositionInSDR)
+
+        await engine.debugForceLaneChange(.returnToOriginal)
+
+        let backOnOriginal = await waitUntil(timeout: 15) { @MainActor in
+            guard let asset = engine.player.currentItem?.asset as? AVURLAsset else { return false }
+            return asset.url.host == "127.0.0.1" && asset.url.port != sdrPort
+                && engine.bufferingState.phase == .playing
+                && engine.player.currentTime().seconds > dropPosition - 3
+        }
+        XCTAssertTrue(backOnOriginal, "return must land back on the localhost cache near the title position (phase=\(engine.bufferingState.phase), t=\(engine.player.currentTime().seconds))")
+        XCTAssertNil(engine.errorMessage)
+    }
+
     /// PERCEIVED-INSTANT START: prewarming on the detail view resolves the source and builds the
     /// cushion BEFORE the user taps Play — load() must then adopt the warm session (no second
     /// resolve, no new server) and reach playback near-instantly.
@@ -1248,16 +1312,20 @@ final class PlaybackDropResilienceTests: XCTestCase {
         func increment() { lock.lock(); n += 1; lock.unlock() }
     }
 
-    private struct MockCustomSourceResolver: CustomPlaybackSourceResolving {
+    private struct MockCustomSourceResolver: CustomPlaybackSourceResolving, CustomPlaybackAdaptiveFallbackResolving {
         let originURL: URL
         let sourceBitrate: Int
         let cacheKey: MediaGatewayCacheKey
         var resolveCounter: ResolveCounter? = nil
+        var fallbackURL: URL? = nil
         func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
             resolveCounter?.increment()
             return ResolvedOriginalSource(
                 originURL: originURL, headers: [:], sourceBitrate: sourceBitrate,
                 overrideMIMEType: "video/mp4", cacheKey: cacheKey, isDolbyVision: false)
+        }
+        func resolveAdaptiveFallback(itemID: String, startSeconds: Double) async -> URL? {
+            fallbackURL
         }
     }
 

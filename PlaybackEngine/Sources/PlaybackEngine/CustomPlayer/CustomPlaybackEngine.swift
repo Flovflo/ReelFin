@@ -37,6 +37,13 @@ public protocol CustomPlaybackProgressReporting: Sendable {
     func reportStopped(_ update: PlaybackProgressUpdate) async
 }
 
+/// Optional capability of a source resolver: produce the clean SDR fallback stream (Jellyfin H.264
+/// HLS transcode, tone-mapped server-side) STARTING at a position. Resolved lazily, only when the
+/// last-resort lane actually fires — never at startup (the global-transcode black-screen lesson).
+public protocol CustomPlaybackAdaptiveFallbackResolving: Sendable {
+    func resolveAdaptiveFallback(itemID: String, startSeconds: Double) async -> URL?
+}
+
 /// The clean custom player (blueprint §2). ONE `AVPlayer`, fed the original bytes from the local
 /// disk cache over `http://127.0.0.1` (DV-safe), with the ORIGINAL-FIRST dynamic brain driving a
 /// loading bar instead of cuts or quality drops. The cache's own fill rate is the connection probe
@@ -103,6 +110,12 @@ public final class CustomPlaybackEngine {
     // Connection measurement (fed from the cache's own fill rate — no separate preheat).
     private var lastTickSnapshot: (date: Date, position: Double, reservoir: Double)?
 
+    // Last-resort lane (SDR fallback with automatic DV return). The SDR stream's timeline is
+    // 0-based at the drop position (Jellyfin transcodes from StartTimeTicks), so every position
+    // the engine tracks/reports while in SDR adds this offset.
+    private var laneState = AdaptiveLanePolicy.State()
+    private var sdrTimelineOffsetSeconds: Double = 0
+
     // Server progress reporting (resume position / watched state).
     private var durationSeconds: Double = 0
     private var lastProgressReportAt: Date = .distantPast
@@ -166,6 +179,8 @@ public final class CustomPlaybackEngine {
         rebuildTimestamps = []
         didReportStop = false
         durationSeconds = 0
+        laneState = AdaptiveLanePolicy.State()
+        sdrTimelineOffsetSeconds = 0
         bufferingState = PlaybackBufferingState(phase: .prebuffering)
         errorMessage = nil
         loadTask = Task { [weak self] in
@@ -376,21 +391,30 @@ public final class CustomPlaybackEngine {
     private func monitorTick() async {
         guard let session, let item = player.currentItem else { return }
         guard bufferingState.phase != .failed, bufferingState.phase != .ended else { return }
-        let nowSeconds = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
+        let rawSeconds = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
+        // The SDR fallback stream's timeline is 0-based at the drop position — track the TITLE
+        // position everywhere (resume reporting, reservoir aim, the return swap).
+        let nowSeconds = sdrTimelineOffsetSeconds + rawSeconds
         if item.status == .readyToPlay, nowSeconds > 0 {
             lastKnownTimeSeconds = nowSeconds
         }
-        if durationSeconds <= 0 {
+        if durationSeconds <= 0, laneState.lane == .original {
             let duration = item.duration.seconds
             if duration.isFinite, duration > 0 { durationSeconds = duration }
         }
         // Cache depth for the HUD only — this is a CBR byte↔seconds estimate, fine to *display* but
-        // NOT to gate buffering on (it oscillates on a VBR file).
+        // NOT to gate buffering on (it oscillates on a VBR file). In the SDR lane this is the DV
+        // reservoir rebuilding underneath for the return.
         let reservoir = await session.reservoirSecondsAhead(atSeconds: nowSeconds)
+        if laneState.lane == .sdrFallback {
+            // No serve requests reach the localhost server in SDR — keep the DV fill following the
+            // (title) playhead ourselves so the return swap lands on a warm region.
+            session.setPlayheadOffset(session.byteOffset(forSeconds: nowSeconds))
+        }
 
         // Feed the connection monitor from the cache's own fill rate: content gained (reservoir
         // growth + playhead progress) per wall-second, scaled by the file's bitrate. This keeps
-        // `sustainedBelowBitrateSeconds` honest for the (future) last-resort lane and diagnostics.
+        // `sustainedBelowBitrateSeconds` honest for the last-resort lane and diagnostics.
         let now = Date()
         if let last = lastTickSnapshot {
             let dt = now.timeIntervalSince(last.date)
@@ -405,16 +429,87 @@ public final class CustomPlaybackEngine {
 
         // Drive the loading bar from AVPlayer's REAL transport state, not the byte estimate. Only a
         // genuine stall (AVPlayer has run dry and is waiting for data) shows the bar.
-        switch player.timeControlStatus {
-        case .waitingToPlayAtSpecifiedRate:
+        let isStarving = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        switch (laneState.lane, isStarving) {
+        case (.sdrFallback, _):
+            bufferingState = PlaybackBufferingState(phase: .degradedSDR, reservoirSeconds: reservoir)
+        case (.original, true):
             bufferingState = PlaybackBufferingState(
                 phase: .buffering, reservoirSeconds: reservoir, targetSeconds: PlaybackLanePolicy.bufferResumeSeconds)
-        default:
+        case (.original, false):
             bufferingState = PlaybackBufferingState(phase: .playing, reservoirSeconds: reservoir)
+        }
+
+        // Last-resort lane brain: drop only on PROVEN sustained inability + real starvation;
+        // return on held headroom + a rebuilt DV reservoir (anti-flap inside the policy).
+        if let monitor {
+            let change = AdaptiveLanePolicy.decision(
+                now: now,
+                isBuffering: isStarving,
+                sustainedBelowBitrateSeconds: monitor.sustainedBelowBitrateSeconds(now: now),
+                headroom: monitor.headroom(now: now),
+                dvReservoirSeconds: reservoir,
+                state: &laneState)
+            if let change { await applyLaneChange(change) }
         }
 
         reportProgressIfDue(now: now)
         await session.maintainDiskBudget(currentSeconds: nowSeconds)
+    }
+
+    // MARK: - Last-resort SDR lane (drop + automatic DV return)
+
+#if DEBUG
+    /// Test hook: force a lane change with the same state mutation the policy performs, so the
+    /// swap mechanics (item replacement, timeline offset, phase) are testable without waiting the
+    /// policy's 90s sustained window.
+    func debugForceLaneChange(_ change: AdaptiveLanePolicy.LaneChange) async {
+        switch change {
+        case .dropToSDR: laneState.lane = .sdrFallback
+        case .returnToOriginal: laneState.lane = .original
+        }
+        await applyLaneChange(change)
+    }
+#endif
+
+    func applyLaneChange(_ change: AdaptiveLanePolicy.LaneChange) async {
+        switch change {
+        case .dropToSDR:
+            guard let adaptive = resolver as? CustomPlaybackAdaptiveFallbackResolving,
+                  let itemID = currentItemID else {
+                laneState.lane = .original // no fallback capability — stay honest on the original
+                return
+            }
+            let at = max(0, lastKnownTimeSeconds)
+            guard let url = await adaptive.resolveAdaptiveFallback(itemID: itemID, startSeconds: at) else {
+                AppLog.playback.warning("customplayer.lane.sdr_unavailable — item=\(itemID.prefix(8), privacy: .public)")
+                laneState.lane = .original
+                return
+            }
+            AppLog.playback.warning(
+                "customplayer.lane.drop_to_sdr — item=\(itemID.prefix(8), privacy: .public) at=\(at, format: .fixed(precision: 1))"
+            )
+            sdrTimelineOffsetSeconds = at
+            lastTickSnapshot = nil
+            let item = AVPlayerItem(url: url)
+            item.preferredForwardBufferDuration = 0
+            player.replaceCurrentItem(with: item)
+            observeItemLifecycle(item)
+            player.play()
+            bufferingState = PlaybackBufferingState(phase: .degradedSDR, reservoirSeconds: 0)
+
+        case .returnToOriginal:
+            guard let session, let localURL = session.localURL else { return }
+            let at = max(0, lastKnownTimeSeconds)
+            AppLog.playback.notice(
+                "customplayer.lane.return_to_original — at=\(at, format: .fixed(precision: 1))"
+            )
+            sdrTimelineOffsetSeconds = 0
+            lastTickSnapshot = nil
+            installItem(localURL: localURL, seekTo: at > 0 ? at : nil)
+            player.play()
+            bufferingState = PlaybackBufferingState(phase: .playing, reservoirSeconds: 0)
+        }
     }
 
     // MARK: - Item lifecycle observation (the never-freeze ladder inputs)
@@ -500,6 +595,10 @@ public final class CustomPlaybackEngine {
 
     private func rebuildCurrentItem() {
         guard let session, let localURL = session.localURL else { return }
+        // A failed SDR item rebuilds onto the ORIGINAL (warm cache) — the lane brain can re-drop
+        // later if the inability persists.
+        laneState.lane = .original
+        sdrTimelineOffsetSeconds = 0
         let resume = max(0, lastKnownTimeSeconds)
         installItem(localURL: localURL, seekTo: resume > 0 ? resume : nil)
         player.play()
