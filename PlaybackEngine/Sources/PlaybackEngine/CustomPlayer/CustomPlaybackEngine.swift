@@ -393,6 +393,10 @@ public final class CustomPlaybackEngine {
         let depth = await session.reservoirSecondsAhead(atSeconds: startSeconds)
         bufferingState = PlaybackBufferingState(phase: .playing, reservoirSeconds: depth)
         if autoPlay { player.play() }
+        // Phase B (blueprint §6): once playback is rolling, step the in-RAM forward buffer up so
+        // AVPlayer keeps ~30s decoded ahead ON TOP of the disk reservoir (fed at disk speed from
+        // localhost — no network cost). The startup gate already ran with 0 for the fast first frame.
+        player.currentItem?.preferredForwardBufferDuration = 30
     }
 
     // MARK: - Steady monitor (loading bar + connection measurement + position tracking)

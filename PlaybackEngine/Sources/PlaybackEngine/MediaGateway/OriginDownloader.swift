@@ -38,7 +38,11 @@ actor OriginDownloader {
     private let maxParallelWindows: Int
     private let headLength: Int64
     private let tailLength: Int64
-    private let minSubBlock = 256 * 1_024
+    // 1 MiB sub-blocks: 4× fewer store-actor hops / coverage events / segment renames on the write
+    // hot path than 256 KiB, while still committing progress every ~0.3s at 26 Mbps. First-byte
+    // latency is unaffected (the serve path reads whatever prefix exists, and on-demand fetches
+    // bypass the fill entirely).
+    private let minSubBlock = 1_024 * 1_024
 
     private var totalLength: Int64?
     private var resolvedContentType: String?
