@@ -19,6 +19,9 @@ public struct ResolvedOriginalSource: Sendable {
     /// original: the engine then plays the URL directly (AVPlayer's own HLS stack — segments are
     /// their own dropout recovery) and skips the byte-range cache session entirely.
     public let isAdaptiveStream: Bool
+    /// Text sidecar subtitle tracks the player renders itself (AVFoundation can't inject external
+    /// text tracks into a progressive asset).
+    public let externalSubtitles: [ExternalSubtitleTrack]
 
     public init(
         originURL: URL,
@@ -27,7 +30,8 @@ public struct ResolvedOriginalSource: Sendable {
         overrideMIMEType: String?,
         cacheKey: MediaGatewayCacheKey,
         isDolbyVision: Bool,
-        isAdaptiveStream: Bool = false
+        isAdaptiveStream: Bool = false,
+        externalSubtitles: [ExternalSubtitleTrack] = []
     ) {
         self.originURL = originURL
         self.headers = headers
@@ -36,6 +40,7 @@ public struct ResolvedOriginalSource: Sendable {
         self.cacheKey = cacheKey
         self.isDolbyVision = isDolbyVision
         self.isAdaptiveStream = isAdaptiveStream
+        self.externalSubtitles = externalSubtitles
     }
 }
 
@@ -80,6 +85,16 @@ public final class CustomPlaybackEngine {
     public private(set) var sourceQualityLabel: String?
     /// Fired once when the title plays to its end (dismiss / up-next hook for the UI).
     public var onPlaybackEnded: (() -> Void)?
+    /// External subtitles rendered by the player itself (AVFoundation can't inject sidecar text
+    /// tracks into a progressive asset). The view binds the picker + the cue overlay.
+    public let subtitles = SubtitleOverlayModel()
+    /// Skip intro/credits suggestion (same resolver as everywhere in the app) — nil when none.
+    public private(set) var activeSkipSuggestion: PlaybackSkipSuggestion?
+    /// Item metadata + binge queue, provided by the host (drives episode skip/next semantics).
+    public var currentMediaItem: MediaItem?
+    public var nextEpisodeQueue: [MediaItem] = []
+    /// Fired to chain into the next episode (host reloads the engine with it + remaining queue).
+    public var onPlayNext: ((MediaItem, [MediaItem]) -> Void)?
 
     /// Default deep-cache budget (4 GB iOS / 10 GB tvOS). Public so the app can size the store it
     /// passes in to match the engine's read-ahead budget.
@@ -100,6 +115,10 @@ public final class CustomPlaybackEngine {
     private let store: MediaGatewayStore
     private let reporter: CustomPlaybackProgressReporting?
     private let prewarmer: CustomPlayerPrewarmer?
+    private let markers: CustomPlaybackMarkersProviding?
+    private var mediaSegments: [MediaSegment] = []
+    private var markersTask: Task<Void, Never>?
+    private var timeObserverToken: Any?
 
     private var session: CacheProxySession?
     private var monitor: ConnectionMonitor?
@@ -154,12 +173,14 @@ public final class CustomPlaybackEngine {
         resolver: CustomPlaybackSourceResolving,
         store: MediaGatewayStore,
         reporter: CustomPlaybackProgressReporting? = nil,
-        prewarmer: CustomPlayerPrewarmer? = nil
+        prewarmer: CustomPlayerPrewarmer? = nil,
+        markers: CustomPlaybackMarkersProviding? = nil
     ) {
         self.resolver = resolver
         self.store = store
         self.reporter = reporter
         self.prewarmer = prewarmer
+        self.markers = markers
         self.player = AVPlayer()
         self.player.automaticallyWaitsToMinimizeStalling = true
         // AirPlay is allowed — but the localhost cache URL is unreachable from a receiver, so the
@@ -213,6 +234,9 @@ public final class CustomPlaybackEngine {
         laneState = AdaptiveLanePolicy.State()
         sdrTimelineOffsetSeconds = 0
         adaptiveStreamURL = nil
+        mediaSegments = []
+        activeSkipSuggestion = nil
+        loadMarkers(itemID: itemID)
         bufferingState = PlaybackBufferingState(phase: .prebuffering)
         errorMessage = nil
         loadTask = Task { [weak self] in
@@ -348,6 +372,8 @@ public final class CustomPlaybackEngine {
         originSource = (resolved.originURL, resolved.headers)
         isExternalPlaybackItemActive = false
         sourceQualityLabel = resolved.isDolbyVision ? "HDR/DV" : nil
+        subtitles.configure(tracks: resolved.externalSubtitles)
+        installTimeObserver()
         self.session = session
 
         let startSeconds = Double(startTimeTicks ?? 0) / 10_000_000
@@ -369,6 +395,8 @@ public final class CustomPlaybackEngine {
         sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
         sourceQualityLabel = nil
         adaptiveStreamURL = resolved.originURL
+        subtitles.configure(tracks: resolved.externalSubtitles)
+        installTimeObserver()
         sdrTimelineOffsetSeconds = Double(startTimeTicks ?? 0) / 10_000_000 // HLS timeline is 0-based at the resume point
         let item = AVPlayerItem(url: resolved.originURL)
         player.replaceCurrentItem(with: item)
@@ -476,6 +504,7 @@ public final class CustomPlaybackEngine {
                 phase: isStarving ? .buffering : .degradedSDR,
                 reservoirSeconds: 0,
                 targetSeconds: isStarving ? PlaybackLanePolicy.bufferResumeSeconds : 0)
+            updateSkipSuggestion()
             reportProgressIfDue(now: Date())
             return
         }
@@ -530,6 +559,7 @@ public final class CustomPlaybackEngine {
             if let change { await applyLaneChange(change) }
         }
 
+        updateSkipSuggestion()
         reportProgressIfDue(now: now)
         await session.maintainDiskBudget(currentSeconds: nowSeconds)
     }
@@ -621,6 +651,62 @@ public final class CustomPlaybackEngine {
             installItem(localURL: localURL, seekTo: at > 0 ? at : nil)
             player.play()
             bufferingState = PlaybackBufferingState(phase: .playing, reservoirSeconds: 0)
+        }
+    }
+
+    // MARK: - Markers (skip intro/credits) + external subtitles + binge chaining
+
+    private func loadMarkers(itemID: String) {
+        markersTask?.cancel()
+        guard let markers else { return }
+        markersTask = Task { [weak self] in
+            let segments = await markers.mediaSegments(itemID: itemID)
+            guard let self, !Task.isCancelled, self.currentItemID == itemID else { return }
+            self.mediaSegments = segments
+        }
+    }
+
+    /// Applies the current skip suggestion (seek past the segment, or chain to the next episode).
+    public func skipCurrentSegment() {
+        guard let suggestion = activeSkipSuggestion else { return }
+        switch suggestion.target {
+        case let .seek(to: targetSeconds):
+            seek(toSeconds: targetSeconds)
+            activeSkipSuggestion = nil
+        case .nextEpisode:
+            playNextEpisodeIfAvailable()
+        }
+    }
+
+    private func playNextEpisodeIfAvailable() {
+        guard let next = nextEpisodeQueue.first else { return }
+        let remaining = Array(nextEpisodeQueue.dropFirst())
+        onPlayNext?(next, remaining)
+    }
+
+    private func updateSkipSuggestion() {
+        let suggestion = PlaybackSkipSuggestionResolver.suggestion(
+            segments: mediaSegments,
+            currentTime: lastKnownTimeSeconds,
+            duration: durationSeconds,
+            currentItem: currentMediaItem,
+            nextEpisodeQueue: nextEpisodeQueue
+        )
+        if activeSkipSuggestion != suggestion { activeSkipSuggestion = suggestion }
+    }
+
+    /// Fine-grained (0.25s) title-position feed for the subtitle overlay — the 1s monitor tick is
+    /// too coarse for cue timing.
+    private func installTimeObserver() {
+        if let timeObserverToken { player.removeTimeObserver(timeObserverToken) }
+        timeObserverToken = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main
+        ) { [weak self] time in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let raw = time.seconds.isFinite ? time.seconds : 0
+                self.subtitles.updateTime(self.sdrTimelineOffsetSeconds + raw)
+            }
         }
     }
 
@@ -750,6 +836,11 @@ public final class CustomPlaybackEngine {
             let update = progressUpdate(positionTicks: ticks, isPaused: false, isPlaying: false, didFinish: true)
             Task { await reporter.reportStopped(update) }
         }
+        // Binge chaining: an episode with a queued follower rolls straight into it.
+        if currentMediaItem?.mediaType == .episode, !nextEpisodeQueue.isEmpty {
+            playNextEpisodeIfAvailable()
+            return
+        }
         onPlaybackEnded?()
     }
 
@@ -781,6 +872,11 @@ public final class CustomPlaybackEngine {
         loadTask?.cancel(); loadTask = nil
         monitorTask?.cancel(); monitorTask = nil
         rebuildTask?.cancel(); rebuildTask = nil
+        markersTask?.cancel(); markersTask = nil
+        if let timeObserverToken { player.removeTimeObserver(timeObserverToken) }
+        timeObserverToken = nil
+        subtitles.configure(tracks: [])
+        activeSkipSuggestion = nil
         removeItemObservers()
         if let observer = audioInterruptionObserver { NotificationCenter.default.removeObserver(observer) }
         audioInterruptionObserver = nil

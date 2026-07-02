@@ -757,22 +757,29 @@ final class DetailViewModel {
     }
 
     private func markItemInProgress(itemID: String, progress: PlaybackProgress) {
+        // Copy-modify-writeback everywhere: an optional-chained assignment (`nextUpEpisode?.x =
+        // f(nextUpEpisode…)`) opens the @Observable modify access BEFORE evaluating its right-hand
+        // side, so re-reading the same property there is a FATAL Swift exclusivity violation
+        // (tvOS crash on player dismissal, 2026-07-02). One writeback also means one observation
+        // notification instead of three.
+        func applied(_ item: MediaItem) -> MediaItem {
+            var updated = item
+            updated.isPlayed = false
+            updated.playbackPositionTicks = progress.positionTicks
+            updated.runtimeTicks = max(updated.runtimeTicks ?? 0, progress.totalTicks)
+            return updated
+        }
+
         updateEpisode(itemID: itemID) { item in
-            item.isPlayed = false
-            item.playbackPositionTicks = progress.positionTicks
-            item.runtimeTicks = max(item.runtimeTicks ?? 0, progress.totalTicks)
+            item = applied(item)
         }
 
         if detail.item.id == itemID {
-            detail.item.isPlayed = false
-            detail.item.playbackPositionTicks = progress.positionTicks
-            detail.item.runtimeTicks = max(detail.item.runtimeTicks ?? 0, progress.totalTicks)
+            detail.item = applied(detail.item)
         }
 
-        if nextUpEpisode?.id == itemID {
-            nextUpEpisode?.isPlayed = false
-            nextUpEpisode?.playbackPositionTicks = progress.positionTicks
-            nextUpEpisode?.runtimeTicks = max(nextUpEpisode?.runtimeTicks ?? 0, progress.totalTicks)
+        if let episode = nextUpEpisode, episode.id == itemID {
+            nextUpEpisode = applied(episode)
         }
     }
 

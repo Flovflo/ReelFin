@@ -72,8 +72,26 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             sourceBitrate: selection.source.bitrate,
             overrideMIMEType: overrideMIMEType,
             cacheKey: key,
-            isDolbyVision: selection.source.isLikelyHDRorDV
+            isDolbyVision: selection.source.isLikelyHDRorDV,
+            isAdaptiveStream: false,
+            externalSubtitles: Self.externalSubtitleTracks(for: selection.source, assetURL: assetURL)
         )
+    }
+
+    /// Text sidecar subtitle tracks (SRT/VTT) of the resolved source, with Jellyfin delivery URLs
+    /// derived from the asset URL's server + api_key. Image formats (PGS) can't be text-rendered.
+    static func externalSubtitleTracks(for source: MediaSource, assetURL: URL) -> [ExternalSubtitleTrack] {
+        let textCodecs: Set<String> = ["srt", "subrip", "vtt", "webvtt"]
+        guard var components = URLComponents(url: assetURL, resolvingAgainstBaseURL: false) else { return [] }
+        let apiKey = components.queryItems?.first { $0.name.lowercased() == "api_key" }?.value
+        return source.subtitleTracks.compactMap { track in
+            guard let codec = track.codec?.lowercased(), textCodecs.contains(codec) else { return nil }
+            components.path = "/Videos/\(source.itemID)/\(source.id)/Subtitles/\(track.index)/0/Stream.srt"
+            components.queryItems = apiKey.map { [URLQueryItem(name: "api_key", value: $0)] }
+            guard let url = components.url else { return nil }
+            let label = track.title.isEmpty ? (track.language ?? "Subtitle \(track.index)") : track.title
+            return ExternalSubtitleTrack(id: track.id, label: label, url: url)
+        }
     }
 
     /// Extensionless direct-play origins need a MIME hint so AVKit picks the RIGHT demuxer — getting
@@ -92,6 +110,10 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
         if tokens.contains("mkv") || tokens.contains("matroska") { return "video/x-matroska" }
+        // The composite "mov,mp4,m4a,3gp,3g2,mj2" is ffmpeg's shared label for the WHOLE QuickTime
+        // family — real .mp4 files report it too (live probe 2026-07-02: '…FW.mp4' carries exactly
+        // that string). It cannot discriminate mov vs mp4; only the file extension can (handled
+        // above via `source.filePath`). mp4 stays the composite default; "mov" alone maps QuickTime.
         if tokens.contains("mp4") || tokens.contains("m4v") { return "video/mp4" }
         if tokens.contains("mov") || tokens.contains("qt") { return "video/quicktime" }
         return "video/mp4"

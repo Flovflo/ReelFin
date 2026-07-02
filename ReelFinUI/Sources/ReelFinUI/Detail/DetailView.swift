@@ -1026,9 +1026,18 @@ struct DetailView: View {
         let resolver = JellyfinOriginalSourceResolver(coordinator: coordinator)
         let reporter = JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient)
         let engine = CustomPlaybackEngine(
-            resolver: resolver, store: store, reporter: reporter, prewarmer: customPrewarmer)
+            resolver: resolver, store: store, reporter: reporter, prewarmer: customPrewarmer,
+            markers: JellyfinCustomPlaybackMarkers(apiClient: dependencies.apiClient))
         engine.onPlaybackEnded = {
             handlePlayerDismissal()
+        }
+        engine.currentMediaItem = targetItem
+        engine.nextEpisodeQueue = targetItem.mediaType == .episode ? viewModel.nextEpisodes(after: targetItem) : []
+        engine.onPlayNext = { [weak engine] next, remaining in
+            guard let engine else { return }
+            engine.currentMediaItem = next
+            engine.nextEpisodeQueue = remaining
+            engine.load(itemID: next.id, startTimeTicks: nil, autoPlay: true)
         }
         playerSession = nil
         customEngine = engine

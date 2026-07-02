@@ -164,13 +164,17 @@ actor OriginDownloader {
     }
 
     /// Warm the cache for a fast first frame: probe, then fetch the tail (moov is often at EOF in
-    /// non-faststart MP4) and the head, strictly ordered, before the forward fill loop takes over.
+    /// non-faststart MP4/MOV) and the head, strictly ordered, before the forward fill loop takes
+    /// over. The tail window SCALES with the file: the moov of a feature-length 4K original runs
+    /// tens of MB, and a 4 MB tail left the parser without its index (tvOS device log 2026-07-02:
+    /// sequential 2 MB scans from byte 0, no first frame).
     func primeStart() async {
         guard !didPrime else { return }
         didPrime = true
         _ = await contentInfo()
         if let total = totalLength, total > tailLength {
-            try? await downloadWindow(from: total - tailLength, to: total)
+            let scaledTail = min(max(tailLength, total / 200), 64 * 1_024 * 1_024)
+            try? await downloadWindow(from: max(0, total - scaledTail), to: total)
         }
         let headEnd = totalLength.map { min(headLength, $0) } ?? headLength
         try? await downloadWindow(from: 0, to: headEnd)

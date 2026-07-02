@@ -15,11 +15,18 @@ struct CustomPlayerView: View {
                 .ignoresSafeArea()
             if engine.bufferingState.phase != .failed {
                 VStack {
-                    cacheHUD
+                    HStack(alignment: .top) {
+                        cacheHUD
+                        Spacer()
+                        subtitlePicker
+                    }
                     Spacer()
                 }
                 .padding(.top, 8)
+                .padding(.horizontal, 8)
             }
+            subtitleCueOverlay
+            skipOverlay
             overlay
         }
         .onAppear {
@@ -108,6 +115,88 @@ struct CustomPlayerView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.black.opacity(0.45), in: Capsule())
+    }
+
+    /// External-subtitle cue rendered by the player itself (sidecar SRT/VTT — AVFoundation can't
+    /// inject text tracks into a progressive asset). Bottom-centered, TV-readable.
+    @ViewBuilder
+    private var subtitleCueOverlay: some View {
+        if let cue = engine.subtitles.currentCue, !cue.isEmpty {
+            VStack {
+                Spacer()
+                Text(cue)
+                    .font(.system(size: 34, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.9), radius: 3, x: 0, y: 1)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 8)
+                    .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.bottom, 72)
+            }
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    /// Skip intro/credits + next-episode suggestion (same resolver as the rest of the app).
+    @ViewBuilder
+    private var skipOverlay: some View {
+        if let suggestion = engine.activeSkipSuggestion {
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+#if os(iOS)
+                    PlaybackSkipButton(suggestion: suggestion) {
+                        engine.skipCurrentSegment()
+                    }
+#else
+                    Button {
+                        engine.skipCurrentSegment()
+                    } label: {
+                        Label(suggestion.title, systemImage: "forward.frame.fill")
+                            .font(.system(size: 26, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 26)
+                            .padding(.vertical, 14)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.white.opacity(0.9))
+                    .foregroundStyle(.black)
+#endif
+                }
+                .padding(.trailing, 48)
+                .padding(.bottom, 96)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// External subtitle track picker — only shown when the source actually has sidecar tracks.
+    @ViewBuilder
+    private var subtitlePicker: some View {
+        if !engine.subtitles.availableTracks.isEmpty {
+            Menu {
+                Button {
+                    engine.subtitles.select(trackID: nil)
+                } label: {
+                    Label("Désactivés", systemImage: engine.subtitles.activeTrackID == nil ? "checkmark" : "captions.bubble")
+                }
+                ForEach(engine.subtitles.availableTracks) { track in
+                    Button {
+                        engine.subtitles.select(trackID: track.id)
+                    } label: {
+                        Label(track.label, systemImage: engine.subtitles.activeTrackID == track.id ? "checkmark" : "captions.bubble")
+                    }
+                }
+            } label: {
+                Image(systemName: engine.subtitles.activeTrackID == nil ? "captions.bubble" : "captions.bubble.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.45), in: Circle())
+            }
+        }
     }
 
     private var qualityBadge: (text: String, tint: Color)? {
