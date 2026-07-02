@@ -120,6 +120,10 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         // Cancelling the connection unblocks its parked `receive` → the handle Task exits its loop.
         for connection in conns { connection.cancel() }
         for task in tasks { task.cancel() }
+        // An un-invalidated URLSession outlives its owner (Foundation keeps it alive until process
+        // exit) — the exact per-playback-session leak family that produced the cross-replay memory
+        // warnings → jetsam. Invalidate it with the rest of the transport.
+        onDemandSession.invalidateAndCancel()
         // Capture the downloader value (NOT self) so this escaping Task is safe to spawn from deinit.
         let downloader = self.downloader
         Task { await downloader.stop() }
@@ -137,6 +141,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         lock.unlock()
         for connection in conns { connection.cancel() }
         for task in tasks { task.cancel() }
+        onDemandSession.invalidateAndCancel()
         let downloader = self.downloader
         Task { await downloader.stop() }
     }

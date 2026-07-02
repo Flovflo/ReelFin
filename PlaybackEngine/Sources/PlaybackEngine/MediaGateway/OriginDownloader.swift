@@ -289,6 +289,10 @@ actor OriginDownloader {
             return .transient
         } catch is CancellationError {
             return .cancelled
+        } catch let MediaAccessError.httpStatus(code) where (500...599).contains(code) || code == 429 {
+            // A flaky origin/CDN answers with sporadic 5xx/429 bursts — that must never kill the
+            // background fill for the rest of the session; back off and resume like a drop.
+            return .transient
         } catch {
             return .permanent
         }

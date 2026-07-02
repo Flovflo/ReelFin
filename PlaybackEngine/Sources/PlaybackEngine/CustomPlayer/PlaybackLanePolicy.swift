@@ -19,9 +19,15 @@ public enum PlaybackLanePolicy {
     /// At/above this the link can at least carry realtime, so the original is still viable (with a
     /// pre-buffer cushion). Below it, the link cannot sustain realtime and we lean on the reservoir.
     public static let realtimeHeadroom: Double = 1.0
-    /// Pre-buffer cushion (seconds of the original) to build behind the loading bar BEFORE starting.
-    /// We always build a real cushion up front (be sure there's enough cache → no cuts), and scale
-    /// it up the weaker the link is. Generous on purpose — not a token few seconds.
+    /// Cushion for a link measured comfortably FASTER than the file: just enough to hide transport
+    /// jitter — the reservoir then builds itself behind playback. This is the Infuse-class fast
+    /// start ("démarre rapidement"): a good link reaches 6s of a 26 Mbps file in ~1-2s.
+    public static let fastStartCushionSeconds: Double = 6
+    /// Cushion when the link roughly matches realtime, or hasn't revealed itself yet (unverified
+    /// probe / cold origin): a middle-ground the startup loop re-decides as measurements arrive.
+    public static let steadyStartCushionSeconds: Double = 20
+    /// Base/deepest cushions for a link measured BELOW the file's bitrate — patient path behind a
+    /// clear loading bar (the link cannot sustain realtime; only the reservoir hides that).
     public static let baseStartupPrebufferSeconds: Double = 30
     public static let maxStartupPrebufferSeconds: Double = 90
     /// Reservoir depth below which playback is "at risk" (informational; the actual buffer event is
@@ -57,32 +63,33 @@ public enum PlaybackLanePolicy {
 
     // MARK: - Decisions
 
-    /// Startup routing. `measuredMbps == nil` means the probe FAILED/timed out — treat as a weak,
-    /// unverified link and pre-buffer the original (never gamble on an instant start, never bail to
-    /// SDR up front). Always the original lane at startup.
+    /// Startup routing, re-decided continuously while the cushion builds (the caller loops with
+    /// fresh measurements — fully dynamic, blueprint R2). `measuredMbps == nil` means the link
+    /// hasn't revealed itself yet (cold origin / unverified probe) — start from the middle-ground
+    /// cushion, never gamble on an instant start, never bail to SDR up front. Always the original
+    /// lane at startup; the moment the held reservoir covers the (current) target, play.
     public static func startupAction(
         measuredMbps: Double?,
         sourceBitrateMbps: Double,
         reservoirSecondsAlready: Double = 0
     ) -> StartupAction {
         let src = max(0.001, sourceBitrateMbps)
-        // Always build a real cushion up front — never an instant start. A strong link just reaches
-        // the (smaller) target fast; a weak/unverified link gets a deeper one. Only skip the wait if
-        // we already hold the cushion (e.g. resuming into an already-cached region).
-        let headroom: Double
+        let target: Double
         if let measuredMbps, measuredMbps > 0 {
-            headroom = measuredMbps / src
+            target = prebufferTarget(headroom: measuredMbps / src)
         } else {
-            headroom = realtimeHeadroom * 0.6 // unverified probe → conservative
+            target = steadyStartCushionSeconds
         }
-        let target = prebufferTarget(headroom: headroom)
         return reservoirSecondsAlready >= target ? .playOriginalNow : .prebufferOriginal(targetSeconds: target)
     }
 
-    /// Weaker link → deeper cushion. Clamped. (≈ base at comfortable, scaling up as headroom falls.)
+    /// Cushion as a function of measured headroom: small and fast when the link outruns the file,
+    /// middle-ground near realtime, deep (scaled, clamped) below realtime. Weaker → deeper.
     public static func prebufferTarget(headroom: Double) -> Double {
         let h = max(0.1, headroom)
-        let scaled = baseStartupPrebufferSeconds * (comfortableHeadroom / h)
+        if h >= comfortableHeadroom { return fastStartCushionSeconds }
+        if h >= realtimeHeadroom { return steadyStartCushionSeconds }
+        let scaled = baseStartupPrebufferSeconds * (realtimeHeadroom / h)
         return min(maxStartupPrebufferSeconds, max(baseStartupPrebufferSeconds, scaled))
     }
 

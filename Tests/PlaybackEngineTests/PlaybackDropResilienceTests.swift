@@ -327,6 +327,102 @@ final class PlaybackDropResilienceTests: XCTestCase {
         XCTAssertTrue(reached, "Custom engine must load + play the original through the cache and advance. phase=\(engine.bufferingState.phase)")
     }
 
+    /// NEVER-FREEZE ladder rung 2: a FAILED AVPlayerItem (AVPlayer never self-recovers from
+    /// `.failed`) must be rebuilt at the last known position over the SAME warm cache and keep
+    /// playing — a failure used to leave a silent, permanently frozen frame.
+    @MainActor
+    func testEngineRebuildsFailedItemAndKeepsPlaying() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1024)
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("EngineRebuild.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "rebuild", sourceID: "src", routeURL: origin)
+
+        let resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: Int(Self.clipBitrate), cacheKey: key)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        engine.rebuildBackoffSeconds = [0.05, 0.05, 0.05]
+        defer { engine.stop() }
+
+        engine.load(itemID: "rebuild", autoPlay: true)
+        let playing = await waitUntil(timeout: 30) { @MainActor in
+            engine.bufferingState.phase == .playing && engine.player.currentTime().seconds > 0.5
+        }
+        XCTAssertTrue(playing, "engine must reach steady playback before the injected failure")
+        let failedItem = engine.player.currentItem
+
+        engine.handleItemFailure(reason: "test_injected_failure")
+
+        let recovered = await waitUntil(timeout: 15) { @MainActor in
+            engine.player.currentItem !== failedItem
+                && engine.player.currentItem != nil
+                && engine.player.currentTime().seconds > 0.2
+                && engine.bufferingState.phase != .failed
+        }
+        XCTAssertTrue(recovered, "a failed item must be rebuilt on the warm cache and keep playing (phase=\(engine.bufferingState.phase))")
+        XCTAssertNil(engine.errorMessage)
+    }
+
+    /// NEVER-FREEZE ladder rung 3: repeated failures inside the rolling window must end in an
+    /// HONEST error state (message + retryable), never a silent frozen frame — and `retry()` must
+    /// restart playback from the same warm cache.
+    @MainActor
+    func testEngineEntersHonestFailedStateAfterRepeatedFailuresAndRetries() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1024)
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("EngineFailState.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "failstate", sourceID: "src", routeURL: origin)
+
+        let resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: Int(Self.clipBitrate), cacheKey: key)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        engine.rebuildBackoffSeconds = [0.05, 0.05, 0.05]
+        defer { engine.stop() }
+
+        engine.load(itemID: "failstate", autoPlay: true)
+        let playing = await waitUntil(timeout: 30) { @MainActor in
+            engine.bufferingState.phase == .playing && engine.player.currentTime().seconds > 0.2
+        }
+        XCTAssertTrue(playing)
+
+        // Exhaust the rolling rebuild window (3 rebuilds), then one more failure → honest error.
+        for _ in 0..<4 {
+            engine.handleItemFailure(reason: "test_injected_failure")
+            _ = await waitUntil(timeout: 5) { @MainActor in
+                engine.bufferingState.phase == .failed || engine.player.currentItem != nil
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000) // let the scheduled rebuild land
+        }
+        let failedHonestly = await waitUntil(timeout: 5) { @MainActor in
+            engine.bufferingState.phase == .failed && engine.errorMessage != nil
+        }
+        XCTAssertTrue(failedHonestly, "repeated failures must surface an honest, retryable error state (phase=\(engine.bufferingState.phase))")
+
+        engine.retry()
+        let recovered = await waitUntil(timeout: 30) { @MainActor in
+            engine.bufferingState.phase == .playing && engine.player.currentTime().seconds > 0.2
+        }
+        XCTAssertTrue(recovered, "retry() must restart playback from the warm cache")
+        XCTAssertNil(engine.errorMessage)
+    }
+
     /// CacheProxySession (clean-engine composition) must build a DEEP reservoir ahead of the
     /// playhead and report its depth in SECONDS — the cache-depth signal the loading bar + the
     /// keep-original decisions rely on. Dynamic per file (reservoir measured in seconds of the

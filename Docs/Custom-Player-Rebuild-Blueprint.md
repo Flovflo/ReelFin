@@ -2,6 +2,39 @@
 
 **Branch:** `feat/custom-player-rebuild`
 **Status:** build-ready design. Apple-native only (AVFoundation / AVKit / VideoToolbox). iOS 26+.
+
+## Implementation status (2026-07-02)
+
+Done and offline-proven (tests in `MediaGatewayStoreTests`, `PlaybackLanePolicyTests`,
+`PlaybackDropResilienceTests`, `CacheLoaderLiveIntegrationTests`):
+
+- **Store at 4K-movie scale** — `MediaGatewayStore` now keeps per-key coverage IN MEMORY (one disk
+  scan per key, then maintained by mutations), append-coalesces sub-block writes into ≤32MB segment
+  files, deduplicates overlapping writes, reads exact slices via `FileHandle`, and throttles the
+  index JSON/trim maintenance off the write hot path (`flushIndex()` forces it at session end).
+  The prior one-file-per-256KB-sub-block + full-directory-scan-per-operation + index-rewrite-per-write
+  design degraded linearly with cache depth and is what cut playback mid-film despite a deep cache.
+- **§4 Layer 3 recovery ladder** (`CustomPlaybackEngine`) — item `.failed` KVO +
+  `failedToPlayToEndTime` → rebuild the item at the last known position over the SAME warm cache
+  (bounded rolling window, backoff), then an HONEST retryable error state (`.failed` phase + Retry
+  button). Stalls never rebuild the item (N4). Play-to-end handled (`.ended` + `onPlaybackEnded`).
+- **§6 fast start** — the startup gate is fully dynamic: fill-rate is measured WHILE the prime fetch
+  runs (no dead probe wait), the cushion target is re-decided every 250ms
+  (fast link → ~6s cushion; unverified → 20s; below-realtime → 30–90s behind the loading bar),
+  and a region cached to EOF stops the wait immediately.
+- **§4 eviction (partial)** — `MediaGatewayStore.evictRanges(endingBefore:protectingHeadBytes:)` +
+  `CacheProxySession.maintainDiskBudget`: per-title budget (default 3GB), rewind window 90s,
+  protected head; smaller titles stay fully cached for offline replay.
+- **Hygiene** — `LocalCacheHTTPServer.onDemandSession` invalidated on stop/deinit (URLSession leak
+  family that caused the cross-replay jetsam); localhost listener start moved off the MainActor;
+  `allowsExternalPlayback = false` (an AirPlay receiver cannot reach `127.0.0.1`); 5xx/429 origin
+  bursts classified transient in the fill loop (never kill the background fill).
+- **§7 progress seam (partial)** — `CustomPlaybackProgressReporting` + Jellyfin adapter: start/10s
+  progress/stop/finish reporting, `stop() -> PlaybackProgress?` feeds the UI's resume state.
+
+Still open per this blueprint: LaneController/degraded SDR HLS lane (§5, `ConnectionMonitor` is fed
+and `PlaybackLanePolicy.steadyAction` exists but the swap is NOT wired), track selection/external
+subtitles/skip segments in the custom engine (§7), Phase 7 cruft deletion, Phase 8 device tuning.
 **Supersedes:** the 9315-line `PlaybackSessionController`, the sample-buffer engine, `NativeBridge`, synthetic HLS, the custom `reelfin-cache://` resource loader, and the 4+ overlapping fallback layers.
 
 This blueprint is the synthesis of three proposals plus their cross-judgments, the AVFoundation/DV spec, and the Infuse-class behavior model. It is decisive: where the proposals contradicted the codebase, the codebase wins. **Two contradictions were verified in-tree and are resolved here, not papered over:**

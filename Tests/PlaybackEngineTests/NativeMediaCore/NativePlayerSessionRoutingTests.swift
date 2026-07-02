@@ -109,7 +109,12 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
         XCTAssertEqual(controller.nativePlayerPlaybackSurface, .appleNative)
         XCTAssertNil(controller.nativePlayerPlaybackURL)
         let asset = try XCTUnwrap(controller.player.currentItem?.asset as? AVURLAsset)
-        XCTAssertEqual(asset.url.path, "/Videos/\(itemID)/stream.mp4")
+        // Since the localhost cache proxy (LocalCacheProxyRoutePolicy, commit 4bbcc858) a large
+        // remote direct-play original is served through http://127.0.0.1 backed by the deep disk
+        // cache — plain-HTTP transport AVFoundation treats exactly like the origin (DV-safe),
+        // immune to origin dropouts. The origin URL itself is what the proxy's downloader fills from.
+        XCTAssertEqual(asset.url.host, "127.0.0.1")
+        XCTAssertEqual(asset.url.path, "/media/\(itemID)")
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
     }

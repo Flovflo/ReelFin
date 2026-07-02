@@ -40,6 +40,26 @@ final class CacheProxySession {
         /// 80 Mbps file would be ~3 GB → clamp to 2 GB of read-ahead).
         var maxAheadBytes: Int64 = 2 * 1_024 * 1_024 * 1_024
         var maxParallelWindows: Int = 6
+        /// Per-title disk cap. Titles smaller than this stay FULLY cached (offline replay). A title
+        /// bigger than it (a 4K DV remux can be 12+ GB — filling the phone) gets a rolling window:
+        /// behind the playhead only `rewindWindowSeconds` are kept (plus the protected head), the
+        /// forward reservoir stays sacred.
+        var perTitleDiskBudgetBytes: Int64 = 3 * 1_024 * 1_024 * 1_024
+        /// Seconds kept BEHIND the playhead for instant back-seek before eviction claims them.
+        var rewindWindowSeconds: Double = 90
+        /// Head region never evicted (moov/init bytes — any rebuild/replay reads them again).
+        var protectedHeadBytes: Int64 = 16 * 1_024 * 1_024
+    }
+
+    /// Pure decision for behind-playhead eviction — trivially unit-testable.
+    enum EvictionPolicy {
+        /// Returns the byte offset strictly BEFORE which cached ranges may be evicted, or nil when
+        /// no eviction is needed (title within budget / nothing behind the rewind window).
+        static func evictionCutoff(playheadByte: Int64, rewindBytes: Int64, cachedBytes: Int64, budgetBytes: Int64) -> Int64? {
+            guard budgetBytes > 0, cachedBytes > budgetBytes else { return nil }
+            let cutoff = playheadByte - rewindBytes
+            return cutoff > 0 ? cutoff : nil
+        }
     }
 
     private let originURL: URL
@@ -143,11 +163,48 @@ final class CacheProxySession {
     /// The dynamic target the loading bar measures against.
     var targetReservoirSeconds: Double { config.targetReservoirSeconds }
 
+    /// True when everything from the given time to the END of the file is already cached — the
+    /// cushion physically cannot grow past this, so any prebuffer wait must stop (resume near the
+    /// end / short titles / fully-cached replays).
+    func isCachedToEnd(fromSeconds seconds: Double) async -> Bool {
+        guard let total = await store.persistedContentLength(key: key), total > 0 else { return false }
+        let end = (try? await store.contiguousEnd(from: byteOffset(forSeconds: seconds), key: key)) ?? 0
+        return end >= total
+    }
+
+    /// Keeps this title's disk footprint bounded while it plays: when the cached size exceeds the
+    /// per-title budget, evict behind the playhead, keeping the rewind window + protected head.
+    /// Cheap (in-memory coverage) and throttled — call it from the 1s monitor tick.
+    private var lastEvictionCheckAt: Date = .distantPast
+    func maintainDiskBudget(currentSeconds: Double) async {
+        let now = Date()
+        guard now.timeIntervalSince(lastEvictionCheckAt) >= 30 else { return }
+        lastEvictionCheckAt = now
+        let cached = Int64((try? await store.cachedByteSize(key: key)) ?? 0)
+        guard let cutoff = Self.EvictionPolicy.evictionCutoff(
+            playheadByte: byteOffset(forSeconds: currentSeconds),
+            rewindBytes: Int64(config.rewindWindowSeconds * bytesPerSecond),
+            cachedBytes: cached,
+            budgetBytes: config.perTitleDiskBudgetBytes
+        ) else { return }
+        let freed = (try? await store.evictRanges(
+            endingBefore: cutoff, key: key, protectingHeadBytes: config.protectedHeadBytes)) ?? 0
+        if freed > 0 {
+            AppLog.playback.notice(
+                "customplayer.cache.evict_behind — item=\(self.key.itemID.prefix(8), privacy: .public) freedMB=\(freed / 1_048_576, privacy: .public) cutoffMB=\(cutoff / 1_048_576, privacy: .public)"
+            )
+        }
+    }
+
     func stop() {
         server?.stop(reason: "cacheproxy_stop")
         server = nil
         if let downloader { Task { await downloader.stop() } }
         downloader = nil
         localURL = nil
+        // Index persistence is throttled off the write hot path — force it now so the LRU index
+        // reflects this session before the next launch.
+        let store = self.store
+        Task { await store.flushIndex() }
     }
 }

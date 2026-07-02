@@ -11,6 +11,8 @@ public struct PlaybackBufferingState: Equatable, Sendable {
         case playing       // original playing smoothly
         case buffering     // reservoir ran dry mid-play; rebuilding the original (loading bar)
         case degradedSDR   // last-resort clean SDR (link sustainably couldn't carry the original)
+        case failed        // recovery ladder exhausted — honest error + retry, never a frozen frame
+        case ended         // played to the end
     }
 
     public let phase: Phase

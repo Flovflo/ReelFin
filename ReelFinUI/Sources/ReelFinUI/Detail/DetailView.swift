@@ -989,16 +989,19 @@ struct DetailView: View {
     private func startCustomPlayback(item: MediaItem? = nil) {
         let targetItem = item ?? viewModel.itemToPlay
         let startTicks: Int64? = (item == nil) ? targetItem.playbackPositionTicks : nil
-        let cacheBudget = Int(CustomPlaybackEngine.defaultCacheBudgetBytes) // 4 GB iOS / 10 GB tvOS
-        guard let store = try? MediaGatewayStore(
-            configuration: MediaGatewayStore.Configuration(maxBytes: cacheBudget)
-        ) else {
+        // ONE shared store for all plays: its in-memory coverage map must be the single authority,
+        // and the deep cache survives across titles/replays under one LRU budget.
+        guard let store = try? CustomPlaybackEngine.sharedStore() else {
             viewModel.errorMessage = "Cache local indisponible."
             return
         }
         let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
         let resolver = JellyfinOriginalSourceResolver(coordinator: coordinator)
-        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        let reporter = JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store, reporter: reporter)
+        engine.onPlaybackEnded = {
+            handlePlayerDismissal()
+        }
         playerSession = nil
         customEngine = engine
 #if os(iOS)
@@ -1023,7 +1026,9 @@ struct DetailView: View {
             viewModel.applyStoppedPlaybackProgress(stoppedProgress)
         }
         playerSession = nil
-        customEngine?.stop()
+        if let customProgress = customEngine?.stop() {
+            viewModel.applyStoppedPlaybackProgress(customProgress)
+        }
         customEngine = nil
         setPlayerCoverPresented(false)
         isLoadingPlayback = false

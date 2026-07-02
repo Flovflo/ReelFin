@@ -7,19 +7,36 @@ final class PlaybackLanePolicyTests: XCTestCase {
 
     // MARK: Startup — always the original lane; dynamic per file bitrate.
 
-    func testStartupAlwaysBuildsACushionEvenOnAComfortableLink() {
-        // We never instant-start cold: a strong link (40 Mbps on a 26 Mbps file = 1.54x) still
-        // pre-buffers a real cushion up front — just the (smaller) base target, reached fast.
+    func testStartupComfortableLinkStartsFastWithSmallCushion() {
+        // Fast start ("démarre rapidement"): a strong link (40 Mbps on a 26 Mbps file = 1.54x)
+        // only builds the small jitter cushion — reached in ~1-2s — because the reservoir then
+        // builds itself behind playback. No 30s gate on a link that outruns the file.
         let strong = PlaybackLanePolicy.startupAction(measuredMbps: 40, sourceBitrateMbps: 26)
         guard case let .prebufferOriginal(target) = strong else {
-            return XCTFail("Even a comfortable link must build a cushion first. Got \(strong)")
+            return XCTFail("A cold start still builds the small jitter cushion first. Got \(strong)")
         }
-        XCTAssertEqual(target, PlaybackLanePolicy.baseStartupPrebufferSeconds, accuracy: 0.001,
-                       "A comfortable link gets the base cushion, not a deeper one.")
-        // Dynamic per file: same 1.5x ratio on a different bitrate also gets the base cushion.
-        guard case .prebufferOriginal = PlaybackLanePolicy.startupAction(measuredMbps: 12, sourceBitrateMbps: 8) else {
-            return XCTFail("expected base-cushion prebuffer for a comfortable link")
+        XCTAssertEqual(target, PlaybackLanePolicy.fastStartCushionSeconds, accuracy: 0.001,
+                       "A comfortable link gets the FAST cushion, not a deep one.")
+        // Dynamic per file: the same 1.5x ratio on a different bitrate also gets the fast cushion.
+        guard case let .prebufferOriginal(smallTarget) = PlaybackLanePolicy.startupAction(measuredMbps: 12, sourceBitrateMbps: 8) else {
+            return XCTFail("expected fast-cushion prebuffer for a comfortable link")
         }
+        XCTAssertEqual(smallTarget, PlaybackLanePolicy.fastStartCushionSeconds, accuracy: 0.001)
+    }
+
+    func testStartupUnverifiedLinkUsesMiddleGroundCushion_reDecidedByCaller() {
+        // The link hasn't revealed itself yet (cold origin / first samples): a middle-ground
+        // cushion, NOT the deep weak-link one — the startup loop re-decides as measurements arrive.
+        let action = PlaybackLanePolicy.startupAction(measuredMbps: nil, sourceBitrateMbps: 26)
+        guard case let .prebufferOriginal(target) = action else { return XCTFail("expected prebuffer") }
+        XCTAssertEqual(target, PlaybackLanePolicy.steadyStartCushionSeconds, accuracy: 0.001)
+    }
+
+    func testStartupResumeIntoCachedRegionStartsInstantly() {
+        // Everything needed is already on disk → zero wait, whatever the link looks like.
+        let action = PlaybackLanePolicy.startupAction(measuredMbps: nil, sourceBitrateMbps: 26,
+                                                      reservoirSecondsAlready: PlaybackLanePolicy.steadyStartCushionSeconds)
+        XCTAssertEqual(action, .playOriginalNow)
     }
 
     func testStartupWeakLinkPrebuffersOriginalWithDynamicTarget() {
@@ -100,5 +117,22 @@ final class PlaybackLanePolicyTests: XCTestCase {
         XCTAssertEqual(PlaybackLanePolicy.bufferingProgress(reservoirSeconds: 0, targetSeconds: 10), 0)
         XCTAssertEqual(PlaybackLanePolicy.bufferingProgress(reservoirSeconds: 5, targetSeconds: 10), 0.5, accuracy: 0.001)
         XCTAssertEqual(PlaybackLanePolicy.bufferingProgress(reservoirSeconds: 20, targetSeconds: 10), 1)
+    }
+
+    // MARK: Per-title disk budget — evict behind the playhead only when over budget.
+
+    func testEvictionCutoffOnlyWhenOverBudgetAndBehindRewindWindow() {
+        // Under budget → keep everything (small titles stay fully cached for offline replay).
+        XCTAssertNil(CacheProxySession.EvictionPolicy.evictionCutoff(
+            playheadByte: 2_000, rewindBytes: 500, cachedBytes: 900, budgetBytes: 1_000))
+        // Over budget → evict strictly behind (playhead - rewind window).
+        XCTAssertEqual(CacheProxySession.EvictionPolicy.evictionCutoff(
+            playheadByte: 2_000, rewindBytes: 500, cachedBytes: 1_500, budgetBytes: 1_000), 1_500)
+        // Early in playback (cutoff would be ≤ 0) → nothing to evict yet.
+        XCTAssertNil(CacheProxySession.EvictionPolicy.evictionCutoff(
+            playheadByte: 300, rewindBytes: 500, cachedBytes: 1_500, budgetBytes: 1_000))
+        // No budget configured → never evict.
+        XCTAssertNil(CacheProxySession.EvictionPolicy.evictionCutoff(
+            playheadByte: 2_000, rewindBytes: 500, cachedBytes: 1_500, budgetBytes: 0))
     }
 }

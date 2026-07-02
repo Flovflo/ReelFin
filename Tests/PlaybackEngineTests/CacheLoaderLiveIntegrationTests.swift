@@ -120,6 +120,87 @@ final class CacheLoaderLiveIntegrationTests: XCTestCase {
             "The cache loader must keep AVPlayer's buffer fed ahead of the playhead (>5s) against the real origin.")
     }
 
+    /// LIVE proof of the WHOLE custom engine: real origin → OriginDownloader (parallel, keep-alive)
+    /// → rebuilt MediaGatewayStore (in-memory coverage, append-coalesced segments) →
+    /// LocalCacheHTTPServer (localhost, DV-safe transport) → real AVPlayer, gated by the dynamic
+    /// fast-start policy. Asserts the Infuse-class contract on a healthy link: fast first frame,
+    /// zero stalls, reservoir building behind playback.
+    @MainActor
+    func testCustomEnginePlaysRealOriginThroughLocalhostCache() async throws {
+        guard let cfg = Self.loadEnv() else {
+            throw XCTSkip("No e2e secrets — live integration test skipped.")
+        }
+        guard let base = cfg["JELLYFIN_BASE_URL"]?.trimmingCharacters(in: .whitespaces),
+              let user = cfg["JELLYFIN_USERNAME"], let pass = cfg["JELLYFIN_PASSWORD"] else {
+            throw XCTSkip("Incomplete e2e secrets.")
+        }
+        let baseURL = base.hasSuffix("/") ? String(base.dropLast()) : base
+        guard let token = try await Self.authenticate(baseURL: baseURL, user: user, pass: pass) else {
+            throw XCTSkip("Jellyfin auth failed (server/connection down) — skipping live test.")
+        }
+        let origin = URL(string: "\(baseURL)/Videos/\(Self.h264ItemID)/stream?static=true&MediaSourceId=\(Self.h264ItemID)&api_key=\(token)")!
+
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CustomEngineLive.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "original", userID: "live", serverID: origin.host, itemID: Self.h264ItemID,
+            sourceID: Self.h264ItemID, routeURL: origin
+        )
+        struct LiveResolver: CustomPlaybackSourceResolving {
+            let origin: URL
+            let key: MediaGatewayCacheKey
+            func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
+                ResolvedOriginalSource(
+                    originURL: origin, headers: [:], sourceBitrate: 5_240_184,
+                    overrideMIMEType: "video/mp4", cacheKey: key, isDolbyVision: false)
+            }
+        }
+        let engine = CustomPlaybackEngine(resolver: LiveResolver(origin: origin, key: key), store: store)
+        defer { engine.stop() }
+
+        let stalls = StallBox()
+        var stallObserver: NSObjectProtocol?
+        defer { if let stallObserver { NotificationCenter.default.removeObserver(stallObserver) } }
+
+        let loadStarted = Date()
+        engine.load(itemID: Self.h264ItemID, autoPlay: true)
+
+        let started = await Self.waitUntil(timeout: 45) { @MainActor in
+            engine.bufferingState.phase == .playing && engine.player.currentTime().seconds > 0.5
+        }
+        let ttff = Date().timeIntervalSince(loadStarted)
+        guard started else {
+            throw XCTSkip("Live start did not reach playback (connection/server state) — phase=\(engine.bufferingState.phase) err=\(engine.errorMessage ?? "nil")")
+        }
+        if let item = engine.player.currentItem {
+            stallObserver = NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main
+            ) { _ in stalls.increment() }
+        }
+
+        let watchTarget = engine.player.currentTime().seconds + 15
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline {
+            if engine.player.currentTime().seconds >= watchTarget { break }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        let reached = engine.player.currentTime().seconds
+        let reservoir = engine.bufferingState.reservoirSeconds
+        print("customengine.live — ttff=\(String(format: "%.1f", ttff))s reached=\(String(format: "%.1f", reached))s stalls=\(stalls.value) reservoir=\(String(format: "%.0f", reservoir))s err=\(engine.errorMessage ?? "nil")")
+
+        XCTAssertNil(engine.errorMessage)
+        XCTAssertLessThan(ttff, 15, "fast start: first frame must not wait on a deep cushion on a healthy link (got \(ttff)s)")
+        XCTAssertGreaterThanOrEqual(reached, watchTarget - 2, "custom engine must sustain playback against the real origin")
+        XCTAssertEqual(stalls.value, 0, "zero stalls expected on a healthy link through the localhost cache")
+        XCTAssertGreaterThan(reservoir, 10, "the disk reservoir must build behind playback")
+    }
+
     // MARK: - Helpers
 
     private static func loadEnv() -> [String: String]? {

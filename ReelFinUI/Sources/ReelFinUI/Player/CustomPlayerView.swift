@@ -13,11 +13,13 @@ struct CustomPlayerView: View {
             Color.black.ignoresSafeArea()
             CustomPlayerSurface(player: engine.player)
                 .ignoresSafeArea()
-            VStack {
-                cacheHUD
-                Spacer()
+            if engine.bufferingState.phase != .failed {
+                VStack {
+                    cacheHUD
+                    Spacer()
+                }
+                .padding(.top, 8)
             }
-            .padding(.top, 8)
             overlay
         }
         .onAppear {
@@ -36,7 +38,29 @@ struct CustomPlayerView: View {
     @ViewBuilder
     private var overlay: some View {
         let state = engine.bufferingState
-        if state.isLoadingBarVisible {
+        if state.phase == .failed {
+            // Honest, retryable error — the recovery ladder's last rung. Never a silent frozen frame.
+            VStack(spacing: 14) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.title2)
+                    .foregroundStyle(.white.opacity(0.9))
+                Text(engine.errorMessage ?? "La lecture a échoué.")
+                    .font(.callout)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+                Button {
+                    engine.retry()
+                } label: {
+                    Label("Réessayer", systemImage: "arrow.clockwise")
+                        .font(.callout.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.white.opacity(0.25))
+            }
+            .padding(24)
+            .frame(maxWidth: 420)
+            .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
+        } else if state.isLoadingBarVisible {
             VStack(spacing: 12) {
                 ProgressView(value: state.progress)
                     .progressViewStyle(.linear)
