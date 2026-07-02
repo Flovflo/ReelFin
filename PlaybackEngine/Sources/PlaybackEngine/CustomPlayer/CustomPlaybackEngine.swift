@@ -77,6 +77,7 @@ public final class CustomPlaybackEngine {
     private let resolver: CustomPlaybackSourceResolving
     private let store: MediaGatewayStore
     private let reporter: CustomPlaybackProgressReporting?
+    private let prewarmer: CustomPlayerPrewarmer?
 
     private var session: CacheProxySession?
     private var monitor: ConnectionMonitor?
@@ -114,11 +115,13 @@ public final class CustomPlaybackEngine {
     public init(
         resolver: CustomPlaybackSourceResolving,
         store: MediaGatewayStore,
-        reporter: CustomPlaybackProgressReporting? = nil
+        reporter: CustomPlaybackProgressReporting? = nil,
+        prewarmer: CustomPlayerPrewarmer? = nil
     ) {
         self.resolver = resolver
         self.store = store
         self.reporter = reporter
+        self.prewarmer = prewarmer
         self.player = AVPlayer()
         self.player.automaticallyWaitsToMinimizeStalling = true
         // The asset URL is 127.0.0.1 — unreachable from an AirPlay receiver. Route external
@@ -248,35 +251,46 @@ public final class CustomPlaybackEngine {
 
     private func runLoad(itemID: String, startTimeTicks: Int64?, autoPlay: Bool) async {
         let resolved: ResolvedOriginalSource
-        do {
-            resolved = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks)
-        } catch {
-            enterFailedState(message: "Impossible de résoudre la source : \(error.localizedDescription)")
+        let session: CacheProxySession
+        let localURL: URL
+
+        if let warm = prewarmer?.consume(itemID: itemID) {
+            // Perceived-instant start: the detail view already resolved the source, started the
+            // localhost session, and built (part of) the cushion — adopt the ready pipeline.
+            AppLog.playback.notice("customplayer.load.adopts_prewarm — item=\(itemID.prefix(8), privacy: .public)")
+            resolved = warm.resolved
+            session = warm.session
+            localURL = warm.localURL
+        } else {
+            do {
+                resolved = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks)
+            } catch {
+                enterFailedState(message: "Impossible de résoudre la source : \(error.localizedDescription)")
+                return
+            }
+            guard !Task.isCancelled else { return }
+            let fresh = CacheProxySession(
+                originURL: resolved.originURL, headers: resolved.headers, key: resolved.cacheKey,
+                store: store, sourceBitrate: resolved.sourceBitrate, overrideMIMEType: resolved.overrideMIMEType)
+            do {
+                // The localhost listener start blocks its thread briefly — keep it off the MainActor.
+                localURL = try await Task.detached(priority: .userInitiated) { try fresh.start() }.value
+            } catch {
+                enterFailedState(message: "Cache local indisponible : \(error.localizedDescription)")
+                return
+            }
+            session = fresh
+        }
+        guard !Task.isCancelled else {
+            session.stop()
             return
         }
-        guard !Task.isCancelled else { return }
 
         Self.configureAudioSessionForPlayback()
         observeAudioInterruptions()
         sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
         resolvedMIMEType = resolved.overrideMIMEType
         monitor = ConnectionMonitor(sourceBitrateMbps: sourceBitrateMbps)
-
-        let session = CacheProxySession(
-            originURL: resolved.originURL, headers: resolved.headers, key: resolved.cacheKey,
-            store: store, sourceBitrate: resolved.sourceBitrate, overrideMIMEType: resolved.overrideMIMEType)
-        let localURL: URL
-        do {
-            // The localhost listener start blocks its thread briefly — keep it off the MainActor.
-            localURL = try await Task.detached(priority: .userInitiated) { try session.start() }.value
-        } catch {
-            enterFailedState(message: "Cache local indisponible : \(error.localizedDescription)")
-            return
-        }
-        guard !Task.isCancelled else {
-            session.stop()
-            return
-        }
         self.session = session
 
         let startSeconds = Double(startTimeTicks ?? 0) / 10_000_000

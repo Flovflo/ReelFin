@@ -43,6 +43,7 @@ struct DetailView: View {
 
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
+    @State private var customPrewarmer: CustomPlayerPrewarmer?
     @State private var showPlayer = false
     @State private var isLoadingPlayback = false
     @State private var hasAnimatedIn = false
@@ -158,6 +159,11 @@ struct DetailView: View {
 #endif
         .task {
             await viewModel.load()
+            prewarmCustomPlayerIfEnabled()
+        }
+        .onDisappear {
+            // Walking away without playing frees the warm session (server + background fill).
+            customPrewarmer?.discardIfUnused()
         }
         .onAppear {
             Task {
@@ -986,6 +992,25 @@ struct DetailView: View {
     /// NEW custom engine path (flag-gated): keep the original via the deep local cache, with a
     /// loading bar instead of cuts. Builds its own coordinator/resolver/store so the legacy path is
     /// untouched. Resumes primary play from the item's saved position.
+    /// Warms the primary playable item while the user reads the page, so tapping Play adopts a
+    /// ready pipeline (source resolved, localhost session up, cushion building) — perceived-instant
+    /// start. No-op when the custom player is disabled.
+    private func prewarmCustomPlayerIfEnabled() {
+        guard dependencies.settingsStore.useCustomPlayerEngine else { return }
+        guard let store = try? CustomPlaybackEngine.sharedStore() else { return }
+        let prewarmer: CustomPlayerPrewarmer
+        if let existing = customPrewarmer {
+            prewarmer = existing
+        } else {
+            let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
+            prewarmer = CustomPlayerPrewarmer(
+                resolver: JellyfinOriginalSourceResolver(coordinator: coordinator), store: store)
+            customPrewarmer = prewarmer
+        }
+        let target = viewModel.itemToPlay
+        prewarmer.prewarm(itemID: target.id, startTimeTicks: target.playbackPositionTicks)
+    }
+
     private func startCustomPlayback(item: MediaItem? = nil) {
         let targetItem = item ?? viewModel.itemToPlay
         let startTicks: Int64? = (item == nil) ? targetItem.playbackPositionTicks : nil
@@ -998,7 +1023,8 @@ struct DetailView: View {
         let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
         let resolver = JellyfinOriginalSourceResolver(coordinator: coordinator)
         let reporter = JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient)
-        let engine = CustomPlaybackEngine(resolver: resolver, store: store, reporter: reporter)
+        let engine = CustomPlaybackEngine(
+            resolver: resolver, store: store, reporter: reporter, prewarmer: customPrewarmer)
         engine.onPlaybackEnded = {
             handlePlayerDismissal()
         }

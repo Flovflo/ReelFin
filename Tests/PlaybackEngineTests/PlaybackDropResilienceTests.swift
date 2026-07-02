@@ -327,6 +327,94 @@ final class PlaybackDropResilienceTests: XCTestCase {
         XCTAssertTrue(reached, "Custom engine must load + play the original through the cache and advance. phase=\(engine.bufferingState.phase)")
     }
 
+    /// PERCEIVED-INSTANT START: prewarming on the detail view resolves the source and builds the
+    /// cushion BEFORE the user taps Play — load() must then adopt the warm session (no second
+    /// resolve, no new server) and reach playback near-instantly.
+    @MainActor
+    func testPrewarmedLoadStartsFromExistingSessionWithoutNewResolve() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1024)
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("Prewarm.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "prewarm", sourceID: "src", routeURL: origin)
+
+        let counter = ResolveCounter()
+        let resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: Int(Self.clipBitrate), cacheKey: key, resolveCounter: counter)
+        let prewarmer = CustomPlayerPrewarmer(resolver: resolver, store: store)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store, prewarmer: prewarmer)
+        defer { engine.stop() }
+
+        prewarmer.prewarm(itemID: "prewarm", startTimeTicks: nil)
+        // Simulate the user reading the detail page: the cushion builds behind the scenes.
+        let warmed = await waitUntil(timeout: 25) {
+            let end = (try? await store.contiguousEnd(from: 0, key: key)) ?? 0
+            return Double(end) * 8 / Self.clipBitrate >= 7
+        }
+        XCTAssertTrue(warmed, "prewarm must build the startup cushion before Play is tapped")
+        XCTAssertEqual(counter.value, 1)
+
+        let tapped = Date()
+        engine.load(itemID: "prewarm", autoPlay: true)
+        let playing = await waitUntil(timeout: 10) { @MainActor in
+            engine.bufferingState.phase == .playing && engine.player.currentTime().seconds > 0.2
+        }
+        let elapsed = Date().timeIntervalSince(tapped)
+        print("prewarm.start — elapsed=\(String(format: "%.2f", elapsed))s resolves=\(counter.value)")
+        XCTAssertTrue(playing, "prewarmed load must reach playback (phase=\(engine.bufferingState.phase))")
+        XCTAssertLessThan(elapsed, 4, "prewarmed start must be near-instant")
+        XCTAssertEqual(counter.value, 1, "load must ADOPT the prewarmed session, not resolve again")
+    }
+
+    /// A prewarm that the user walks away from must free everything (no leaked localhost server,
+    /// no background fill for a title that will not be played).
+    @MainActor
+    func testPrewarmDiscardStopsSessionAndFreesServer() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: 50_000_000, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("PrewarmDiscard.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "discard", sourceID: "src", routeURL: origin)
+
+        let prewarmer = CustomPlayerPrewarmer(
+            resolver: MockCustomSourceResolver(originURL: origin, sourceBitrate: Int(Self.clipBitrate), cacheKey: key),
+            store: store)
+        prewarmer.prewarm(itemID: "discard", startTimeTicks: nil)
+        let localURL = await waitUntil(timeout: 15) { @MainActor in prewarmer.debugPreparedLocalURL != nil }
+        XCTAssertTrue(localURL, "prewarm must come up")
+        let servedURL = prewarmer.debugPreparedLocalURL
+
+        prewarmer.discardIfUnused()
+
+        // The localhost server must be gone: a fresh GET on the old URL fails.
+        if let servedURL {
+            var request = URLRequest(url: servedURL)
+            request.timeoutInterval = 3
+            do {
+                _ = try await URLSession.shared.data(for: request)
+                XCTFail("discarded prewarm server must not keep serving")
+            } catch {
+                // expected — connection refused
+            }
+        }
+    }
+
     /// NEVER-FREEZE ladder rung 2: a FAILED AVPlayerItem (AVPlayer never self-recovers from
     /// `.failed`) must be rebuilt at the last known position over the SAME warm cache and keep
     /// playing — a failure used to leave a silent, permanently frozen frame.
@@ -1154,12 +1242,20 @@ final class PlaybackDropResilienceTests: XCTestCase {
         func reset() { lock.lock(); count = 0; lock.unlock() }
     }
 
+    private final class ResolveCounter: @unchecked Sendable {
+        private let lock = NSLock(); private var n = 0
+        var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+        func increment() { lock.lock(); n += 1; lock.unlock() }
+    }
+
     private struct MockCustomSourceResolver: CustomPlaybackSourceResolving {
         let originURL: URL
         let sourceBitrate: Int
         let cacheKey: MediaGatewayCacheKey
+        var resolveCounter: ResolveCounter? = nil
         func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
-            ResolvedOriginalSource(
+            resolveCounter?.increment()
+            return ResolvedOriginalSource(
                 originURL: originURL, headers: [:], sourceBitrate: sourceBitrate,
                 overrideMIMEType: "video/mp4", cacheKey: cacheKey, isDolbyVision: false)
         }
