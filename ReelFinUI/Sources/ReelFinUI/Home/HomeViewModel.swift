@@ -9,19 +9,20 @@ struct HomeSectionPaginationRequest: Equatable, Sendable {
 }
 
 @MainActor
-final class HomeViewModel: ObservableObject {
-    @Published var feed: HomeFeed = .empty
-    @Published var isInitialLoading = true
-    @Published var isRefreshing = false
-    @Published var errorMessage: String?
-    @Published var selectedItem: MediaItem?
-    @Published var selectedEpisode: MediaItem?
-    @Published var orderedSectionKinds: [HomeSectionKind]
-    @Published var hiddenSectionKinds: Set<HomeSectionKind>
-    @Published private(set) var visibleRows: [HomeRow] = []
-    @Published private(set) var rowIDByItemID: [String: String] = [:]
-    @Published private(set) var visibleRowsRevision = 0
-    @Published private var loadingMoreRowIDs: Set<String> = []
+@Observable
+final class HomeViewModel {
+    var feed: HomeFeed = .empty
+    var isInitialLoading = true
+    var isRefreshing = false
+    var errorMessage: String?
+    var selectedItem: MediaItem?
+    var selectedEpisode: MediaItem?
+    var orderedSectionKinds: [HomeSectionKind]
+    var hiddenSectionKinds: Set<HomeSectionKind>
+    private(set) var visibleRows: [HomeRow] = []
+    private(set) var rowIDByItemID: [String: String] = [:]
+    private(set) var visibleRowsRevision = 0
+    private var loadingMoreRowIDs: Set<String> = []
 
     private let dependencies: ReelFinDependencies
     private var feedEnrichmentTask: Task<Void, Never>?

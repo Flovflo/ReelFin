@@ -38,7 +38,7 @@ struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.reelFinDisplayDensity) private var displayDensity
-    @StateObject private var viewModel: DetailViewModel
+    @State private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
 
     @State private var playerSession: PlaybackSessionController?
@@ -75,8 +75,8 @@ struct DetailView: View {
         onDisplayedSourceItemChange: ((MediaItem) -> Void)? = nil,
         onDismissRequest: (() -> Void)? = nil
     ) {
-        _viewModel = StateObject(
-            wrappedValue: DetailViewModel(
+        _viewModel = State(
+            initialValue: DetailViewModel(
                 item: item,
                 preferredEpisode: preferredEpisode,
                 dependencies: dependencies
@@ -462,7 +462,9 @@ struct DetailView: View {
                 RoundedRectangle(cornerRadius: heroCornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(stageMetrics.heroStrokeOpacity), lineWidth: 1)
             }
-            .shadow(color: .black.opacity(stageMetrics.heroShadowOpacity), radius: stageMetrics.heroShadowRadius, x: 0, y: stageMetrics.heroShadowYOffset)
+            // Constant blur radius/offset: animating a shadow's RADIUS re-rasterizes the huge hero
+            // layer every frame of the collapse — opacity fades are visually equivalent and cheap.
+            .shadow(color: .black.opacity(stageMetrics.heroShadowOpacity), radius: 40, x: 0, y: 24)
 
             if let next = neighbors.next {
                 TVDetailContextPreviewCard(
@@ -1302,14 +1304,18 @@ private struct TVDetailScreen<Hero: View, Supporting: View>: View {
     @ViewBuilder let hero: (TVDetailStageMetrics) -> Hero
     @ViewBuilder let supportingContent: () -> Supporting
 
-    @State private var scrollSnapshot = TVDetailScrollSnapshot()
+    /// Derived, quantized collapse progress — NOT the raw scroll offset. Publishing the raw offset
+    /// re-evaluated the whole image-heavy hero on every scrolled pixel (the detail scroll hitch);
+    /// the hero only depends on this clamped progress, so outside the collapse band scrolling now
+    /// invalidates nothing, and inside it at most 64 steps.
+    @State private var collapseProgress: CGFloat = 0
 
     var body: some View {
         let metrics = TVDetailStageMetrics(
-            snapshot: scrollSnapshot,
+            snapshot: TVDetailScrollSnapshot(),
             heroHeight: heroHeight,
             topTriggerDistance: max(heroHeight * 0.16, 1),
-            forcedCollapseProgress: forcedHeroCollapseProgress
+            forcedCollapseProgress: forcedHeroCollapseProgress ?? collapseProgress
         )
 
         ZStack(alignment: .top) {
@@ -1328,13 +1334,12 @@ private struct TVDetailScreen<Hero: View, Supporting: View>: View {
                             .padding(.bottom, 96)
                     }
                 }
-                .onScrollGeometryChange(for: TVDetailScrollSnapshot.self) { geometry in
-                    TVDetailScrollSnapshot(
-                        offsetY: geometry.contentOffset.y,
-                        topInset: geometry.contentInsets.top
-                    )
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    let effectiveOffset = max(0, geometry.contentOffset.y + geometry.contentInsets.top - 14)
+                    let raw = min(max(effectiveOffset / max(heroHeight * 0.16, 1), 0), 1)
+                    return (raw * 64).rounded() / 64
                 } action: { _, newValue in
-                    scrollSnapshot = newValue
+                    if collapseProgress != newValue { collapseProgress = newValue }
                 }
                 .onChange(of: scrollRequest) { _, request in
                     guard let request else { return }
@@ -2515,7 +2520,7 @@ private struct IOSDetailHeroPrimaryButton: View {
                 Capsule(style: .continuous)
                     .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
             }
-            .shadow(color: .black.opacity(isFocused ? 0.34 : 0.20), radius: isFocused ? 20 : 12, x: 0, y: isFocused ? 10 : 6)
+            .shadow(color: .black.opacity(isFocused ? 0.34 : 0.20), radius: 20, x: 0, y: 10)
             .scaleEffect(isFocused ? 1.02 : 1)
         }
         .buttonStyle(.plain)
@@ -2549,7 +2554,7 @@ private struct IOSDetailHeroRoundActionButton: View {
                     Circle()
                         .stroke(borderColor, lineWidth: 0.9)
                 }
-                .shadow(color: .black.opacity(isFocused ? 0.24 : 0.14), radius: isFocused ? 16 : 10, x: 0, y: isFocused ? 8 : 5)
+                .shadow(color: .black.opacity(isFocused ? 0.24 : 0.14), radius: 16, x: 0, y: 8)
                 .scaleEffect(isFocused ? 1.03 : 1)
                 .accessibilityHidden(true)
         }
@@ -2803,7 +2808,10 @@ private struct TVDetailContextPreviewCard: View {
                 CachedRemoteImage(
                     itemID: previewItemID,
                     type: previewImageType,
-                    width: Int(width * 3),
+                    // Edge previews render mostly clipped and dimmed — 1.5x their layout width is
+                    // visually indistinguishable and cuts the detail-open decode cost (this used
+                    // to be one of FOUR width*3 backdrops decoded at once).
+                    width: Int(width * 1.5),
                     quality: 84,
                     contentMode: .fill,
                     apiClient: apiClient,
@@ -2858,7 +2866,7 @@ private struct TVDetailContextPreviewCard: View {
         .disabled(!isEnabled)
         .opacity((isFocused ? 1 : 0.88) * visibility)
         .scaleEffect((isFocused ? 1.04 : 0.98) - ((1 - visibility) * 0.08))
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 16 : 10)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: 24, x: 0, y: 16)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .focused($isFocused)
@@ -3320,7 +3328,7 @@ private struct HeroPrimaryButton: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 24 : 12, x: 0, y: isFocused ? 14 : 8)
+        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: 24, x: 0, y: 14)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
     }
@@ -3344,7 +3352,7 @@ private struct HeroPrimaryButton: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 24 : 12, x: 0, y: isFocused ? 14 : 8)
+        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: 24, x: 0, y: 14)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
         .accessibilityAddTraits(.isButton)
     }
@@ -3410,7 +3418,7 @@ private struct HeroPrimaryButton: View {
                 Capsule(style: .continuous)
                     .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
             }
-            .shadow(color: .black.opacity(isFocused ? 0.36 : 0.22), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 12 : 8)
+            .shadow(color: .black.opacity(isFocused ? 0.36 : 0.22), radius: 24, x: 0, y: 12)
             .scaleEffect(isFocused ? 1.035 : 1)
         }
         .buttonStyle(.plain)
@@ -3440,7 +3448,7 @@ private struct HeroIconActionButton: View {
                     Circle()
                         .stroke(borderColor, lineWidth: 0.9)
                 }
-                .shadow(color: .black.opacity(isFocused ? 0.26 : 0.14), radius: isFocused ? 18 : 12, x: 0, y: isFocused ? 10 : 6)
+                .shadow(color: .black.opacity(isFocused ? 0.26 : 0.14), radius: 18, x: 0, y: 10)
                 .scaleEffect(isFocused ? 1.04 : 1)
         }
         .buttonStyle(.plain)
@@ -3495,7 +3503,7 @@ private struct HeroSecondaryButton: View {
                 Capsule(style: .continuous)
                     .stroke(borderColor, lineWidth: 0.8)
             }
-            .shadow(color: .black.opacity(isFocused ? 0.28 : 0.14), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
+            .shadow(color: .black.opacity(isFocused ? 0.28 : 0.14), radius: 18, x: 0, y: 10)
             .scaleEffect(isFocused ? 1.03 : 1)
         }
         .buttonStyle(.plain)
@@ -3555,7 +3563,7 @@ private struct HeroSecondaryButton: View {
         }
         .buttonStyle(TVNoChromeButtonStyle())
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
+        .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: 18, x: 0, y: 10)
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
@@ -4028,7 +4036,7 @@ private struct TVCastRowItem: View {
         }
         .frame(width: itemWidth)
         .scaleEffect(isFocused ? 1.04 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: isFocused ? 20 : 10, x: 0, y: isFocused ? 10 : 5)
+        .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: 20, x: 0, y: 10)
         .focusable()
         .focused($isFocused)
         .focusEffectDisabled(true)
@@ -4214,7 +4222,7 @@ private struct TVRelatedRowItem: View {
         }
         .buttonStyle(TVNoChromeButtonStyle())
         .scaleEffect(isFocused ? 1.045 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 26 : 12, x: 0, y: isFocused ? 16 : 8)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: 26, x: 0, y: 16)
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)

@@ -46,9 +46,9 @@ struct TVLibraryPosterCard: View {
         .scaleEffect(isActivating ? 1.04 : 1)
         .shadow(
             color: .black.opacity(isFocused ? 0.34 : 0.16),
-            radius: isFocused ? 28 : 16,
+            radius: 28,
             x: 0,
-            y: isFocused ? 16 : 10
+            y: 16
         )
         .onMoveCommand(perform: handleMoveCommand)
         .focused($isFocused)
@@ -67,17 +67,29 @@ struct TVLibraryPosterCard: View {
     @ViewBuilder
     private var focusSurface: some View {
         if #available(tvOS 26.0, *) {
-            Color.clear
-                .glassEffect(
-                    Glass.regular
-                        .tint(Color.white.opacity(isFocused ? 0.16 : 0.05))
-                        .interactive(),
-                    in: .rect(cornerRadius: surfaceCornerRadius)
-                )
-                .overlay {
-                    surfaceShape
-                        .stroke(surfaceStroke, lineWidth: isFocused ? 1.35 : 0.9)
-                }
+            // Liquid Glass ONLY on the focused cell: interactive glass is a live backdrop-sampling
+            // layer, and one per visible grid cell made whole library pages heavy. Resting cells
+            // get a cheap fill + stroke that reads identically from the couch.
+            if isFocused {
+                Color.clear
+                    .glassEffect(
+                        Glass.regular
+                            .tint(Color.white.opacity(0.16))
+                            .interactive(),
+                        in: .rect(cornerRadius: surfaceCornerRadius)
+                    )
+                    .overlay {
+                        surfaceShape
+                            .stroke(surfaceStroke, lineWidth: 1.35)
+                    }
+            } else {
+                surfaceShape
+                    .fill(Color.white.opacity(0.05))
+                    .overlay {
+                        surfaceShape
+                            .stroke(surfaceStroke, lineWidth: 0.9)
+                    }
+            }
         } else {
             Color.clear.tvCardSurface(focused: isFocused, cornerRadius: surfaceCornerRadius)
         }

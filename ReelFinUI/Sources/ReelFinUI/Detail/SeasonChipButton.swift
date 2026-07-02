@@ -43,7 +43,7 @@ struct SeasonChipButton: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? 1.02 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.26 : 0.12), radius: isFocused ? 18 : 10, x: 0, y: isFocused ? 10 : 6)
+        .shadow(color: .black.opacity(isFocused ? 0.26 : 0.12), radius: 18, x: 0, y: 10)
         .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -101,20 +101,20 @@ struct SeasonChipButton: View {
 
     #if os(tvOS)
     private var tvBackground: some View {
+        // Interactive glass is a live backdrop-sampling layer — one per RESTING chip made season
+        // rows heavy for nothing. Resting chips get a cheap translucent capsule; the focused chip
+        // keeps its solid highlight.
         Group {
             if isFocused {
                 Capsule(style: .continuous)
                     .fill(Color.white.opacity(0.96))
             } else {
-                Color.clear.reelFinGlassCapsule(
-                    interactive: true,
-                    tint: tvTint,
-                    stroke: .clear,
-                    strokeWidth: 0,
-                    shadowOpacity: 0.10,
-                    shadowRadius: 10,
-                    shadowYOffset: 5
-                )
+                Capsule(style: .continuous)
+                    .fill(tvTint)
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
+                    }
             }
         }
     }

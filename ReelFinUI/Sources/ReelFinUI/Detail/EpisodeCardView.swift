@@ -78,7 +78,7 @@ public struct EpisodeCardView: View {
         }
         .buttonStyle(TVNoChromeButtonStyle())
         .tvMotionFocus(.episodeCard, isFocused: isFocused)
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: isFocused ? 24 : 14, x: 0, y: isFocused ? 14 : 8)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.18), radius: 24, x: 0, y: 14)
         .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
@@ -317,7 +317,7 @@ public struct EpisodeCardView: View {
             .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
         .buttonStyle(.plain)
-        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.20), radius: isFocused ? 22 : 14, x: 0, y: isFocused ? 12 : 8)
+        .shadow(color: .black.opacity(isFocused ? 0.34 : 0.20), radius: 22, x: 0, y: 12)
         .scaleEffect(isFocused ? 1.018 : 1)
         .animation(.easeOut(duration: 0.16), value: isFocused)
         .accessibilityHint("Play episode")

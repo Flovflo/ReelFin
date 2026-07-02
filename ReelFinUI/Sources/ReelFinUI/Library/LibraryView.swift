@@ -14,7 +14,7 @@ struct LibraryView: View {
 #if os(tvOS)
     @FocusState private var focusedControl: TVLibraryControlFocus?
 #endif
-    @StateObject private var viewModel: LibraryViewModel
+    @State private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
     @State private var warmupTask: Task<Void, Never>?
     @State private var selectedDetailTransitionSourceID: String?
@@ -24,7 +24,7 @@ struct LibraryView: View {
 #endif
 
     init(dependencies: ReelFinDependencies) {
-        _viewModel = StateObject(wrappedValue: LibraryViewModel(dependencies: dependencies))
+        _viewModel = State(initialValue: LibraryViewModel(dependencies: dependencies))
         self.dependencies = dependencies
     }
 

@@ -1053,7 +1053,7 @@ public struct SectionRow: View {
 struct HomeView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reelFinDisplayDensity) private var displayDensity
-    @StateObject private var viewModel: HomeViewModel
+    @State private var viewModel: HomeViewModel
     @Namespace private var posterNamespace
 #if os(tvOS)
     @FocusState private var focusedHomeItemID: String?
@@ -1095,7 +1095,7 @@ struct HomeView: View {
 #endif
 
     init(dependencies: ReelFinDependencies, tvRefreshRequest: Int = 0, tvHeroFocusRequest: Int = 0) {
-        _viewModel = StateObject(wrappedValue: HomeViewModel(dependencies: dependencies))
+        _viewModel = State(initialValue: HomeViewModel(dependencies: dependencies))
 #if os(tvOS)
         _tvScreenState = StateObject(
             wrappedValue: TVHomeScreenState(
@@ -1215,10 +1215,17 @@ struct HomeView: View {
 #if os(tvOS)
         TVHomeScreen(navigationAppearance: tvScreenState.navigationAppearance) {
             ZStack(alignment: .topTrailing) {
+                // No live Gaussian blur over the whole image-dense home while a detail is open —
+                // that held a heavy GPU pass for the entire presentation and slowed open/close.
+                // Scale + dim + a flat scrim reads the same from 3 m for a fraction of the cost.
                 homeScrollContent(visibleRows: visibleRows)
                     .scaleEffect(viewModel.selectedItem == nil ? 1 : 0.982)
-                    .opacity(viewModel.selectedItem == nil ? 1 : 0.46)
-                    .blur(radius: viewModel.selectedItem == nil ? 0 : 10)
+                    .opacity(viewModel.selectedItem == nil ? 1 : 0.34)
+                    .overlay {
+                        Color.black.opacity(viewModel.selectedItem == nil ? 0 : 0.45)
+                            .ignoresSafeArea()
+                            .allowsHitTesting(false)
+                    }
                     .animation(tvDetailPresentationAnimation, value: viewModel.selectedItem?.id)
 
                 TVHomeRefreshStatusView(isRefreshing: viewModel.isRefreshing && !viewModel.isInitialLoading)
@@ -2376,7 +2383,7 @@ private struct TVHomeScreen<Content: View>: View {
 #endif
 
 private struct HomeCustomizationSheet: View {
-    @ObservedObject var viewModel: HomeViewModel
+    @Bindable var viewModel: HomeViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var editMode: EditMode = .active
 

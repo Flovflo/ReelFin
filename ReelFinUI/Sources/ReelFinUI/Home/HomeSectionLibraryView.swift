@@ -8,7 +8,7 @@ struct HomeSectionLibraryView: View {
     @Namespace private var posterNamespace
 
     private let dependencies: ReelFinDependencies
-    @ObservedObject private var homeViewModel: HomeViewModel
+    private let homeViewModel: HomeViewModel
     private let fallbackRow: HomeRow
     private let rowID: String
 

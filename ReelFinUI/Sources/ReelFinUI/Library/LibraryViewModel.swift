@@ -3,18 +3,19 @@ import Shared
 import SwiftUI
 
 @MainActor
-final class LibraryViewModel: ObservableObject {
+@Observable
+final class LibraryViewModel {
     enum SortMode: String, CaseIterable {
         case recent = "Recent"
         case title = "Title"
     }
 
-    @Published var items: [MediaItem] = []
-    @Published var searchQuery = ""
-    @Published var selectedFilter: MediaType = .movie
-    @Published var sortMode: SortMode = .recent
-    @Published var isLoadingPage = false
-    @Published var selectedItem: MediaItem?
+    var items: [MediaItem] = []
+    var searchQuery = ""
+    var selectedFilter: MediaType = .movie
+    var sortMode: SortMode = .recent
+    var isLoadingPage = false
+    var selectedItem: MediaItem?
 
     private let dependencies: ReelFinDependencies
 

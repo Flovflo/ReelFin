@@ -85,9 +85,9 @@ struct TVTopNavigationItem: View {
             }
             .shadow(
                 color: .black.opacity(isFocused ? 0.24 : 0.18),
-                radius: isFocused ? 14 : 10,
+                radius: 14,
                 x: 0,
-                y: isFocused ? 8 : 6
+                y: 8
             )
             .matchedGeometryEffect(id: "tv-top-nav-highlight", in: highlightNamespace)
     }

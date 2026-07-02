@@ -3,7 +3,8 @@ import PlaybackEngine
 import Shared
 
 @MainActor
-final class DetailViewModel: ObservableObject {
+@Observable
+final class DetailViewModel {
     enum LoadPhase: Int {
         case shell
         case hero
@@ -11,24 +12,24 @@ final class DetailViewModel: ObservableObject {
         case playbackWarm
     }
 
-    @Published var detail: MediaDetail
-    @Published var loadPhase: LoadPhase = .shell
-    @Published var isLoading = false
-    @Published var errorMessage: String?
-    @Published var playbackProgress: PlaybackProgress?
-    @Published var isInWatchlist = false
-    @Published var isWatched = false
-    @Published var preferredPlaybackSource: MediaSource?
-    @Published var playbackOptimizationStatus: ApplePlaybackOptimizationStatus?
-    @Published var isPlaybackWarm = false
-    @Published var isWarmingPlayback = false
+    var detail: MediaDetail
+    var loadPhase: LoadPhase = .shell
+    var isLoading = false
+    var errorMessage: String?
+    var playbackProgress: PlaybackProgress?
+    var isInWatchlist = false
+    var isWatched = false
+    var preferredPlaybackSource: MediaSource?
+    var playbackOptimizationStatus: ApplePlaybackOptimizationStatus?
+    var isPlaybackWarm = false
+    var isWarmingPlayback = false
 
-    @Published var seasons: [MediaItem] = []
-    @Published var episodes: [MediaItem] = []
-    @Published var selectedSeason: MediaItem?
-    @Published var isLoadingEpisodes = false
-    @Published var nextUpEpisode: MediaItem?
-    @Published private(set) var episodeFileInfoByID: [String: EpisodeFileInfoSummary] = [:]
+    var seasons: [MediaItem] = []
+    var episodes: [MediaItem] = []
+    var selectedSeason: MediaItem?
+    var isLoadingEpisodes = false
+    var nextUpEpisode: MediaItem?
+    private(set) var episodeFileInfoByID: [String: EpisodeFileInfoSummary] = [:]
 
     private let dependencies: ReelFinDependencies
     private var preferredEpisode: MediaItem?
