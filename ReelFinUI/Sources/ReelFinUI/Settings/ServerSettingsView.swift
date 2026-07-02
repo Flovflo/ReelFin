@@ -349,8 +349,8 @@ struct ServerSettingsView: View {
                     )
                 ) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("New Custom Player (beta)")
-                        Text("Deep local cache, keeps the original (Dolby Vision), loading bar instead of cuts.")
+                        Text("ReelFin Player (deep cache)")
+                        Text("Default. Keeps the original (Dolby Vision), instant start, loading bar instead of cuts. Turn off to use the legacy player.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

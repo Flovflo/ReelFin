@@ -11,7 +11,7 @@ struct CustomPlayerView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            CustomPlayerSurface(player: engine.player)
+            CustomPlayerSurface(player: engine.player, engine: engine)
                 .ignoresSafeArea()
             if engine.bufferingState.phase != .failed {
                 VStack {
@@ -28,7 +28,10 @@ struct CustomPlayerView: View {
 #endif
         }
         .onDisappear {
-            engine.stop()
+            // Picture in Picture outlives the view — only a real dismissal stops playback.
+            if !engine.isPictureInPictureActive {
+                engine.stop()
+            }
 #if os(iOS)
             OrientationManager.shared.restorePortraitAfterPlayerDismissal()
 #endif
@@ -81,12 +84,19 @@ struct CustomPlayerView: View {
         }
     }
 
-    /// Always-visible cache HUD so you can watch the deep buffer build in real time. Green bar +
-    /// seconds of the original cached ahead of the playhead (updates every second).
+    /// Always-visible HUD: quality badge (the proof you're getting the original) + live reservoir.
     private var cacheHUD: some View {
         let seconds = Int(engine.bufferingState.reservoirSeconds.rounded())
         let fraction = min(1, engine.bufferingState.reservoirSeconds / 300) // bar spans ~5 min
         return HStack(spacing: 8) {
+            if let badge = qualityBadge {
+                Text(badge.text)
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(badge.tint.opacity(0.85), in: Capsule())
+                    .foregroundStyle(.black)
+            }
             Image(systemName: "internaldrive")
             Text("Cache \(seconds)s")
                 .font(.caption.monospacedDigit())
@@ -100,6 +110,14 @@ struct CustomPlayerView: View {
         .background(.black.opacity(0.45), in: Capsule())
     }
 
+    private var qualityBadge: (text: String, tint: Color)? {
+        if engine.bufferingState.phase == .degradedSDR {
+            return ("Qualité adaptée", .orange)
+        }
+        guard let label = engine.sourceQualityLabel else { return nil }
+        return (label, .white)
+    }
+
     private func label(for state: PlaybackBufferingState) -> String {
         let pct = Int((state.progress * 100).rounded())
         switch state.phase {
@@ -110,18 +128,50 @@ struct CustomPlayerView: View {
     }
 }
 
-/// Minimal AVPlayerViewController host (iOS/tvOS). The custom engine owns the AVPlayer.
+/// Minimal AVPlayerViewController host (iOS/tvOS). The custom engine owns the AVPlayer; the
+/// delegate keeps the engine informed about Picture in Picture so teardown never kills it.
 private struct CustomPlayerSurface: UIViewControllerRepresentable {
     let player: AVPlayer
+    let engine: CustomPlaybackEngine
+
+    func makeCoordinator() -> Coordinator { Coordinator(engine: engine) }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
+        controller.delegate = context.coordinator
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         if controller.player !== player { controller.player = player }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+        private let engine: CustomPlaybackEngine
+        init(engine: CustomPlaybackEngine) { self.engine = engine }
+
+        nonisolated func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            Task { @MainActor in self.engine.isPictureInPictureActive = true }
+        }
+
+        nonisolated func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            Task { @MainActor in
+                self.engine.isPictureInPictureActive = false
+                // The hosting view is long gone when PiP ends detached — stop cleanly then.
+                if playerViewController.viewIfLoaded?.window == nil {
+                    self.engine.stop()
+                }
+            }
+        }
+
+        nonisolated func playerViewController(
+            _ playerViewController: AVPlayerViewController,
+            restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+        ) {
+            completionHandler(true)
+        }
     }
 }

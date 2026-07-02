@@ -391,6 +391,53 @@ final class PlaybackDropResilienceTests: XCTestCase {
         XCTAssertNil(engine.errorMessage)
     }
 
+    /// AIRPLAY correctness: while external playback is active the item must play the ORIGIN URL
+    /// (a receiver cannot reach 127.0.0.1's cache), and swap back onto the localhost cache when it
+    /// ends — position preserved both ways.
+    @MainActor
+    func testExternalPlaybackSwapUsesOriginURLAndSwapsBack() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1024)
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("AirPlay.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "airplay", sourceID: "src", routeURL: origin)
+
+        let resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: Int(Self.clipBitrate), cacheKey: key)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        defer { engine.stop() }
+
+        engine.load(itemID: "airplay", autoPlay: true)
+        let playing = await waitUntil(timeout: 30) { @MainActor in
+            engine.bufferingState.phase == .playing && engine.player.currentTime().seconds > 1.0
+        }
+        XCTAssertTrue(playing)
+        let positionBefore = engine.lastObservedSeconds
+
+        engine.handleExternalPlaybackChange(active: true)
+        let onOrigin = await waitUntil(timeout: 10) { @MainActor in
+            guard let asset = engine.player.currentItem?.asset as? AVURLAsset else { return false }
+            return asset.url.path == "/clip.mp4" && engine.player.currentTime().seconds > positionBefore - 3
+        }
+        XCTAssertTrue(onOrigin, "external playback must play the ORIGIN URL near the same position")
+
+        engine.handleExternalPlaybackChange(active: false)
+        let backOnCache = await waitUntil(timeout: 10) { @MainActor in
+            guard let asset = engine.player.currentItem?.asset as? AVURLAsset else { return false }
+            return asset.url.path.hasPrefix("/media/") && engine.player.currentTime().seconds > positionBefore - 3
+        }
+        XCTAssertTrue(backOnCache, "ending external playback must swap back onto the localhost cache")
+        XCTAssertNil(engine.errorMessage)
+    }
+
     /// PERCEIVED-INSTANT START: prewarming on the detail view resolves the source and builds the
     /// cushion BEFORE the user taps Play — load() must then adopt the warm session (no second
     /// resolve, no new server) and reach playback near-instantly.

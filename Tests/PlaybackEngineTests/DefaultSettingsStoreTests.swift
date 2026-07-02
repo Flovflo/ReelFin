@@ -3,6 +3,22 @@ import Shared
 import XCTest
 
 final class DefaultSettingsStoreTests: XCTestCase {
+    func testCustomPlayerEngineDefaultsOnButRespectsExplicitOptOut() throws {
+        let suiteName = "DefaultSettingsStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = DefaultSettingsStore(defaults: defaults)
+        XCTAssertTrue(store.useCustomPlayerEngine, "the custom engine is the default player")
+
+        store.useCustomPlayerEngine = false
+        XCTAssertFalse(store.useCustomPlayerEngine, "an explicit opt-out must persist")
+
+        store.useCustomPlayerEngine = true
+        XCTAssertTrue(store.useCustomPlayerEngine)
+    }
+
     func testLastSessionPersistsIdentityWithoutToken() throws {
         let suiteName = "DefaultSettingsStoreTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

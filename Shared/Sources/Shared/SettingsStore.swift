@@ -63,7 +63,13 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
     }
 
     public var useCustomPlayerEngine: Bool {
-        get { defaults.bool(forKey: Keys.useCustomPlayerEngine) }
+        get {
+            // The custom engine IS the player now — default ON. An explicit user choice (either
+            // way) persists; only the never-touched state gets the new default, so nobody who
+            // deliberately switched back to the legacy path is overridden by an update.
+            guard defaults.object(forKey: Keys.useCustomPlayerEngine) != nil else { return true }
+            return defaults.bool(forKey: Keys.useCustomPlayerEngine)
+        }
         set { defaults.set(newValue, forKey: Keys.useCustomPlayerEngine) }
     }
 

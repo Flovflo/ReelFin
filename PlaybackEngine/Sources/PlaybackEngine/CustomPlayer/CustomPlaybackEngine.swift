@@ -63,6 +63,8 @@ public final class CustomPlaybackEngine {
     public let player: AVPlayer
     public private(set) var bufferingState: PlaybackBufferingState = .idle
     public private(set) var errorMessage: String?
+    /// Quality badge for the HUD ("HDR/DV" originals) — proof the original bitstream is playing.
+    public private(set) var sourceQualityLabel: String?
     /// Fired once when the title plays to its end (dismiss / up-next hook for the UI).
     public var onPlaybackEnded: (() -> Void)?
 
@@ -116,6 +118,14 @@ public final class CustomPlaybackEngine {
     private var laneState = AdaptiveLanePolicy.State()
     private var sdrTimelineOffsetSeconds: Double = 0
 
+    // External playback (AirPlay): while active, the item plays the ORIGIN URL (a receiver cannot
+    // reach 127.0.0.1); back on the localhost cache when it ends.
+    private var externalPlaybackObservation: NSKeyValueObservation?
+    private var isExternalPlaybackItemActive = false
+    private var originSource: (url: URL, headers: [String: String])?
+    /// Set by the UI host while Picture in Picture runs, so a disappearing view doesn't stop it.
+    public var isPictureInPictureActive = false
+
     // Server progress reporting (resume position / watched state).
     private var durationSeconds: Double = 0
     private var lastProgressReportAt: Date = .distantPast
@@ -137,10 +147,16 @@ public final class CustomPlaybackEngine {
         self.prewarmer = prewarmer
         self.player = AVPlayer()
         self.player.automaticallyWaitsToMinimizeStalling = true
-        // The asset URL is 127.0.0.1 — unreachable from an AirPlay receiver. Route external
-        // playback as screen mirroring instead of handing the Apple TV a URL it can never open
-        // (which black-screens). A true remote-URL AirPlay lane can come later.
-        self.player.allowsExternalPlayback = false
+        // AirPlay is allowed — but the localhost cache URL is unreachable from a receiver, so the
+        // engine swaps to the ORIGIN URL while external playback is active (see
+        // `handleExternalPlaybackChange`), and back to the cache when it ends.
+        self.player.allowsExternalPlayback = true
+        externalPlaybackObservation = player.observe(\.isExternalPlaybackActive, options: [.new]) { [weak self] observedPlayer, _ in
+            let active = observedPlayer.isExternalPlaybackActive
+            Task { @MainActor [weak self] in
+                self?.handleExternalPlaybackChange(active: active)
+            }
+        }
     }
 
     /// Route audio to playback (movie) so there IS sound — and it ignores the silent switch, like a
@@ -306,6 +322,9 @@ public final class CustomPlaybackEngine {
         sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
         resolvedMIMEType = resolved.overrideMIMEType
         monitor = ConnectionMonitor(sourceBitrateMbps: sourceBitrateMbps)
+        originSource = (resolved.originURL, resolved.headers)
+        isExternalPlaybackItemActive = false
+        sourceQualityLabel = resolved.isDolbyVision ? "HDR/DV" : nil
         self.session = session
 
         let startSeconds = Double(startTimeTicks ?? 0) / 10_000_000
@@ -457,6 +476,41 @@ public final class CustomPlaybackEngine {
         await session.maintainDiskBudget(currentSeconds: nowSeconds)
     }
 
+    // MARK: - External playback (AirPlay)
+
+    /// While AirPlay is active the receiver must fetch the stream itself — swap the item to the
+    /// ORIGIN URL at the current position (127.0.0.1 is unreachable from the receiver); swap back
+    /// to the localhost cache when external playback ends. The DV session keeps filling underneath
+    /// either way. SDR lane is already a remote URL — no swap needed there.
+    func handleExternalPlaybackChange(active: Bool) {
+        guard laneState.lane == .original else { return }
+        if active {
+            guard !isExternalPlaybackItemActive, let originSource else { return }
+            isExternalPlaybackItemActive = true
+            AppLog.playback.notice("customplayer.airplay.origin_swap — at=\(self.lastKnownTimeSeconds, format: .fixed(precision: 1))")
+            var options: [String: Any] = [:]
+            if let mime = resolvedMIMEType { options[AVURLAssetOverrideMIMETypeKey] = mime }
+            if !originSource.headers.isEmpty {
+                options["AVURLAssetHTTPHeaderFieldsKey"] = originSource.headers
+            }
+            let asset = AVURLAsset(url: originSource.url, options: options)
+            let item = AVPlayerItem(asset: asset)
+            player.replaceCurrentItem(with: item)
+            if lastKnownTimeSeconds > 0 {
+                player.seek(to: CMTime(seconds: lastKnownTimeSeconds, preferredTimescale: 600),
+                            toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 1, preferredTimescale: 600))
+            }
+            observeItemLifecycle(item)
+            player.play()
+        } else {
+            guard isExternalPlaybackItemActive, let session, let localURL = session.localURL else { return }
+            isExternalPlaybackItemActive = false
+            AppLog.playback.notice("customplayer.airplay.back_to_cache — at=\(self.lastKnownTimeSeconds, format: .fixed(precision: 1))")
+            installItem(localURL: localURL, seekTo: lastKnownTimeSeconds > 0 ? lastKnownTimeSeconds : nil)
+            player.play()
+        }
+    }
+
     // MARK: - Last-resort SDR lane (drop + automatic DV return)
 
 #if DEBUG
@@ -594,6 +648,13 @@ public final class CustomPlaybackEngine {
     }
 
     private func rebuildCurrentItem() {
+        // While AirPlaying, a rebuild must land on the ORIGIN URL again (localhost is unreachable
+        // from the receiver).
+        if isExternalPlaybackItemActive {
+            isExternalPlaybackItemActive = false
+            handleExternalPlaybackChange(active: true)
+            return
+        }
         guard let session, let localURL = session.localURL else { return }
         // A failed SDR item rebuilds onto the ORIGINAL (warm cache) — the lane brain can re-drop
         // later if the inability persists.
