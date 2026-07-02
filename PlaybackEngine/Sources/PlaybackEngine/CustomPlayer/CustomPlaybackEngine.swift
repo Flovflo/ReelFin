@@ -15,14 +15,27 @@ public struct ResolvedOriginalSource: Sendable {
     public let overrideMIMEType: String?
     public let cacheKey: MediaGatewayCacheKey
     public let isDolbyVision: Bool
+    /// True when this is a server ADAPTIVE stream (HLS transcode/remux) rather than the raw
+    /// original: the engine then plays the URL directly (AVPlayer's own HLS stack — segments are
+    /// their own dropout recovery) and skips the byte-range cache session entirely.
+    public let isAdaptiveStream: Bool
 
-    public init(originURL: URL, headers: [String: String], sourceBitrate: Int?, overrideMIMEType: String?, cacheKey: MediaGatewayCacheKey, isDolbyVision: Bool) {
+    public init(
+        originURL: URL,
+        headers: [String: String],
+        sourceBitrate: Int?,
+        overrideMIMEType: String?,
+        cacheKey: MediaGatewayCacheKey,
+        isDolbyVision: Bool,
+        isAdaptiveStream: Bool = false
+    ) {
         self.originURL = originURL
         self.headers = headers
         self.sourceBitrate = sourceBitrate
         self.overrideMIMEType = overrideMIMEType
         self.cacheKey = cacheKey
         self.isDolbyVision = isDolbyVision
+        self.isAdaptiveStream = isAdaptiveStream
     }
 }
 
@@ -123,6 +136,8 @@ public final class CustomPlaybackEngine {
     private var externalPlaybackObservation: NSKeyValueObservation?
     private var isExternalPlaybackItemActive = false
     private var originSource: (url: URL, headers: [String: String])?
+    /// Set when playing the adaptive-only lane (non-direct-playable source, no cache session).
+    private var adaptiveStreamURL: URL?
     /// Set by the UI host while Picture in Picture runs, so a disappearing view doesn't stop it.
     public var isPictureInPictureActive = false
 
@@ -197,6 +212,7 @@ public final class CustomPlaybackEngine {
         durationSeconds = 0
         laneState = AdaptiveLanePolicy.State()
         sdrTimelineOffsetSeconds = 0
+        adaptiveStreamURL = nil
         bufferingState = PlaybackBufferingState(phase: .prebuffering)
         errorMessage = nil
         loadTask = Task { [weak self] in
@@ -300,6 +316,13 @@ public final class CustomPlaybackEngine {
                 return
             }
             guard !Task.isCancelled else { return }
+            if resolved.isAdaptiveStream {
+                // Not directly playable as a raw original — play the server's adaptive stream
+                // straight (AVPlayer's HLS stack). No cache session, no startup gate: segments
+                // start fast and carry their own recovery.
+                startAdaptivePlayback(resolved: resolved, startTimeTicks: startTimeTicks, autoPlay: autoPlay)
+                return
+            }
             let fresh = CacheProxySession(
                 originURL: resolved.originURL, headers: resolved.headers, key: resolved.cacheKey,
                 store: store, sourceBitrate: resolved.sourceBitrate, overrideMIMEType: resolved.overrideMIMEType)
@@ -332,6 +355,27 @@ public final class CustomPlaybackEngine {
 
         await runStartup(startSeconds: startSeconds, autoPlay: autoPlay)
         startMonitorLoop(startSeconds: startSeconds)
+    }
+
+    /// Non-direct-playable source (container/codec AVFoundation can't open raw): play the server's
+    /// adaptive HLS stream directly. The item lifecycle ladder still applies (rebuild on failure →
+    /// honest error); the reservoir HUD stays hidden (no cache session — segments self-recover).
+    private func startAdaptivePlayback(resolved: ResolvedOriginalSource, startTimeTicks: Int64?, autoPlay: Bool) {
+        AppLog.playback.notice(
+            "customplayer.load.adaptive_lane — item=\(self.currentItemID?.prefix(8) ?? "-", privacy: .public)"
+        )
+        Self.configureAudioSessionForPlayback()
+        observeAudioInterruptions()
+        sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
+        sourceQualityLabel = nil
+        adaptiveStreamURL = resolved.originURL
+        sdrTimelineOffsetSeconds = Double(startTimeTicks ?? 0) / 10_000_000 // HLS timeline is 0-based at the resume point
+        let item = AVPlayerItem(url: resolved.originURL)
+        player.replaceCurrentItem(with: item)
+        observeItemLifecycle(item)
+        bufferingState = PlaybackBufferingState(phase: .playing)
+        if autoPlay { player.play() }
+        startMonitorLoop(startSeconds: sdrTimelineOffsetSeconds)
     }
 
     /// Builds and installs an `AVPlayerItem` over the localhost cache URL, wiring the full
@@ -412,18 +456,28 @@ public final class CustomPlaybackEngine {
     }
 
     private func monitorTick() async {
-        guard let session, let item = player.currentItem else { return }
+        guard let item = player.currentItem else { return }
         guard bufferingState.phase != .failed, bufferingState.phase != .ended else { return }
         let rawSeconds = player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0
-        // The SDR fallback stream's timeline is 0-based at the drop position — track the TITLE
+        // Adaptive/SDR stream timelines are 0-based at their start position — track the TITLE
         // position everywhere (resume reporting, reservoir aim, the return swap).
         let nowSeconds = sdrTimelineOffsetSeconds + rawSeconds
         if item.status == .readyToPlay, nowSeconds > 0 {
             lastKnownTimeSeconds = nowSeconds
         }
-        if durationSeconds <= 0, laneState.lane == .original {
+        if durationSeconds <= 0 {
             let duration = item.duration.seconds
-            if duration.isFinite, duration > 0 { durationSeconds = duration }
+            if duration.isFinite, duration > 0 { durationSeconds = sdrTimelineOffsetSeconds + duration }
+        }
+        guard let session else {
+            // Adaptive-only lane (no cache session): position + honest transport + server progress.
+            let isStarving = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+            bufferingState = PlaybackBufferingState(
+                phase: isStarving ? .buffering : .degradedSDR,
+                reservoirSeconds: 0,
+                targetSeconds: isStarving ? PlaybackLanePolicy.bufferResumeSeconds : 0)
+            reportProgressIfDue(now: Date())
+            return
         }
         // Cache depth for the HUD only — this is a CBR byte↔seconds estimate, fine to *display* but
         // NOT to gate buffering on (it oscillates on a VBR file). In the SDR lane this is the DV
@@ -657,6 +711,19 @@ public final class CustomPlaybackEngine {
         if isExternalPlaybackItemActive {
             isExternalPlaybackItemActive = false
             handleExternalPlaybackChange(active: true)
+            return
+        }
+        // Adaptive-only lane (no cache session): reinstall the stream and seek back within it.
+        if session == nil, let adaptiveStreamURL {
+            let item = AVPlayerItem(url: adaptiveStreamURL)
+            player.replaceCurrentItem(with: item)
+            let rawResume = max(0, lastKnownTimeSeconds - sdrTimelineOffsetSeconds)
+            if rawResume > 0 {
+                player.seek(to: CMTime(seconds: rawResume, preferredTimescale: 600),
+                            toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 1, preferredTimescale: 600))
+            }
+            observeItemLifecycle(item)
+            player.play()
             return
         }
         guard let session, let localURL = session.localURL else { return }

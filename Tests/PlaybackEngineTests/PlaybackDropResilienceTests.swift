@@ -391,6 +391,40 @@ final class PlaybackDropResilienceTests: XCTestCase {
         XCTAssertNil(engine.errorMessage)
     }
 
+    /// NON-DIRECT-PLAYABLE source (exotic container/codec): the engine must play the server's
+    /// adaptive stream DIRECTLY (no cache session, no localhost) instead of failing — the
+    /// regression risk of making the custom engine the default player.
+    @MainActor
+    func testAdaptiveOnlyLanePlaysStreamDirectlyWithoutCacheSession() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let server = ThrottledDropHTTPServer(payload: data, contentType: "video/mp4", throttleBytesPerSec: 50_000_000, dropMode: .freeze, keepAlive: true)
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("AdaptiveLane.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil))
+        let key = MediaGatewayCacheKey(scope: "adaptive", userID: "u", serverID: "s", itemID: "adaptive", sourceID: "src", routeURL: origin)
+
+        var resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: Int(Self.clipBitrate), cacheKey: key)
+        resolver.adaptiveOnly = true
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        defer { engine.stop() }
+
+        engine.load(itemID: "adaptive", autoPlay: true)
+        let playing = await waitUntil(timeout: 20) { @MainActor in
+            engine.player.currentTime().seconds > 1.0 && engine.errorMessage == nil
+        }
+        XCTAssertTrue(playing, "adaptive-only source must play, not fail (err=\(engine.errorMessage ?? "nil"))")
+        let asset = try XCTUnwrap(engine.player.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(asset.url.path, "/clip.mp4", "adaptive lane plays the stream URL directly — no localhost cache")
+        XCTAssertNotEqual(engine.bufferingState.phase, .failed)
+    }
+
     /// AIRPLAY correctness: while external playback is active the item must play the ORIGIN URL
     /// (a receiver cannot reach 127.0.0.1's cache), and swap back onto the localhost cache when it
     /// ends — position preserved both ways.
@@ -1365,11 +1399,13 @@ final class PlaybackDropResilienceTests: XCTestCase {
         let cacheKey: MediaGatewayCacheKey
         var resolveCounter: ResolveCounter? = nil
         var fallbackURL: URL? = nil
+        var adaptiveOnly = false
         func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
             resolveCounter?.increment()
             return ResolvedOriginalSource(
                 originURL: originURL, headers: [:], sourceBitrate: sourceBitrate,
-                overrideMIMEType: "video/mp4", cacheKey: cacheKey, isDolbyVision: false)
+                overrideMIMEType: adaptiveOnly ? nil : "video/mp4", cacheKey: cacheKey,
+                isDolbyVision: false, isAdaptiveStream: adaptiveOnly)
         }
         func resolveAdaptiveFallback(itemID: String, startSeconds: Double) async -> URL? {
             fallbackURL

@@ -43,6 +43,12 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             preferredContainers: ["mp4", "m4v", "mov"]
         )
         guard case .directPlay = selection.decision.route else {
+            // Not playable as a raw original (container/codec AVFoundation can't open) — hand the
+            // engine the server's adaptive stream instead of failing. Best server-chosen quality,
+            // resolved lazily and scoped to this call.
+            if let adaptive = await resolveAdaptiveSelection(itemID: itemID, startTimeTicks: startTimeTicks) {
+                return adaptive
+            }
             throw ResolveError.notDirectPlayable
         }
 
@@ -98,6 +104,45 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         case "mov", "qt": return "video/quicktime"
         case "webm": return "video/webm"
         default: return nil
+        }
+    }
+}
+
+extension JellyfinOriginalSourceResolver {
+    /// Adaptive selection for a source that cannot direct-play at all: the server's default
+    /// transcode/remux (its best quality choice for the client), packaged for the engine's
+    /// adaptive-only lane. Returns nil when the server offers no stream.
+    func resolveAdaptiveSelection(itemID: String, startTimeTicks: Int64?) async -> ResolvedOriginalSource? {
+        guard let selection = try? await coordinator.resolvePlayback(
+            itemID: itemID,
+            startTimeTicks: startTimeTicks,
+            allowDirectRoutes: false,
+            nativeEngineFallbackReason: "custom_player_adaptive_lane"
+        ) else { return nil }
+        switch selection.decision.route {
+        case .transcode, .remux:
+            return ResolvedOriginalSource(
+                originURL: selection.assetURL,
+                headers: selection.headers,
+                sourceBitrate: selection.source.bitrate,
+                overrideMIMEType: nil,
+                cacheKey: MediaGatewayCacheKey(
+                    scope: "adaptive",
+                    userID: nil,
+                    serverID: selection.assetURL.host,
+                    itemID: selection.source.itemID,
+                    sourceID: selection.source.id,
+                    routeURL: selection.assetURL,
+                    routeHeaders: selection.headers,
+                    audioSignature: audioSignature,
+                    subtitleSignature: subtitleSignature,
+                    resumeSeconds: nil
+                ),
+                isDolbyVision: false,
+                isAdaptiveStream: true
+            )
+        case .directPlay, .nativeBridge:
+            return nil
         }
     }
 }
