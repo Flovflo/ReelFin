@@ -170,6 +170,7 @@ public final class CustomPlaybackEngine {
     private var videoLivenessDeadline: Date?
     private var didFallBackToDirectOrigin = false
     private var lastTransportLogAt: Date = .distantPast
+    private var wasStarving = false
     /// Set by the UI host while Picture in Picture runs, so a disappearing view doesn't stop it.
     public var isPictureInPictureActive = false
 
@@ -552,6 +553,19 @@ public final class CustomPlaybackEngine {
         // Drive the loading bar from AVPlayer's REAL transport state, not the byte estimate. Only a
         // genuine stall (AVPlayer has run dry and is waiting for data) shows the bar.
         let isStarving = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        if isStarving != wasStarving {
+            wasStarving = isStarving
+            if isStarving {
+                // The one-line forensic for any future hiccup: a TRANSPORT stall carries the
+                // reservoir depth + AVPlayer's own reason; a render hiccup never prints this line.
+                let reason = player.reasonForWaitingToPlay?.rawValue ?? "-"
+                AppLog.playback.warning(
+                    "customplayer.stall — t=\(nowSeconds, format: .fixed(precision: 1)) reservoir=\(reservoir, format: .fixed(precision: 0)) reason=\(reason, privacy: .public)"
+                )
+            } else {
+                AppLog.playback.notice("customplayer.stall.recovered — t=\(nowSeconds, format: .fixed(precision: 1))")
+            }
+        }
         switch (laneState.lane, isStarving) {
         case (.sdrFallback, _):
             bufferingState = PlaybackBufferingState(phase: .degradedSDR, reservoirSeconds: reservoir)
