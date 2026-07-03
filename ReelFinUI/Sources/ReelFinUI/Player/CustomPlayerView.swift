@@ -1,5 +1,7 @@
 import AVKit
+import ImageCache
 import PlaybackEngine
+import Shared
 import SwiftUI
 
 /// Full-screen host for the NEW custom playback engine (flag-gated). Shows `engine.player` and an
