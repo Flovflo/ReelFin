@@ -1600,14 +1600,17 @@ struct HomeView: View {
     }
 
     private var tvInlineDetailTransition: AnyTransition {
+        // The detail FADES while it zooms, so the (dimmed, scaled) home stays visible through the
+        // whole move — the iOS "same page" continuity. A bare scale popped an opaque black sheet
+        // over the home on frame one, which read as a hard cut between two screens.
         .asymmetric(
-            insertion: .scale(scale: 0.92, anchor: .center),
-            removal: .scale(scale: 0.96, anchor: .center)
+            insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .center)),
+            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
         )
     }
 
     private var tvDetailPresentationAnimation: Animation {
-        .smooth(duration: 0.42, extraBounce: 0.055)
+        .smooth(duration: 0.38, extraBounce: 0.04)
     }
 #endif
 
