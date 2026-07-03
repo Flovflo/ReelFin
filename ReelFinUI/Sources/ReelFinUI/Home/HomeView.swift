@@ -2211,8 +2211,11 @@ struct HomeView: View {
         }
 
         guard let rowID = viewModel.rowIDByItemID[item.id] else {
-            selectedDetailNamespace = nil
-            selectedDetailTransitionSourceID = nil
+            // Keep the last valid transition anchors. Nil-ing them flipped the structural branch
+            // in DetailZoomTransitionModifier and REMOUNTED the whole inline DetailView mid-
+            // interaction — the just-presented player's state (showPlayer/customEngine) died with
+            // the old instance: pressing an EPISODE froze the screen while the engine played
+            // unseen (tvOS device log 2026-07-03, double 'Detail navigation started').
             return
         }
 

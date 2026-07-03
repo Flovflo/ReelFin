@@ -59,8 +59,12 @@ struct DetailView: View {
 #endif
     @FocusState private var focusedHeroAction: DetailHeroAction?
     @FocusState private var focusedSeasonID: String?
-    private let transitionNamespace: Namespace.ID?
-    private let transitionSourceID: String?
+    // Seeded ONCE at init (@State): the zoom-transition anchors must never change for a mounted
+    // detail — DetailZoomTransitionModifier branches structurally on them, so a mid-presentation
+    // change (e.g. the host reacting to an episode selection) REMOUNTS the whole view and drops
+    // every @State, including a just-presented player.
+    @State private var transitionNamespace: Namespace.ID?
+    @State private var transitionSourceID: String?
     private let onDisplayedSourceItemChange: ((MediaItem) -> Void)?
     private let onDismissRequest: (() -> Void)?
 
@@ -88,8 +92,8 @@ struct DetailView: View {
         )
         _currentReturnSourceItem = State(initialValue: preferredEpisode ?? item)
         self.dependencies = dependencies
-        self.transitionNamespace = namespace
-        self.transitionSourceID = transitionSourceID
+        _transitionNamespace = State(initialValue: namespace)
+        _transitionSourceID = State(initialValue: transitionSourceID)
         self.onDisplayedSourceItemChange = onDisplayedSourceItemChange
         self.onDismissRequest = onDismissRequest
     }
