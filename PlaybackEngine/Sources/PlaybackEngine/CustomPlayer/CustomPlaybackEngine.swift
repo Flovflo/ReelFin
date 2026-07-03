@@ -157,6 +157,19 @@ public final class CustomPlaybackEngine {
     private var originSource: (url: URL, headers: [String: String])?
     /// Set when playing the adaptive-only lane (non-direct-playable source, no cache session).
     private var adaptiveStreamURL: URL?
+
+    // Video liveness (tvOS): the localhost-cache transport was never render-validated on tvOS —
+    // a stream can consume bytes with a black picture. A pixel-buffer probe detects real decoded
+    // frames (the legacy tvOS decoded-frame watchdog pattern; NEVER attached on iOS where a probe
+    // once doubled the DV render load); no frame by the deadline → swap to the DIRECT origin URL
+    // (the legacy tvOS path, byte-identical quality), then the honest ladder if even that is black.
+#if os(tvOS)
+    private var videoOutputProbe: AVPlayerItemVideoOutput?
+#endif
+    private var videoFramesObserved = false
+    private var videoLivenessDeadline: Date?
+    private var didFallBackToDirectOrigin = false
+    private var lastTransportLogAt: Date = .distantPast
     /// Set by the UI host while Picture in Picture runs, so a disappearing view doesn't stop it.
     public var isPictureInPictureActive = false
 
@@ -236,6 +249,9 @@ public final class CustomPlaybackEngine {
         adaptiveStreamURL = nil
         mediaSegments = []
         activeSkipSuggestion = nil
+        videoFramesObserved = false
+        videoLivenessDeadline = nil
+        didFallBackToDirectOrigin = false
         loadMarkers(itemID: itemID)
         bufferingState = PlaybackBufferingState(phase: .prebuffering)
         errorMessage = nil
@@ -559,9 +575,77 @@ public final class CustomPlaybackEngine {
             if let change { await applyLaneChange(change) }
         }
 
+        checkVideoLiveness(item: item, positionSeconds: nowSeconds, now: now)
+        logTransportIfDue(item: item, positionSeconds: nowSeconds, reservoir: reservoir, now: now)
         updateSkipSuggestion()
         reportProgressIfDue(now: now)
         await session.maintainDiskBudget(currentSeconds: nowSeconds)
+    }
+
+    /// Transport heartbeat (5s cadence) — the diagnostic line a device log needs to tell "black
+    /// screen" apart from "not playing": status, rate, position, decoded frames, presentation size.
+    private func logTransportIfDue(item: AVPlayerItem, positionSeconds: Double, reservoir: Double, now: Date) {
+        guard now.timeIntervalSince(lastTransportLogAt) >= 5 else { return }
+        lastTransportLogAt = now
+        let size = item.presentationSize
+        AppLog.playback.notice(
+            "customplayer.transport — status=\(item.status.rawValue, privacy: .public) rate=\(self.player.rate, format: .fixed(precision: 2)) t=\(positionSeconds, format: .fixed(precision: 1)) framesSeen=\(self.videoFramesObserved, privacy: .public) size=\(Int(size.width), privacy: .public)x\(Int(size.height), privacy: .public) reservoir=\(reservoir, format: .fixed(precision: 0)) lane=\(self.laneState.lane == .original ? "original" : "sdr", privacy: .public) directOrigin=\(self.didFallBackToDirectOrigin, privacy: .public)"
+        )
+    }
+
+    /// tvOS black-picture self-healing: playback advancing + decoder producing NO frames past the
+    /// deadline → swap to the DIRECT origin URL at the current position (the render path tvOS has
+    /// always used — byte-identical quality); if even that stays black, the honest ladder takes it.
+    private func checkVideoLiveness(item: AVPlayerItem, positionSeconds: Double, now: Date) {
+#if os(tvOS)
+        guard laneState.lane == .original, !isExternalPlaybackItemActive else { return }
+        guard item.status == .readyToPlay, player.rate > 0, positionSeconds > 2 else { return }
+        if !videoFramesObserved, let probe = videoOutputProbe,
+           probe.hasNewPixelBuffer(forItemTime: item.currentTime()) {
+            videoFramesObserved = true
+            AppLog.playback.notice("customplayer.video.first_frame — t=\(positionSeconds, format: .fixed(precision: 1))")
+        }
+        if videoFramesObserved {
+            videoLivenessDeadline = nil
+            return
+        }
+        guard let deadline = videoLivenessDeadline else {
+            videoLivenessDeadline = now.addingTimeInterval(12)
+            return
+        }
+        guard now >= deadline else { return }
+        videoLivenessDeadline = nil
+        if !didFallBackToDirectOrigin {
+            didFallBackToDirectOrigin = true
+            AppLog.playback.error(
+                "customplayer.video_liveness.origin_fallback — no decoded frame by t=\(positionSeconds, format: .fixed(precision: 1)); swapping to direct origin"
+            )
+            installOriginDirectItem(atSeconds: max(0, lastKnownTimeSeconds))
+        } else {
+            AppLog.playback.error("customplayer.video_liveness.exhausted — direct origin also black")
+            handleItemFailure(reason: "video_liveness_black_picture")
+        }
+#endif
+    }
+
+    /// Plays the origin URL directly (no localhost) at the given position. The cache session stays
+    /// alive (fill continues; a later rebuild can return to it), but AVPlayer streams natively.
+    private func installOriginDirectItem(atSeconds seconds: Double) {
+        guard let originSource else { return }
+        var options: [String: Any] = [:]
+        if let mime = resolvedMIMEType { options[AVURLAssetOverrideMIMETypeKey] = mime }
+        if !originSource.headers.isEmpty {
+            options["AVURLAssetHTTPHeaderFieldsKey"] = originSource.headers
+        }
+        let asset = AVURLAsset(url: originSource.url, options: options)
+        let item = AVPlayerItem(asset: asset)
+        player.replaceCurrentItem(with: item)
+        if seconds > 0 {
+            player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
+                        toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 1, preferredTimescale: 600))
+        }
+        observeItemLifecycle(item)
+        player.play()
     }
 
     // MARK: - External playback (AirPlay)
@@ -714,11 +798,24 @@ public final class CustomPlaybackEngine {
 
     private func observeItemLifecycle(_ item: AVPlayerItem) {
         removeItemObservers()
+#if os(tvOS)
+        // Native-format probe (nil attributes → zero conversion cost) purely to witness that the
+        // decoder is producing frames. tvOS only — see `videoOutputProbe` doc.
+        let probe = AVPlayerItemVideoOutput(pixelBufferAttributes: nil)
+        item.add(probe)
+        videoOutputProbe = probe
+#endif
         itemStatusObservation = item.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
-            guard observedItem.status == .failed else { return }
-            let reason = observedItem.error?.localizedDescription ?? "unknown"
+            let status = observedItem.status
+            let reason = observedItem.error?.localizedDescription ?? "-"
             Task { @MainActor [weak self] in
-                self?.handleItemFailure(reason: "item_failed: \(reason)")
+                guard let self else { return }
+                AppLog.playback.notice(
+                    "customplayer.item.status — status=\(status.rawValue, privacy: .public) error=\(reason, privacy: .public)"
+                )
+                if status == .failed {
+                    self.handleItemFailure(reason: "item_failed: \(reason)")
+                }
             }
         }
         failedToEndObserver = NotificationCenter.default.addObserver(
@@ -750,6 +847,9 @@ public final class CustomPlaybackEngine {
     private func removeItemObservers() {
         itemStatusObservation?.invalidate()
         itemStatusObservation = nil
+#if os(tvOS)
+        videoOutputProbe = nil // the outgoing item keeps its output; the next observe adds a fresh one
+#endif
         if let failedToEndObserver { NotificationCenter.default.removeObserver(failedToEndObserver) }
         failedToEndObserver = nil
         if let didEndObserver { NotificationCenter.default.removeObserver(didEndObserver) }
