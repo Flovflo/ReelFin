@@ -230,7 +230,14 @@ struct DetailView: View {
 #endif
         .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
             if let customEngine {
-                CustomPlayerView(engine: customEngine)
+                CustomPlayerView(
+                    engine: customEngine,
+                    launchContext: CustomPlayerView.LaunchContext(
+                        item: customEngine.currentMediaItem ?? viewModel.itemToPlay,
+                        apiClient: dependencies.apiClient,
+                        imagePipeline: dependencies.imagePipeline
+                    )
+                )
             } else if let playerSession {
                 PlayerView(
                     session: playerSession,

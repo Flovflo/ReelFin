@@ -7,12 +7,22 @@ import SwiftUI
 /// buffer) — instead of a silent freeze or a quality drop. The legacy player path is untouched.
 struct CustomPlayerView: View {
     let engine: CustomPlaybackEngine
+    var launchContext: LaunchContext?
+
+    /// What the launch screen shows the instant Play is pressed — the immediate "your action is
+    /// happening" feedback (a bare black screen on a TV reads as a crash).
+    struct LaunchContext {
+        let item: MediaItem
+        let apiClient: JellyfinAPIClientProtocol
+        let imagePipeline: ImagePipelineProtocol
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             CustomPlayerSurface(player: engine.player, engine: engine)
                 .ignoresSafeArea()
+            launchOverlay
             if engine.bufferingState.phase != .failed {
                 VStack {
                     HStack(alignment: .top) {
@@ -29,6 +39,7 @@ struct CustomPlayerView: View {
             skipOverlay
             overlay
         }
+        .animation(.easeOut(duration: 0.3), value: engine.bufferingState.phase)
         .onAppear {
 #if os(iOS)
             OrientationManager.shared.lockLandscapeForPlayerPresentation()
@@ -115,6 +126,64 @@ struct CustomPlayerView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.black.opacity(0.45), in: Capsule())
+    }
+
+    /// Launch screen: from the instant the player appears until the first frame — the movie's
+    /// backdrop + title + a big spinner (and the cushion progress once known). Instant, contextual
+    /// feedback that the press registered; fades out into the video.
+    @ViewBuilder
+    private var launchOverlay: some View {
+        let state = engine.bufferingState
+        if state.phase == .idle || state.phase == .prebuffering {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let context = launchContext {
+                    CachedRemoteImage(
+                        itemID: context.item.id,
+                        type: .backdrop,
+                        width: 1280,
+                        quality: 60,
+                        contentMode: .fill,
+                        apiClient: context.apiClient,
+                        imagePipeline: context.imagePipeline
+                    )
+                    .ignoresSafeArea()
+                    .opacity(0.32)
+                    LinearGradient(
+                        colors: [.black.opacity(0.15), .black.opacity(0.75)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+                }
+                VStack(spacing: 20) {
+                    if let title = launchContext?.item.name, !title.isEmpty {
+                        Text(title)
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+                    ProgressView()
+                        .tint(.white)
+                        .scaleEffect(1.6)
+                    if state.targetSeconds > 0 {
+                        VStack(spacing: 8) {
+                            ProgressView(value: state.progress)
+                                .progressViewStyle(.linear)
+                                .frame(width: 300)
+                                .tint(.white)
+                            Text("Préparation de la lecture…")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                    } else {
+                        Text("Lancement…")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                }
+            }
+            .transition(.opacity)
+        }
     }
 
     /// External-subtitle cue rendered by the player itself (sidecar SRT/VTT — AVFoundation can't
