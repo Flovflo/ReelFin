@@ -600,11 +600,7 @@ public final class CustomPlaybackEngine {
 #if os(tvOS)
         guard laneState.lane == .original, !isExternalPlaybackItemActive else { return }
         guard item.status == .readyToPlay, player.rate > 0, positionSeconds > 2 else { return }
-        if !videoFramesObserved, let probe = videoOutputProbe,
-           probe.hasNewPixelBuffer(forItemTime: item.currentTime()) {
-            videoFramesObserved = true
-            AppLog.playback.notice("customplayer.video.first_frame — t=\(positionSeconds, format: .fixed(precision: 1))")
-        }
+        witnessFirstVideoFrameIfNeeded()
         if videoFramesObserved {
             videoLivenessDeadline = nil
             return
@@ -627,6 +623,27 @@ public final class CustomPlaybackEngine {
         }
 #endif
     }
+
+#if os(tvOS)
+    /// One witnessed decoded frame is all the liveness check needs. COPY (and discard) the queued
+    /// buffer, then DETACH the probe immediately: an output whose frames are never copied retains
+    /// decoder-pool buffers — on 4K HDR that starves the pool and FREEZES the picture while
+    /// audio/timeline keep running (device 2026-07-03: first frame, then a frozen image). Called
+    /// from the 0.25s time observer so the probe lives ≤250ms past the first frame.
+    private func witnessFirstVideoFrameIfNeeded() {
+        guard !videoFramesObserved, let probe = videoOutputProbe, let item = player.currentItem,
+              item.status == .readyToPlay else { return }
+        let itemTime = item.currentTime()
+        guard probe.hasNewPixelBuffer(forItemTime: itemTime) else { return }
+        _ = probe.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil)
+        item.remove(probe)
+        videoOutputProbe = nil
+        videoFramesObserved = true
+        AppLog.playback.notice(
+            "customplayer.video.first_frame — t=\(itemTime.seconds, format: .fixed(precision: 1)) (probe detached)"
+        )
+    }
+#endif
 
     /// Plays the origin URL directly (no localhost) at the given position. The cache session stays
     /// alive (fill continues; a later rebuild can return to it), but AVPlayer streams natively.
@@ -790,6 +807,9 @@ public final class CustomPlaybackEngine {
                 guard let self else { return }
                 let raw = time.seconds.isFinite ? time.seconds : 0
                 self.subtitles.updateTime(self.sdrTimelineOffsetSeconds + raw)
+#if os(tvOS)
+                self.witnessFirstVideoFrameIfNeeded()
+#endif
             }
         }
     }
