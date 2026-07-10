@@ -211,6 +211,12 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     var readerPhase: NativeMatroskaPlaybackGeneration.Phase {
         generationLock.withLock { readerGeneration.phase }
     }
+    var readerCanSeekInPlace: Bool {
+        generationLock.withLock { readerGeneration.canSeekInPlace }
+    }
+    var readerOwnsCurrentCallbacks: Bool {
+        generationLock.withLock { readerGeneration.owns(readerGeneration.id) }
+    }
     var pendingRestartTargetSeconds: Double? { pendingRestartConfiguration?.targetSeconds }
     var pendingRestartIsPaused: Bool { pendingRestartConfiguration?.isPaused ?? pendingPause }
     var pendingRestartSelectedAudioTrackID: String? { pendingRestartConfiguration?.selectedAudioTrackID }
@@ -330,7 +336,6 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         generationLock.withLock {
             guard readerGeneration.owns(candidate) else { return }
             readerGeneration.beginRetirement()
-            readerGeneration.finishRetirement(candidate)
         }
     }
 
@@ -371,8 +376,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     }
 
     private func canApplyForwardSeek(to targetSeconds: Double) -> Bool {
-        let canSeekInPlace = generationLock.withLock { readerGeneration.canSeekInPlace }
-        guard canSeekInPlace else { return false }
+        guard readerCanSeekInPlace else { return false }
         return targetSeconds + 0.5 >= currentPlaybackSecondsForRestart()
     }
 

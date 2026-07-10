@@ -174,6 +174,41 @@ final class NativePlayerConfigurationTests: XCTestCase {
         controller.stopForDismantle()
     }
 
+    func testMatroskaEOFRetainsCallbackOwnershipForFinalDiagnosticsAndDrains() async {
+        let factory = FinishedByteSourceFactory()
+        let controller = NativeMatroskaSampleBufferPlayerController {
+            factory.make(url: $0, headers: $1)
+        }
+        _ = controller.view
+        let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
+        var diagnostics: [[String]] = []
+
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 0,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { diagnostics.append($0) },
+            onPlaybackTime: { _ in }
+        )
+
+        let deliveredFinalDiagnostics = await waitUntil {
+            diagnostics.contains { $0.contains("state=ended") }
+        }
+
+        XCTAssertTrue(deliveredFinalDiagnostics)
+        XCTAssertEqual(controller.readerPhase, .retiring)
+        XCTAssertFalse(controller.readerCanSeekInPlace)
+        XCTAssertTrue(controller.readerOwnsCurrentCallbacks)
+        controller.stopForDismantle()
+        XCTAssertEqual(controller.readerPhase, .idle)
+    }
+
     func testMatroskaForwardSeekWaitsForVideoKeyframeBeforeDecode() {
         var state = NativeMatroskaForwardSeekState(targetSeconds: 100)
 
@@ -709,7 +744,7 @@ private final class RecordingByteSourceFactory: @unchecked Sendable {
 
     var sourceCount: Int { lock.withLock { sources.count } }
 
-    private static let matroskaBootstrapData: Data = {
+    fileprivate static let matroskaBootstrapData: Data = {
         let avcC: [UInt8] = [
             0x01, 0x42, 0xE0, 0x1E, 0xFF, 0xE1,
             0x00, 0x1D,
@@ -742,6 +777,40 @@ private final class RecordingByteSourceFactory: @unchecked Sendable {
             ? [UInt8(0x80 | size)]
             : [UInt8(0x40 | ((size >> 8) & 0x3F)), UInt8(size & 0xFF)]
     }
+}
+
+private final class FinishedByteSourceFactory: @unchecked Sendable {
+    func make(url: URL, headers: [String: String]) -> any MediaByteSource {
+        _ = headers
+        return FinishedByteSource(
+            url: url,
+            data: RecordingByteSourceFactory.matroskaBootstrapData
+        )
+    }
+}
+
+private actor FinishedByteSource: MediaByteSource {
+    nonisolated let url: URL
+    private let data: Data
+
+    init(url: URL, data: Data) {
+        self.url = url
+        self.data = data
+    }
+
+    func read(range: ByteRange) async throws -> Data {
+        guard range.offset >= 0, range.length >= 0 else {
+            throw MediaAccessError.invalidRange(range)
+        }
+        guard range.offset < Int64(data.count) else { return Data() }
+        let lowerBound = Int(range.offset)
+        let upperBound = lowerBound + min(range.length, data.count - lowerBound)
+        return Data(data[lowerBound..<upperBound])
+    }
+
+    func size() async throws -> Int64? { Int64(data.count) }
+    func cancel() async {}
+    func metrics() async -> MediaAccessMetrics { MediaAccessMetrics() }
 }
 
 private actor BlockingByteSource: MediaByteSource {
