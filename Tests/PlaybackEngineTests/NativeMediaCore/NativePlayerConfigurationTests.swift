@@ -48,8 +48,11 @@ final class NativePlayerConfigurationTests: XCTestCase {
         controller.stopForDismantle()
     }
 
-    func testMatroskaForwardSeekKeepsCurrentReaderAndCoalescesRequest() {
-        let controller = NativeMatroskaSampleBufferPlayerController()
+    func testMatroskaForwardSeekKeepsCurrentReaderAndCoalescesRequest() async {
+        let factory = RecordingByteSourceFactory()
+        let controller = NativeMatroskaSampleBufferPlayerController {
+            factory.make(url: $0, headers: $1)
+        }
         _ = controller.view
         let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
 
@@ -66,6 +69,9 @@ final class NativePlayerConfigurationTests: XCTestCase {
             onDiagnostics: { _ in },
             onPlaybackTime: { _ in }
         )
+        let becameActive = await waitUntil { controller.readerPhase == .active }
+        XCTAssertTrue(becameActive)
+        XCTAssertEqual(factory.sourceCount, 1)
         let generation = controller.playbackGeneration
         let request = NativePlayerSeekRequest(id: 1, targetSeconds: 42)
 
@@ -84,6 +90,7 @@ final class NativePlayerConfigurationTests: XCTestCase {
         )
         XCTAssertEqual(controller.playbackGeneration, generation)
         XCTAssertEqual(controller.forwardSeekRequestCount, 1)
+        XCTAssertEqual(factory.sourceCount, 1)
 
         controller.configure(
             url: url,
@@ -100,6 +107,70 @@ final class NativePlayerConfigurationTests: XCTestCase {
         )
         XCTAssertEqual(controller.playbackGeneration, generation)
         XCTAssertEqual(controller.forwardSeekRequestCount, 1)
+        XCTAssertEqual(factory.sourceCount, 1)
+        controller.stopForDismantle()
+    }
+
+    func testMatroskaAlternatingSeekKeepsOnlyLatestTarget() async {
+        let factory = RecordingByteSourceFactory()
+        let controller = NativeMatroskaSampleBufferPlayerController {
+            factory.make(url: $0, headers: $1)
+        }
+        _ = controller.view
+        let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
+
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        let becameActive = await waitUntil { controller.readerPhase == .active }
+        XCTAssertTrue(becameActive)
+        XCTAssertEqual(factory.sourceCount, 1)
+
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: NativePlayerSeekRequest(id: 1, targetSeconds: 480),
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: NativePlayerSeekRequest(id: 2, targetSeconds: 700),
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+
+        XCTAssertEqual(controller.readerPhase, .retiring)
+        XCTAssertEqual(controller.pendingRestartTargetSeconds, 700)
+        XCTAssertEqual(factory.sourceCount, 1)
+
+        let replacementBecameActive = await waitUntil {
+            controller.readerPhase == .active && factory.sourceCount == 2
+        }
+        XCTAssertTrue(replacementBecameActive)
         controller.stopForDismantle()
     }
 
@@ -611,4 +682,92 @@ final class NativePlayerConfigurationTests: XCTestCase {
             data: Data([0x01])
         )
     }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return condition()
+    }
+}
+
+private final class RecordingByteSourceFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sources: [BlockingByteSource] = []
+
+    func make(url: URL, headers: [String: String]) -> any MediaByteSource {
+        _ = headers
+        let source = BlockingByteSource(url: url, bootstrapData: Self.matroskaBootstrapData)
+        lock.withLock { sources.append(source) }
+        return source
+    }
+
+    var sourceCount: Int { lock.withLock { sources.count } }
+
+    private static let matroskaBootstrapData: Data = {
+        let avcC: [UInt8] = [
+            0x01, 0x42, 0xE0, 0x1E, 0xFF, 0xE1,
+            0x00, 0x1D,
+            0x67, 0x42, 0xE0, 0x1E, 0xDA, 0x02, 0x80, 0xB7,
+            0xFE, 0x5C, 0x05, 0xA8, 0x30, 0x30, 0x32, 0x00,
+            0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00,
+            0x79, 0x1E, 0x2C, 0x5C, 0x90,
+            0x01, 0x00, 0x04,
+            0x68, 0xCE, 0x06, 0xE2
+        ]
+        let videoTrack = element([0xAE], payload:
+            element([0xD7], payload: [0x01]) +
+            element([0x83], payload: [0x01]) +
+            element([0x86], payload: Array("V_MPEG4/ISO/AVC".utf8)) +
+            element([0x63, 0xA2], payload: avcC)
+        )
+        let tracks = element([0x16, 0x54, 0xAE, 0x6B], payload: videoTrack)
+        return Data(element([0x1A, 0x45, 0xDF, 0xA3], payload: []))
+            + Data([0x18, 0x53, 0x80, 0x67, 0xFF])
+            + Data(tracks)
+    }()
+
+    private static func element(_ id: [UInt8], payload: [UInt8]) -> [UInt8] {
+        id + vintSize(payload.count) + payload
+    }
+
+    private static func vintSize(_ size: Int) -> [UInt8] {
+        precondition(size < 16_383)
+        return size < 127
+            ? [UInt8(0x80 | size)]
+            : [UInt8(0x40 | ((size >> 8) & 0x3F)), UInt8(size & 0xFF)]
+    }
+}
+
+private actor BlockingByteSource: MediaByteSource {
+    nonisolated let url: URL
+    private let bootstrapData: Data
+    private var servedBootstrap = false
+    private(set) var cancelCount = 0
+    private var cancelled = false
+
+    init(url: URL, bootstrapData: Data) {
+        self.url = url
+        self.bootstrapData = bootstrapData
+    }
+
+    func read(range: ByteRange) async throws -> Data {
+        if range.offset == 0, !servedBootstrap {
+            servedBootstrap = true
+            return bootstrapData
+        }
+        while !cancelled {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw MediaAccessError.cancelled
+    }
+
+    func size() async throws -> Int64? { 16 * 1_024 * 1_024 }
+    func cancel() async { cancelCount += 1; cancelled = true }
+    func metrics() async -> MediaAccessMetrics { MediaAccessMetrics() }
 }

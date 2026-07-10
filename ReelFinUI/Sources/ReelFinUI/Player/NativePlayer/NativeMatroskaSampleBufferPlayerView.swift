@@ -149,6 +149,7 @@ private struct NativeMatroskaRestartConfiguration {
 }
 
 final class NativeMatroskaSampleBufferPlayerController: UIViewController {
+    private let byteSourceFactory: NativeMatroskaByteSourceFactory
     private let displayLayer = AVSampleBufferDisplayLayer()
     private let audioRenderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
@@ -179,7 +180,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private var restartTask: Task<Void, Never>?
     private var pendingRestartConfiguration: NativeMatroskaRestartConfiguration?
     private var seekCommitPolicy = NativePlayerSeekCommitPolicy()
-    private var activeCallbackGeneration = 0
+    private var readerGeneration = NativeMatroskaPlaybackGeneration()
     private var restartCoordinatorID = 0
     private var diagnosticTimer: Timer?
     private var metrics = NativeMatroskaSampleBufferMetrics()
@@ -207,10 +208,25 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private(set) var pauseStateApplicationCount = 0
     private(set) var forwardSeekRequestCount = 0
     private(set) var restartCoordinatorStartCount = 0
+    var readerPhase: NativeMatroskaPlaybackGeneration.Phase {
+        generationLock.withLock { readerGeneration.phase }
+    }
     var pendingRestartTargetSeconds: Double? { pendingRestartConfiguration?.targetSeconds }
     var pendingRestartIsPaused: Bool { pendingRestartConfiguration?.isPaused ?? pendingPause }
     var pendingRestartSelectedAudioTrackID: String? { pendingRestartConfiguration?.selectedAudioTrackID }
     var pendingRestartSelectedSubtitleTrackID: String? { pendingRestartConfiguration?.selectedSubtitleTrackID }
+
+    init(byteSourceFactory: @escaping NativeMatroskaByteSourceFactory = {
+        HTTPRangeByteSource(url: $0, headers: $1)
+    }) {
+        self.byteSourceFactory = byteSourceFactory
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -287,19 +303,43 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             startPlayback(url: url, headers: headers, container: container, startTimeSeconds: currentPlaybackSecondsForRestart(), selectedAudioTrackID: selectedAudioTrackID, selectedSubtitleTrackID: selectedSubtitleTrackID)
         }
         setPaused(isPaused)
-        publishDiagnostics(generation: playbackGeneration)
+        publishDiagnostics(generation: currentReaderGeneration)
     }
 
-    private func setActiveCallbackGeneration(_ generation: Int) {
-        generationLock.lock()
-        activeCallbackGeneration = generation
-        generationLock.unlock()
+    private func beginReaderStart() -> Int {
+        generationLock.withLock { readerGeneration.beginStart() }
+    }
+
+    private func markReaderActive(_ candidate: Int) {
+        generationLock.withLock { readerGeneration.markActive(candidate) }
+    }
+
+    private func beginReaderRetirement() -> Int? {
+        generationLock.withLock {
+            guard readerGeneration.phase != .idle else { return nil }
+            readerGeneration.beginRetirement()
+            return readerGeneration.id
+        }
+    }
+
+    private func finishReaderRetirement(_ candidate: Int) {
+        generationLock.withLock { readerGeneration.finishRetirement(candidate) }
+    }
+
+    private func finishReaderAfterCompletion(_ candidate: Int) {
+        generationLock.withLock {
+            guard readerGeneration.owns(candidate) else { return }
+            readerGeneration.beginRetirement()
+            readerGeneration.finishRetirement(candidate)
+        }
     }
 
     private func ownsCallbacks(from generation: Int) -> Bool {
-        generationLock.lock()
-        defer { generationLock.unlock() }
-        return activeCallbackGeneration == generation
+        generationLock.withLock { readerGeneration.owns(generation) }
+    }
+
+    private var currentReaderGeneration: Int {
+        generationLock.withLock { readerGeneration.id }
     }
 
     private func currentPlaybackSecondsForRestart() -> Double {
@@ -331,7 +371,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     }
 
     private func canApplyForwardSeek(to targetSeconds: Double) -> Bool {
-        guard playbackTask != nil else { return false }
+        let canSeekInPlace = generationLock.withLock { readerGeneration.canSeekInPlace }
+        guard canSeekInPlace else { return false }
         return targetSeconds + 0.5 >= currentPlaybackSecondsForRestart()
     }
 
@@ -362,7 +403,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         audioRenderer.flush()
         resetMetricsForSeek(targetSeconds: request.targetSeconds, hasAudio: hasAudio)
         startClock(at: request.targetSeconds, paused: true)
-        startDrainTimers(generation: playbackGeneration)
+        startDrainTimers(generation: currentReaderGeneration)
         AppLog.playback.notice("nativeplayer.seek.forward_in_place — target=\(request.targetSeconds, privacy: .public)")
     }
 
@@ -388,7 +429,6 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         let shouldStartCoordinator = seekCommitPolicy.enqueueRestart(targetSeconds: startTimeSeconds)
         let generation = seekCommitPolicy.generation
         playbackGeneration = generation
-        setActiveCallbackGeneration(generation)
         currentURL = url
         currentHeaders = headers
         currentContainer = container
@@ -403,6 +443,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             isPaused: pendingPause
         )
+        _ = beginReaderRetirement()
         prepareForReaderReplacement()
         guard shouldStartCoordinator else { return }
         restartCoordinatorID += 1
@@ -414,30 +455,36 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     }
 
     private func commitPendingRestart(coordinatorID: Int) async {
+        let retiringGeneration = beginReaderRetirement()
         let previousTask = playbackTask ?? retiringPlaybackTask
         playbackTask = nil
         retiringPlaybackTask = previousTask
         previousTask?.cancel()
         await previousTask?.value
+        if let retiringGeneration {
+            finishReaderRetirement(retiringGeneration)
+        }
 
         guard coordinatorID == restartCoordinatorID, !Task.isCancelled, !isTornDown else { return }
         retiringPlaybackTask = nil
         guard let commit = seekCommitPolicy.takePendingRestart(),
               let configuration = pendingRestartConfiguration,
               commit.generation == configuration.generation,
-              ownsCallbacks(from: commit.generation) else {
+              seekCommitPolicy.ownsCallbacks(from: commit.generation) else {
             seekCommitPolicy.finishRestart()
             restartTask = nil
             return
         }
         pendingRestartConfiguration = nil
-        beginPlayback(configuration)
+        beginPlayback(configuration, readerGeneration: beginReaderStart())
         seekCommitPolicy.finishRestart()
         restartTask = nil
     }
 
-    private func beginPlayback(_ configuration: NativeMatroskaRestartConfiguration) {
-        let generation = configuration.generation
+    private func beginPlayback(
+        _ configuration: NativeMatroskaRestartConfiguration,
+        readerGeneration generation: Int
+    ) {
         guard ownsCallbacks(from: generation) else { return }
         currentStartTimeSeconds = configuration.targetSeconds
         playbackStateLock.lock()
@@ -516,14 +563,17 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         }
         seekCommitPolicy.cancelAll()
         playbackGeneration = seekCommitPolicy.generation
-        setActiveCallbackGeneration(playbackGeneration)
         pendingRestartConfiguration = nil
         restartCoordinatorID += 1
         restartTask?.cancel()
         restartTask = nil
         playbackTask?.cancel()
         retiringPlaybackTask?.cancel()
+        let retiringGeneration = beginReaderRetirement()
         prepareForReaderReplacement()
+        if let retiringGeneration {
+            finishReaderRetirement(retiringGeneration)
+        }
     }
 
     private func openDemuxAndPump(
@@ -538,7 +588,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         do {
             guard ownsCallbacks(from: generation) else { return }
             AppLog.playback.notice("nativeplayer.sampleReader.start — backend=\(Self.demuxerName(for: container), privacy: .public)")
-            let source = HTTPRangeByteSource(url: url, headers: headers)
+            let source = byteSourceFactory(url, headers)
             let demuxer = Self.makeDemuxer(source: source, container: container)
             let stream = try await demuxer.open()
             try Task.checkCancellation()
@@ -568,6 +618,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             let audioDecoder = await makeAudioDecoder(audioTrack, generation: generation)
             try Task.checkCancellation()
             guard ownsCallbacks(from: generation) else { return }
+            markReaderActive(generation)
             resetPlaybackReadiness(hasAudio: audioDecoder != nil)
 
             updateMetrics {
@@ -592,6 +643,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 startTimeSeconds: startTimeSeconds,
                 generation: generation
             )
+            finishReaderAfterCompletion(generation)
         } catch {
             guard !Task.isCancelled, ownsCallbacks(from: generation) else { return }
             updateMetrics {
@@ -599,6 +651,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 $0.failure = error.localizedDescription
             }
             publishDiagnostics(generation: generation)
+            finishReaderAfterCompletion(generation)
         }
     }
 
