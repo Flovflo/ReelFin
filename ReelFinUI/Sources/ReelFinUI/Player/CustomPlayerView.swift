@@ -4,12 +4,76 @@ import PlaybackEngine
 import Shared
 import SwiftUI
 
+enum CustomPlayerLaunchPresentationPolicy {
+    static func showsInterruptionOverlay(
+        phase: PlaybackBufferingState.Phase,
+        reservoirSeconds: Double
+    ) -> Bool {
+        phase == .buffering && reservoirSeconds < 3
+    }
+
+    static func statusText(
+        phase: PlaybackBufferingState.Phase,
+        progress: Double
+    ) -> String {
+        switch phase {
+        case .prebuffering:
+            let percentage = Int((min(max(progress, 0), 1) * 100).rounded())
+            return "Préparation de l’original · \(percentage) %"
+        case .buffering:
+            return "Reprise de la lecture"
+        default:
+            return "Ouverture de l’original"
+        }
+    }
+}
+
+enum CustomPlayerTVRemoteRouting {
+    enum Input: Equatable {
+        case menu
+        case playPause
+        case other
+    }
+
+    enum Action: Equatable {
+        case exitPlayer
+        case togglePlayPause
+        case system
+    }
+
+    static func action(for input: Input) -> Action {
+        switch input {
+        case .menu: return .exitPlayer
+        case .playPause: return .togglePlayPause
+        case .other: return .system
+        }
+    }
+}
+
+enum CustomPlayerSkipFocusPolicy {
+    static func shouldRequestFocus(hadSuggestion: Bool, hasSuggestion: Bool) -> Bool {
+        !hadSuggestion && hasSuggestion
+    }
+}
+
 /// Full-screen host for the NEW custom playback engine (flag-gated). Shows `engine.player` and an
 /// original-first LOADING BAR overlay while the deep cache is being built (pre-buffer / mid-play
 /// buffer) — instead of a silent freeze or a quality drop. The legacy player path is untouched.
 struct CustomPlayerView: View {
     let engine: CustomPlaybackEngine
     var launchContext: LaunchContext?
+    /// Host-provided dismissal. Required when the view is an INLINE overlay (tvOS) — there is no
+    /// presentation for `@Environment(\.dismiss)` to pop there.
+    var onRequestDismiss: (() -> Void)?
+
+    @Environment(\.dismiss) private var dismiss
+    /// Slow-launch escalation: past this delay with still no picture, the overlay stops pretending
+    /// ("Lancement…") and says the server is slow, with Retry/Quit — never an endless bare spinner.
+    @State private var launchIsSlow = false
+    private let slowLaunchThresholdSeconds: UInt64 = 15
+#if os(tvOS)
+    @FocusState private var isSkipActionFocused: Bool
+#endif
 
     /// What the launch screen shows the instant Play is pressed — the immediate "your action is
     /// happening" feedback (a bare black screen on a TV reads as a crash).
@@ -22,13 +86,16 @@ struct CustomPlayerView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            CustomPlayerSurface(player: engine.player, engine: engine)
+            CustomPlayerSurface(
+                player: engine.player,
+                engine: engine,
+                onExitRequested: requestDismissal
+            )
                 .ignoresSafeArea()
             launchOverlay
-            if engine.bufferingState.phase != .failed {
+            if !isLaunching, engine.bufferingState.phase != .failed {
                 VStack {
-                    HStack(alignment: .top) {
-                        cacheHUD
+                    HStack {
                         Spacer()
                         subtitlePicker
                     }
@@ -41,19 +108,46 @@ struct CustomPlayerView: View {
             skipOverlay
             overlay
         }
-        .animation(.easeOut(duration: 0.3), value: engine.bufferingState.phase)
+        .modifier(CustomPlayerRemoteCommandModifier(engine: engine))
+#if os(tvOS)
+        .onExitCommand {
+            requestDismissal()
+        }
+        .onChange(of: engine.activeSkipSuggestion != nil) { hadSuggestion, hasSuggestion in
+            guard CustomPlayerSkipFocusPolicy.shouldRequestFocus(
+                hadSuggestion: hadSuggestion,
+                hasSuggestion: hasSuggestion
+            ) else {
+                if !hasSuggestion { isSkipActionFocused = false }
+                return
+            }
+            Task { @MainActor in
+                await Task.yield()
+                isSkipActionFocused = true
+            }
+        }
+#endif
         .onAppear {
+            // The one log line that separates "the player never presented" (screen stuck on the
+            // detail while the engine plays unseen) from "the player is up but the picture froze".
+            AppLog.ui.notice("customplayer.view.appeared")
 #if os(iOS)
             OrientationManager.shared.lockLandscapeForPlayerPresentation()
 #endif
         }
         .onDisappear {
+            AppLog.ui.notice("customplayer.view.disappeared")
             // Picture in Picture outlives the view — only a real dismissal stops playback.
             if !engine.isPictureInPictureActive {
                 engine.stop()
             }
 #if os(iOS)
-            OrientationManager.shared.restorePortraitAfterPlayerDismissal()
+            // A compatible MKV replaces this view with `PlayerView` inside the SAME full-screen
+            // cover. Restoring portrait here races after the native view's landscape request and
+            // leaves the movie letterboxed in a portrait screen.
+            if !engine.isHandingOffToNativePlayback {
+                OrientationManager.shared.restorePortraitAfterPlayerDismissal()
+            }
 #endif
         }
     }
@@ -83,18 +177,12 @@ struct CustomPlayerView: View {
             .padding(24)
             .frame(maxWidth: 420)
             .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
-        } else if state.isLoadingBarVisible {
-            VStack(spacing: 12) {
-                ProgressView(value: state.progress)
-                    .progressViewStyle(.linear)
-                    .frame(width: 240)
-                    .tint(.white)
-                Text(label(for: state))
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-            .padding(20)
-            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
+        } else if state.isLoadingBarVisible,
+                  CustomPlayerLaunchPresentationPolicy.showsInterruptionOverlay(
+                    phase: state.phase,
+                    reservoirSeconds: state.reservoirSeconds
+                  ) {
+            bufferingGlassPanel(state: state)
         } else if let error = engine.errorMessage {
             Text(error)
                 .font(.callout)
@@ -104,88 +192,202 @@ struct CustomPlayerView: View {
         }
     }
 
-    /// Always-visible HUD: quality badge (the proof you're getting the original) + live reservoir.
-    private var cacheHUD: some View {
-        let seconds = Int(engine.bufferingState.reservoirSeconds.rounded())
-        let fraction = min(1, engine.bufferingState.reservoirSeconds / 300) // bar spans ~5 min
-        return HStack(spacing: 8) {
-            if let badge = qualityBadge {
-                Text(badge.text)
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(badge.tint.opacity(0.85), in: Capsule())
-                    .foregroundStyle(.black)
-            }
-            Image(systemName: "internaldrive")
-            Text("Cache \(seconds)s")
-                .font(.caption.monospacedDigit())
-            ProgressView(value: fraction)
-                .frame(width: 90)
-                .tint(.green)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.black.opacity(0.45), in: Capsule())
+    /// True from the instant the player appears until the picture is PROVEN on screen. Keying the
+    /// overlay off the phase alone dropped it at the startup-gate exit — leaving a bare black
+    /// screen (reads as a crash on a TV) until the first frame actually rendered.
+    private var isLaunching: Bool {
+        let phase = engine.bufferingState.phase
+        if phase == .failed || phase == .ended { return false }
+        return phase == .idle || phase == .prebuffering || !engine.hasRenderedFirstFrame
     }
 
-    /// Launch screen: from the instant the player appears until the first frame — the movie's
-    /// backdrop + title + a big spinner (and the cushion progress once known). Instant, contextual
-    /// feedback that the press registered; fades out into the video.
+    /// Launch screen: from the instant the player appears until the FIRST RENDERED FRAME — the
+    /// movie's backdrop + title + a big spinner (and the cushion progress once known). Instant,
+    /// contextual feedback that the press registered; fades out into the video. Past
+    /// `slowLaunchThresholdSeconds` it turns honest: the server is slow — Retry or Quit.
     @ViewBuilder
     private var launchOverlay: some View {
         let state = engine.bufferingState
-        if state.phase == .idle || state.phase == .prebuffering {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                if let context = launchContext {
-                    CachedRemoteImage(
-                        itemID: context.item.id,
-                        type: .backdrop,
-                        width: 1280,
-                        quality: 60,
-                        contentMode: .fill,
-                        apiClient: context.apiClient,
-                        imagePipeline: context.imagePipeline
-                    )
-                    .ignoresSafeArea()
-                    .opacity(0.32)
-                    LinearGradient(
-                        colors: [.black.opacity(0.15), .black.opacity(0.75)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .ignoresSafeArea()
-                }
-                VStack(spacing: 20) {
-                    if let title = launchContext?.item.name, !title.isEmpty {
-                        Text(title)
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
+        if isLaunching {
+            GeometryReader { geometry in
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    if let context = launchContext {
+                        CachedRemoteImage(
+                            itemID: context.item.id,
+                            type: .backdrop,
+                            width: 1280,
+                            quality: 68,
+                            contentMode: .fill,
+                            apiClient: context.apiClient,
+                            imagePipeline: context.imagePipeline
+                        )
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .opacity(0.52)
                     }
-                    ProgressView()
-                        .tint(.white)
-                        .scaleEffect(1.6)
-                    if state.targetSeconds > 0 {
-                        VStack(spacing: 8) {
-                            ProgressView(value: state.progress)
-                                .progressViewStyle(.linear)
-                                .frame(width: 300)
-                                .tint(.white)
-                            Text("Préparation de la lecture…")
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.8))
+                    LinearGradient(
+                        colors: [
+                            .black.opacity(0.10),
+                            .black.opacity(0.28),
+                            .black.opacity(0.88)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+
+                    VStack {
+                        Spacer()
+                        HStack {
+                            launchGlassPanel(state: state)
+                            Spacer(minLength: 0)
                         }
-                    } else {
-                        Text("Lancement…")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.8))
+                        .padding(.horizontal, launchHorizontalPadding)
+                        .padding(.bottom, launchBottomPadding)
                     }
                 }
             }
             .transition(.opacity)
+            .animation(.easeOut(duration: 0.22), value: engine.hasRenderedFirstFrame)
+            .task(id: engine.loadGeneration) {
+                launchIsSlow = false
+                try? await Task.sleep(nanoseconds: slowLaunchThresholdSeconds * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.3)) {
+                    launchIsSlow = true
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func launchGlassPanel(state: PlaybackBufferingState) -> some View {
+        let panel = HStack(alignment: .center, spacing: 18) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(.white)
+                .frame(width: 52, height: 52)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    if let title = launchContext?.item.name, !title.isEmpty {
+                        Text(title)
+                            .font(.title3.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                    if let badge = qualityBadge {
+                        Text(badge.text)
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(badge.tint.opacity(0.9), in: Capsule())
+                            .foregroundStyle(.black)
+                    }
+                }
+
+                Text(
+                    CustomPlayerLaunchPresentationPolicy.statusText(
+                        phase: state.phase,
+                        progress: state.progress
+                    )
+                )
+                .font(.callout)
+                .foregroundStyle(.white.opacity(0.72))
+
+                if state.phase == .prebuffering, state.targetSeconds > 0 {
+                    ProgressView(value: state.progress)
+                        .progressViewStyle(.linear)
+                        .frame(maxWidth: 340)
+                        .tint(.white)
+                }
+
+                if launchIsSlow {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Le serveur met plus de temps que prévu.")
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.82))
+                        slowLaunchActions
+                    }
+                    .padding(.top, 4)
+                    .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: 420, alignment: .leading)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+
+        if #available(iOS 26.0, tvOS 26.0, *) {
+            GlassEffectContainer(spacing: 14) {
+                panel
+                    .glassEffect(
+                        .regular.tint(.black.opacity(0.18)),
+                        in: .rect(cornerRadius: 28)
+                    )
+            }
+        } else {
+            panel
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28))
+        }
+    }
+
+    @ViewBuilder
+    private var slowLaunchActions: some View {
+        HStack(spacing: 12) {
+            Button {
+                engine.retry()
+            } label: {
+                Label("Réessayer", systemImage: "arrow.clockwise")
+            }
+            Button(role: .cancel) {
+                requestDismissal()
+            } label: {
+                Label("Quitter", systemImage: "xmark")
+            }
+        }
+        .buttonStyle(.glass)
+    }
+
+    @ViewBuilder
+    private func bufferingGlassPanel(state: PlaybackBufferingState) -> some View {
+        let panel = HStack(spacing: 14) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(.white)
+            Text("Reprise de la lecture")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+
+        if #available(iOS 26.0, tvOS 26.0, *) {
+            panel.glassEffect(
+                .regular.tint(.black.opacity(0.22)),
+                in: .rect(cornerRadius: 22)
+            )
+        } else {
+            panel.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+        }
+    }
+
+    private var launchHorizontalPadding: CGFloat {
+#if os(tvOS)
+        72
+#else
+        28
+#endif
+    }
+
+    private var launchBottomPadding: CGFloat {
+#if os(tvOS)
+        64
+#else
+        32
+#endif
     }
 
     /// External-subtitle cue rendered by the player itself (sidecar SRT/VTT — AVFoundation can't
@@ -231,9 +433,9 @@ struct CustomPlayerView: View {
                             .padding(.horizontal, 26)
                             .padding(.vertical, 14)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.white.opacity(0.9))
-                    .foregroundStyle(.black)
+                    .buttonStyle(.glassProminent)
+                    .focused($isSkipActionFocused)
+                    .accessibilityIdentifier("custom_player_skip_button")
 #endif
                 }
                 .padding(.trailing, 48)
@@ -278,40 +480,336 @@ struct CustomPlayerView: View {
         return (label, .white)
     }
 
-    private func label(for state: PlaybackBufferingState) -> String {
-        let pct = Int((state.progress * 100).rounded())
-        switch state.phase {
-        case .prebuffering: return "Mise en cache de l’original… \(pct)%"
-        case .buffering: return "Mise en mémoire tampon… \(pct)%"
-        default: return ""
+    private func requestDismissal() {
+        AppLog.ui.notice("customplayer.remote.exit")
+        if let onRequestDismiss {
+            onRequestDismiss()
+        } else {
+            dismiss()
         }
     }
 }
 
-/// Minimal AVPlayerViewController host (iOS/tvOS). The custom engine owns the AVPlayer; the
-/// delegate keeps the engine informed about Picture in Picture so teardown never kills it.
+/// `AVPlayerViewController` normally handles the Siri Remote, but this player is hosted under
+/// SwiftUI HUD/overlay layers that can own the focus responder. Keep Play/Pause deterministic at
+/// the full-screen root as well; iOS remains entirely under AVKit's transport controls.
+private struct CustomPlayerRemoteCommandModifier: ViewModifier {
+    let engine: CustomPlaybackEngine
+
+    func body(content: Content) -> some View {
+#if os(tvOS)
+        content.onPlayPauseCommand {
+            engine.togglePlayPause()
+        }
+#else
+        content
+#endif
+    }
+}
+
+/// AVKit host for the custom engine. The engine creates its `AVPlayerItem` asynchronously after
+/// SwiftUI presents this controller. On iOS AVKit can leave its PlayerRemoteXPC video surface
+/// detached in that sequence: audio advances, but the display stays black. Keep the presentation
+/// lifecycle here, where AVKit exposes the only authoritative render signal.
 private struct CustomPlayerSurface: UIViewControllerRepresentable {
+    private static let playerScreenAccessibilityIdentifier = "native_player_screen"
+    private static let renderReadyAccessibilityIdentifier = "custom_player_rendering_ready"
+    private static let playerScreenMarkerTag = 0x5246_4350
+    private static let renderReadyMarkerTag = 0x5246_4352
+
     let player: AVPlayer
     let engine: CustomPlaybackEngine
+    let onExitRequested: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(engine: engine) }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
+#if os(tvOS)
+        let controller = InlineCustomAVPlayerViewController()
+        controller.onExitRequested = onExitRequested
+        controller.onPlayPauseRequested = { engine.togglePlayPause() }
+#else
         let controller = AVPlayerViewController()
+#endif
+        AppLog.playback.notice("customplayer.surface.make")
+        installPlayerScreenAccessibilityMarker(in: controller)
         controller.player = player
+        configureDisplayPolicy(on: controller)
+        controller.showsPlaybackControls = true
         controller.allowsPictureInPicturePlayback = true
+#if os(iOS)
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.canStartPictureInPictureAutomaticallyFromInline = false
+#endif
+        // ReelFin picks the media tracks itself. Letting AVKit select one while the custom engine
+        // still prepares its item caused a second late reconfiguration of the render surface.
+        controller.player?.appliesMediaSelectionCriteriaAutomatically = false
         controller.delegate = context.coordinator
+        context.coordinator.startObserving(player: player, controller: controller)
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
-        if controller.player !== player { controller.player = player }
+#if os(tvOS)
+        if let inlineController = controller as? InlineCustomAVPlayerViewController {
+            inlineController.onExitRequested = onExitRequested
+            inlineController.onPlayPauseRequested = { engine.togglePlayPause() }
+        }
+#endif
+        installPlayerScreenAccessibilityMarker(in: controller)
+        if context.coordinator.shouldDeferPlayerAssignment(to: player, controller: controller) {
+            return
+        }
+        if controller.player !== player {
+            AppLog.playback.notice("customplayer.surface.player_reassigned")
+            controller.player = player
+            configureDisplayPolicy(on: controller)
+            controller.player?.appliesMediaSelectionCriteriaAutomatically = false
+            context.coordinator.startObserving(player: player, controller: controller)
+        }
+    }
+
+    private func installPlayerScreenAccessibilityMarker(in controller: AVPlayerViewController) {
+        controller.view.accessibilityIdentifier = Self.playerScreenAccessibilityIdentifier
+        guard controller.view.viewWithTag(Self.playerScreenMarkerTag) == nil else { return }
+
+        let marker = UIView()
+        marker.tag = Self.playerScreenMarkerTag
+        marker.isAccessibilityElement = true
+        marker.accessibilityIdentifier = Self.playerScreenAccessibilityIdentifier
+        marker.accessibilityLabel = "Player"
+        marker.backgroundColor = .clear
+        marker.isUserInteractionEnabled = false
+        marker.translatesAutoresizingMaskIntoConstraints = false
+        controller.view.addSubview(marker)
+        NSLayoutConstraint.activate([
+            marker.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+            marker.topAnchor.constraint(equalTo: controller.view.topAnchor),
+            marker.widthAnchor.constraint(equalToConstant: 1),
+            marker.heightAnchor.constraint(equalToConstant: 1)
+        ])
+    }
+
+    private func configureDisplayPolicy(on controller: AVPlayerViewController) {
+#if os(tvOS)
+        if NativePlayerViewController.shouldApplyPreferredDisplayCriteriaAutomatically(
+            isTVOS: true,
+            isSimulator: NativePlayerViewController.isRunningInSimulator
+        ) {
+            controller.appliesPreferredDisplayCriteriaAutomatically = true
+        }
+#endif
     }
 
     @MainActor
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         private let engine: CustomPlaybackEngine
+        private var itemObservation: NSKeyValueObservation?
+        private var statusObservation: NSKeyValueObservation?
+        private var readyForDisplayObservation: NSKeyValueObservation?
+        private weak var controller: AVPlayerViewController?
+        private weak var observedPlayer: AVPlayer?
+#if os(iOS)
+        private var didReattachForCurrentItem = false
+        private var isTemporarilyDetachedForReattach = false
+        private var observedItemIdentifier: ObjectIdentifier?
+        private var reattachGeneration: UInt = 0
+        private var reattachWorkItem: DispatchWorkItem?
+#endif
+
         init(engine: CustomPlaybackEngine) { self.engine = engine }
+
+        deinit {
+#if os(iOS)
+            reattachWorkItem?.cancel()
+#endif
+        }
+
+        func startObserving(player: AVPlayer, controller: AVPlayerViewController) {
+            self.controller = controller
+            observedPlayer = player
+            let currentItemState = player.currentItem == nil ? "none" : "present"
+            AppLog.playback.notice(
+                "customplayer.surface.observe_start — item=\(currentItemState, privacy: .public)"
+            )
+            observeReadyForDisplay(on: controller)
+#if os(iOS)
+            reattachWorkItem?.cancel()
+            isTemporarilyDetachedForReattach = false
+            didReattachForCurrentItem = false
+            observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
+#endif
+            statusObservation = nil
+            itemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] player, _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let currentItemState = player.currentItem == nil ? "none" : "present"
+                    AppLog.playback.notice(
+                        "customplayer.surface.item_changed — item=\(currentItemState, privacy: .public)"
+                    )
+#if os(iOS)
+                    self.reattachWorkItem?.cancel()
+                    self.isTemporarilyDetachedForReattach = false
+                    self.didReattachForCurrentItem = false
+                    self.observedItemIdentifier = player.currentItem.map(ObjectIdentifier.init)
+#endif
+                    self.removeRenderReadyMarker()
+                    self.observeItemStatus(player: player)
+                }
+            }
+            if player.currentItem != nil {
+                observeItemStatus(player: player)
+            }
+        }
+
+        func shouldDeferPlayerAssignment(to player: AVPlayer, controller: AVPlayerViewController) -> Bool {
+#if os(iOS)
+            return isTemporarilyDetachedForReattach
+                && controller.player == nil
+                && observedPlayer === player
+#else
+            return false
+#endif
+        }
+
+        private func observeReadyForDisplay(on controller: AVPlayerViewController) {
+            readyForDisplayObservation = nil
+            notifyRenderReadyIfNeeded(on: controller)
+            readyForDisplayObservation = controller.observe(\.isReadyForDisplay, options: [.new]) { [weak self] controller, _ in
+                Task { @MainActor in
+                    AppLog.playback.notice(
+                        "customplayer.surface.ready_for_display — value=\(controller.isReadyForDisplay, privacy: .public)"
+                    )
+                    self?.notifyRenderReadyIfNeeded(on: controller)
+                }
+            }
+        }
+
+        private func notifyRenderReadyIfNeeded(on controller: AVPlayerViewController) {
+            guard controller.isReadyForDisplay,
+                  controller.player?.currentItem?.status == .readyToPlay
+            else { return }
+#if os(iOS)
+            guard !isTemporarilyDetachedForReattach else { return }
+#endif
+            installRenderReadyMarker(in: controller)
+            AppLog.playback.notice("customplayer.surface.render_ready")
+            engine.reportRenderSurfaceReady()
+        }
+
+        private func installRenderReadyMarker(in controller: AVPlayerViewController) {
+            guard controller.view.viewWithTag(CustomPlayerSurface.renderReadyMarkerTag) == nil else { return }
+
+            let marker = UIView()
+            marker.tag = CustomPlayerSurface.renderReadyMarkerTag
+            marker.isAccessibilityElement = true
+            marker.accessibilityIdentifier = CustomPlayerSurface.renderReadyAccessibilityIdentifier
+            marker.accessibilityLabel = "Player rendering ready"
+            marker.backgroundColor = .clear
+            marker.isUserInteractionEnabled = false
+            marker.translatesAutoresizingMaskIntoConstraints = false
+            controller.view.addSubview(marker)
+            NSLayoutConstraint.activate([
+                marker.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+                marker.topAnchor.constraint(equalTo: controller.view.topAnchor),
+                marker.widthAnchor.constraint(equalToConstant: 1),
+                marker.heightAnchor.constraint(equalToConstant: 1)
+            ])
+        }
+
+        private func removeRenderReadyMarker() {
+            controller?.view.viewWithTag(CustomPlayerSurface.renderReadyMarkerTag)?.removeFromSuperview()
+        }
+
+        private func observeItemStatus(player: AVPlayer) {
+            statusObservation = nil
+            guard let item = player.currentItem else {
+#if os(iOS)
+                observedItemIdentifier = nil
+#endif
+                return
+            }
+#if os(iOS)
+            observedItemIdentifier = ObjectIdentifier(item)
+#endif
+            AppLog.playback.notice(
+                "customplayer.surface.item_status — status=\(item.status.rawValue, privacy: .public)"
+            )
+            if item.status == .readyToPlay {
+                handleSurfaceItemReady(player: player, item: item)
+                return
+            }
+            statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+                AppLog.playback.notice(
+                    "customplayer.surface.item_status_changed — status=\(item.status.rawValue, privacy: .public)"
+                )
+                guard item.status == .readyToPlay else { return }
+                Task { @MainActor in
+                    self?.handleSurfaceItemReady(player: player, item: item)
+                }
+            }
+        }
+
+        private func handleSurfaceItemReady(player: AVPlayer, item: AVPlayerItem) {
+#if os(iOS)
+            reattachIfNeeded(player: player, item: item)
+#else
+            guard player.currentItem === item, let controller else { return }
+            notifyRenderReadyIfNeeded(on: controller)
+#endif
+        }
+
+#if os(iOS)
+        private func reattachIfNeeded(player: AVPlayer, item: AVPlayerItem) {
+            guard !didReattachForCurrentItem,
+                  observedItemIdentifier == ObjectIdentifier(item),
+                  let controller
+            else { return }
+
+            didReattachForCurrentItem = true
+            reattachWorkItem?.cancel()
+            isTemporarilyDetachedForReattach = true
+            reattachGeneration &+= 1
+            let generation = reattachGeneration
+
+            DispatchQueue.main.async { [weak self, weak controller, weak item] in
+                guard let self, let controller, let item,
+                      self.reattachGeneration == generation,
+                      self.observedItemIdentifier == ObjectIdentifier(item),
+                      player.currentItem === item
+                else {
+                    self?.isTemporarilyDetachedForReattach = false
+                    return
+                }
+
+                let shouldResume = player.rate > 0 || player.timeControlStatus == .playing
+                if shouldResume { player.pause() }
+                self.removeRenderReadyMarker()
+                AppLog.playback.notice("customplayer.avkit.render_surface.reattach — reason=item_ready_to_play")
+                controller.player = nil
+
+                let workItem = DispatchWorkItem { [weak self, weak controller, weak item] in
+                    guard let self else { return }
+                    defer {
+                        self.isTemporarilyDetachedForReattach = false
+                        self.reattachWorkItem = nil
+                    }
+                    guard let controller, let item,
+                          self.reattachGeneration == generation,
+                          self.observedItemIdentifier == ObjectIdentifier(item),
+                          player.currentItem === item
+                    else { return }
+                    controller.player = player
+                    controller.player?.appliesMediaSelectionCriteriaAutomatically = false
+                    self.observeReadyForDisplay(on: controller)
+                    if shouldResume { player.play() }
+                }
+                self.reattachWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
+            }
+        }
+#endif
 
         nonisolated func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
             Task { @MainActor in self.engine.isPictureInPictureActive = true }
@@ -335,3 +833,75 @@ private struct CustomPlayerSurface: UIViewControllerRepresentable {
         }
     }
 }
+
+#if os(tvOS)
+/// AVKit consumes the Siri Remote Menu press when embedded inline and tries to dismiss a UIKit
+/// presentation that does not exist. Intercept only that public tvOS press at the controller
+/// boundary so Home/Detail can tear down the engine and restore their own focus tree.
+private final class InlineCustomAVPlayerViewController: AVPlayerViewController {
+    var onExitRequested: (() -> Void)?
+    var onPlayPauseRequested: (() -> Void)?
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override var keyCommands: [UIKeyCommand]? {
+        let command = UIKeyCommand(
+            input: UIKeyCommand.inputEscape,
+            modifierFlags: [],
+            action: #selector(handleExitPress)
+        )
+        command.wantsPriorityOverSystemBehavior = true
+        return [command]
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleExitPress))
+        recognizer.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
+        recognizer.cancelsTouchesInView = true
+        view.addGestureRecognizer(recognizer)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        becomeFirstResponder()
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        switch routedAction(for: presses) {
+        case .exitPlayer:
+            onExitRequested?()
+        case .togglePlayPause:
+            onPlayPauseRequested?()
+        case .system:
+            super.pressesBegan(presses, with: event)
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        switch routedAction(for: presses) {
+        case .exitPlayer, .togglePlayPause:
+            return // handled exactly once in pressesBegan
+        case .system:
+            super.pressesEnded(presses, with: event)
+        }
+    }
+
+    private func routedAction(for presses: Set<UIPress>) -> CustomPlayerTVRemoteRouting.Action {
+        let inputs = presses.map { press -> CustomPlayerTVRemoteRouting.Input in
+            switch press.type {
+            case .menu: return .menu
+            case .playPause: return .playPause
+            default: return .other
+            }
+        }
+        return inputs.lazy
+            .map(CustomPlayerTVRemoteRouting.action(for:))
+            .first(where: { $0 != .system }) ?? .system
+    }
+
+    @objc private func handleExitPress() {
+        onExitRequested?()
+    }
+}
+#endif

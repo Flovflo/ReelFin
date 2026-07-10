@@ -18,6 +18,9 @@ public struct EpisodeCardView: View {
     let onSetWatched: ((Bool) -> Void)?
     let onShowFileInfo: (() -> Void)?
     let onMoveUp: (() -> Void)?
+    /// tvOS: reports focus dwell so the host can pre-resolve playback for the episode the user is
+    /// ABOUT to press — the press then adopts a ready resolution instead of paying it live.
+    let onFocusChange: ((Bool) -> Void)?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
 
@@ -29,6 +32,7 @@ public struct EpisodeCardView: View {
         onSetWatched: ((Bool) -> Void)? = nil,
         onShowFileInfo: (() -> Void)? = nil,
         onMoveUp: (() -> Void)? = nil,
+        onFocusChange: ((Bool) -> Void)? = nil,
         apiClient: any JellyfinAPIClientProtocol,
         imagePipeline: any ImagePipelineProtocol
     ) {
@@ -39,6 +43,7 @@ public struct EpisodeCardView: View {
         self.onSetWatched = onSetWatched
         self.onShowFileInfo = onShowFileInfo
         self.onMoveUp = onMoveUp
+        self.onFocusChange = onFocusChange
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
     }
@@ -88,6 +93,9 @@ public struct EpisodeCardView: View {
         .onMoveCommand { direction in
             guard direction == .up else { return }
             onMoveUp?()
+        }
+        .onChange(of: isFocused) { _, focused in
+            onFocusChange?(focused)
         }
         .animation(.smooth(duration: 0.20, extraBounce: 0.01), value: isFocused)
         .accessibilityElement(children: .combine)

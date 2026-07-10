@@ -96,11 +96,11 @@ public final class SubtitleOverlayModel {
     // MARK: - Loading / parsing (static + nonisolated: runs off the MainActor)
 
     nonisolated private static func loadCues(from url: URL) async -> [TimedCue]? {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 20
-        let session = URLSession(configuration: config)
-        defer { session.finishTasksAndInvalidate() }
-        guard let (data, response) = try? await session.data(from: url),
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        // Subtitle sidecars live on the same Jellyfin origin as the media. Reuse the process-lived
+        // transport instead of creating an ephemeral session that forgets the tvOS H3→H2 verdict.
+        guard let (data, response) = try? await MediaOriginTransport.onDemand.data(for: request),
               (response as? HTTPURLResponse).map({ (200...299).contains($0.statusCode) }) ?? true,
               let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
         else { return nil }

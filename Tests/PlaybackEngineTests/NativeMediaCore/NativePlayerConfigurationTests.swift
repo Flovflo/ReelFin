@@ -149,6 +149,106 @@ final class NativePlayerConfigurationTests: XCTestCase {
         ))
     }
 
+    func testMatroskaSeekCommitPolicyPreservesSeekToZero() {
+        var policy = NativePlayerSeekCommitPolicy()
+
+        XCTAssertTrue(policy.enqueueRestart(targetSeconds: 0))
+        let commit = policy.takePendingRestart()
+
+        XCTAssertEqual(commit?.targetSeconds, 0)
+    }
+
+    func testMatroskaSeekCommitPolicyCoalescesRapidBackwardRestartsToLatestTarget() {
+        var policy = NativePlayerSeekCommitPolicy()
+
+        XCTAssertTrue(policy.enqueueRestart(targetSeconds: 480))
+        XCTAssertFalse(policy.enqueueRestart(targetSeconds: 240))
+        XCTAssertFalse(policy.enqueueRestart(targetSeconds: 0))
+
+        let commit = policy.takePendingRestart()
+        XCTAssertEqual(commit?.targetSeconds, 0)
+        XCTAssertEqual(commit?.generation, 3)
+        policy.finishRestart()
+        XCTAssertFalse(policy.isRestartInFlight)
+    }
+
+    func testMatroskaSeekCommitPolicyRejectsStaleGenerationCallbacks() {
+        var policy = NativePlayerSeekCommitPolicy()
+
+        _ = policy.enqueueRestart(targetSeconds: 480)
+        let staleGeneration = policy.generation
+        _ = policy.enqueueRestart(targetSeconds: 0)
+
+        XCTAssertFalse(policy.ownsCallbacks(from: staleGeneration))
+        XCTAssertTrue(policy.ownsCallbacks(from: policy.generation))
+    }
+
+    func testMatroskaControllerKeepsOneLatestRestartWithPauseAndTrackSelection() {
+        let controller = NativeMatroskaSampleBufferPlayerController()
+        _ = controller.view
+        let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
+
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: nil,
+            selectedAudioTrackID: "1",
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: NativePlayerSeekRequest(id: 1, targetSeconds: 480),
+            selectedAudioTrackID: "1",
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: true,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: NativePlayerSeekRequest(id: 2, targetSeconds: 240),
+            selectedAudioTrackID: "2",
+            selectedSubtitleTrackID: "3",
+            baseDiagnostics: [],
+            isPaused: true,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: NativePlayerSeekRequest(id: 3, targetSeconds: 0),
+            selectedAudioTrackID: "2",
+            selectedSubtitleTrackID: "3",
+            baseDiagnostics: [],
+            isPaused: true,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+
+        XCTAssertEqual(controller.restartCoordinatorStartCount, 1)
+        XCTAssertEqual(controller.pendingRestartTargetSeconds, 0)
+        XCTAssertTrue(controller.pendingRestartIsPaused)
+        XCTAssertEqual(controller.pendingRestartSelectedAudioTrackID, "2")
+        XCTAssertEqual(controller.pendingRestartSelectedSubtitleTrackID, "3")
+        controller.stopForDismantle()
+    }
+
     func testMatroskaTrackSelectionRestartsReaderAtCurrentSurface() {
         let controller = NativeMatroskaSampleBufferPlayerController()
         _ = controller.view

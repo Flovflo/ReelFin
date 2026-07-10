@@ -250,7 +250,10 @@ struct ItemDTO: Decodable {
             posterTag: imageTags?["Primary"],
             backdropTag: backdropImageTags?.first,
             libraryID: libraryID,
-            parentID: parentID ?? seriesID,
+            // ReelFin's domain `parentID` is the owning SERIES everywhere it drives episode
+            // navigation, artwork, grouping, Next Up, and detail presentation. Jellyfin's
+            // `ParentId` for an episode is its SEASON, so prefer the explicit `SeriesId`.
+            parentID: seriesID ?? parentID,
             seriesName: seriesName,
             seriesPosterTag: seriesPrimaryImageTag,
             indexNumber: indexNumber,
@@ -972,15 +975,27 @@ struct DeviceProfileRequestDTO: Encodable {
                 )
             ],
             transcodingProfiles: [
-                // Server-side transcode: HLS TS with H.264 video.
-                // Jellyfin does not produce real fMP4 segments (serves TS bytes
-                // despite SegmentContainer=fmp4), so HEVC fMP4 HLS is broken.
-                // H264 TS is the only reliable transcode path on tvOS.
+                // Apple-native fMP4 HLS remux: copy HEVC/EAC3 out of MKV without changing quality.
+                TranscodingProfileRequestDTO(
+                    container: "fmp4",
+                    type: .video,
+                    videoCodec: "hevc",
+                    audioCodec: "eac3,ac3,aac",
+                    protocolValue: .hls,
+                    context: .streaming,
+                    maxAudioChannels: String(maxAudioChannels),
+                    enableSubtitlesInManifest: false,
+                    estimateContentLength: false,
+                    copyTimestamps: true,
+                    enableAudioVbrEncoding: true
+                ),
+                // Destructive fallback is a separate profile so Jellyfin never emits the invalid
+                // literal `VideoCodec=hevc,h264` URL observed in the real Star City test.
                 TranscodingProfileRequestDTO(
                     container: "ts",
                     type: .video,
                     videoCodec: "h264",
-                    audioCodec: "aac,ac3,eac3",
+                    audioCodec: "eac3,ac3,aac",
                     protocolValue: .hls,
                     context: .streaming,
                     maxAudioChannels: String(maxAudioChannels),

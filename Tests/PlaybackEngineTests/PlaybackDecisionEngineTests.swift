@@ -861,6 +861,35 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertTrue(selection.routeGuarantees.preservesOriginalVideo)
     }
 
+    func testOriginalResolverHandsMKVHEVCToNativeDemuxWithoutDestructiveRefetch() async throws {
+        let source = MediaSource(
+            id: "source-resolver-mkv-hevc",
+            itemID: "item-resolver-mkv-hevc",
+            name: "MKV HEVC source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            supportsDirectPlay: false,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/Videos/item-resolver-mkv-hevc/master.m3u8?MediaSourceId=source-resolver-mkv-hevc&VideoCodec=hevc&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true&Container=fmp4&SegmentContainer=fmp4"),
+            directPlayURL: nil,
+            transcodeURL: nil
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-resolver-mkv-hevc": [source]])
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+
+        let resolved = try await resolver.resolveOriginal(itemID: "item-resolver-mkv-hevc", startTimeTicks: nil)
+
+        XCTAssertFalse(resolved.isAdaptiveStream)
+        XCTAssertTrue(resolved.requiresNativePlayback)
+        XCTAssertTrue(resolved.preservesOriginalVideo)
+        XCTAssertEqual(
+            client.playbackSourceRequestCount,
+            1,
+            "MKV native handoff must reuse the first source resolution, not request a destructive H.264 fallback"
+        )
+    }
+
     func testCoordinatorForceH264ProfileDisablesVideoCopy() async throws {
         // Use preferAudioTranscodeOnly: false so this test exercises the audio-copy path.
         let configWithAudioCopy = ServerConfiguration(
@@ -1233,6 +1262,7 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
     private let configuration: ServerConfiguration
     private let session: UserSession
     private let sources: [String: [MediaSource]]
+    private(set) var playbackSourceRequestCount = 0
 
     init(configuration: ServerConfiguration, sources: [String: [MediaSource]]) {
         self.configuration = configuration
@@ -1290,6 +1320,7 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
 
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
         _ = options
+        playbackSourceRequestCount += 1
         return try await fetchPlaybackSources(itemID: itemID)
     }
 

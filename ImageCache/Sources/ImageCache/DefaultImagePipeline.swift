@@ -61,15 +61,28 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
     public init(
         diskCache: LRUDiskCache? = nil,
-        urlSession: URLSession = .shared,
+        urlSession: URLSession? = nil,
         tokenStore: TokenStoreProtocol = KeychainTokenStore(),
         memoryCapacity: Int = 220
     ) {
         self.diskCache = diskCache ?? Self.makeDiskCache()
-        self.urlSession = urlSession
+        self.urlSession = urlSession ?? Self.makeImageSession()
         self.tokenStore = tokenStore
         memoryCache.countLimit = memoryCapacity
         memoryCache.totalCostLimit = 130 * 1_024 * 1_024
+    }
+
+    /// Dedicated transport for artwork. On `URLSession.shared`, a burst of image fetches queued
+    /// on the SAME per-host connections as the API/sync/PlaybackInfo traffic — on a degraded link
+    /// images at 20s timeouts kept the pool wedged for the requests users actually wait on.
+    /// Bounded connections + shorter timeouts; caching stays ours (the LRU disk cache).
+    private static func makeImageSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 30
+        configuration.httpMaximumConnectionsPerHost = 4
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
     }
 
     private static func makeDiskCache(fileManager: FileManager = .default) -> LRUDiskCache {

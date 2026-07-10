@@ -261,6 +261,64 @@ final class PlaybackDropResilienceTests: XCTestCase {
             "Proxy bytes must be byte-for-byte identical to the origin payload through a reset (no corruption, no gap).")
     }
 
+    /// Locks the two serve-path behaviors that ended the startup black-window and the reset storm:
+    /// (1) an OPEN-ENDED range request is answered with a BOUNDED window — a response that can
+    /// COMPLETE, so the keep-alive socket is reusable — whose Content-Range still reports the real
+    /// total; (2) the very first serve discovers the file's total from its own on-demand fetch
+    /// (Content-Range adoption) instead of parking AVPlayer behind the dedicated origin probe.
+    @MainActor
+    func testCacheProxyBoundsOpenEndedRangeAndAdoptsContentInfo() async throws {
+        let clip = try Self.sharedClip()
+        let data = try Data(contentsOf: clip)
+        let throttle = max(Self.clipBitrate / 8 * 8, 1_024 * 1_024)
+        let server = ThrottledDropHTTPServer(
+            payload: data, contentType: "video/mp4",
+            throttleBytesPerSec: throttle, dropMode: .freeze, keepAlive: true
+        )
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CacheProxyOpenEnded.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil)
+        )
+        let key = MediaGatewayCacheKey(scope: "original", userID: "u", serverID: "s", itemID: "openended", sourceID: "src", routeURL: origin)
+        let downloader = OriginDownloader(
+            remoteURL: origin, headers: [:], key: key, store: store,
+            overrideContentType: "video/mp4", sessionConfiguration: .ephemeral,
+            windowLength: 2 * 1_024 * 1_024, aheadBudget: 512 * 1_024 * 1_024, maxParallelWindows: 6
+        )
+        let proxy = LocalCacheHTTPServer(store: store, downloader: downloader, key: key, remoteURL: origin, headers: [:], overrideMIMEType: "video/mp4")
+        defer { proxy.stop(reason: "test_end") }
+        // Deliberately NO primeStart(): the serve itself must discover the total (adoption path).
+        let localURL = try proxy.start()
+
+        var request = URLRequest(url: localURL)
+        request.setValue("bytes=0-", forHTTPHeaderField: "Range")
+        request.timeoutInterval = 60
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 60
+        let (received, response) = try await URLSession(configuration: config).data(for: request)
+        let http = try XCTUnwrap(response as? HTTPURLResponse)
+        XCTAssertEqual(http.statusCode, 206, "Proxy must answer an open-ended range with 206 Partial Content.")
+        let contentRange = try XCTUnwrap(http.value(forHTTPHeaderField: "Content-Range"))
+        XCTAssertTrue(contentRange.hasSuffix("/\(data.count)"),
+            "Content-Range must report the origin's REAL total, adopted from the serve's own fetch: \(contentRange)")
+        let expected = min(data.count, 32 * 1_024 * 1_024)
+        XCTAssertEqual(received.count, expected,
+            "An open-ended range must be answered with a bounded, completable window — not the whole remainder.")
+        XCTAssertEqual(received, data.subdata(in: 0 ..< expected),
+            "Bounded open-ended window must be byte-identical to the origin payload.")
+        let known = await downloader.knownContentInfo()
+        XCTAssertEqual(known.length, Int64(data.count),
+            "The downloader must have adopted the total length from the first serve's Content-Range.")
+    }
+
     /// Reproduces the on-device deep RESUME the toy test missed: playback starts deep in the file
     /// (seek) with a small ahead-budget (a finite cache vs a file much larger than it, like the
     /// 11.7 GB original). v1 waited on the windowed downloader to crawl to the seek point → slow
@@ -423,6 +481,100 @@ final class PlaybackDropResilienceTests: XCTestCase {
         let asset = try XCTUnwrap(engine.player.currentItem?.asset as? AVURLAsset)
         XCTAssertEqual(asset.url.path, "/clip.mp4", "adaptive lane plays the stream URL directly — no localhost cache")
         XCTAssertNotEqual(engine.bufferingState.phase, .failed)
+    }
+
+    /// Detail prewarming must preserve the adaptive-lane contract. Wrapping an HLS manifest in
+    /// the progressive byte-range cache makes content-info probe the playlist as if it were a
+    /// movie file, leaving AVPlayer at t=0 with `resource unavailable`.
+    @MainActor
+    func testAdaptivePrewarmNeverCreatesProgressiveCacheProxy() async throws {
+        // No server is required: a correct adaptive prewarm never opens/probes the URL.
+        let origin = URL(string: "https://example.com/master.m3u8")!
+
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AdaptivePrewarm.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(
+                chunkSize: 1_024 * 1_024,
+                maxBytes: 2_000_000_000,
+                ttlSeconds: nil
+            )
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "adaptive",
+            userID: "u",
+            serverID: "s",
+            itemID: "adaptive-prewarm",
+            sourceID: "src",
+            routeURL: origin
+        )
+        var resolver = MockCustomSourceResolver(
+            originURL: origin,
+            sourceBitrate: 8_000_000,
+            cacheKey: key
+        )
+        resolver.adaptiveOnly = true
+        let prewarmer = CustomPlayerPrewarmer(resolver: resolver, store: store)
+
+        prewarmer.prewarm(itemID: "adaptive-prewarm")
+        let warm = await prewarmer.consume(itemID: "adaptive-prewarm")
+
+        XCTAssertNil(
+            warm,
+            "session-scoped HLS URLs must be re-resolved at Play time, never retained by detail prewarm"
+        )
+    }
+
+    /// A compatible MKV is not an AVPlayer progressive asset and Jellyfin's HEVC fMP4 remux can
+    /// expose audio while reporting no video tracks. The custom engine must hand the item to the
+    /// packet-demuxed native surface before creating any AVPlayer item.
+    @MainActor
+    func testNativeMKVHandoffDoesNotCreateAVPlayerItem() async throws {
+        let origin = URL(string: "https://example.com/Videos/native/stream")!
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativeHandoff.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(
+                chunkSize: 1_024 * 1_024,
+                maxBytes: 2_000_000_000,
+                ttlSeconds: nil
+            )
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "native-handoff",
+            userID: "u",
+            serverID: "s",
+            itemID: "native",
+            sourceID: "src",
+            routeURL: origin
+        )
+        var resolver = MockCustomSourceResolver(
+            originURL: origin,
+            sourceBitrate: 8_000_000,
+            cacheKey: key
+        )
+        resolver.requiresNativePlayback = true
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store)
+        defer { engine.stop() }
+
+        let handoff = expectation(description: "native playback requested")
+        engine.onRequiresNativePlayback = { handoff.fulfill() }
+        engine.load(itemID: "native", autoPlay: true)
+
+        await fulfillment(of: [handoff], timeout: 2)
+        XCTAssertNil(engine.player.currentItem)
+        XCTAssertNil(engine.errorMessage)
+        XCTAssertEqual(engine.bufferingState.phase, .idle)
+        XCTAssertTrue(
+            engine.isHandingOffToNativePlayback,
+            "the disappearing custom surface must not restore portrait while the native player replaces it"
+        )
     }
 
     /// AIRPLAY correctness: while external playback is active the item must play the ORIGIN URL
@@ -1400,12 +1552,15 @@ final class PlaybackDropResilienceTests: XCTestCase {
         var resolveCounter: ResolveCounter? = nil
         var fallbackURL: URL? = nil
         var adaptiveOnly = false
+        var requiresNativePlayback = false
         func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
             resolveCounter?.increment()
             return ResolvedOriginalSource(
                 originURL: originURL, headers: [:], sourceBitrate: sourceBitrate,
                 overrideMIMEType: adaptiveOnly ? nil : "video/mp4", cacheKey: cacheKey,
-                isDolbyVision: false, isAdaptiveStream: adaptiveOnly)
+                isDolbyVision: false,
+                isAdaptiveStream: adaptiveOnly,
+                requiresNativePlayback: requiresNativePlayback)
         }
         func resolveAdaptiveFallback(itemID: String, startSeconds: Double) async -> URL? {
             fallbackURL

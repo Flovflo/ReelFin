@@ -172,6 +172,7 @@ struct NativePlayerTrackSelectionMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
     let onSelect: (PlaybackControlSelection) -> Void
+    @Namespace private var focusNamespace
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
@@ -193,6 +194,7 @@ struct NativePlayerTrackSelectionMenuView: View {
         .padding(.vertical, metrics.verticalPadding)
         .frame(width: metrics.panelWidth, alignment: .leading)
         .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
+        .nativePlayerTrackMenuFocusScope(focusNamespace)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 
@@ -203,7 +205,7 @@ struct NativePlayerTrackSelectionMenuView: View {
             } else {
                 sectionLabel("Audio Track")
                 ForEach(controls.audioOptions) { option in
-                    NativePlayerTrackMenuRow(option: option) {
+                    NativePlayerTrackMenuRow(option: option, focusNamespace: focusNamespace) {
                         guard let trackID = option.trackID else { return }
                         onSelect(.audio(trackID))
                     }
@@ -218,7 +220,7 @@ struct NativePlayerTrackSelectionMenuView: View {
                 NativePlayerTrackMenuEmptyRow(title: "No subtitles")
             } else {
                 ForEach(controls.subtitleOptions) { option in
-                    NativePlayerTrackMenuRow(option: option) {
+                    NativePlayerTrackMenuRow(option: option, focusNamespace: focusNamespace) {
                         onSelect(.subtitle(option.trackID))
                     }
                 }
@@ -237,9 +239,9 @@ struct NativePlayerTrackSelectionMenuView: View {
     private var primaryTitle: String {
         switch mode {
         case .audio:
-            return "Audio Adjustments"
+            return "Audio"
         case .subtitles:
-            return "Subtitles"
+            return "Sous-titres"
         }
     }
 
@@ -252,13 +254,14 @@ struct NativePlayerTrackSelectionMenuView: View {
         }
     }
 
-    private var metrics: NativePlayerTrackMenuMetrics {
-        NativePlayerTrackMenuMetrics.current
+    private var metrics: NativePlayerTrackMenuLayout {
+        NativePlayerTrackMenuLayout.current
     }
 }
 
 private struct NativePlayerTrackMenuRow: View {
     let option: PlaybackTrackOption
+    let focusNamespace: Namespace.ID
     let onSelect: () -> Void
     @FocusState private var isFocused: Bool
 
@@ -298,6 +301,7 @@ private struct NativePlayerTrackMenuRow: View {
         }
         .buttonStyle(TVNoChromeButtonStyle())
         .focused($isFocused)
+        .nativePlayerPrefersDefaultTrackFocus(option.isSelected, in: focusNamespace)
         .nativePlayerTrackMenuFocusDisabled()
         .padding(.horizontal, metrics.rowOuterPadding)
         .accessibilityLabel(option.title)
@@ -311,8 +315,8 @@ private struct NativePlayerTrackMenuRow: View {
         isHighlighted ? .black : .white
     }
 
-    private var metrics: NativePlayerTrackMenuMetrics {
-        NativePlayerTrackMenuMetrics.current
+    private var metrics: NativePlayerTrackMenuLayout {
+        NativePlayerTrackMenuLayout.current
     }
 }
 
@@ -321,15 +325,15 @@ private struct NativePlayerTrackMenuEmptyRow: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: NativePlayerTrackMenuMetrics.current.rowTitleSize, weight: .semibold, design: .rounded))
+            .font(.system(size: NativePlayerTrackMenuLayout.current.rowTitleSize, weight: .semibold, design: .rounded))
             .foregroundStyle(.white.opacity(0.5))
-            .padding(.horizontal, NativePlayerTrackMenuMetrics.current.horizontalPadding)
-            .frame(height: NativePlayerTrackMenuMetrics.current.rowHeight)
+            .padding(.horizontal, NativePlayerTrackMenuLayout.current.horizontalPadding)
+            .frame(height: NativePlayerTrackMenuLayout.current.rowHeight)
             .accessibilityLabel(title)
     }
 }
 
-private struct NativePlayerTrackMenuMetrics {
+struct NativePlayerTrackMenuLayout {
     let panelWidth: CGFloat
     let cornerRadius: CGFloat
     let horizontalPadding: CGFloat
@@ -347,55 +351,79 @@ private struct NativePlayerTrackMenuMetrics {
     let checkSize: CGFloat
     let contentMaxHeight: CGFloat
 
-    static var current: NativePlayerTrackMenuMetrics {
+    static let tvOS = NativePlayerTrackMenuLayout(
+        panelWidth: 540,
+        cornerRadius: 38,
+        horizontalPadding: 38,
+        verticalPadding: 30,
+        sectionSpacing: 24,
+        rowSpacing: 10,
+        rowHeight: 76,
+        rowOuterPadding: 18,
+        rowHorizontalPadding: 26,
+        checkColumnWidth: 40,
+        titleSize: 32,
+        sectionTitleSize: 26,
+        rowTitleSize: 30,
+        badgeSize: 18,
+        checkSize: 28,
+        contentMaxHeight: 440
+    )
+
+    static let iOS = NativePlayerTrackMenuLayout(
+        panelWidth: 320,
+        cornerRadius: 30,
+        horizontalPadding: 24,
+        verticalPadding: 20,
+        sectionSpacing: 16,
+        rowSpacing: 6,
+        rowHeight: 50,
+        rowOuterPadding: 10,
+        rowHorizontalPadding: 18,
+        checkColumnWidth: 28,
+        titleSize: 21,
+        sectionTitleSize: 18,
+        rowTitleSize: 21,
+        badgeSize: 12,
+        checkSize: 18,
+        contentMaxHeight: 250
+    )
+
+    static var current: NativePlayerTrackMenuLayout {
 #if os(tvOS)
-        NativePlayerTrackMenuMetrics(
-            panelWidth: 690,
-            cornerRadius: 58,
-            horizontalPadding: 58,
-            verticalPadding: 42,
-            sectionSpacing: 36,
-            rowSpacing: 14,
-            rowHeight: 88,
-            rowOuterPadding: 28,
-            rowHorizontalPadding: 34,
-            checkColumnWidth: 48,
-            titleSize: 38,
-            sectionTitleSize: 34,
-            rowTitleSize: 38,
-            badgeSize: 21,
-            checkSize: 34,
-            contentMaxHeight: 560
-        )
+        tvOS
 #else
-        NativePlayerTrackMenuMetrics(
-            panelWidth: 320,
-            cornerRadius: 30,
-            horizontalPadding: 24,
-            verticalPadding: 20,
-            sectionSpacing: 16,
-            rowSpacing: 6,
-            rowHeight: 50,
-            rowOuterPadding: 10,
-            rowHorizontalPadding: 18,
-            checkColumnWidth: 28,
-            titleSize: 21,
-            sectionTitleSize: 18,
-            rowTitleSize: 21,
-            badgeSize: 12,
-            checkSize: 18,
-            contentMaxHeight: 250
-        )
+        iOS
 #endif
     }
 }
 
 private extension View {
+    @ViewBuilder
+    func nativePlayerTrackMenuFocusScope(_ namespace: Namespace.ID) -> some View {
+#if os(tvOS)
+        self
+            .focusScope(namespace)
+            .focusSection()
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func nativePlayerPrefersDefaultTrackFocus(_ enabled: Bool, in namespace: Namespace.ID) -> some View {
+#if os(tvOS)
+        self.prefersDefaultFocus(enabled, in: namespace)
+#else
+        self
+#endif
+    }
+
     func nativePlayerTrackMenuGlass(cornerRadius: CGFloat) -> some View {
         background {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.black.opacity(0.72))
-                .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
+                .fill(.black.opacity(0.48))
+                .glassEffect(.regular.tint(.black.opacity(0.20)), in: .rect(cornerRadius: cornerRadius))
         }
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

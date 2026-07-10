@@ -109,7 +109,10 @@ final class CacheProxySession {
             key: key,
             store: store,
             overrideContentType: overrideMIMEType,
-            sessionConfiguration: .ephemeral,
+            // Default-based (NOT ephemeral): keeps CFNetwork's "HTTP/3 broken → H2" learning for
+            // this origin across plays — an ephemeral config re-paid a ~10s QUIC timeout on the
+            // first request of every session (see MediaOriginTransport).
+            sessionConfiguration: MediaOriginTransport.makeConfiguration(),
             aheadBudget: aheadBudget,
             maxParallelWindows: config.maxParallelWindows
         )

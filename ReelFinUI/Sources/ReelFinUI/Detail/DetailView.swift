@@ -22,6 +22,26 @@ private struct DetailNavigationContext: Equatable {
     static let empty = DetailNavigationContext(title: nil, items: [])
 }
 
+/// The presentation payload and the presentation trigger must be one state value. Keeping the
+/// engine/session in one `@State` and toggling a separate Bool in the same run-loop turn let
+/// SwiftUI create an empty full-screen cover before the payload was visible; the engine then
+/// played off-screen with audio while the user saw black.
+private struct DetailPlayerPresentation: Identifiable {
+    enum Content {
+        case custom(CustomPlaybackEngine)
+        case legacy(PlaybackSessionController)
+    }
+
+    let id = UUID()
+    let item: MediaItem
+    let content: Content
+}
+
+private struct DetailPlaybackLaunchRequest {
+    let item: MediaItem
+    let resumePositionTicks: Int64
+}
+
 #if os(iOS) || os(tvOS)
 private struct IOSDetailCarouselEntry: Identifiable, Equatable {
     let id: String
@@ -38,13 +58,20 @@ struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.reelFinDisplayDensity) private var displayDensity
+#if os(tvOS)
+    @Environment(\.resetFocus) private var resetFocus
+    @Environment(\.tvTopNavigationVisibilityAction) private var setTopNavigationVisible
+    @Namespace private var tvDetailFocusScope
+#endif
     @State private var viewModel: DetailViewModel
     private let dependencies: ReelFinDependencies
+    private let tvPresentationFocusRequest: Int
 
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
+    @State private var playerPresentation: DetailPlayerPresentation?
     @State private var customPrewarmer: CustomPlayerPrewarmer?
-    @State private var showPlayer = false
+    @State private var episodeFocusPrewarmTask: Task<Void, Never>?
     @State private var isLoadingPlayback = false
     @State private var hasAnimatedIn = false
     @State private var tvHeroRevealProgress: CGFloat = 0
@@ -52,10 +79,13 @@ struct DetailView: View {
     @State private var iosSelectedCarouselItemID: String?
     @State private var currentReturnSourceItem: MediaItem
 #if os(tvOS)
+    @State private var pendingPlaybackLaunch: DetailPlaybackLaunchRequest?
     @State private var tvScrollRequest: TVDetailScrollRequest?
     @State private var tvScrollRequestID = 0
     @State private var pendingTVFocusTarget: TVDetailFocusTarget?
     @State private var tvEpisodeFileInfoPresentation: TVEpisodeFileInfoPresentation?
+    @State private var hasEstablishedPrimaryTVFocus = false
+    @State private var primaryTVFocusAttempts = 0
 #endif
     @FocusState private var focusedHeroAction: DetailHeroAction?
     @FocusState private var focusedSeasonID: String?
@@ -76,6 +106,7 @@ struct DetailView: View {
         contextTitle: String? = nil,
         namespace: Namespace.ID? = nil,
         transitionSourceID: String? = nil,
+        tvPresentationFocusRequest: Int = 0,
         onDisplayedSourceItemChange: ((MediaItem) -> Void)? = nil,
         onDismissRequest: (() -> Void)? = nil
     ) {
@@ -92,6 +123,7 @@ struct DetailView: View {
         )
         _currentReturnSourceItem = State(initialValue: preferredEpisode ?? item)
         self.dependencies = dependencies
+        self.tvPresentationFocusRequest = tvPresentationFocusRequest
         _transitionNamespace = State(initialValue: namespace)
         _transitionSourceID = State(initialValue: transitionSourceID)
         self.onDisplayedSourceItemChange = onDisplayedSourceItemChange
@@ -156,6 +188,7 @@ struct DetailView: View {
         .toolbar(.hidden, for: .navigationBar)
 #elseif os(tvOS)
         .toolbar(.hidden, for: .tabBar)
+        .focusScope(tvDetailFocusScope)
         .preference(key: TVTopNavigationVisibilityPreferenceKey.self, value: false)
         .onExitCommand {
             dismissDetail()
@@ -164,9 +197,18 @@ struct DetailView: View {
         .task {
             await viewModel.load()
             prewarmCustomPlayerIfEnabled()
+#if os(tvOS)
+            await requestPrimaryTVFocus()
+#endif
+        }
+        .onChange(of: viewModel.itemToPlay.id) { _, _ in
+            // On a series page the playable item is only known once NextUp resolves — re-arm the
+            // prewarm on the ACTUAL episode (the initial pass saw the series id and skipped).
+            prewarmCustomPlayerIfEnabled()
         }
         .onDisappear {
             // Walking away without playing frees the warm session (server + background fill).
+            episodeFocusPrewarmTask?.cancel()
             customPrewarmer?.discardIfUnused()
         }
         .onAppear {
@@ -176,11 +218,14 @@ struct DetailView: View {
             onDisplayedSourceItemChange?(currentReturnSourceItem)
             animateHeroEntryIfNeeded()
 #if os(tvOS)
-            if focusedHeroAction == nil {
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 120_000_000)
-                    focusedHeroAction = .play
-                }
+            hasEstablishedPrimaryTVFocus = false
+            primaryTVFocusAttempts = 0
+            // The detail is an inline overlay, so invalidate any focus value inherited during the
+            // same transaction that disabled Home. Once SwiftUI has published the new focus tree,
+            // select Play explicitly. One scheduler yield separates the two focus transactions;
+            // no timing guess is involved.
+            Task { @MainActor in
+                await requestPrimaryTVFocus()
             }
 #endif
         }
@@ -191,6 +236,38 @@ struct DetailView: View {
             onDisplayedSourceItemChange?(currentReturnSourceItem)
         }
 #if os(tvOS)
+        .onChange(of: focusedHeroAction) { _, newValue in
+            AppLog.ui.notice(
+                "detail.focus.changed value=\(String(describing: newValue), privacy: .public) established=\(hasEstablishedPrimaryTVFocus, privacy: .public) attempts=\(primaryTVFocusAttempts, privacy: .public)"
+            )
+            guard !hasEstablishedPrimaryTVFocus, newValue != nil else { return }
+            Task { @MainActor in
+                // The Home → Detail handoff can publish a spatial focus after both onAppear and
+                // detail loading. Accept Play only once it survives two scheduler turns; otherwise
+                // correct that newly-published focus while the tree is known to be active.
+                await Task.yield()
+                guard !hasEstablishedPrimaryTVFocus else { return }
+                if focusedHeroAction == .play {
+                    await Task.yield()
+                    if focusedHeroAction == .play {
+                        hasEstablishedPrimaryTVFocus = true
+                        return
+                    }
+                }
+                await requestPrimaryTVFocus()
+            }
+        }
+        .onChange(of: tvPresentationFocusRequest) { previousRequest, newRequest in
+            guard TVDetailInitialFocusPolicy.shouldRequestPrimaryFocus(
+                previousPresentationRequest: previousRequest,
+                newPresentationRequest: newRequest,
+                hasEstablishedPrimaryFocus: hasEstablishedPrimaryTVFocus
+            ) else { return }
+            primaryTVFocusAttempts = 0
+            Task { @MainActor in
+                await requestPrimaryTVFocus()
+            }
+        }
         .onChange(of: focusedSeasonID) { _, newValue in
             guard newValue != nil else { return }
             completeTVHeroRevealIfNeeded()
@@ -232,27 +309,84 @@ struct DetailView: View {
             Text(tvEpisodeFileInfoPresentation?.message ?? "")
         }
 #endif
-        .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
-            if let customEngine {
-                CustomPlayerView(
-                    engine: customEngine,
-                    launchContext: CustomPlayerView.LaunchContext(
-                        item: customEngine.currentMediaItem ?? viewModel.itemToPlay,
-                        apiClient: dependencies.apiClient,
-                        imagePipeline: dependencies.imagePipeline
-                    )
-                )
-            } else if let playerSession {
-                PlayerView(
-                    session: playerSession,
-                    item: viewModel.itemToPlay,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline
-                )
-            }
+#if os(iOS)
+        .fullScreenCover(item: $playerPresentation, onDismiss: handlePlayerDismissal) { presentation in
+            playerCoverContent(for: presentation)
         }
         .modifier(DetailZoomTransitionModifier(namespace: transitionNamespace, sourceID: transitionSourceID))
+#else
+        // tvOS: the player is a plain INLINE overlay, never a UIKit presentation. This detail view
+        // lives inside HomeView's inline ZStack; presenting a fullScreenCover from that context
+        // stalled for MINUTES on device (2026-07-03 and 2026-07-08: engine playing, `view.appeared`
+        // never logged, screen frozen on the detail) — SwiftUI draws an overlay the same frame.
+        // Keep the player OUTSIDE the navigation-transition wrapper. Otherwise tvOS retains the
+        // transition's detail snapshot above the live overlay: AVPlayer advances and fills cache,
+        // but the user keeps seeing the frozen detail page.
+        .modifier(DetailZoomTransitionModifier(namespace: transitionNamespace, sourceID: transitionSourceID))
+        .disabled(playerPresentation != nil || pendingPlaybackLaunch != nil)
+        .overlay {
+            tvPlaybackPresentation
+                .zIndex(1)
+        }
+        .onChange(of: playerPresentation != nil) { _, hasActivePlayer in
+            setTopNavigationVisible?(
+                TVTopNavigationPlayerVisibilityPolicy.isVisible(hasActivePlayer: hasActivePlayer)
+            )
+        }
+#endif
     }
+
+    /// Shared player content (custom engine first, legacy session second) for both hosts:
+    /// iOS fullScreenCover, tvOS inline overlay.
+    @ViewBuilder
+    private func playerCoverContent(for presentation: DetailPlayerPresentation) -> some View {
+        switch presentation.content {
+        case .custom(let customEngine):
+            CustomPlayerView(
+                engine: customEngine,
+                launchContext: CustomPlayerView.LaunchContext(
+                    item: customEngine.currentMediaItem ?? presentation.item,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline
+                ),
+                onRequestDismiss: { handlePlayerDismissal() }
+            )
+        case .legacy(let playerSession):
+            PlayerView(
+                session: playerSession,
+                item: presentation.item,
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline
+            )
+        }
+    }
+
+#if os(tvOS)
+    @ViewBuilder
+    private var tvPlaybackPresentation: some View {
+        if let pendingPlaybackLaunch {
+            PlaybackResumeChoiceView(
+                itemTitle: pendingPlaybackLaunch.item.name,
+                resumePositionTicks: pendingPlaybackLaunch.resumePositionTicks,
+                onSelect: { startPosition in
+                    resolvePendingPlaybackLaunch(startPosition: startPosition)
+                },
+                onCancel: cancelPendingPlaybackLaunch
+            )
+            .transition(.opacity)
+        } else if let playerPresentation {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                playerCoverContent(for: playerPresentation)
+            }
+            .ignoresSafeArea()
+            .transition(.opacity)
+            .onExitCommand {
+                handlePlayerDismissal()
+            }
+        }
+    }
+#endif
 
     private func heroSection(
         heroHeight: CGFloat,
@@ -453,6 +587,7 @@ struct DetailView: View {
                         contentWidth: max(heroContentWidth, 420),
                         animateIn: hasAnimatedIn,
                         prefersNativeZoomTransition: prefersNativeZoomTransition,
+                        focusScope: tvDetailFocusScope,
                         focusedAction: $focusedHeroAction,
                         onPlay: { startPlayback() },
                         onToggleWatchlist: viewModel.toggleWatchlist,
@@ -519,6 +654,7 @@ struct DetailView: View {
                 SeasonPickerView(
                     seasons: viewModel.seasons,
                     selectedSeasonID: viewModel.selectedSeason?.id,
+                    allowsDefaultFocus: hasEstablishedPrimaryTVFocus,
                     focusedSeasonID: $focusedSeasonID,
                     onMoveUp: focusHeroPrimaryActionFromSeasonPicker,
                     onSelect: { season in
@@ -601,6 +737,9 @@ struct DetailView: View {
                                     showEpisodeFileInfo(for: episode)
                                 },
                                 onMoveUp: focusAboveEpisodes,
+                                onFocusChange: { focused in
+                                    handleEpisodeFocusChange(episode, isFocused: focused)
+                                },
                                 apiClient: dependencies.apiClient,
                                 imagePipeline: dependencies.imagePipeline
                             )
@@ -716,6 +855,31 @@ struct DetailView: View {
             return viewModel.itemToPlay
         }
         return viewModel.detail.item
+    }
+#endif
+
+#if os(tvOS)
+    @MainActor
+    private func requestPrimaryTVFocus() async {
+        guard !hasEstablishedPrimaryTVFocus, primaryTVFocusAttempts < 4 else {
+            AppLog.ui.notice(
+                "detail.focus.request.skipped value=\(String(describing: focusedHeroAction), privacy: .public) established=\(hasEstablishedPrimaryTVFocus, privacy: .public) attempts=\(primaryTVFocusAttempts, privacy: .public)"
+            )
+            return
+        }
+        primaryTVFocusAttempts += 1
+        AppLog.ui.notice(
+            "detail.focus.request.begin value=\(String(describing: focusedHeroAction), privacy: .public) attempt=\(primaryTVFocusAttempts, privacy: .public)"
+        )
+        focusedHeroAction = nil
+        await Task.yield()
+        resetFocus(in: tvDetailFocusScope)
+        await Task.yield()
+        focusedHeroAction = .play
+        await Task.yield()
+        AppLog.ui.notice(
+            "detail.focus.request.end value=\(String(describing: focusedHeroAction), privacy: .public) attempt=\(primaryTVFocusAttempts, privacy: .public)"
+        )
     }
 #endif
 
@@ -966,38 +1130,91 @@ struct DetailView: View {
 
     private func startPlayback(item: MediaItem? = nil) {
         guard !isLoadingPlayback else { return }
-        if dependencies.settingsStore.useCustomPlayerEngine {
-            startCustomPlayback(item: item)
+        let targetItem = item ?? viewModel.itemToPlay
+
+#if os(tvOS)
+        guard pendingPlaybackLaunch == nil else { return }
+        if let resumePositionTicks = PlaybackLaunchChoicePolicy.resumePositionTicks(
+            for: targetItem,
+            progress: viewModel.playbackProgress
+        ) {
+            pendingPlaybackLaunch = DetailPlaybackLaunchRequest(
+                item: targetItem,
+                resumePositionTicks: resumePositionTicks
+            )
             return
         }
+        launchPlayback(
+            item: targetItem,
+            startPosition: .beginning,
+            resumePositionTicks: nil
+        )
+#else
+        let resumePositionTicks = PlaybackLaunchChoicePolicy.resumePositionTicks(
+            for: targetItem,
+            progress: viewModel.playbackProgress
+        )
+        launchPlayback(
+            item: targetItem,
+            startPosition: resumePositionTicks == nil ? .beginning : .resumeIfAvailable,
+            resumePositionTicks: resumePositionTicks
+        )
+#endif
+    }
+
+    private func launchPlayback(
+        item: MediaItem,
+        startPosition: PlaybackStartPosition,
+        resumePositionTicks: Int64?
+    ) {
+        if dependencies.settingsStore.useCustomPlayerEngine {
+            startCustomPlayback(
+                item: item,
+                startPosition: startPosition,
+                resumePositionTicks: resumePositionTicks
+            )
+            return
+        }
+        startLegacyPlayback(item: item, startPosition: startPosition)
+    }
+
+    private func startLegacyPlayback(
+        item: MediaItem,
+        startPosition: PlaybackStartPosition,
+        forceNativeOriginalPlayback: Bool = false
+    ) {
+        guard !isLoadingPlayback else { return }
         let session = dependencies.makePlaybackSession()
-        let targetItem = item ?? viewModel.itemToPlay
-        let startPosition: PlaybackStartPosition = item == nil
-            ? viewModel.primaryPlaybackStartPosition
-            : .resumeIfAvailable
-        let nextEpisodeQueue = targetItem.mediaType == .episode ? viewModel.nextEpisodes(after: targetItem) : []
+        let nextEpisodeQueue = item.mediaType == .episode ? viewModel.nextEpisodes(after: item) : []
 
 #if os(iOS)
         OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
 #endif
         isLoadingPlayback = true
+        if forceNativeOriginalPlayback {
+            customEngine?.stop()
+            customEngine = nil
+        }
         playerSession = session
-        setPlayerCoverPresented(true)
+        presentPlayer(
+            DetailPlayerPresentation(item: item, content: .legacy(session))
+        )
 
         Task { @MainActor in
             await Task.yield()
             do {
                 try await session.load(
-                    item: targetItem,
+                    item: item,
                     upNextEpisodes: nextEpisodeQueue,
-                    startPosition: startPosition
+                    startPosition: startPosition,
+                    forceNativeOriginalPlayback: forceNativeOriginalPlayback
                 )
                 isLoadingPlayback = false
             } catch {
                 isLoadingPlayback = false
                 playerSession = nil
                 viewModel.errorMessage = error.localizedDescription
-                setPlayerCoverPresented(false)
+                dismissPlayerPresentation()
             }
         }
     }
@@ -1008,25 +1225,52 @@ struct DetailView: View {
     /// Warms the primary playable item while the user reads the page, so tapping Play adopts a
     /// ready pipeline (source resolved, localhost session up, cushion building) — perceived-instant
     /// start. No-op when the custom player is disabled.
+    private func ensureCustomPrewarmer() -> CustomPlayerPrewarmer? {
+        guard dependencies.settingsStore.useCustomPlayerEngine else { return nil }
+        if let existing = customPrewarmer { return existing }
+        guard let store = try? CustomPlaybackEngine.sharedStore() else { return nil }
+        let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
+        let prewarmer = CustomPlayerPrewarmer(
+            resolver: JellyfinOriginalSourceResolver(coordinator: coordinator), store: store)
+        customPrewarmer = prewarmer
+        return prewarmer
+    }
+
     private func prewarmCustomPlayerIfEnabled() {
-        guard dependencies.settingsStore.useCustomPlayerEngine else { return }
-        guard let store = try? CustomPlaybackEngine.sharedStore() else { return }
-        let prewarmer: CustomPlayerPrewarmer
-        if let existing = customPrewarmer {
-            prewarmer = existing
-        } else {
-            let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
-            prewarmer = CustomPlayerPrewarmer(
-                resolver: JellyfinOriginalSourceResolver(coordinator: coordinator), store: store)
-            customPrewarmer = prewarmer
-        }
+        // Pressing an episode flips itemToPlay (nextUpEpisode) BEFORE the player presents — the
+        // .onChange re-arm must never fire then: it discarded the in-flight warm state and spun a
+        // SECOND full session for the very item the engine was busy loading (press-time hijack).
+        guard playerPresentation == nil else { return }
+        guard let prewarmer = ensureCustomPrewarmer() else { return }
         let target = viewModel.itemToPlay
+        // A series id can never direct-play — warming it burned a full PlaybackInfo resolve + a
+        // bulk cache fill on the WRONG id, and the press-time consume() always missed. Wait for
+        // NextUp to name the real episode (the .onChange above re-arms then).
+        guard target.mediaType != .series else { return }
         prewarmer.prewarm(itemID: target.id, startTimeTicks: target.playbackPositionTicks)
     }
 
-    private func startCustomPlayback(item: MediaItem? = nil) {
-        let targetItem = item ?? viewModel.itemToPlay
-        let startTicks: Int64? = (item == nil) ? targetItem.playbackPositionTicks : nil
+    /// tvOS: focus dwelling on an episode card pre-resolves ITS playback (one PlaybackInfo, one at
+    /// a time, debounced) — so the press adopts a ready resolution instead of paying the round trip
+    /// live on a slow link. This is what makes "click → player starts" feel direct for episodes
+    /// other than the fully-prewarmed NextUp.
+    private func handleEpisodeFocusChange(_ episode: MediaItem, isFocused: Bool) {
+        guard isFocused else { return }
+        guard dependencies.settingsStore.useCustomPlayerEngine else { return }
+        episodeFocusPrewarmTask?.cancel()
+        episodeFocusPrewarmTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000) // dwell, not travel
+            guard !Task.isCancelled else { return }
+            ensureCustomPrewarmer()?.prewarmResolveOnly(itemID: episode.id)
+        }
+    }
+
+    private func startCustomPlayback(
+        item: MediaItem,
+        startPosition: PlaybackStartPosition,
+        resumePositionTicks: Int64?
+    ) {
+        let startTicks = startPosition == .resumeIfAvailable ? resumePositionTicks : nil
         // ONE shared store for all plays: its in-memory coverage map must be the single authority,
         // and the deep cache survives across titles/replays under one LRU budget.
         guard let store = try? CustomPlaybackEngine.sharedStore() else {
@@ -1042,8 +1286,19 @@ struct DetailView: View {
         engine.onPlaybackEnded = {
             handlePlayerDismissal()
         }
-        engine.currentMediaItem = targetItem
-        engine.nextEpisodeQueue = targetItem.mediaType == .episode ? viewModel.nextEpisodes(after: targetItem) : []
+        engine.onRequiresNativePlayback = { [weak engine] in
+            guard let engine, customEngine === engine else { return }
+            AppLog.playback.notice(
+                "detail.player.native_handoff — item=\(item.id.prefix(8), privacy: .public)"
+            )
+            startLegacyPlayback(
+                item: item,
+                startPosition: startPosition,
+                forceNativeOriginalPlayback: true
+            )
+        }
+        engine.currentMediaItem = item
+        engine.nextEpisodeQueue = item.mediaType == .episode ? viewModel.nextEpisodes(after: item) : []
         engine.onPlayNext = { [weak engine] next, remaining in
             guard let engine else { return }
             engine.currentMediaItem = next
@@ -1055,9 +1310,27 @@ struct DetailView: View {
 #if os(iOS)
         OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
 #endif
-        setPlayerCoverPresented(true)
-        engine.load(itemID: targetItem.id, startTimeTicks: startTicks, autoPlay: true)
+        presentPlayer(
+            DetailPlayerPresentation(item: item, content: .custom(engine))
+        )
+        engine.load(itemID: item.id, startTimeTicks: startTicks, autoPlay: true)
     }
+
+#if os(tvOS)
+    private func resolvePendingPlaybackLaunch(startPosition: PlaybackStartPosition) {
+        guard let request = pendingPlaybackLaunch else { return }
+        pendingPlaybackLaunch = nil
+        launchPlayback(
+            item: request.item,
+            startPosition: startPosition,
+            resumePositionTicks: request.resumePositionTicks
+        )
+    }
+
+    private func cancelPendingPlaybackLaunch() {
+        pendingPlaybackLaunch = nil
+    }
+#endif
 
     static func showsBlockingPlaybackPreparation(
         isLoadingPlayback: Bool,
@@ -1078,19 +1351,31 @@ struct DetailView: View {
             viewModel.applyStoppedPlaybackProgress(customProgress)
         }
         customEngine = nil
-        setPlayerCoverPresented(false)
+        dismissPlayerPresentation()
         isLoadingPlayback = false
     }
 
-    private func setPlayerCoverPresented(_ isPresented: Bool) {
+    private func presentPlayer(_ presentation: DetailPlayerPresentation) {
 #if os(iOS)
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            showPlayer = isPresented
+            playerPresentation = presentation
         }
 #else
-        showPlayer = isPresented
+        playerPresentation = presentation
+#endif
+    }
+
+    private func dismissPlayerPresentation() {
+#if os(iOS)
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            playerPresentation = nil
+        }
+#else
+        playerPresentation = nil
 #endif
     }
 
@@ -2696,7 +2981,11 @@ private struct HeroBackgroundView: View {
             quality: ArtworkRequestProfile.heroBackdropLow.quality,
             contentMode: .fill,
             apiClient: apiClient,
-            imagePipeline: imagePipeline
+            imagePipeline: imagePipeline,
+            // The low-res ambient layer lands well before the 1920px sharp one — it IS the first
+            // visible hero artwork, so it satisfies hero_visible instead of leaving a bare shimmer
+            // until the full-resolution download completes (tvOS: ~5s on a slow link).
+            onImageLoaded: onHeroImageVisible
         )
         .frame(width: size.width * 1.08, height: size.height * 1.08)
         .scaleEffect(1.03)
@@ -2948,6 +3237,7 @@ private struct HeroMetadataColumn: View {
     let contentWidth: CGFloat
     let animateIn: Bool
     let prefersNativeZoomTransition: Bool
+    let focusScope: Namespace.ID
     let focusedAction: FocusState<DetailHeroAction?>.Binding
     let onPlay: () -> Void
     let onToggleWatchlist: () -> Void
@@ -3003,6 +3293,7 @@ private struct HeroMetadataColumn: View {
                 isInWatchlist: isInWatchlist,
                 isWatched: isWatched,
                 centered: layout == .centered,
+                focusScope: focusScope,
                 focusedAction: focusedAction,
                 onPlay: onPlay,
                 onToggleWatchlist: onToggleWatchlist,
@@ -3233,6 +3524,7 @@ private struct PrimaryActionsRow: View {
     let isInWatchlist: Bool
     let isWatched: Bool
     let centered: Bool
+    let focusScope: Namespace.ID
     let focusedAction: FocusState<DetailHeroAction?>.Binding
     let onPlay: () -> Void
     let onToggleWatchlist: () -> Void
@@ -3278,41 +3570,47 @@ private struct PrimaryActionsRow: View {
             HeroPrimaryButton(
                 title: playButtonLabel,
                 isLoading: isLoadingPlayback,
+                focusedAction: focusedAction,
+                focusValue: .play,
                 action: onPlay
             )
-            .focused(focusedAction, equals: .play)
+            .prefersDefaultFocus(true, in: focusScope)
 
             HeroSecondaryButton(
                 title: isInWatchlist ? "In Watchlist" : "Watchlist",
                 systemImage: isInWatchlist ? "checkmark" : "plus",
                 isActive: isInWatchlist,
+                focusedAction: focusedAction,
+                focusValue: .watchlist,
                 action: onToggleWatchlist
             )
-            .focused(focusedAction, equals: .watchlist)
 
             HeroSecondaryButton(
                 title: isWatched ? "Watched" : "Mark Watched",
                 systemImage: isWatched ? "eye.fill" : "eye",
                 isActive: isWatched,
+                focusedAction: focusedAction,
+                focusValue: .watched,
                 action: onToggleWatched
             )
-            .focused(focusedAction, equals: .watched)
         }
-        .defaultFocus(focusedAction, .play)
+        .defaultFocus(focusedAction, .play, priority: .userInitiated)
         .accessibilityElement(children: .contain)
     }
 #endif
 }
 
 private struct HeroPrimaryButton: View {
-    #if os(tvOS)
-    @FocusState private var isFocused: Bool
-    #else
+    #if os(iOS)
     @Environment(\.isFocused) private var isFocused
     #endif
 
     let title: String
     let isLoading: Bool
+    #if os(tvOS)
+    let focusedAction: FocusState<DetailHeroAction?>.Binding
+    let focusValue: DetailHeroAction
+    #endif
     let action: () -> Void
 
     var body: some View {
@@ -3343,8 +3641,8 @@ private struct HeroPrimaryButton: View {
                 .background { primaryButtonBackground }
                 .contentShape(Capsule(style: .continuous))
         }
+        .focused(focusedAction, equals: focusValue)
         .buttonStyle(TVNoChromeButtonStyle())
-        .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
@@ -3367,8 +3665,8 @@ private struct HeroPrimaryButton: View {
                 .background { primaryButtonBackground }
                 .contentShape(Capsule(style: .continuous))
         }
+        .focused(focusedAction, equals: focusValue)
         .buttonStyle(TVNoChromeButtonStyle())
-        .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
@@ -3390,6 +3688,10 @@ private struct HeroPrimaryButton: View {
         .font(.system(size: TVDetailActionButtonLayout.fontSize, weight: .semibold, design: .rounded))
         .lineLimit(1)
         .minimumScaleFactor(0.85)
+    }
+
+    private var isFocused: Bool {
+        focusedAction.wrappedValue == focusValue
     }
 
     private var primaryButtonForeground: Color {
@@ -3490,15 +3792,17 @@ private struct HeroIconActionButton: View {
 #endif
 
 private struct HeroSecondaryButton: View {
-    #if os(tvOS)
-    @FocusState private var isFocused: Bool
-    #else
+    #if os(iOS)
     @Environment(\.isFocused) private var isFocused
     #endif
 
     let title: String
     let systemImage: String
     let isActive: Bool
+    #if os(tvOS)
+    let focusedAction: FocusState<DetailHeroAction?>.Binding
+    let focusValue: DetailHeroAction
+    #endif
     let action: () -> Void
 
     var body: some View {
@@ -3544,13 +3848,17 @@ private struct HeroSecondaryButton: View {
                 .background { secondaryGlassBackground }
                 .contentShape(Capsule(style: .continuous))
         }
+        .focused(focusedAction, equals: focusValue)
         .buttonStyle(TVNoChromeButtonStyle())
-        .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isFocused)
         .accessibilityAddTraits(.isButton)
+    }
+
+    private var isFocused: Bool {
+        focusedAction.wrappedValue == focusValue
     }
 
     @available(tvOS 26.0, *)
@@ -3581,10 +3889,10 @@ private struct HeroSecondaryButton: View {
                 .background { buttonBackground }
                 .contentShape(Capsule(style: .continuous))
         }
+        .focused(focusedAction, equals: focusValue)
         .buttonStyle(TVNoChromeButtonStyle())
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: 18, x: 0, y: 10)
-        .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
@@ -3887,6 +4195,7 @@ private struct HeroProgressView: View {
 private struct SeasonPickerView: View {
     let seasons: [MediaItem]
     let selectedSeasonID: String?
+    let allowsDefaultFocus: Bool
     let focusedSeasonID: FocusState<String?>.Binding
     let onMoveUp: () -> Void
     let onSelect: (MediaItem) -> Void
@@ -3916,7 +4225,14 @@ private struct SeasonPickerView: View {
                     }
                 }
                 #if os(tvOS)
-                .defaultFocus(focusedSeasonID, selectedSeasonID ?? seasons.first?.id)
+                .defaultFocus(
+                    focusedSeasonID,
+                    TVDetailInitialFocusPolicy.seasonDefaultFocusID(
+                        selectedSeasonID: selectedSeasonID,
+                        firstSeasonID: seasons.first?.id,
+                        hasEstablishedPrimaryFocus: allowsDefaultFocus
+                    )
+                )
                 #endif
                 .padding(.horizontal, rowContentHorizontalPadding)
                 .padding(.vertical, rowContentVerticalPadding)
@@ -3931,6 +4247,25 @@ private struct SeasonPickerView: View {
         #else
         return 12
         #endif
+    }
+}
+
+struct TVDetailInitialFocusPolicy {
+    static func seasonDefaultFocusID(
+        selectedSeasonID: String?,
+        firstSeasonID: String?,
+        hasEstablishedPrimaryFocus: Bool
+    ) -> String? {
+        guard hasEstablishedPrimaryFocus else { return nil }
+        return selectedSeasonID ?? firstSeasonID
+    }
+
+    static func shouldRequestPrimaryFocus(
+        previousPresentationRequest: Int,
+        newPresentationRequest: Int,
+        hasEstablishedPrimaryFocus: Bool
+    ) -> Bool {
+        previousPresentationRequest != newPresentationRequest && !hasEstablishedPrimaryFocus
     }
 }
 

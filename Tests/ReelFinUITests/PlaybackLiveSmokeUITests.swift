@@ -63,7 +63,9 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             "-reelfin-force-onboarding",
             "-reelfin-onboarding-page",
             "5",
-            "-reelfin-ui-reset-auth-state"
+            "-reelfin-ui-reset-auth-state",
+            "-settings.useCustomPlayerEngine",
+            "YES"
         ]
         configureLivePlaybackLaunchEnvironment(app)
         app.launch()
@@ -77,6 +79,37 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             in: app,
             scenario: "live-login",
             preferredKinds: ["continueWatching", "nextUp", "movies", "shows"]
+        )
+    }
+
+    /// Control run: same server, same authenticated title and same full-screen presentation, but
+    /// the pre-custom-engine AVPlayer path. It tells us whether a failure belongs to the media
+    /// source/AVFoundation itself or to the custom cache-and-render path.
+    func testLiveLoginAndStartLegacyPlaybackControl() throws {
+        let credentials = try requireLiveCredentials()
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-reelfin-force-onboarding",
+            "-reelfin-onboarding-page",
+            "5",
+            "-reelfin-ui-reset-auth-state",
+            "-settings.useCustomPlayerEngine",
+            "NO"
+        ]
+        configureLivePlaybackLaunchEnvironment(app)
+        app.launchEnvironment["REELFIN_NATIVE_PLAYER"] = "0"
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        if !waitForHome(in: app) {
+            authenticate(in: app, credentials: credentials)
+        }
+        try runPlaybackScenario(
+            in: app,
+            scenario: "legacy-control",
+            preferredKinds: ["continueWatching", "nextUp", "movies", "shows"],
+            requiresCustomRenderProof: false
         )
     }
 
@@ -126,7 +159,8 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     private func runPlaybackScenario(
         in app: XCUIApplication,
         scenario: String,
-        preferredKinds: [String]
+        preferredKinds: [String],
+        requiresCustomRenderProof: Bool = true
     ) throws {
         XCTAssertTrue(waitForHome(in: app))
 
@@ -146,8 +180,22 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         logTap("tap_\(scenario)_\(actionButton.label.lowercased())")
         tapElement(actionButton)
 
+        // The custom engine can advance audio time while AVKit's late-attached video surface is
+        // still black. A generic player container is therefore not proof of playback. Require the
+        // custom surface to publish AVPlayerViewController.isReadyForDisplay after its item is
+        // ready. The optional legacy branch is a control run against the identical real title.
         let playerScreen = app.otherElements["native_player_screen"].firstMatch
-        XCTAssertTrue(playerScreen.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            playerScreen.waitForExistence(timeout: 5),
+            "Expected the custom AVKit host to be mounted before waiting for its render proof."
+        )
+        if requiresCustomRenderProof {
+            let customRenderingReady = app.otherElements["custom_player_rendering_ready"].firstMatch
+            XCTAssertTrue(
+                customRenderingReady.waitForExistence(timeout: 25),
+                "Expected the custom player to prove that AVKit rendered a video surface."
+            )
+        }
         let playerChromeSurface = chromeInteractionSurface(in: app, fallback: playerScreen)
         observePlaybackStartup()
         try exercisePlayerControls(in: app, playerScreen: playerChromeSurface)
@@ -434,6 +482,11 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         return ["1", "true", "yes", "on"].contains(value.lowercased())
     }
 
+    private func shouldForceLegacyPlayer() -> Bool {
+        let value = loadEnvironmentValues()["REELFIN_LIVE_UI_FORCE_LEGACY"] ?? ""
+        return ["1", "true", "yes", "on"].contains(value.lowercased())
+    }
+
     private func shouldOpenExplicitTargetDirectly() -> Bool {
         let value = loadEnvironmentValues()["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] ?? ""
         return ["1", "true", "yes", "on"].contains(value.lowercased())
@@ -694,12 +747,19 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
 
     private func configureLivePlaybackLaunchEnvironment(_ app: XCUIApplication) {
         let environment = loadEnvironmentValues()
+        if shouldForceLegacyPlayer() {
+            // XCTest launch arguments become UserDefaults values. Keep this control run scoped to
+            // the test process so a real-device user's player preference is never touched.
+            app.launchArguments += ["-settings.useCustomPlayerEngine", "NO"]
+        }
         if shouldOpenExplicitTargetDirectly(), let targetItemID = explicitTargetItemID() {
             app.launchArguments += ["-reelfin-live-ui-open-target", targetItemID]
         }
         for key in [
             "REELFIN_LIVE_UI_TARGET_ITEM_ID",
             "REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY",
+            "REELFIN_LIVE_UI_FORCE_LEGACY",
+            "REELFIN_NATIVE_PLAYER",
             "REELFIN_PLAYER_DEEP_EVIDENCE",
             "REELFIN_PLAYER_DEEP_EVIDENCE_RESET"
         ] {

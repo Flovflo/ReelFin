@@ -154,6 +154,74 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.primaryPlaybackStartPosition, .beginning)
     }
 
+    func testMeaningfulMovieProgressRequiresExplicitResumeChoice() {
+        let resumeTicks = Int64(25 * 60 * 10_000_000)
+        let item = MediaItem(
+            id: "movie-resume-choice",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: resumeTicks
+        )
+
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.resumePositionTicks(for: item),
+            resumeTicks
+        )
+        XCTAssertTrue(PlaybackLaunchChoicePolicy.shouldPresentChoice(for: item))
+    }
+
+    func testExplicitResumeAndRestartChoicesMapToStartPositions() {
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.startPosition(for: .resume),
+            .resumeIfAvailable
+        )
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.startPosition(for: .restart),
+            .beginning
+        )
+    }
+
+    func testAbsentOrNearlyFinishedProgressSkipsResumeChoice() {
+        let untouched = MediaItem(
+            id: "movie-not-started",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000)
+        )
+        let nearlyFinished = MediaItem(
+            id: "episode-nearly-finished",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(50 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(49 * 60 * 10_000_000)
+        )
+
+        XCTAssertFalse(PlaybackLaunchChoicePolicy.shouldPresentChoice(for: untouched))
+        XCTAssertFalse(PlaybackLaunchChoicePolicy.shouldPresentChoice(for: nearlyFinished))
+    }
+
+    func testResolvedProgressOverridesStaleEpisodeCardPosition() {
+        let item = MediaItem(
+            id: "episode-resolved-progress",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(50 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(5 * 60 * 10_000_000)
+        )
+        let progress = PlaybackProgress(
+            itemID: item.id,
+            positionTicks: Int64(17 * 60 * 10_000_000),
+            totalTicks: Int64(50 * 60 * 10_000_000),
+            updatedAt: Date()
+        )
+
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.resumePositionTicks(for: item, progress: progress),
+            progress.positionTicks
+        )
+    }
+
     func testLoadUsesLocalStoppedProgressForPlayedItem() async {
         let localPositionTicks = Int64(17 * 60 * 10_000_000)
         let apiClient = DetailActionSpyAPIClient()

@@ -8,10 +8,12 @@ struct NativePlayerTimelineView: View {
     @State private var scrubValue: Double?
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 5) {
             scrubberControl
             timeLabels
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("native_player_timeline")
     }
 
     @ViewBuilder
@@ -31,22 +33,15 @@ struct NativePlayerTimelineView: View {
     }
 
     private var timeLabels: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .topLeading) {
-                Text(presentation.currentTimeText)
-                    .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
-                    .offset(x: currentLabelX(width: proxy.size.width), y: 0)
-
-                Text(presentation.remainingTimeText)
-                    .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+        HStack(spacing: 20) {
+            Text(presentation.currentTimeText)
+            Spacer(minLength: 0)
+            Text(presentation.remainingTimeText)
         }
-        .frame(height: 30)
+        .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.82))
+        .shadow(color: .black.opacity(0.32), radius: 4, y: 1)
+        .frame(height: 26)
     }
 
     private var scrubBinding: Binding<Double> {
@@ -62,10 +57,4 @@ struct NativePlayerTimelineView: View {
         self.scrubValue = nil
     }
 
-    private func currentLabelX(width: CGFloat) -> CGFloat {
-        let labelWidth: CGFloat = 92
-        let progress = CGFloat(presentation.progress)
-        let centered = (width * progress) - (labelWidth / 2)
-        return min(max(0, centered), max(0, width - labelWidth))
-    }
 }

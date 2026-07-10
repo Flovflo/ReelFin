@@ -91,6 +91,42 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         XCTAssertEqual(json["MaxStreamingBitrate"] as? Int, 42_000_000)
         XCTAssertNil(json["DeviceProfile"])
     }
+
+    func testUnauthorizedResponseInvalidatesPersistedSession() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        URLProtocolStub.requestHandler = { request in
+            (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 401,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!,
+                Data(#"{"error":"expired token"}"#.utf8)
+            )
+        }
+
+        let session = URLSession(configuration: configuration)
+        let settings = PlaybackReportingSettingsStore(
+            serverConfiguration: ServerConfiguration(serverURL: URL(string: "https://example.com")!),
+            lastSession: UserSession(userID: "user-1", username: "Flo", token: "token-1")
+        )
+        let tokenStore = PlaybackReportingTokenStore(storedToken: "token-1")
+        let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
+
+        do {
+            _ = try await client.fetchPlaybackSources(itemID: "movie-1")
+            XCTFail("Expected the expired session to be rejected")
+        } catch AppError.unauthenticated {
+            // Expected.
+        }
+
+        let currentSession = await client.currentSession()
+        XCTAssertNil(currentSession)
+        XCTAssertNil(settings.lastSession)
+        XCTAssertNil(tokenStore.storedToken)
+    }
 }
 
 private actor RequestRecorder {

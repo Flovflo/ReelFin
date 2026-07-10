@@ -27,6 +27,11 @@ enum AdaptiveLanePolicy {
     /// Sustained below-bitrate time (with starvation) before the drop. Mirrors
     /// `PlaybackLanePolicy.lastResortSustainedSeconds`.
     static let dropSustainedBelowSeconds: Double = PlaybackLanePolicy.lastResortSustainedSeconds
+    /// A drop is only meaningful when the reservoir is nearly DRY — with a deep cushion on disk the
+    /// original physically cannot starve for long, so a buffering signal then is a transient (serve
+    /// hiccup, render glitch, poisoned throughput sample while the fill idles at its cap), not link
+    /// inability. Device 2026-07-08: SDR fired on a gigabit LAN with 4 minutes of cache ahead.
+    static let dropMaxReservoirSeconds: Double = 30
     /// Headroom the link must HOLD to earn the original back.
     static let upgradeHeadroom: Double = 1.3
     static let upgradeHoldSeconds: Double = 30
@@ -49,7 +54,9 @@ enum AdaptiveLanePolicy {
     ) -> LaneChange? {
         switch state.lane {
         case .original:
-            guard isBuffering, sustainedBelowBitrateSeconds >= dropSustainedBelowSeconds else { return nil }
+            guard isBuffering,
+                  sustainedBelowBitrateSeconds >= dropSustainedBelowSeconds,
+                  dvReservoirSeconds < dropMaxReservoirSeconds else { return nil }
             // Relapsing right after an upgrade = that upgrade failed; two failures lock SDR.
             if let lastReturn = state.lastReturnAt, now.timeIntervalSince(lastReturn) <= failedUpgradeWindowSeconds {
                 state.failedUpgrades += 1

@@ -6,6 +6,25 @@ import XCTest
 
 @MainActor
 final class HomeViewModelActionTests: XCTestCase {
+    func testFeaturedPlayUsesCustomRouteWhenCustomEngineIsEnabled() {
+        XCTAssertEqual(
+            HomePlaybackRoute.preferred(useCustomPlayerEngine: true),
+            .custom
+        )
+    }
+
+    func testFeaturedPlayKeepsExplicitLegacyOptOut() {
+        XCTAssertEqual(
+            HomePlaybackRoute.preferred(useCustomPlayerEngine: false),
+            .legacy
+        )
+    }
+
+    func testTopNavigationIsHiddenWhileHomePlayerIsPresented() {
+        XCTAssertFalse(HomePlayerPresentationPolicy.showsTopNavigation(hasActivePlayer: true))
+        XCTAssertTrue(HomePlayerPresentationPolicy.showsTopNavigation(hasActivePlayer: false))
+    }
+
     func testToggleFeaturedWatchlistUpdatesFeedAndCallsFavoriteEndpoint() async throws {
         let apiClient = HomeActionSpyAPIClient()
         let repository = MockMetadataRepository()

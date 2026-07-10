@@ -30,6 +30,10 @@ struct TVRootShellView: View {
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .environment(\.tvTopNavigationFocusAction, focusTopNavigation)
+        .environment(\.tvTopNavigationVisibilityAction) { isVisible in
+            guard isTopNavigationVisible != isVisible else { return }
+            isTopNavigationVisible = isVisible
+        }
         .onPreferenceChange(TVTopNavigationVisibilityPreferenceKey.self) { isVisible in
             isTopNavigationVisible = isVisible
         }

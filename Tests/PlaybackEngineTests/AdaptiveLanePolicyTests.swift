@@ -26,6 +26,20 @@ final class AdaptiveLanePolicyTests: XCTestCase {
         XCTAssertNil(change)
     }
 
+    func testDeepReservoirBlocksTheDrop() {
+        // With minutes of original already on disk the title cannot starve for long — a buffering
+        // signal there is a transient (serve hiccup / poisoned sample while the fill idles at its
+        // cap), never link inability. Device 2026-07-08: SDR fired on a gigabit LAN with a ~240s
+        // reservoir; this locks that class of false drop out.
+        var state = AdaptiveLanePolicy.State()
+        let change = AdaptiveLanePolicy.decision(
+            now: t0, isBuffering: true,
+            sustainedBelowBitrateSeconds: AdaptiveLanePolicy.dropSustainedBelowSeconds + 100,
+            headroom: 0.5, dvReservoirSeconds: 240, state: &state)
+        XCTAssertNil(change, "a deep reservoir must veto the SDR drop")
+        XCTAssertEqual(state.lane, .original)
+    }
+
     func testDropRequiresSustainedBelowAndBuffering() {
         var state = AdaptiveLanePolicy.State()
         let change = AdaptiveLanePolicy.decision(

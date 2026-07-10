@@ -6,6 +6,35 @@ import SwiftUI
 import UIKit
 #endif
 
+enum HomePlaybackRoute: Equatable {
+    case custom
+    case legacy
+
+    static func preferred(useCustomPlayerEngine: Bool) -> Self {
+        useCustomPlayerEngine ? .custom : .legacy
+    }
+}
+
+enum HomePlayerPresentationPolicy {
+    static func showsTopNavigation(hasActivePlayer: Bool) -> Bool {
+        !hasActivePlayer
+    }
+}
+
+/// Keep the playback payload and presentation trigger atomic. A separate `showPlayer` Boolean can
+/// present an empty cover before SwiftUI observes the engine/session, leaving audio active behind
+/// a black screen. The detail screen uses the same invariant.
+private struct HomePlayerPresentation: Identifiable {
+    enum Content {
+        case custom(CustomPlaybackEngine)
+        case legacy(PlaybackSessionController)
+    }
+
+    let id = UUID()
+    let item: MediaItem
+    let content: Content
+}
+
 // MARK: - Components (Merged here to avoid missing .pbxproj references)
 
 #if os(tvOS)
@@ -1078,10 +1107,12 @@ struct HomeView: View {
     @State private var localHeroFocusRequest = 0
     @State private var tvOpeningArtworkItem: MediaItem?
     @State private var tvOpeningArtworkVisible = false
+    @State private var tvDetailFocusRequest = 0
 #endif
     @State private var playerSession: PlaybackSessionController?
-    @State private var playerItem: MediaItem?
-    @State private var showPlayer = false
+    @State private var customEngine: CustomPlaybackEngine?
+    @State private var playerPresentation: HomePlayerPresentation?
+    @State private var customPrewarmer: CustomPlayerPrewarmer?
     @State private var isPreparingPlayback = false
     @State private var playbackErrorMessage: String?
     @State private var liveUITestTargetOpenAttempted = false
@@ -1154,9 +1185,7 @@ struct HomeView: View {
         .task {
             await viewModel.load()
             await preloadOptimizationStatuses()
-#if os(iOS)
             await openLiveUITestTargetIfRequested()
-#endif
 #if os(tvOS)
             if let item = viewModel.feed.featured.first {
                 tvScreenState.scheduleNavigationAppearance(for: item)
@@ -1171,16 +1200,25 @@ struct HomeView: View {
             triggerTVHomeRefresh()
         }
 #endif
-        .fullScreenCover(isPresented: $showPlayer, onDismiss: handlePlayerDismissal) {
-            if let playerSession, let playerItem {
-                PlayerView(
-                    session: playerSession,
-                    item: playerItem,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline
-                )
-            }
+#if os(iOS)
+        .fullScreenCover(item: $playerPresentation, onDismiss: handlePlayerDismissal) { presentation in
+            homePlayerContent(for: presentation)
         }
+#else
+        // Match DetailView's proven tvOS host. A fullScreenCover from the inline Home/detail stack
+        // can retain a frozen navigation snapshot above live playback on physical Apple TV.
+        .disabled(playerPresentation != nil)
+        .overlay {
+            tvHomePlayerPresentation
+                .zIndex(100)
+        }
+        .preference(
+            key: TVTopNavigationVisibilityPreferenceKey.self,
+            value: HomePlayerPresentationPolicy.showsTopNavigation(
+                hasActivePlayer: playerPresentation != nil
+            )
+        )
+#endif
         .alert(
             "Playback Error",
             isPresented: Binding(
@@ -1209,6 +1247,46 @@ struct HomeView: View {
     }
 
     @ViewBuilder
+    private func homePlayerContent(for presentation: HomePlayerPresentation) -> some View {
+        switch presentation.content {
+        case .custom(let engine):
+            CustomPlayerView(
+                engine: engine,
+                launchContext: CustomPlayerView.LaunchContext(
+                    item: engine.currentMediaItem ?? presentation.item,
+                    apiClient: dependencies.apiClient,
+                    imagePipeline: dependencies.imagePipeline
+                ),
+                onRequestDismiss: { handlePlayerDismissal() }
+            )
+        case .legacy(let session):
+            PlayerView(
+                session: session,
+                item: presentation.item,
+                apiClient: dependencies.apiClient,
+                imagePipeline: dependencies.imagePipeline
+            )
+        }
+    }
+
+#if os(tvOS)
+    @ViewBuilder
+    private var tvHomePlayerPresentation: some View {
+        if let playerPresentation {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                homePlayerContent(for: playerPresentation)
+            }
+            .ignoresSafeArea()
+            .transition(.opacity)
+            .onExitCommand {
+                handlePlayerDismissal()
+            }
+        }
+    }
+#endif
+
+    @ViewBuilder
     private func mainContent(
         visibleRows: [HomeRow]
     ) -> some View {
@@ -1219,6 +1297,11 @@ struct HomeView: View {
                 // that held a heavy GPU pass for the entire presentation and slowed open/close.
                 // Scale + dim + a flat scrim reads the same from 3 m for a fraction of the cost.
                 homeScrollContent(visibleRows: visibleRows)
+                    // The detail is an inline overlay on tvOS, so the Home focus tree otherwise
+                    // stays alive behind it. Select then activates the hidden shelf card again
+                    // instead of the visible Play button. Removing Home from focus participation
+                    // lets DetailView's default focus resolve immediately and deterministically.
+                    .disabled(viewModel.selectedItem != nil)
                     .scaleEffect(viewModel.selectedItem == nil ? 1 : 0.982)
                     .opacity(viewModel.selectedItem == nil ? 1 : 0.34)
                     .overlay {
@@ -1572,6 +1655,7 @@ struct HomeView: View {
                     contextTitle: selectedDetailContextTitle,
                     namespace: selectedDetailNamespace,
                     transitionSourceID: selectedDetailTransitionSourceID,
+                    tvPresentationFocusRequest: tvDetailFocusRequest,
                     onDisplayedSourceItemChange: handleDisplayedDetailSourceItemChange,
                     onDismissRequest: dismissDetailPresentation
                 )
@@ -1733,11 +1817,13 @@ struct HomeView: View {
 
     private func handleFocusedItem(_ item: MediaItem, neighbors: [MediaItem]) {
 #if os(tvOS)
+        // 600ms settle: focus travels across several cards per second on tvOS — 150ms fired the
+        // whole warmup chain (detail fetch + image prefetch + NextUp) for cards merely passed over.
         scheduleWarmup(
             for: item,
             neighbors: neighbors,
             scope: TVHomeWarmupScope.focus,
-            settleDelayNanoseconds: 150_000_000
+            settleDelayNanoseconds: 600_000_000
         )
 #else
         scheduleWarmup(
@@ -1779,8 +1865,11 @@ struct HomeView: View {
         tvOpeningArtworkItem = item
         tvOpeningArtworkVisible = true
 
-        withAnimation(tvDetailPresentationAnimation) {
+        withAnimation(tvDetailPresentationAnimation, completionCriteria: .logicallyComplete) {
             viewModel.select(item: item)
+        } completion: {
+            guard viewModel.selectedItem?.id == presentedItemID else { return }
+            tvDetailFocusRequest &+= 1
         }
 
         Task { @MainActor in
@@ -1798,7 +1887,7 @@ struct HomeView: View {
 #endif
     }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
     private var liveUITestTargetItemID: String? {
         if let argumentValue = liveUITestArgumentValue(after: "-reelfin-live-ui-open-target") {
             return normalizedLiveUITestItemID(argumentValue)
@@ -1938,20 +2027,101 @@ struct HomeView: View {
 
     @MainActor
     private func launchPlayback(for item: MediaItem) async {
+        switch HomePlaybackRoute.preferred(
+            useCustomPlayerEngine: dependencies.settingsStore.useCustomPlayerEngine
+        ) {
+        case .custom:
+            startHomeCustomPlayback(item: item)
+        case .legacy:
+            await startHomeLegacyPlayback(item: item)
+        }
+    }
+
+    @MainActor
+    private func ensureHomeCustomPrewarmer() -> CustomPlayerPrewarmer? {
+        if let customPrewarmer { return customPrewarmer }
+        guard let store = try? CustomPlaybackEngine.sharedStore() else { return nil }
+        let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
+        let prewarmer = CustomPlayerPrewarmer(
+            resolver: JellyfinOriginalSourceResolver(coordinator: coordinator),
+            store: store
+        )
+        customPrewarmer = prewarmer
+        return prewarmer
+    }
+
+    @MainActor
+    private func startHomeCustomPlayback(item: MediaItem) {
+        guard let store = try? CustomPlaybackEngine.sharedStore() else {
+            playbackErrorMessage = "Cache local indisponible."
+            return
+        }
+
+        let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
+        let engine = CustomPlaybackEngine(
+            resolver: JellyfinOriginalSourceResolver(coordinator: coordinator),
+            store: store,
+            reporter: JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient),
+            prewarmer: customPrewarmer,
+            markers: JellyfinCustomPlaybackMarkers(apiClient: dependencies.apiClient)
+        )
+        engine.onPlaybackEnded = {
+            handlePlayerDismissal()
+        }
+        engine.onRequiresNativePlayback = { [weak engine] in
+            guard let engine, customEngine === engine else { return }
+            AppLog.playback.notice(
+                "home.player.native_handoff — item=\(item.id.prefix(8), privacy: .public)"
+            )
+            Task { @MainActor in
+                await startHomeLegacyPlayback(item: item, forceNativeOriginalPlayback: true)
+            }
+        }
+        engine.currentMediaItem = item
+        engine.nextEpisodeQueue = []
+
+        playerSession = nil
+        customEngine = engine
+#if os(iOS)
+        OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
+#endif
+        presentHomePlayer(
+            HomePlayerPresentation(item: item, content: .custom(engine))
+        )
+        engine.load(
+            itemID: item.id,
+            startTimeTicks: item.playbackPositionTicks,
+            autoPlay: true
+        )
+    }
+
+    @MainActor
+    private func startHomeLegacyPlayback(
+        item: MediaItem,
+        forceNativeOriginalPlayback: Bool = false
+    ) async {
         let session = dependencies.makePlaybackSession()
 #if os(iOS)
         OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
 #endif
+        if forceNativeOriginalPlayback {
+            customEngine?.stop()
+            customEngine = nil
+        }
         playerSession = session
-        playerItem = item
-        setPlayerCoverPresented(true)
+        presentHomePlayer(
+            HomePlayerPresentation(item: item, content: .legacy(session))
+        )
 
         do {
-            try await session.load(item: item)
+            try await session.load(
+                item: item,
+                startPosition: .resumeIfAvailable,
+                forceNativeOriginalPlayback: forceNativeOriginalPlayback
+            )
         } catch {
             playerSession = nil
-            playerItem = nil
-            setPlayerCoverPresented(false)
+            dismissHomePlayer()
             playbackErrorMessage = error.localizedDescription
         }
     }
@@ -1980,6 +2150,18 @@ struct HomeView: View {
     }
 
     private func warmPresentationPlayback(for item: MediaItem, neighbors: [MediaItem]) async {
+        if dependencies.settingsStore.useCustomPlayerEngine {
+            guard let playbackItem = await optimizationPlaybackItem(for: item) else { return }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                ensureHomeCustomPrewarmer()?.prewarm(
+                    itemID: playbackItem.id,
+                    startTimeTicks: playbackItem.playbackPositionTicks
+                )
+            }
+            return
+        }
+
         let nearbyItems = Array(neighbors.prefix(2))
         guard !Task.isCancelled else { return }
 
@@ -2097,6 +2279,9 @@ struct HomeView: View {
 
     private func handleHomeDisappear() {
         warmupTask?.cancel()
+        if playerPresentation == nil {
+            customPrewarmer?.discardIfUnused()
+        }
 #if os(tvOS)
         tvScreenState.cancel()
         if let coordinator = dependencies.tvFocusWarmupCoordinator {
@@ -2112,20 +2297,33 @@ struct HomeView: View {
     private func handlePlayerDismissal() {
         playerSession?.stop()
         playerSession = nil
-        playerItem = nil
-        setPlayerCoverPresented(false)
+        customEngine?.stop()
+        customEngine = nil
+        dismissHomePlayer()
         isPreparingPlayback = false
     }
 
-    private func setPlayerCoverPresented(_ isPresented: Bool) {
+    private func presentHomePlayer(_ presentation: HomePlayerPresentation) {
 #if os(iOS)
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            showPlayer = isPresented
+            playerPresentation = presentation
         }
 #else
-        showPlayer = isPresented
+        playerPresentation = presentation
+#endif
+    }
+
+    private func dismissHomePlayer() {
+#if os(iOS)
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            playerPresentation = nil
+        }
+#else
+        playerPresentation = nil
 #endif
     }
 

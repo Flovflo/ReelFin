@@ -28,7 +28,79 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         self.subtitleSignature = subtitleSignature
     }
 
+    /// Process-wide resolution memo. A resolve can serially burn several PlaybackInfo POSTs
+    /// (initial + dedicated-profile + balanced fallback), each with a full network timeout — on a
+    /// degraded link that is MINUTES behind the play-press spinner. Every resolver instance (focus
+    /// warm, detail prewarm, the engine at press time) shares this: any earlier resolution makes
+    /// the press instant, and concurrent resolves for the same title coalesce into one.
+    private final class ResolutionMemo: @unchecked Sendable {
+        static let shared = ResolutionMemo()
+        private let lock = NSLock()
+        private var cached: [String: (resolved: ResolvedOriginalSource, at: Date)] = [:]
+        private var inFlight: [String: Task<ResolvedOriginalSource, Error>] = [:]
+        private let ttl: TimeInterval = 180
+
+        func hit(_ key: String) -> ResolvedOriginalSource? {
+            lock.lock(); defer { lock.unlock() }
+            guard let entry = cached[key] else { return nil }
+            guard Date().timeIntervalSince(entry.at) < ttl else {
+                cached[key] = nil
+                return nil
+            }
+            return entry.resolved
+        }
+
+        func task(_ key: String) -> Task<ResolvedOriginalSource, Error>? {
+            lock.lock(); defer { lock.unlock() }
+            return inFlight[key]
+        }
+
+        func register(_ task: Task<ResolvedOriginalSource, Error>, for key: String) {
+            lock.lock(); defer { lock.unlock() }
+            inFlight[key] = task
+        }
+
+        func finish(_ key: String, result: ResolvedOriginalSource?) {
+            lock.lock(); defer { lock.unlock() }
+            inFlight[key] = nil
+            // Adaptive streams embed the start position in their URL — never memoize those.
+            if let result, !result.isAdaptiveStream {
+                cached[key] = (result, Date())
+            }
+            if cached.count > 16 {
+                let cutoff = Date().addingTimeInterval(-ttl)
+                cached = cached.filter { $0.value.at > cutoff }
+            }
+        }
+    }
+
+    private var memoKey: (String) -> String {
+        { itemID in "\(itemID)|\(self.audioSignature)|\(self.subtitleSignature)" }
+    }
+
     public func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
+        let key = memoKey(itemID)
+        if let hit = ResolutionMemo.shared.hit(key) {
+            AppLog.playback.notice("customplayer.resolve.memo_hit — item=\(itemID.prefix(8), privacy: .public)")
+            return hit
+        }
+        if let inFlight = ResolutionMemo.shared.task(key) {
+            AppLog.playback.notice("customplayer.resolve.memo_join — item=\(itemID.prefix(8), privacy: .public)")
+            return try await inFlight.value
+        }
+        let task = Task { try await performResolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks) }
+        ResolutionMemo.shared.register(task, for: key)
+        do {
+            let resolved = try await task.value
+            ResolutionMemo.shared.finish(key, result: resolved)
+            return resolved
+        } catch {
+            ResolutionMemo.shared.finish(key, result: nil)
+            throw error
+        }
+    }
+
+    private func performResolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
         // Pass a non-nil fallback reason (not the post-start-stall sentinel) so the coordinator's
         // legacy native-route self-block is bypassed and it resolves the direct-play original. That
         // guard is removed entirely when the legacy engine is stripped (blueprint Phase 7).
@@ -42,10 +114,18 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             // the same HEVC/Dolby-Vision bitstream. Falls back to whatever exists (e.g. MKV-only).
             preferredContainers: ["mp4", "m4v", "mov"]
         )
-        guard case .directPlay = selection.decision.route else {
-            // Not playable as a raw original (container/codec AVFoundation can't open) — hand the
-            // engine the server's adaptive stream instead of failing. Best server-chosen quality,
-            // resolved lazily and scoped to this call.
+        if Self.requiresNativeOriginalPlayback(for: selection.source) {
+            return resolvedNativeHandoff(selection: selection)
+        }
+        switch selection.decision.route {
+        case .directPlay:
+            break
+        case .remux, .transcode:
+            // Keep Jellyfin's FIRST selection. It may be a lossless DirectStream/video-copy remux
+            // (MKV → Apple-compatible HLS). Re-fetching with direct routes disabled destroyed that
+            // route and silently produced H.264 instead — exactly the "Qualité adaptée" regression.
+            return resolvedAdaptive(selection: selection)
+        case .nativeBridge:
             if let adaptive = await resolveAdaptiveSelection(itemID: itemID, startTimeTicks: startTimeTicks) {
                 return adaptive
             }
@@ -73,9 +153,77 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             overrideMIMEType: overrideMIMEType,
             cacheKey: key,
             isDolbyVision: selection.source.isLikelyHDRorDV,
+            preservesOriginalVideo: true,
             isAdaptiveStream: false,
             externalSubtitles: Self.externalSubtitleTracks(for: selection.source, assetURL: assetURL)
         )
+    }
+
+    private func resolvedAdaptive(selection: PlaybackAssetSelection) -> ResolvedOriginalSource {
+        let assetURL = selection.assetURL
+        return ResolvedOriginalSource(
+            originURL: assetURL,
+            headers: selection.headers,
+            sourceBitrate: selection.source.bitrate,
+            overrideMIMEType: nil,
+            cacheKey: MediaGatewayCacheKey(
+                scope: selection.routeGuarantees.preservesOriginalVideo ? "adaptive-video-copy" : "adaptive",
+                userID: nil,
+                serverID: assetURL.host,
+                itemID: selection.source.itemID,
+                sourceID: selection.source.id,
+                routeURL: assetURL,
+                routeHeaders: selection.headers,
+                audioSignature: audioSignature,
+                subtitleSignature: subtitleSignature,
+                resumeSeconds: nil
+            ),
+            isDolbyVision: selection.source.isLikelyHDRorDV && selection.routeGuarantees.preservesOriginalVideo,
+            preservesOriginalVideo: selection.routeGuarantees.preservesOriginalVideo,
+            isAdaptiveStream: true,
+            externalSubtitles: Self.externalSubtitleTracks(for: selection.source, assetURL: assetURL)
+        )
+    }
+
+    private func resolvedNativeHandoff(selection: PlaybackAssetSelection) -> ResolvedOriginalSource {
+        let assetURL = selection.assetURL
+        return ResolvedOriginalSource(
+            originURL: assetURL,
+            headers: selection.headers,
+            sourceBitrate: selection.source.bitrate,
+            overrideMIMEType: nil,
+            cacheKey: MediaGatewayCacheKey(
+                scope: "native-original-handoff",
+                userID: nil,
+                serverID: assetURL.host,
+                itemID: selection.source.itemID,
+                sourceID: selection.source.id,
+                routeURL: assetURL,
+                routeHeaders: selection.headers,
+                audioSignature: audioSignature,
+                subtitleSignature: subtitleSignature,
+                resumeSeconds: nil
+            ),
+            isDolbyVision: selection.source.isLikelyHDRorDV,
+            preservesOriginalVideo: true,
+            isAdaptiveStream: false,
+            requiresNativePlayback: true,
+            externalSubtitles: Self.externalSubtitleTracks(for: selection.source, assetURL: assetURL)
+        )
+    }
+
+    /// The custom AVPlayer path keeps Apple-native files on its fast progressive cache. A lone
+    /// Matroska HEVC/H.264 source instead needs ReelFin's packet demuxer: raw MKV is not a reliable
+    /// AVPlayer input, and Jellyfin's fMP4 remux has produced audio-only assets in real tvOS tests.
+    static func requiresNativeOriginalPlayback(for source: MediaSource) -> Bool {
+        let containers = PlaybackCoordinator.sourceContainerTokens(source)
+        guard containers.contains("mkv") || containers.contains("matroska") else { return false }
+        switch source.normalizedVideoCodec {
+        case "hevc", "h265", "hvc1", "hev1", "h264", "avc1":
+            return true
+        default:
+            return false
+        }
     }
 
     /// Text sidecar subtitle tracks (SRT/VTT) of the resolved source, with Jellyfin delivery URLs
@@ -143,26 +291,7 @@ extension JellyfinOriginalSourceResolver {
         ) else { return nil }
         switch selection.decision.route {
         case .transcode, .remux:
-            return ResolvedOriginalSource(
-                originURL: selection.assetURL,
-                headers: selection.headers,
-                sourceBitrate: selection.source.bitrate,
-                overrideMIMEType: nil,
-                cacheKey: MediaGatewayCacheKey(
-                    scope: "adaptive",
-                    userID: nil,
-                    serverID: selection.assetURL.host,
-                    itemID: selection.source.itemID,
-                    sourceID: selection.source.id,
-                    routeURL: selection.assetURL,
-                    routeHeaders: selection.headers,
-                    audioSignature: audioSignature,
-                    subtitleSignature: subtitleSignature,
-                    resumeSeconds: nil
-                ),
-                isDolbyVision: false,
-                isAdaptiveStream: true
-            )
+            return resolvedAdaptive(selection: selection)
         case .directPlay, .nativeBridge:
             return nil
         }

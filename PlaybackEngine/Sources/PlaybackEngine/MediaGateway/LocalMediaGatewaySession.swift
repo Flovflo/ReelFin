@@ -49,8 +49,9 @@ public actor LocalMediaGatewaySession {
         key: MediaGatewayCacheKey,
         store: MediaGatewayStore,
         prefetchConfiguration: LocalMediaGatewayPrefetchConfiguration? = nil,
-        sessionConfiguration: URLSessionConfiguration = .ephemeral
+        sessionConfiguration suppliedConfiguration: URLSessionConfiguration? = nil
     ) {
+        let sessionConfiguration = suppliedConfiguration ?? MediaOriginTransport.makeConfiguration()
         let id = UUID().uuidString
         self.id = id
         self.localPath = Self.makeLocalPath(id: id, remoteURL: remoteURL)
@@ -61,7 +62,8 @@ public actor LocalMediaGatewaySession {
         sessionConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
         sessionConfiguration.timeoutIntervalForRequest = 30
         self.session = URLSession(configuration: sessionConfiguration)
-        self.rangeSessionConfiguration = sessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral
+        self.rangeSessionConfiguration = sessionConfiguration.copy() as? URLSessionConfiguration
+            ?? MediaOriginTransport.makeConfiguration()
         if let prefetchConfiguration {
             self.prefetcher = LocalMediaGatewayPrefetcher(
                 remoteURL: remoteURL,
@@ -69,7 +71,8 @@ public actor LocalMediaGatewaySession {
                 key: key,
                 store: store,
                 configuration: prefetchConfiguration,
-                sessionConfiguration: sessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral
+                sessionConfiguration: sessionConfiguration.copy() as? URLSessionConfiguration
+                    ?? MediaOriginTransport.makeConfiguration()
             )
         } else {
             self.prefetcher = nil
@@ -133,7 +136,8 @@ public actor LocalMediaGatewaySession {
         }
         let requestURL = PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers)
         let requestHeaders = headers
-        let configuration = rangeSessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral
+        let configuration = rangeSessionConfiguration.copy() as? URLSessionConfiguration
+            ?? MediaOriginTransport.makeConfiguration()
         let responseLengthInt = Int(responseLength)
         let endOffset = requestedLength == nil ? nil : offset + responseLength - 1
         let store = store
@@ -396,7 +400,8 @@ public actor LocalMediaGatewaySession {
         // range.length, so an open-ended upstream request stops once the window is filled.
         let (payload, http) = try await HTTPChunkedRangeReader.collect(
             request: request,
-            configuration: rangeSessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral,
+            configuration: rangeSessionConfiguration.copy() as? URLSessionConfiguration
+                ?? MediaOriginTransport.makeConfiguration(),
             maxLength: range.length
         )
         guard http.statusCode == 206 || http.statusCode == 200 else {

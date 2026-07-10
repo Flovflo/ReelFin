@@ -627,7 +627,8 @@ public final class PlaybackSessionController {
         item: MediaItem,
         autoPlay: Bool = true,
         upNextEpisodes: [MediaItem] = [],
-        startPosition: PlaybackStartPosition = .resumeIfAvailable
+        startPosition: PlaybackStartPosition = .resumeIfAvailable,
+        forceNativeOriginalPlayback: Bool = false
     ) async throws {
         currentItemID = item.id
         playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
@@ -711,7 +712,17 @@ public final class PlaybackSessionController {
         lastFailureReason = nil
         lastRecoverySuggestion = nil
         localHLSStartupSummary = nil
-        let playbackConfig = await currentPlaybackConfiguration()
+        var playbackConfig = await currentPlaybackConfiguration()
+        if forceNativeOriginalPlayback {
+            playbackConfig.nativePlayerConfig.enabled = true
+            playbackConfig.nativePlayerConfig.alwaysRequestOriginalFile = true
+            playbackConfig.nativePlayerConfig.allowCustomDemuxers = true
+            playbackConfig.nativePlayerConfig.enableExperimentalMKV = true
+            playbackConfig.nativePlayerConfig.allowServerTranscodeFallback = false
+            AppLog.playback.notice(
+                "nativeplayer.route.forced_original — \(self.playbackLogScope(), privacy: .public) reason=custom_mkv_handoff"
+            )
+        }
         playbackPolicy = playbackConfig.playbackPolicy
         allowSDRFallback = playbackConfig.allowSDRFallback
         preferAudioTranscodeOnly = playbackConfig.preferAudioTranscodeOnly
@@ -2640,7 +2651,7 @@ public final class PlaybackSessionController {
                     key: key,
                     store: store,
                     overrideContentType: overrideMIME,
-                    sessionConfiguration: .ephemeral
+                    sessionConfiguration: MediaOriginTransport.makeConfiguration()
                 )
                 let server = LocalCacheHTTPServer(
                     store: store,
@@ -2686,7 +2697,7 @@ public final class PlaybackSessionController {
                     key: key,
                     store: store,
                     overrideContentType: overrideMIME,
-                    sessionConfiguration: .ephemeral
+                    sessionConfiguration: MediaOriginTransport.makeConfiguration()
                 )
                 let loader = CacheResourceLoaderDelegate(
                     store: store,
@@ -4357,7 +4368,8 @@ public final class PlaybackSessionController {
                 headers: selection.headers,
                 key: key,
                 store: store,
-                prefetchConfiguration: localGatewayPrefetchConfiguration(selection: selection, configuration: configuration)
+                prefetchConfiguration: localGatewayPrefetchConfiguration(selection: selection, configuration: configuration),
+                sessionConfiguration: MediaOriginTransport.makeConfiguration()
             )
             let gatewayLogScope = playbackLogScope()
             let server = LocalMediaGatewayServer(session: gatewaySession) { method, range in

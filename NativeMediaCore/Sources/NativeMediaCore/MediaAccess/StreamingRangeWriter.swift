@@ -66,17 +66,21 @@ public final class StreamingRangeWriter: NSObject, @unchecked Sendable {
     private final class TaskState {
         let startOffset: Int64
         let minSubBlock: Int
+        let maximumResponseBytes: Int?
         let continuation: AsyncThrowingStream<SubBlock, Error>.Continuation
         var buffer = Data()
         var emittedEnd: Int64
+        var activeResponseLimit: Int?
         var finished = false
         init(
             startOffset: Int64,
             minSubBlock: Int,
+            maximumResponseBytes: Int?,
             continuation: AsyncThrowingStream<SubBlock, Error>.Continuation
         ) {
             self.startOffset = startOffset
             self.minSubBlock = minSubBlock
+            self.maximumResponseBytes = maximumResponseBytes
             self.emittedEnd = startOffset
             self.continuation = continuation
         }
@@ -86,6 +90,7 @@ public final class StreamingRangeWriter: NSObject, @unchecked Sendable {
     private var states: [Int: TaskState] = [:]
     private var session: URLSession!
     private var invalidated = false
+    private var knownResourceSize: Int64?
 
     public init(configuration: URLSessionConfiguration) {
         super.init()
@@ -104,7 +109,8 @@ public final class StreamingRangeWriter: NSObject, @unchecked Sendable {
     public func stream(
         request: URLRequest,
         startOffset: Int64,
-        minSubBlock: Int = 256 * 1_024
+        minSubBlock: Int = 256 * 1_024,
+        maximumResponseBytes: Int? = nil
     ) -> AsyncThrowingStream<SubBlock, Error> {
         let (stream, continuation) = AsyncThrowingStream<SubBlock, Error>.makeStream(bufferingPolicy: .unbounded)
         // Create the task UNDER the lock and gated on `invalidated`, atomically with the flag that
@@ -117,11 +123,18 @@ public final class StreamingRangeWriter: NSObject, @unchecked Sendable {
             return stream
         }
         let task = session.dataTask(with: request)
-        let state = TaskState(startOffset: startOffset, minSubBlock: max(1, minSubBlock), continuation: continuation)
+        let state = TaskState(
+            startOffset: startOffset,
+            minSubBlock: max(1, minSubBlock),
+            maximumResponseBytes: maximumResponseBytes.map { max(0, $0) },
+            continuation: continuation
+        )
         states[task.taskIdentifier] = state
         lock.unlock()
-        continuation.onTermination = { [weak self] _ in
-            task.cancel()
+        continuation.onTermination = { [weak self] termination in
+            if case .cancelled = termination {
+                task.cancel()
+            }
             self?.removeState(task.taskIdentifier)
         }
         task.resume()
@@ -137,6 +150,10 @@ public final class StreamingRangeWriter: NSObject, @unchecked Sendable {
         invalidated = true
         lock.unlock()
         session.invalidateAndCancel()
+    }
+
+    public func resourceSize() -> Int64? {
+        lock.withLock { knownResourceSize }
     }
 
     private func removeState(_ identifier: Int) {
@@ -176,6 +193,14 @@ extension StreamingRangeWriter: URLSessionDataDelegate {
             completionHandler(.cancel)
             return
         }
+        lock.lock()
+        if let state = states[dataTask.taskIdentifier], !state.finished {
+            state.activeResponseLimit = http.statusCode == 200 ? state.maximumResponseBytes : nil
+            if let size = Self.resourceSize(from: http) {
+                knownResourceSize = size
+            }
+        }
+        lock.unlock()
         completionHandler(.allow)
     }
 
@@ -189,8 +214,18 @@ extension StreamingRangeWriter: URLSessionDataDelegate {
             lock.unlock()
             return
         }
-        state.buffer.append(data)
-        guard state.buffer.count >= state.minSubBlock else {
+        var accepted = data
+        if let limit = state.activeResponseLimit {
+            let emitted = Int(state.emittedEnd - state.startOffset)
+            let remaining = max(0, limit - emitted - state.buffer.count)
+            if accepted.count > remaining {
+                accepted = Data(accepted.prefix(remaining))
+            }
+        }
+        state.buffer.append(accepted)
+        let emittedWithBuffer = Int(state.emittedEnd - state.startOffset) + state.buffer.count
+        let reachedLimit = state.activeResponseLimit.map { emittedWithBuffer >= $0 } ?? false
+        guard state.buffer.count >= state.minSubBlock || reachedLimit else {
             lock.unlock()
             return
         }
@@ -199,8 +234,16 @@ extension StreamingRangeWriter: URLSessionDataDelegate {
         let offset = state.emittedEnd
         state.emittedEnd += Int64(block.count)
         let continuation = state.continuation
+        if reachedLimit {
+            state.finished = true
+            states[dataTask.taskIdentifier] = nil
+        }
         lock.unlock()
         continuation.yield(SubBlock(offset: offset, data: block))
+        if reachedLimit {
+            continuation.finish()
+            dataTask.cancel()
+        }
     }
 
     public func urlSession(
@@ -259,5 +302,19 @@ extension StreamingRangeWriter: URLSessionDataDelegate {
         states[taskIdentifier] = nil
         lock.unlock()
         continuation.finish(throwing: error)
+    }
+
+    private static func resourceSize(from response: HTTPURLResponse) -> Int64? {
+        if let contentRange = response.value(forHTTPHeaderField: "Content-Range"),
+           let slash = contentRange.lastIndex(of: "/"),
+           let total = Int64(contentRange[contentRange.index(after: slash)...]) {
+            return total
+        }
+        if response.statusCode == 200,
+           let contentLength = response.value(forHTTPHeaderField: "Content-Length"),
+           let total = Int64(contentLength) {
+            return total
+        }
+        return nil
     }
 }

@@ -2,6 +2,65 @@ import Foundation
 import Shared
 import SwiftUI
 
+enum NativePlayerTVChromeAction: CaseIterable, Equatable, Hashable {
+    case audio
+    case subtitles
+    case video
+
+    var title: String {
+        switch self {
+        case .audio:
+            return "Audio"
+        case .subtitles:
+            return "Sous-titres"
+        case .video:
+            return "Vidéo"
+        }
+    }
+
+    var systemName: String {
+        switch self {
+        case .audio:
+            return "waveform"
+        case .subtitles:
+            return "captions.bubble"
+        case .video:
+            return "display"
+        }
+    }
+
+    var trackMenuKind: PlaybackTrackMenuKind? {
+        switch self {
+        case .audio:
+            return .audio
+        case .subtitles:
+            return .subtitles
+        case .video:
+            return nil
+        }
+    }
+}
+
+struct NativePlayerTVChromeLayout: Equatable {
+    enum Alignment: Equatable {
+        case bottom
+    }
+
+    let alignment: Alignment
+    let gradientHeight: CGFloat
+    let horizontalPadding: CGFloat
+    let bottomPadding: CGFloat
+    let timelineHeight: CGFloat
+
+    static let standard = NativePlayerTVChromeLayout(
+        alignment: .bottom,
+        gradientHeight: 500,
+        horizontalPadding: 72,
+        bottomPadding: 54,
+        timelineHeight: 7
+    )
+}
+
 struct NativePlayerTransportOverlayView: View {
     let item: MediaItem
     @Binding var isPaused: Bool
@@ -31,99 +90,91 @@ struct NativePlayerTransportOverlayView: View {
             onDismiss: onDismiss
         )
 #else
+        let layout = NativePlayerTVChromeLayout.standard
         ZStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 12) {
-                metadataAndRoundControls
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black.opacity(0.10), location: 0.28),
+                    .init(color: .black.opacity(0.72), location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: layout.gradientHeight)
+            .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 16) {
+                metadata
                 NativePlayerTimelineView(
                     presentation: presentation,
                     playbackTime: playbackTime,
                     durationSeconds: durationSeconds,
                     onSeekAbsolute: onSeekAbsolute
                 )
-                bottomActions
+                actionBar
             }
-            .padding(.horizontal, 38)
-            .padding(.bottom, 44)
+            .padding(.horizontal, layout.horizontalPadding)
+            .padding(.bottom, layout.bottomPadding)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea()
 #endif
     }
 
-    private var metadataAndRoundControls: some View {
-        HStack(alignment: .bottom, spacing: 28) {
-            VStack(alignment: .leading, spacing: 10) {
-                if let eyebrow = presentation.eyebrow {
-                    Text(eyebrow)
-                        .font(.system(size: 27, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .shadow(color: .black.opacity(0.35), radius: 5, y: 1)
+    private var metadata: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let eyebrow = presentation.eyebrow {
+                Text(eyebrow)
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .lineLimit(1)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(presentation.title)
+                    .font(.system(size: 46, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                if isBuffering {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white.opacity(0.86))
+                        .accessibilityLabel("Buffering")
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 14) {
-                    Text(presentation.title)
-                        .font(.system(size: 56, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                        .shadow(color: .black.opacity(0.38), radius: 7, y: 2)
-                    if isBuffering {
-                        bufferingBadge
+            }
+        }
+        .shadow(color: .black.opacity(0.42), radius: 7, y: 2)
+    }
+
+#if os(tvOS)
+    private var actionBar: some View {
+        HStack {
+            Spacer(minLength: 0)
+            GlassEffectContainer(spacing: 18) {
+                HStack(spacing: 18) {
+                    ForEach(NativePlayerTVChromeAction.allCases, id: \.self) { action in
+                        Button {
+                            onInteraction()
+                            if let trackMenuKind = action.trackMenuKind {
+                                onShowTrackPicker(trackMenuKind)
+                            }
+                        } label: {
+                            Label(action.title, systemImage: action.systemName)
+                                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                                .padding(.horizontal, 20)
+                                .frame(height: 54)
+                        }
+                        .buttonStyle(.glass)
+                        .accessibilityIdentifier("native_player_\(action.accessibilityName)_button")
                     }
                 }
             }
-            Spacer(minLength: 32)
-            rightRoundControls
+            .focusSection()
         }
     }
-
-    @ViewBuilder
-    private var rightRoundControls: some View {
-        rightRoundControlsContent
-    }
-
-    private var rightRoundControlsContent: some View {
-        HStack(spacing: 22) {
-            NativePlayerGlassCircleButton(systemName: "text.bubble", accessibilityLabel: "Subtitles", action: {
-                onShowTrackPicker(.subtitles)
-            })
-            NativePlayerGlassCircleButton(systemName: "waveform", accessibilityLabel: "Audio", action: {
-                onShowTrackPicker(.audio)
-            }, isProminent: true)
-            NativePlayerGlassCircleButton(systemName: "rectangle.on.rectangle", accessibilityLabel: "Picture in Picture") { onInteraction() }
-        }
-    }
-
-    @ViewBuilder
-    private var bottomActions: some View {
-        bottomActionsContent
-    }
-
-    private var bottomActionsContent: some View {
-        HStack(spacing: 24) {
-            NativePlayerGlassPillButton(title: "Info") {
-                onInteraction()
-                showsDiagnostics.toggle()
-            }
-            NativePlayerGlassPillButton(title: "InSight") {
-                onInteraction()
-                showsDiagnostics.toggle()
-            }
-            NativePlayerGlassPillButton(title: "Continue Watching", action: {
-                onInteraction()
-                isPaused = false
-            }, isProminent: true)
-        }
-    }
-
-    private var bufferingBadge: some View {
-        Text("Buffering")
-            .font(.system(size: 18, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.9))
-            .padding(.horizontal, 14)
-            .frame(height: 34)
-            .reelFinGlassCapsule(tint: Color.white.opacity(0.10), stroke: Color.white.opacity(0.14), shadowOpacity: 0.12, shadowRadius: 10, shadowYOffset: 5)
-    }
+#endif
 
     private var presentation: NativePlayerChromePresentation {
         NativePlayerChromePresentation(
@@ -133,4 +184,17 @@ struct NativePlayerTransportOverlayView: View {
         )
     }
 
+}
+
+private extension NativePlayerTVChromeAction {
+    var accessibilityName: String {
+        switch self {
+        case .audio:
+            return "audio"
+        case .subtitles:
+            return "subtitles"
+        case .video:
+            return "video"
+        }
+    }
 }

@@ -4,6 +4,7 @@ import XCTest
 final class HTTPRangeByteSourceTests: XCTestCase {
     override func tearDown() {
         MockRangeProtocol.handler = nil
+        MockRangeProtocol.resetStopLoadingCount()
         super.tearDown()
     }
 
@@ -27,6 +28,33 @@ final class HTTPRangeByteSourceTests: XCTestCase {
         XCTAssertEqual(data, Data([2, 3, 4, 5]))
         let metrics = await source.metrics()
         XCTAssertEqual(metrics.rangeRequestCount, 1)
+    }
+
+    func testCompletedClosedRangeDoesNotCancelTransportTask() async throws {
+        MockRangeProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 206,
+                httpVersion: "HTTP/2",
+                headerFields: ["Content-Range": "bytes 0-3/10"]
+            )!
+            return (response, Data([0, 1, 2, 3]))
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockRangeProtocol.self]
+        let source = HTTPRangeByteSource(
+            url: URL(string: "https://example.com/movie.mkv")!,
+            sessionConfiguration: config
+        )
+
+        _ = try await source.read(range: ByteRange(offset: 0, length: 4))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(
+            MockRangeProtocol.stopLoadingCount,
+            0,
+            "A completed closed range must return its connection to the persistent session, not cancel it."
+        )
     }
 
     func testTruncatesIgnoredZeroOffsetRangeResponseToRequestedLength() async throws {
@@ -91,6 +119,16 @@ final class HTTPRangeByteSourceTests: XCTestCase {
 
 private final class MockRangeProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    private static let stopLock = NSLock()
+    private static var _stopLoadingCount = 0
+
+    static var stopLoadingCount: Int {
+        stopLock.withLock { _stopLoadingCount }
+    }
+
+    static func resetStopLoadingCount() {
+        stopLock.withLock { _stopLoadingCount = 0 }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -106,5 +144,7 @@ private final class MockRangeProtocol: URLProtocol {
         }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        Self.stopLock.withLock { Self._stopLoadingCount += 1 }
+    }
 }

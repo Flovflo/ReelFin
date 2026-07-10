@@ -687,11 +687,16 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             deviceProfile: profile
         )
 
+        // Interactive budget: a play press waits on this POST behind a spinner. The default
+        // 20s×4-attempt ladder held the player up to ~82s on a wedged connection — one short
+        // retry (which rebuilds the transport) is the right trade for a user-facing request.
         let response: PlaybackInfoResponseDTO = try await request(
             path: "Items/\(itemID)/PlaybackInfo",
             method: "POST",
             body: body,
-            dedupe: true
+            dedupe: true,
+            timeout: 12,
+            retryPolicy: RetryPolicy(maxRetries: 1)
         )
 
         guard let configuration else {
@@ -878,17 +883,20 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         query: [URLQueryItem] = [],
         body: Encodable? = nil,
         requiresAuth: Bool = true,
-        dedupe: Bool = true
+        dedupe: Bool = true,
+        timeout: TimeInterval = 20,
+        retryPolicy: RetryPolicy? = nil
     ) async throws -> T {
         let request = try buildRequest(
             path: path,
             method: method,
             query: query,
             body: body,
-            requiresAuth: requiresAuth
+            requiresAuth: requiresAuth,
+            timeout: timeout
         )
 
-        let data = try await send(request, dedupe: dedupe)
+        let data = try await send(request, dedupe: dedupe, retryPolicy: retryPolicy)
 
         if T.self == EmptyResponse.self || data.isEmpty {
             if T.self == EmptyResponse.self {
@@ -931,7 +939,8 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         method: String,
         query: [URLQueryItem],
         body: Encodable?,
-        requiresAuth: Bool
+        requiresAuth: Bool,
+        timeout: TimeInterval = 20
     ) throws -> URLRequest {
         guard let configuration else {
             throw AppError.invalidServerURL
@@ -956,16 +965,16 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             request.httpBody = try encoder.encode(AnyEncodable(body))
         }
 
-        request.timeoutInterval = 20
+        request.timeoutInterval = timeout
         return request
     }
 
-    private func send(_ request: URLRequest, dedupe: Bool) async throws -> Data {
+    private func send(_ request: URLRequest, dedupe: Bool, retryPolicy overridePolicy: RetryPolicy? = nil) async throws -> Data {
         let bodyKey = request.httpBody?.base64EncodedString() ?? ""
         let key = request.httpMethod.map { "\($0)|\(request.url?.absoluteString ?? "")|\(bodyKey)" }
 
         do {
-            return try await retrying(policy: retryPolicy, shouldRetry: { error in
+            return try await retrying(policy: overridePolicy ?? retryPolicy, shouldRetry: { error in
                 Self.isRetryable(error: error)
             }) { [self] in
                 if dedupe, let key {

@@ -310,7 +310,9 @@ public enum PlaybackStartupPreheater {
         headers: [String: String],
         urlProtocolClasses: [AnyClass]?
     ) async throws -> Data {
-        let configuration = URLSessionConfiguration.ephemeral
+        // This probe is part of the media-origin hot path. Keep CFNetwork's shared protocol state
+        // so a tvOS device that already rejected this origin's QUIC route goes straight to H2.
+        let configuration = MediaOriginTransport.makeConfiguration()
         configuration.timeoutIntervalForRequest = requestPlan.timeout
         configuration.timeoutIntervalForResource = requestPlan.timeout
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -358,6 +360,12 @@ public enum PlaybackStartupPreheater {
 
     private static func isCancellation(_ error: Error) -> Bool {
         if error is CancellationError {
+            return true
+        }
+
+        // The byte-source path surfaces cancellation as MediaAccessError — misreading it as a
+        // generic failure logged a scary "preheat.skipped" for what is a normal press-time cancel.
+        if case MediaAccessError.cancelled = error {
             return true
         }
 
