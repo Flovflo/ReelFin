@@ -1,4 +1,5 @@
 @testable import ReelFinUI
+@testable import PlaybackEngine
 import AVFoundation
 import CoreMedia
 import NativeMediaCore
@@ -7,6 +8,111 @@ import XCTest
 
 @MainActor
 final class NativePlayerConfigurationTests: XCTestCase {
+    func testMatroskaReplacementCancelsSourceAndQuiescesBeforeRendererFlush() async throws {
+        let factory = RecordingByteSourceFactory()
+        let controller = NativeMatroskaSampleBufferPlayerController {
+            factory.make(url: $0, headers: $1)
+        }
+        _ = controller.view
+        let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
+
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        let becameActive = await waitUntil { controller.readerPhase == .active }
+        XCTAssertTrue(becameActive)
+        let firstSource = try XCTUnwrap(factory.source(at: 0))
+
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 600,
+            seekRequest: NativePlayerSeekRequest(id: 1, targetSeconds: 480),
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+
+        let replacementBecameActive = await waitUntil {
+            controller.readerPhase == .active && factory.sourceCount == 2
+        }
+        XCTAssertTrue(replacementBecameActive)
+        let firstCancelCount = await firstSource.cancelCount
+        XCTAssertEqual(firstCancelCount, 1)
+        XCTAssertEqual(controller.maximumConcurrentReaderCount, 1)
+        XCTAssertEqual(
+            controller.teardownEvents,
+            [
+                .generationInvalidated,
+                .sourceCancelled,
+                .readerFinished,
+                .videoQueueQuiesced,
+                .audioQueueQuiesced,
+                .renderersFlushed
+            ]
+        )
+
+        controller.stopForDismantle()
+        let becameIdle = await waitUntil { controller.readerPhase == .idle }
+        XCTAssertTrue(becameIdle)
+        let secondSource = try XCTUnwrap(factory.source(at: 1))
+        let secondCancelCount = await secondSource.cancelCount
+        XCTAssertEqual(secondCancelCount, 1)
+        XCTAssertEqual(controller.callbackCountAfterDismantle, 0)
+    }
+
+    func testNativePlaybackPreparationCancelsTemporaryProbeSource() async throws {
+        let itemID = "probe-source-cancel"
+        let mediaSource = MediaSource(
+            id: "probe-source",
+            itemID: itemID,
+            name: "Probe Source",
+            fileSize: Int64(RecordingByteSourceFactory.matroskaBootstrapData.count),
+            container: "mkv",
+            videoCodec: "h264",
+            supportsDirectPlay: false,
+            supportsDirectStream: false
+        )
+        let apiClient = ProbePlaybackAPIClient(source: mediaSource)
+        let source = FinishedByteSource(
+            url: URL(string: "https://example.com/Videos/\(itemID)/stream.mkv")!,
+            data: RecordingByteSourceFactory.matroskaBootstrapData
+        )
+        let controller = NativePlayerPlaybackController(
+            apiClient: apiClient,
+            byteSourceFactory: { _, _ in source }
+        )
+        let nativeConfig = NativePlayerConfig(enabled: true, surfacePreference: .customPlayer)
+
+        _ = try await controller.prepare(
+            itemID: itemID,
+            configuration: ServerConfiguration(
+                serverURL: URL(string: "https://example.com")!,
+                nativePlayerConfig: nativeConfig
+            ),
+            session: UserSession(userID: "user", username: "user", token: "secret"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: nil
+        )
+
+        let cancelCount = await source.cancelCount
+        XCTAssertEqual(cancelCount, 1)
+    }
+
     func testMatroskaProgressStartTimeUpdatesDoNotRestartPlayback() {
         let controller = NativeMatroskaSampleBufferPlayerController()
         _ = controller.view
@@ -206,7 +312,8 @@ final class NativePlayerConfigurationTests: XCTestCase {
         XCTAssertFalse(controller.readerCanSeekInPlace)
         XCTAssertTrue(controller.readerOwnsCurrentCallbacks)
         controller.stopForDismantle()
-        XCTAssertEqual(controller.readerPhase, .idle)
+        let becameIdle = await waitUntil { controller.readerPhase == .idle }
+        XCTAssertTrue(becameIdle)
     }
 
     func testMatroskaForwardSeekWaitsForVideoKeyframeBeforeDecode() {
@@ -744,6 +851,10 @@ private final class RecordingByteSourceFactory: @unchecked Sendable {
 
     var sourceCount: Int { lock.withLock { sources.count } }
 
+    func source(at index: Int) -> BlockingByteSource? {
+        lock.withLock { sources.indices.contains(index) ? sources[index] : nil }
+    }
+
     fileprivate static let matroskaBootstrapData: Data = {
         let avcC: [UInt8] = [
             0x01, 0x42, 0xE0, 0x1E, 0xFF, 0xE1,
@@ -792,6 +903,7 @@ private final class FinishedByteSourceFactory: @unchecked Sendable {
 private actor FinishedByteSource: MediaByteSource {
     nonisolated let url: URL
     private let data: Data
+    private(set) var cancelCount = 0
 
     init(url: URL, data: Data) {
         self.url = url
@@ -809,8 +921,43 @@ private actor FinishedByteSource: MediaByteSource {
     }
 
     func size() async throws -> Int64? { Int64(data.count) }
-    func cancel() async {}
+    func cancel() async { cancelCount += 1 }
     func metrics() async -> MediaAccessMetrics { MediaAccessMetrics() }
+}
+
+private final class ProbePlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
+    let source: MediaSource
+
+    init(source: MediaSource) {
+        self.source = source
+    }
+
+    func currentConfiguration() async -> ServerConfiguration? { nil }
+    func currentSession() async -> UserSession? { nil }
+    func configure(server: ServerConfiguration) async throws {}
+    func testConnection(serverURL: URL) async throws {}
+    func authenticate(credentials: UserCredentials) async throws -> UserSession { throw AppError.unknown }
+    func signOut() async {}
+    func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState { throw AppError.unknown }
+    func pollQuickConnect(secret: String) async throws -> UserSession? { nil }
+    func fetchUserViews() async throws -> [Shared.LibraryView] { [] }
+    func fetchHomeFeed(since: Date?) async throws -> HomeFeed { .empty }
+    func fetchItem(id: String) async throws -> MediaItem { throw AppError.unknown }
+    func fetchItemDetail(id: String) async throws -> MediaDetail { throw AppError.unknown }
+    func fetchSeasons(seriesID: String) async throws -> [MediaItem] { [] }
+    func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
+    func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
+    func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { [] }
+    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] { [source] }
+    func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] { [source] }
+    func fetchTrickplayManifest(itemID: String, mediaSourceID: String?) async throws -> TrickplayManifest? { nil }
+    func trickplayTileBaseURL(itemID: String, mediaSourceID: String?, width: Int) async -> URL? { nil }
+    func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? { nil }
+    func reportPlayback(progress: PlaybackProgressUpdate) async throws {}
+    func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws {}
+    func reportPlayed(itemID: String) async throws {}
+    func setPlayedState(itemID: String, isPlayed: Bool) async throws {}
+    func setFavorite(itemID: String, isFavorite: Bool) async throws {}
 }
 
 private actor BlockingByteSource: MediaByteSource {

@@ -148,6 +148,15 @@ private struct NativeMatroskaRestartConfiguration {
     let isPaused: Bool
 }
 
+enum NativeMatroskaTeardownEvent: Equatable {
+    case generationInvalidated
+    case sourceCancelled
+    case readerFinished
+    case videoQueueQuiesced
+    case audioQueueQuiesced
+    case renderersFlushed
+}
+
 final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private let byteSourceFactory: NativeMatroskaByteSourceFactory
     private let displayLayer = AVSampleBufferDisplayLayer()
@@ -156,6 +165,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private let subtitleOverlay = NativeSubtitleOverlayView()
     private let videoQueue = DispatchQueue(label: "reelfin.nativeplayer.mkv.video", qos: .userInitiated)
     private let audioQueue = DispatchQueue(label: "reelfin.nativeplayer.mkv.audio", qos: .userInitiated)
+    private let renderQueueKey = DispatchSpecificKey<String>()
     private let metricsLock = NSLock()
     private let playbackStateLock = NSLock()
     private let generationLock = NSLock()
@@ -181,6 +191,11 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private var pendingRestartConfiguration: NativeMatroskaRestartConfiguration?
     private var seekCommitPolicy = NativePlayerSeekCommitPolicy()
     private var readerGeneration = NativeMatroskaPlaybackGeneration()
+    private var invalidatedCallbackGenerations: Set<Int> = []
+    private var activeByteSource: (generation: Int, source: any MediaByteSource)?
+    private var activeReaderCount = 0
+    private var cancelledSourceGenerations: Set<Int> = []
+    private var recordedSourceCancellationGenerations: Set<Int> = []
     private var restartCoordinatorID = 0
     private var diagnosticTimer: Timer?
     private var metrics = NativeMatroskaSampleBufferMetrics()
@@ -208,6 +223,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private(set) var pauseStateApplicationCount = 0
     private(set) var forwardSeekRequestCount = 0
     private(set) var restartCoordinatorStartCount = 0
+    private(set) var maximumConcurrentReaderCount = 0
+    private(set) var callbackCountAfterDismantle = 0
+    private(set) var teardownEvents: [NativeMatroskaTeardownEvent] = []
     var readerPhase: NativeMatroskaPlaybackGeneration.Phase {
         generationLock.withLock { readerGeneration.phase }
     }
@@ -227,6 +245,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     }) {
         self.byteSourceFactory = byteSourceFactory
         super.init(nibName: nil, bundle: nil)
+        videoQueue.setSpecific(key: renderQueueKey, value: "video")
+        audioQueue.setSpecific(key: renderQueueKey, value: "audio")
     }
 
     @available(*, unavailable)
@@ -328,8 +348,20 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         }
     }
 
+    private func invalidateCallbackOwnership(for generation: Int) {
+        let inserted = generationLock.withLock {
+            invalidatedCallbackGenerations.insert(generation).inserted
+        }
+        if inserted {
+            teardownEvents.append(.generationInvalidated)
+        }
+    }
+
     private func finishReaderRetirement(_ candidate: Int) {
-        generationLock.withLock { readerGeneration.finishRetirement(candidate) }
+        generationLock.withLock {
+            readerGeneration.finishRetirement(candidate)
+            invalidatedCallbackGenerations.remove(candidate)
+        }
     }
 
     private func finishReaderAfterCompletion(_ candidate: Int) {
@@ -340,7 +372,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     }
 
     private func ownsCallbacks(from generation: Int) -> Bool {
-        generationLock.withLock { readerGeneration.owns(generation) }
+        generationLock.withLock {
+            readerGeneration.owns(generation) && !invalidatedCallbackGenerations.contains(generation)
+        }
     }
 
     private var currentReaderGeneration: Int {
@@ -447,8 +481,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             isPaused: pendingPause
         )
-        _ = beginReaderRetirement()
-        prepareForReaderReplacement()
+        if let retiringGeneration = beginReaderRetirement() {
+            invalidateCallbackOwnership(for: retiringGeneration)
+        }
         guard shouldStartCoordinator else { return }
         restartCoordinatorID += 1
         let coordinatorID = restartCoordinatorID
@@ -459,18 +494,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     }
 
     private func commitPendingRestart(coordinatorID: Int) async {
-        let retiringGeneration = beginReaderRetirement()
-        let previousTask = playbackTask ?? retiringPlaybackTask
-        playbackTask = nil
-        retiringPlaybackTask = previousTask
-        previousTask?.cancel()
-        await previousTask?.value
-        if let retiringGeneration {
-            finishReaderRetirement(retiringGeneration)
-        }
+        await retireActiveGeneration()
 
         guard coordinatorID == restartCoordinatorID, !Task.isCancelled, !isTornDown else { return }
-        retiringPlaybackTask = nil
         guard let commit = seekCommitPolicy.takePendingRestart(),
               let configuration = pendingRestartConfiguration,
               commit.generation == configuration.generation,
@@ -529,16 +555,45 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         }
     }
 
-    private func prepareForReaderReplacement() {
-        playbackTask?.cancel()
-        retiringPlaybackTask?.cancel()
+    private func retireActiveGeneration() async {
+        let retiringGeneration = beginReaderRetirement()
+        if let retiringGeneration {
+            invalidateCallbackOwnership(for: retiringGeneration)
+        }
+        let previousTask = playbackTask ?? retiringPlaybackTask
+        guard retiringGeneration != nil || previousTask != nil else { return }
+        playbackTask = nil
+        retiringPlaybackTask = previousTask
         diagnosticTimer?.invalidate()
         diagnosticTimer = nil
         stopDrainTimers()
         displayLayer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()
+        previousTask?.cancel()
+        await previousTask?.value
+        if let retiringGeneration {
+            recordSourceCancellationIfNeeded(for: retiringGeneration)
+            teardownEvents.append(.readerFinished)
+            finishReaderRetirement(retiringGeneration)
+        }
+        retiringPlaybackTask = nil
+        quiesceRenderQueuesAndFlush()
+    }
+
+    private func quiesceRenderQueuesAndFlush() {
+        precondition(Thread.isMainThread, "Matroska renderer teardown must stay on the main thread")
+        if let queue = DispatchQueue.getSpecific(key: renderQueueKey) {
+            assertionFailure("Matroska renderer teardown re-entered the \(queue) render queue")
+            AppLog.playback.error("nativeplayer.teardown.queue_reentry — queue=\(queue, privacy: .public)")
+            return
+        }
+        videoQueue.sync {}
+        teardownEvents.append(.videoQueueQuiesced)
+        audioQueue.sync {}
+        teardownEvents.append(.audioQueueQuiesced)
         displayLayer.flushAndRemoveImage()
         audioRenderer.flush()
+        teardownEvents.append(.renderersFlushed)
         videoSamples.removeAll()
         audioSamples.removeAll()
         videoHDRMetadata = nil
@@ -561,7 +616,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private func stopPlayback(publishFinalPlaybackTime: Bool = true) {
         let finalPlaybackTime = synchronizer.currentTime().matroskaSafeSeconds
         if publishFinalPlaybackTime, !isTornDown, let onPlaybackTime {
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isTornDown else { return }
+                self.recordCallbackDelivery()
                 onPlaybackTime(finalPlaybackTime)
             }
         }
@@ -570,13 +627,18 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         pendingRestartConfiguration = nil
         restartCoordinatorID += 1
         restartTask?.cancel()
-        restartTask = nil
-        playbackTask?.cancel()
-        retiringPlaybackTask?.cancel()
         let retiringGeneration = beginReaderRetirement()
-        prepareForReaderReplacement()
         if let retiringGeneration {
-            finishReaderRetirement(retiringGeneration)
+            invalidateCallbackOwnership(for: retiringGeneration)
+        }
+        let hasRetirementWork = retiringGeneration != nil || playbackTask != nil || retiringPlaybackTask != nil
+        if restartTask == nil, hasRetirementWork {
+            let coordinatorID = restartCoordinatorID
+            restartTask = Task { [weak self] in
+                await self?.retireActiveGeneration()
+                guard let self, coordinatorID == self.restartCoordinatorID else { return }
+                self.restartTask = nil
+            }
         }
     }
 
@@ -589,10 +651,12 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         selectedSubtitleTrackID: String?,
         generation: Int
     ) async {
+        guard ownsCallbacks(from: generation) else { return }
+        AppLog.playback.notice("nativeplayer.sampleReader.start — backend=\(Self.demuxerName(for: container), privacy: .public)")
+        let source = byteSourceFactory(url, headers)
+        setActiveByteSource(source, generation: generation)
+        var completedWithOwnedCallbacks = false
         do {
-            guard ownsCallbacks(from: generation) else { return }
-            AppLog.playback.notice("nativeplayer.sampleReader.start — backend=\(Self.demuxerName(for: container), privacy: .public)")
-            let source = byteSourceFactory(url, headers)
             let demuxer = Self.makeDemuxer(source: source, container: container)
             let stream = try await demuxer.open()
             try Task.checkCancellation()
@@ -647,16 +711,45 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 startTimeSeconds: startTimeSeconds,
                 generation: generation
             )
-            finishReaderAfterCompletion(generation)
+            completedWithOwnedCallbacks = ownsCallbacks(from: generation)
         } catch {
-            guard !Task.isCancelled, ownsCallbacks(from: generation) else { return }
-            updateMetrics {
-                $0.state = "failed"
-                $0.failure = error.localizedDescription
+            if !Task.isCancelled, ownsCallbacks(from: generation) {
+                updateMetrics {
+                    $0.state = "failed"
+                    $0.failure = error.localizedDescription
+                }
+                publishDiagnostics(generation: generation)
+                completedWithOwnedCallbacks = true
             }
-            publishDiagnostics(generation: generation)
+        }
+        await source.cancel()
+        cancelledSourceGenerations.insert(generation)
+        recordSourceCancellationIfNeeded(for: generation)
+        clearActiveByteSource(source, generation: generation)
+        if completedWithOwnedCallbacks {
             finishReaderAfterCompletion(generation)
         }
+    }
+
+    private func setActiveByteSource(_ source: any MediaByteSource, generation: Int) {
+        precondition(activeByteSource == nil, "A Matroska byte source was replaced before retirement finished")
+        activeByteSource = (generation, source)
+        activeReaderCount += 1
+        maximumConcurrentReaderCount = max(maximumConcurrentReaderCount, activeReaderCount)
+    }
+
+    private func clearActiveByteSource(_ source: any MediaByteSource, generation: Int) {
+        _ = source
+        guard activeByteSource?.generation == generation else { return }
+        activeByteSource = nil
+        activeReaderCount = max(0, activeReaderCount - 1)
+    }
+
+    private func recordSourceCancellationIfNeeded(for generation: Int) {
+        guard cancelledSourceGenerations.contains(generation),
+              invalidatedCallbackGenerations.contains(generation),
+              recordedSourceCancellationGenerations.insert(generation).inserted else { return }
+        teardownEvents.append(.sourceCancelled)
     }
 
     private func makeAudioDecoder(
@@ -1225,8 +1318,15 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         renderActiveSubtitles()
         DispatchQueue.main.async { [weak self] in
             guard let self, self.ownsCallbacks(from: generation) else { return }
+            self.recordCallbackDelivery()
             self.onPlaybackTime?(snapshot.playbackTime)
             self.onDiagnostics?(snapshot.overlayLines(base: self.baseDiagnostics))
+        }
+    }
+
+    private func recordCallbackDelivery() {
+        if isTornDown {
+            callbackCountAfterDismantle += 1
         }
     }
 

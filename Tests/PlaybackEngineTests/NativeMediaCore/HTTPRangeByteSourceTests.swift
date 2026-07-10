@@ -5,6 +5,7 @@ final class HTTPRangeByteSourceTests: XCTestCase {
     override func tearDown() {
         MockRangeProtocol.handler = nil
         MockRangeProtocol.resetStopLoadingCount()
+        SuspendingRangeProtocol.reset()
         super.tearDown()
     }
 
@@ -115,6 +116,26 @@ final class HTTPRangeByteSourceTests: XCTestCase {
         XCTAssertEqual(data, Data([4, 5, 6]))
         XCTAssertEqual(size, 10)
     }
+
+    func testCancelStopsAnInFlightRangeExactlyOnce() async {
+        let started = expectation(description: "range request started")
+        SuspendingRangeProtocol.onStart = { started.fulfill() }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SuspendingRangeProtocol.self]
+        let source = HTTPRangeByteSource(
+            url: URL(string: "https://example.com/movie.mkv")!,
+            sessionConfiguration: config
+        )
+        let readTask = Task {
+            try await source.read(range: ByteRange(offset: 0, length: 4))
+        }
+        await fulfillment(of: [started], timeout: 1)
+
+        await source.cancel()
+        _ = await readTask.result
+
+        XCTAssertEqual(SuspendingRangeProtocol.stopLoadingCount, 1)
+    }
 }
 
 private final class MockRangeProtocol: URLProtocol {
@@ -146,5 +167,34 @@ private final class MockRangeProtocol: URLProtocol {
 
     override func stopLoading() {
         Self.stopLock.withLock { Self._stopLoadingCount += 1 }
+    }
+}
+
+private final class SuspendingRangeProtocol: URLProtocol {
+    static var onStart: (() -> Void)?
+    private static let stopLock = NSLock()
+    private static var _stopLoadingCount = 0
+
+    static var stopLoadingCount: Int {
+        stopLock.withLock { _stopLoadingCount }
+    }
+
+    static func reset() {
+        stopLock.withLock {
+            _stopLoadingCount = 0
+            onStart = nil
+        }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.onStart?()
+    }
+
+    override func stopLoading() {
+        Self.stopLock.withLock { Self._stopLoadingCount += 1 }
+        client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
     }
 }

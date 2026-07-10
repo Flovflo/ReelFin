@@ -65,20 +65,28 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
 }
 
 public actor NativePlayerPlaybackController {
+    public typealias ByteSourceFactory = @Sendable (
+        _ url: URL,
+        _ headers: [String: String]
+    ) -> any MediaByteSource
+
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let resolver: OriginalMediaResolver
     private let mediaGatewayStore: MediaGatewayStore?
+    private let byteSourceFactory: ByteSourceFactory
     private let probeService = ContainerProbeService()
     private var stateMachine = NativePlaybackStateMachine()
 
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
         resolver: OriginalMediaResolver = OriginalMediaResolver(authPolicy: .header),
-        mediaGatewayStore: MediaGatewayStore? = nil
+        mediaGatewayStore: MediaGatewayStore? = nil,
+        byteSourceFactory: @escaping ByteSourceFactory = { HTTPRangeByteSource(url: $0, headers: $1) }
     ) {
         self.apiClient = apiClient
         self.resolver = resolver
         self.mediaGatewayStore = mediaGatewayStore
+        self.byteSourceFactory = byteSourceFactory
     }
 
     public func prepare(
@@ -183,6 +191,7 @@ public actor NativePlayerPlaybackController {
             originalHeaders: originalHeaders
         )
         let source = byteSource.source
+        return try await withTemporaryByteSource(source) {
         AppLog.playback.notice(
             "nativeplayer.byteSource.open — source=\(resolution.mediaSource.id, privacy: .public) type=\(byteSource.type, privacy: .public)"
         )
@@ -321,6 +330,21 @@ public actor NativePlayerPlaybackController {
             selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
             selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
         )
+        }
+    }
+
+    private func withTemporaryByteSource<Result>(
+        _ source: any MediaByteSource,
+        operation: () async throws -> Result
+    ) async throws -> Result {
+        do {
+            let result = try await operation()
+            await source.cancel()
+            return result
+        } catch {
+            await source.cancel()
+            throw error
+        }
     }
 
     private func makeByteSource(
@@ -330,7 +354,7 @@ public actor NativePlayerPlaybackController {
         originalURL: URL,
         originalHeaders: [String: String]
     ) -> (source: any MediaByteSource, type: String) {
-        let upstream = HTTPRangeByteSource(url: originalURL, headers: originalHeaders)
+        let upstream = byteSourceFactory(originalURL, originalHeaders)
         guard configuration.mediaCacheMode != .off, let mediaGatewayStore else {
             return (upstream, "HTTPRangeByteSource")
         }
