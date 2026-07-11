@@ -3,6 +3,28 @@ import PlaybackEngine
 @testable import ReelFinUI
 
 final class NativePlayerChromeLayoutTests: XCTestCase {
+    func testIOSSubtitlePresentationIsCompactWhileTVRemainsReadable() {
+        let ios = CustomPlayerSubtitlePresentationPolicy.style(for: .iOS)
+        let tv = CustomPlayerSubtitlePresentationPolicy.style(for: .tvOS)
+
+        XCTAssertEqual(ios.fontSize, 20)
+        XCTAssertLessThanOrEqual(ios.fontSize, 24)
+        XCTAssertEqual(ios.maximumLineCount, 2)
+        XCTAssertEqual(ios.maximumWidthRatio, 0.85, accuracy: 0.001)
+        XCTAssertEqual(ios.horizontalPadding, 10)
+        XCTAssertEqual(ios.verticalPadding, 4)
+        XCTAssertEqual(ios.backgroundOpacity, 0.30, accuracy: 0.001)
+
+        XCTAssertEqual(tv.fontSize, 34)
+        XCTAssertEqual(tv.maximumLineCount, 0)
+        XCTAssertGreaterThan(tv.fontSize, ios.fontSize)
+    }
+
+    func testIOSSubtitleControlUsesSystemBottomChromeWithoutFloatingDuplicate() {
+        XCTAssertFalse(CustomPlayerIOSSubtitleControlPolicy.showsFloatingPicker)
+        XCTAssertTrue(CustomPlayerIOSSubtitleControlPolicy.usesSystemBottomControl)
+    }
+
     func testPlaybackEvidenceRequiresTwoAdvancingObservationsAndResetsAtSessionBoundaries() {
         var evidence = PlayerAccessibilityEvidenceState()
 

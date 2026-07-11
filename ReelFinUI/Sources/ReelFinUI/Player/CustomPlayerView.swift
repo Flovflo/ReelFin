@@ -28,6 +28,56 @@ enum CustomPlayerLaunchPresentationPolicy {
     }
 }
 
+enum CustomPlayerSubtitlePlatform {
+    case iOS
+    case tvOS
+}
+
+struct CustomPlayerSubtitlePresentationStyle: Equatable {
+    let fontSize: CGFloat
+    let maximumLineCount: Int
+    let maximumWidthRatio: CGFloat
+    let horizontalPadding: CGFloat
+    let verticalPadding: CGFloat
+    let backgroundOpacity: Double
+    let cornerRadius: CGFloat
+    let bottomPadding: CGFloat
+}
+
+enum CustomPlayerSubtitlePresentationPolicy {
+    static func style(for platform: CustomPlayerSubtitlePlatform) -> CustomPlayerSubtitlePresentationStyle {
+        switch platform {
+        case .iOS:
+            return CustomPlayerSubtitlePresentationStyle(
+                fontSize: 20,
+                maximumLineCount: 2,
+                maximumWidthRatio: 0.85,
+                horizontalPadding: 10,
+                verticalPadding: 4,
+                backgroundOpacity: 0.30,
+                cornerRadius: 6,
+                bottomPadding: 54
+            )
+        case .tvOS:
+            return CustomPlayerSubtitlePresentationStyle(
+                fontSize: 34,
+                maximumLineCount: 0,
+                maximumWidthRatio: 0.90,
+                horizontalPadding: 18,
+                verticalPadding: 8,
+                backgroundOpacity: 0.45,
+                cornerRadius: 10,
+                bottomPadding: 72
+            )
+        }
+    }
+}
+
+enum CustomPlayerIOSSubtitleControlPolicy {
+    static let showsFloatingPicker = false
+    static let usesSystemBottomControl = true
+}
+
 enum CustomPlayerTVRemoteRouting {
     enum Input: Equatable {
         case menu
@@ -117,16 +167,6 @@ struct CustomPlayerView: View {
 #if os(tvOS)
                 tvRemoteInputLayer
                 tvPlayerChrome
-#else
-                VStack {
-                    HStack {
-                        Spacer()
-                        subtitlePicker
-                    }
-                    Spacer()
-                }
-                .padding(.top, 8)
-                .padding(.horizontal, 8)
 #endif
             }
             subtitleCueOverlay
@@ -487,21 +527,38 @@ struct CustomPlayerView: View {
     @ViewBuilder
     private var subtitleCueOverlay: some View {
         if let cue = engine.subtitles.currentCue, !cue.isEmpty {
-            VStack {
-                Spacer()
-                Text(cue)
-                    .font(.system(size: 34, weight: .semibold))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.9), radius: 3, x: 0, y: 1)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 8)
-                    .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.bottom, 72)
+            GeometryReader { proxy in
+                let style = subtitlePresentationStyle
+                VStack {
+                    Spacer()
+                    Text(cue)
+                        .font(.system(size: style.fontSize, weight: .semibold))
+                        .lineLimit(style.maximumLineCount == 0 ? nil : style.maximumLineCount)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.9), radius: 3, x: 0, y: 1)
+                        .padding(.horizontal, style.horizontalPadding)
+                        .padding(.vertical, style.verticalPadding)
+                        .background(
+                            .black.opacity(style.backgroundOpacity),
+                            in: RoundedRectangle(cornerRadius: style.cornerRadius)
+                        )
+                        .frame(maxWidth: proxy.size.width * style.maximumWidthRatio)
+                        .padding(.bottom, style.bottomPadding)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .allowsHitTesting(false)
             .transition(.opacity)
         }
+    }
+
+    private var subtitlePresentationStyle: CustomPlayerSubtitlePresentationStyle {
+#if os(tvOS)
+        CustomPlayerSubtitlePresentationPolicy.style(for: .tvOS)
+#else
+        CustomPlayerSubtitlePresentationPolicy.style(for: .iOS)
+#endif
     }
 
     /// Skip intro/credits + next-episode suggestion (same resolver as the rest of the app).
@@ -908,7 +965,7 @@ private struct CustomPlayerSurface: UIViewControllerRepresentable {
 #if os(tvOS)
         controller.showsPlaybackControls = CustomPlayerTVRemoteRouting.showsInlineAVKitControls
 #else
-        controller.showsPlaybackControls = true
+        controller.showsPlaybackControls = CustomPlayerIOSSubtitleControlPolicy.usesSystemBottomControl
 #endif
         controller.allowsPictureInPicturePlayback = true
 #if os(iOS)
