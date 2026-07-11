@@ -317,7 +317,8 @@ final class DetailViewModelActionTests: XCTestCase {
                 effects: spy.effects
             )
 
-            XCTAssertEqual(spy.selectedItemIDs, [item.id])
+            XCTAssertEqual(spy.selectedItemIDs, [])
+            XCTAssertEqual(spy.selectionTriggeredCustomPrewarmItemIDs, [])
             XCTAssertEqual(spy.prepareItemIDs, [])
             XCTAssertEqual(spy.sessionStartCount, 0)
             XCTAssertTrue(spy.loadRequests.isEmpty)
@@ -347,6 +348,8 @@ final class DetailViewModelActionTests: XCTestCase {
         router.resolve(choice: .resume, effects: spy.effects)
 
         XCTAssertNil(router.presentationIntent)
+        XCTAssertEqual(spy.selectedItemIDs, [])
+        XCTAssertEqual(spy.selectionTriggeredCustomPrewarmItemIDs, [])
         XCTAssertEqual(spy.prepareItemIDs, [])
         XCTAssertEqual(spy.sessionStartCount, 0)
         XCTAssertTrue(spy.loadRequests.isEmpty)
@@ -373,6 +376,8 @@ final class DetailViewModelActionTests: XCTestCase {
         router.resolve(choice: .restart, effects: spy.effects)
 
         let request = try XCTUnwrap(spy.loadRequests.first)
+        XCTAssertEqual(spy.selectedItemIDs, [item.id])
+        XCTAssertEqual(spy.selectionTriggeredCustomPrewarmItemIDs, [item.id])
         XCTAssertEqual(spy.prepareItemIDs, [item.id])
         XCTAssertEqual(spy.sessionStartCount, 1)
         XCTAssertEqual(spy.loadRequests.count, 1)
@@ -1074,6 +1079,7 @@ final class DetailViewModelActionTests: XCTestCase {
 @MainActor
 private final class PlaybackLaunchEntryEffectSpy {
     private(set) var selectedItemIDs: [String] = []
+    private(set) var selectionTriggeredCustomPrewarmItemIDs: [String] = []
     private(set) var prepareItemIDs: [String] = []
     private(set) var sessionStartCount = 0
     private(set) var loadRequests: [PlaybackLaunchRequest] = []
@@ -1083,6 +1089,7 @@ private final class PlaybackLaunchEntryEffectSpy {
         PlaybackLaunchEntryEffects(
             select: { [weak self] item in
                 self?.selectedItemIDs.append(item.id)
+                self?.selectionTriggeredCustomPrewarmItemIDs.append(item.id)
             },
             prepare: { [weak self] item in
                 self?.prepareItemIDs.append(item.id)

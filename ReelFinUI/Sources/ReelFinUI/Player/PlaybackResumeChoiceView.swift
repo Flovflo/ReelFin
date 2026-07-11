@@ -199,7 +199,6 @@ struct PlaybackLaunchEntryRouter {
         presentsExplicitChoice: Bool,
         effects: PlaybackLaunchEntryEffects
     ) {
-        effects.select(item)
         guard let request = coordinator.begin(
             item: item,
             progress: progress,
@@ -224,6 +223,7 @@ struct PlaybackLaunchEntryRouter {
         _ request: PlaybackLaunchRequest,
         effects: PlaybackLaunchEntryEffects
     ) {
+        effects.select(request.item)
         effects.prepare(request.item)
         effects.launch(request)
     }
