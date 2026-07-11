@@ -66,6 +66,7 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
 
     func testResumeChoiceFocusesContinueBeforeRestart() {
         XCTAssertEqual(PlaybackLaunchChoicePolicy.orderedChoices, [.resume, .restart])
+        XCTAssertEqual(PlaybackLaunchChoicePolicy.defaultFocusedChoice, .resume)
         XCTAssertEqual(
             PlaybackLaunchChoicePolicy.title(for: .resume, resumeSeconds: 65),
             "Continuer à 1:05"

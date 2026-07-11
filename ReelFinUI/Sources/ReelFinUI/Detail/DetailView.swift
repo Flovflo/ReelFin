@@ -37,11 +37,6 @@ private struct DetailPlayerPresentation: Identifiable {
     let content: Content
 }
 
-private struct DetailPlaybackLaunchRequest {
-    let item: MediaItem
-    let resumePositionTicks: Int64
-}
-
 #if os(iOS) || os(tvOS)
 private struct IOSDetailCarouselEntry: Identifiable, Equatable {
     let id: String
@@ -70,6 +65,7 @@ struct DetailView: View {
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
     @State private var playerPresentation: DetailPlayerPresentation?
+    @State private var playbackLaunchCoordinator = PlaybackLaunchCoordinator()
     @State private var customPrewarmer: CustomPlayerPrewarmer?
     @State private var episodeFocusPrewarmTask: Task<Void, Never>?
     @State private var isLoadingPlayback = false
@@ -79,7 +75,6 @@ struct DetailView: View {
     @State private var iosSelectedCarouselItemID: String?
     @State private var currentReturnSourceItem: MediaItem
 #if os(tvOS)
-    @State private var pendingPlaybackLaunch: DetailPlaybackLaunchRequest?
     @State private var tvScrollRequest: TVDetailScrollRequest?
     @State private var tvScrollRequestID = 0
     @State private var pendingTVFocusTarget: TVDetailFocusTarget?
@@ -323,7 +318,10 @@ struct DetailView: View {
         // transition's detail snapshot above the live overlay: AVPlayer advances and fills cache,
         // but the user keeps seeing the frozen detail page.
         .modifier(DetailZoomTransitionModifier(namespace: transitionNamespace, sourceID: transitionSourceID))
-        .disabled(playerPresentation != nil || pendingPlaybackLaunch != nil)
+        .disabled(
+            playerPresentation != nil
+                || playbackLaunchCoordinator.presentationIntent != nil
+        )
         .overlay {
             tvPlaybackPresentation
                 .zIndex(1)
@@ -364,10 +362,10 @@ struct DetailView: View {
 #if os(tvOS)
     @ViewBuilder
     private var tvPlaybackPresentation: some View {
-        if let pendingPlaybackLaunch {
+        if let presentationIntent = playbackLaunchCoordinator.presentationIntent {
             PlaybackResumeChoiceView(
-                itemTitle: pendingPlaybackLaunch.item.name,
-                resumePositionTicks: pendingPlaybackLaunch.resumePositionTicks,
+                itemTitle: presentationIntent.item.name,
+                resumePositionTicks: presentationIntent.resumePositionTicks,
                 onSelect: { startPosition in
                     resolvePendingPlaybackLaunch(startPosition: startPosition)
                 },
@@ -1131,51 +1129,36 @@ struct DetailView: View {
     private func startPlayback(item: MediaItem? = nil) {
         guard !isLoadingPlayback else { return }
         let targetItem = item ?? viewModel.itemToPlay
+        guard playbackLaunchCoordinator.presentationIntent == nil else { return }
 
+        let presentsExplicitChoice: Bool
 #if os(tvOS)
-        guard pendingPlaybackLaunch == nil else { return }
-        if let resumePositionTicks = PlaybackLaunchChoicePolicy.resumePositionTicks(
-            for: targetItem,
-            progress: viewModel.playbackProgress
-        ) {
-            pendingPlaybackLaunch = DetailPlaybackLaunchRequest(
-                item: targetItem,
-                resumePositionTicks: resumePositionTicks
-            )
-            return
-        }
-        launchPlayback(
-            item: targetItem,
-            startPosition: .beginning,
-            resumePositionTicks: nil
-        )
+        presentsExplicitChoice = true
 #else
-        let resumePositionTicks = PlaybackLaunchChoicePolicy.resumePositionTicks(
-            for: targetItem,
-            progress: viewModel.playbackProgress
-        )
-        launchPlayback(
-            item: targetItem,
-            startPosition: resumePositionTicks == nil ? .beginning : .resumeIfAvailable,
-            resumePositionTicks: resumePositionTicks
-        )
+        presentsExplicitChoice = false
 #endif
+        guard let request = playbackLaunchCoordinator.begin(
+            item: targetItem,
+            progress: viewModel.playbackProgress,
+            presentsExplicitChoice: presentsExplicitChoice
+        ) else { return }
+
+        launchPlayback(request)
     }
 
-    private func launchPlayback(
-        item: MediaItem,
-        startPosition: PlaybackStartPosition,
-        resumePositionTicks: Int64?
-    ) {
+    private func launchPlayback(_ request: PlaybackLaunchRequest) {
         if dependencies.settingsStore.useCustomPlayerEngine {
             startCustomPlayback(
-                item: item,
-                startPosition: startPosition,
-                resumePositionTicks: resumePositionTicks
+                item: request.item,
+                startPosition: request.startPosition(for: .custom),
+                resumePositionTicks: request.resumePositionTicks
             )
             return
         }
-        startLegacyPlayback(item: item, startPosition: startPosition)
+        startLegacyPlayback(
+            item: request.item,
+            startPosition: request.startPosition(for: .legacy)
+        )
     }
 
     private func startLegacyPlayback(
@@ -1318,17 +1301,13 @@ struct DetailView: View {
 
 #if os(tvOS)
     private func resolvePendingPlaybackLaunch(startPosition: PlaybackStartPosition) {
-        guard let request = pendingPlaybackLaunch else { return }
-        pendingPlaybackLaunch = nil
-        launchPlayback(
-            item: request.item,
-            startPosition: startPosition,
-            resumePositionTicks: request.resumePositionTicks
-        )
+        let choice: PlaybackLaunchChoice = startPosition == .beginning ? .restart : .resume
+        guard let request = playbackLaunchCoordinator.resolve(choice: choice) else { return }
+        launchPlayback(request)
     }
 
     private func cancelPendingPlaybackLaunch() {
-        pendingPlaybackLaunch = nil
+        playbackLaunchCoordinator.cancel()
     }
 #endif
 

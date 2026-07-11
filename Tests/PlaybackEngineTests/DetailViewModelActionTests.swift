@@ -182,6 +182,134 @@ final class DetailViewModelActionTests: XCTestCase {
         )
     }
 
+    func testMovieEpisodeContinueWatchingAndNextUpShareOneLaunchCoordinator() {
+        let runtimeTicks = Int64(90 * 60 * 10_000_000)
+        let resumeTicks = Int64(8 * 60 * 10_000_000)
+        let entryItems = [
+            MediaItem(
+                id: "movie-detail",
+                name: "Movie",
+                mediaType: .movie,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            ),
+            MediaItem(
+                id: "episode-card",
+                name: "Episode",
+                mediaType: .episode,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            ),
+            MediaItem(
+                id: "home-continue-watching",
+                name: "Continue Watching",
+                mediaType: .movie,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            ),
+            MediaItem(
+                id: "home-next-up",
+                name: "Next Up",
+                mediaType: .episode,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            )
+        ]
+
+        for item in entryItems {
+            var coordinator = PlaybackLaunchCoordinator()
+
+            XCTAssertNil(
+                coordinator.begin(
+                    item: item,
+                    progress: nil,
+                    presentsExplicitChoice: true
+                ),
+                "\(item.name) must not start playback before the user chooses"
+            )
+            XCTAssertEqual(coordinator.presentationIntent?.item.id, item.id)
+            XCTAssertEqual(coordinator.presentationIntent?.resumePositionTicks, resumeTicks)
+        }
+    }
+
+    func testLaunchCoordinatorPassesSelectedStartPositionUnchangedToEveryPlayerRoute() throws {
+        let item = MediaItem(
+            id: "movie-route-choice",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+
+        for choice in PlaybackLaunchChoicePolicy.orderedChoices {
+            var coordinator = PlaybackLaunchCoordinator()
+            XCTAssertNil(
+                coordinator.begin(
+                    item: item,
+                    progress: nil,
+                    presentsExplicitChoice: true
+                )
+            )
+
+            let request = try XCTUnwrap(coordinator.resolve(choice: choice))
+            let expectedPosition = PlaybackLaunchChoicePolicy.startPosition(for: choice)
+
+            XCTAssertEqual(request.startPosition, expectedPosition)
+            for route in PlaybackLaunchPlayerRoute.allCases {
+                XCTAssertEqual(request.startPosition(for: route), expectedPosition)
+            }
+        }
+    }
+
+    func testCancellingPendingLaunchProducesNoPlaybackRequest() {
+        let item = MediaItem(
+            id: "episode-cancel-choice",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        var coordinator = PlaybackLaunchCoordinator()
+        var emittedRequests: [PlaybackLaunchRequest] = []
+
+        if let request = coordinator.begin(
+            item: item,
+            progress: nil,
+            presentsExplicitChoice: true
+        ) {
+            emittedRequests.append(request)
+        }
+        coordinator.cancel()
+        if let request = coordinator.resolve(choice: .resume) {
+            emittedRequests.append(request)
+        }
+
+        XCTAssertNil(coordinator.presentationIntent)
+        XCTAssertTrue(emittedRequests.isEmpty)
+    }
+
+    func testNearlyCompletedLaunchSkipsChoiceAndStartsFromBeginning() throws {
+        let item = MediaItem(
+            id: "episode-completed",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(50 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(49 * 60 * 10_000_000)
+        )
+        var coordinator = PlaybackLaunchCoordinator()
+
+        let request = try XCTUnwrap(
+            coordinator.begin(
+                item: item,
+                progress: nil,
+                presentsExplicitChoice: true
+            )
+        )
+
+        XCTAssertNil(coordinator.presentationIntent)
+        XCTAssertEqual(request.startPosition, .beginning)
+    }
+
     func testAbsentOrNearlyFinishedProgressSkipsResumeChoice() {
         let untouched = MediaItem(
             id: "movie-not-started",

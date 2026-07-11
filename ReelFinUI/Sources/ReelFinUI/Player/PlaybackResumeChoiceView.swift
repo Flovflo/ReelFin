@@ -15,6 +15,7 @@ enum PlaybackResumeChoiceExitAction: Equatable, Sendable {
 struct PlaybackLaunchChoicePolicy {
     static let completionThreshold = 0.97
     static let orderedChoices: [PlaybackLaunchChoice] = [.resume, .restart]
+    static let defaultFocusedChoice: PlaybackLaunchChoice = .resume
     static let exitCommandAction: PlaybackResumeChoiceExitAction = .cancel
 
     static func shouldPresentChoice(
@@ -88,6 +89,95 @@ struct PlaybackLaunchChoicePolicy {
     }
 }
 
+enum PlaybackLaunchPlayerRoute: CaseIterable {
+    case custom
+    case legacy
+}
+
+struct PlaybackLaunchRequest {
+    let item: MediaItem
+    let startPosition: PlaybackStartPosition
+    let resumePositionTicks: Int64?
+
+    func startPosition(for route: PlaybackLaunchPlayerRoute) -> PlaybackStartPosition {
+        _ = route
+        return startPosition
+    }
+}
+
+enum PlaybackLaunchPresentationIntent: Identifiable {
+    case chooseStart(item: MediaItem, resumePositionTicks: Int64)
+
+    var id: String { item.id }
+
+    var item: MediaItem {
+        switch self {
+        case .chooseStart(let item, _):
+            return item
+        }
+    }
+
+    var resumePositionTicks: Int64 {
+        switch self {
+        case .chooseStart(_, let resumePositionTicks):
+            return resumePositionTicks
+        }
+    }
+}
+
+struct PlaybackLaunchCoordinator {
+    private(set) var presentationIntent: PlaybackLaunchPresentationIntent?
+
+    mutating func begin(
+        item: MediaItem,
+        progress: PlaybackProgress?,
+        presentsExplicitChoice: Bool
+    ) -> PlaybackLaunchRequest? {
+        let resumePositionTicks = PlaybackLaunchChoicePolicy.resumePositionTicks(
+            for: item,
+            progress: progress
+        )
+
+        guard let resumePositionTicks else {
+            presentationIntent = nil
+            return PlaybackLaunchRequest(
+                item: item,
+                startPosition: .beginning,
+                resumePositionTicks: nil
+            )
+        }
+
+        guard presentsExplicitChoice else {
+            presentationIntent = nil
+            return PlaybackLaunchRequest(
+                item: item,
+                startPosition: .resumeIfAvailable,
+                resumePositionTicks: resumePositionTicks
+            )
+        }
+
+        presentationIntent = .chooseStart(
+            item: item,
+            resumePositionTicks: resumePositionTicks
+        )
+        return nil
+    }
+
+    mutating func resolve(choice: PlaybackLaunchChoice) -> PlaybackLaunchRequest? {
+        guard let intent = presentationIntent else { return nil }
+        presentationIntent = nil
+        return PlaybackLaunchRequest(
+            item: intent.item,
+            startPosition: PlaybackLaunchChoicePolicy.startPosition(for: choice),
+            resumePositionTicks: intent.resumePositionTicks
+        )
+    }
+
+    mutating func cancel() {
+        presentationIntent = nil
+    }
+}
+
 #if os(tvOS)
 struct PlaybackResumeChoiceView: View {
     let itemTitle: String
@@ -140,6 +230,9 @@ struct PlaybackResumeChoiceView: View {
             .shadow(color: .black.opacity(0.42), radius: 50, y: 24)
         }
         .onExitCommand(perform: onCancel)
+        .onAppear {
+            focusedChoice = PlaybackLaunchChoicePolicy.defaultFocusedChoice
+        }
         .accessibilityIdentifier("playback_resume_choice")
     }
 

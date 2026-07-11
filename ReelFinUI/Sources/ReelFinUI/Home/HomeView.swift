@@ -1112,6 +1112,7 @@ struct HomeView: View {
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
     @State private var playerPresentation: HomePlayerPresentation?
+    @State private var playbackLaunchCoordinator = PlaybackLaunchCoordinator()
     @State private var customPrewarmer: CustomPlayerPrewarmer?
     @State private var isPreparingPlayback = false
     @State private var playbackErrorMessage: String?
@@ -1207,7 +1208,10 @@ struct HomeView: View {
 #else
         // Match DetailView's proven tvOS host. A fullScreenCover from the inline Home/detail stack
         // can retain a frozen navigation snapshot above live playback on physical Apple TV.
-        .disabled(playerPresentation != nil)
+        .disabled(
+            playerPresentation != nil
+                || playbackLaunchCoordinator.presentationIntent != nil
+        )
         .overlay {
             tvHomePlayerPresentation
                 .zIndex(100)
@@ -1216,6 +1220,7 @@ struct HomeView: View {
             key: TVTopNavigationVisibilityPreferenceKey.self,
             value: HomePlayerPresentationPolicy.showsTopNavigation(
                 hasActivePlayer: playerPresentation != nil
+                    || playbackLaunchCoordinator.presentationIntent != nil
             )
         )
 #endif
@@ -1272,7 +1277,15 @@ struct HomeView: View {
 #if os(tvOS)
     @ViewBuilder
     private var tvHomePlayerPresentation: some View {
-        if let playerPresentation {
+        if let presentationIntent = playbackLaunchCoordinator.presentationIntent {
+            PlaybackResumeChoiceView(
+                itemTitle: presentationIntent.item.name,
+                resumePositionTicks: presentationIntent.resumePositionTicks,
+                onSelect: resolveHomePlaybackLaunch,
+                onCancel: cancelHomePlaybackLaunch
+            )
+            .transition(.opacity)
+        } else if let playerPresentation {
             ZStack {
                 Color.black.ignoresSafeArea()
                 homePlayerContent(for: playerPresentation)
@@ -2027,15 +2040,46 @@ struct HomeView: View {
 
     @MainActor
     private func launchPlayback(for item: MediaItem) async {
+        let presentsExplicitChoice: Bool
+#if os(tvOS)
+        presentsExplicitChoice = true
+#else
+        presentsExplicitChoice = false
+#endif
+        guard let request = playbackLaunchCoordinator.begin(
+            item: item,
+            progress: nil,
+            presentsExplicitChoice: presentsExplicitChoice
+        ) else { return }
+
+        await launchResolvedHomePlayback(request)
+    }
+
+    @MainActor
+    private func launchResolvedHomePlayback(_ request: PlaybackLaunchRequest) async {
         switch HomePlaybackRoute.preferred(
             useCustomPlayerEngine: dependencies.settingsStore.useCustomPlayerEngine
         ) {
         case .custom:
-            startHomeCustomPlayback(item: item)
+            startHomeCustomPlayback(request: request)
         case .legacy:
-            await startHomeLegacyPlayback(item: item)
+            await startHomeLegacyPlayback(request: request)
         }
     }
+
+#if os(tvOS)
+    private func resolveHomePlaybackLaunch(startPosition: PlaybackStartPosition) {
+        let choice: PlaybackLaunchChoice = startPosition == .beginning ? .restart : .resume
+        guard let request = playbackLaunchCoordinator.resolve(choice: choice) else { return }
+        Task { @MainActor in
+            await launchResolvedHomePlayback(request)
+        }
+    }
+
+    private func cancelHomePlaybackLaunch() {
+        playbackLaunchCoordinator.cancel()
+    }
+#endif
 
     @MainActor
     private func ensureHomeCustomPrewarmer() -> CustomPlayerPrewarmer? {
@@ -2051,7 +2095,8 @@ struct HomeView: View {
     }
 
     @MainActor
-    private func startHomeCustomPlayback(item: MediaItem) {
+    private func startHomeCustomPlayback(request: PlaybackLaunchRequest) {
+        let item = request.item
         guard let store = try? CustomPlaybackEngine.sharedStore() else {
             playbackErrorMessage = "Cache local indisponible."
             return
@@ -2074,7 +2119,10 @@ struct HomeView: View {
                 "home.player.native_handoff — item=\(item.id.prefix(8), privacy: .public)"
             )
             Task { @MainActor in
-                await startHomeLegacyPlayback(item: item, forceNativeOriginalPlayback: true)
+                await startHomeLegacyPlayback(
+                    request: request,
+                    forceNativeOriginalPlayback: true
+                )
             }
         }
         engine.currentMediaItem = item
@@ -2090,16 +2138,19 @@ struct HomeView: View {
         )
         engine.load(
             itemID: item.id,
-            startTimeTicks: item.playbackPositionTicks,
+            startTimeTicks: request.startPosition(for: .custom) == .resumeIfAvailable
+                ? request.resumePositionTicks
+                : nil,
             autoPlay: true
         )
     }
 
     @MainActor
     private func startHomeLegacyPlayback(
-        item: MediaItem,
+        request: PlaybackLaunchRequest,
         forceNativeOriginalPlayback: Bool = false
     ) async {
+        let item = request.item
         let session = dependencies.makePlaybackSession()
 #if os(iOS)
         OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
@@ -2116,7 +2167,7 @@ struct HomeView: View {
         do {
             try await session.load(
                 item: item,
-                startPosition: .resumeIfAvailable,
+                startPosition: request.startPosition(for: .legacy),
                 forceNativeOriginalPlayback: forceNativeOriginalPlayback
             )
         } catch {
