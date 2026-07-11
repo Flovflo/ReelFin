@@ -347,3 +347,11 @@
 - The timeline is no longer an empty-action button: it consumes Left/Right, publishes position accessibility state, and Select hides chrome. A hidden input surface has its focus/hover effects disabled so focus cannot render a full-screen white plate.
 - Simulator evidence: authenticated launch and real Jellyfin playback were preserved with update-install only; a live Device Hub pass exposed the white focus plate, which was corrected. Deterministic gates passed 18/18 chrome/remote tests plus 33/33 NativePlayer configuration tests, followed by clean iOS/tvOS builds.
 - Remaining validation: Task 5 must add a tvOS UI-test target and prove Play/Pause, Select, repeated Left/Right, panel focus restoration, Menu precedence, advancing video, and audio evidence with `XCUIRemote`.
+
+## tvOS Native Liquid Glass Player Chrome - 2026-07-11
+
+- Replaced the intermediate text-heavy action row with the native tvOS reference hierarchy on both CustomPlayer and NativePlayer: episode/title metadata at the lower left, circular Subtitles/Audio/Video controls at the lower right, a full-width timeline, and Info/InSight/Continue Watching glass capsules below it.
+- The chrome uses tvOS 26+ interactive Liquid Glass primitives for controls and keeps iOS layout behavior unchanged. Info and Video expose route/quality facts already known by the active player; InSight is deliberately limited to Jellyfin metadata and does not claim scene or people recognition.
+- Focus and Menu behavior remain deterministic: utility actions participate in the same focus model, Continue Watching resumes paused playback and hides chrome, and Menu closes an open information/track panel before hiding chrome or dismissing playback.
+- Authenticated simulator evidence on Star City S1E1 passed the complete Liquid Glass journey in 49.3 seconds, including hidden-chrome recovery, Info, InSight, track/video panels, Continue Watching, focus restoration, and Menu precedence. Captures were exported to `/tmp/ReelFinLiquidGlassAttachments2`.
+- Remaining validation belongs to the hardened live Task 5 suite: ensure opt-in tests cannot mutate Jellyfin progress, assert Continue/Restart start positions, perform real track changes, and make advancement evidence expire on pause or freeze.

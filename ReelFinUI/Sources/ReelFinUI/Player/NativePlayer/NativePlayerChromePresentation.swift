@@ -166,12 +166,23 @@ enum NativePlayerTVChromeFocus: Hashable {
     case audio
     case subtitles
     case video
+    case info
+    case insight
+    case continueWatching
 
     static func action(_ action: NativePlayerTVChromeAction) -> Self {
         switch action {
         case .audio: return .audio
         case .subtitles: return .subtitles
         case .video: return .video
+        }
+    }
+
+    static func utility(_ action: NativePlayerTVChromeUtilityAction) -> Self {
+        switch action {
+        case .info: return .info
+        case .insight: return .insight
+        case .continueWatching: return .continueWatching
         }
     }
 }
@@ -185,6 +196,17 @@ struct NativePlayerTVTimelineAccessibility {
         guard let durationSeconds, durationSeconds > 0 else { return "Position unavailable" }
         return "\(Int(playbackTime.rounded())) of \(Int(durationSeconds.rounded())) seconds"
     }
+}
+
+struct NativePlayerTVTimelineLabelLayout {
+    static func currentCenterX(progress: Double, width: CGFloat) -> CGFloat {
+        let clampedProgress = min(max(progress.isFinite ? progress : 0, 0), 1)
+        return min(max(48, width * CGFloat(clampedProgress)), max(48, width - 180))
+    }
+}
+
+struct NativePlayerTVContinueWatchingPolicy {
+    static func shouldResume(isPaused: Bool) -> Bool { isPaused }
 }
 
 enum NativePlayerRemoteMoveDirection: Equatable {

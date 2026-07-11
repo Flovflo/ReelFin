@@ -281,12 +281,13 @@ struct NativePlayerTrackSelectionMenuView: View {
 /// A real destination for the tvOS “Vidéo” action. It intentionally reports only user-relevant
 /// facts already known by the active route; diagnostics remain in the DEBUG-only panel.
 struct NativePlayerVideoInformationView: View {
+    var title: String = "Vidéo"
     let qualityLabel: String
     let routeLabel: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
-            Text("Vidéo")
+            Text(title)
                 .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.62))
 
@@ -316,6 +317,65 @@ struct NativePlayerVideoInformationView: View {
                     .foregroundStyle(.white)
                     .lineLimit(2)
             }
+        }
+    }
+
+    private var metrics: NativePlayerTrackMenuLayout { .current }
+}
+
+/// Honest item context for the tvOS InSight action. This intentionally uses only metadata already
+/// supplied by Jellyfin; it does not imply people recognition or scene analysis.
+struct NativePlayerItemInsightView: View {
+    let item: MediaItem?
+    let qualityLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            Text("InSight")
+                .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.66))
+
+            insightRow(title: "Titre", value: item?.name ?? "Contenu en cours")
+            if let seriesName = item?.seriesName, !seriesName.isEmpty {
+                insightRow(title: "Série", value: seriesName)
+            }
+            if let episodeText {
+                insightRow(title: "Épisode", value: episodeText)
+            }
+            if let year = item?.year {
+                insightRow(title: "Année", value: String(year))
+            }
+            insightRow(title: "Qualité", value: qualityLabel)
+        }
+        .padding(.horizontal, metrics.horizontalPadding)
+        .padding(.vertical, metrics.verticalPadding)
+        .frame(width: metrics.panelWidth, alignment: .leading)
+        .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
+        .background(alignment: .topLeading) {
+            PlayerAccessibilityMarkerView(identifier: "native_player_insight_panel")
+                .frame(width: 1, height: 1)
+        }
+    }
+
+    private func insightRow(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: metrics.sectionTitleSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+            Text(value)
+                .font(.system(size: metrics.rowTitleSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.72)
+        }
+    }
+
+    private var episodeText: String? {
+        switch (item?.parentIndexNumber, item?.indexNumber) {
+        case let (.some(season), .some(episode)): return "S\(season), E\(episode)"
+        case let (.some(season), .none): return "S\(season)"
+        case let (.none, .some(episode)): return "E\(episode)"
+        case (.none, .none): return nil
         }
     }
 

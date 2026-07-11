@@ -90,21 +90,17 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(after: 41), 42)
     }
 
-    func testTVChromeExposesOnlyPlaybackMetadataActions() {
+    func testTVChromeExposesReferenceOrderedCircularPlaybackActions() {
         XCTAssertEqual(
             NativePlayerTVChromeAction.allCases,
-            [.audio, .subtitles, .video]
+            [.subtitles, .audio, .video]
         )
         XCTAssertEqual(
             NativePlayerTVChromeAction.allCases.map(\.title),
-            ["Audio", "Sous-titres", "Vidéo"]
+            ["Sous-titres", "Audio", "Vidéo"]
         )
-
-        let excludedTitles = ["Info", "InSight", "Continue Watching", "Accueil", "Recherche", "Bibliothèque"]
-        XCTAssertTrue(
-            Set(NativePlayerTVChromeAction.allCases.map(\.title))
-                .isDisjoint(with: excludedTitles)
-        )
+        XCTAssertTrue(NativePlayerTVChromeAction.allCases.allSatisfy { $0.controlShape == .circle })
+        XCTAssertTrue(NativePlayerTVChromeAction.allCases.allSatisfy { !$0.accessibilityIdentifier.isEmpty })
     }
 
     func testOnlyTrackActionsOpenTheAnchoredTrackPopover() {
@@ -114,14 +110,68 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeAction.video.destination, .videoPanel)
     }
 
-    func testTVChromeStaysCompactAndBottomAnchored() {
+    func testTVChromeMatchesReferenceNormalizedGeometry() {
         let layout = NativePlayerTVChromeLayout.standard
 
         XCTAssertEqual(layout.alignment, .bottom)
-        XCTAssertLessThanOrEqual(layout.gradientHeight, 520)
-        XCTAssertGreaterThanOrEqual(layout.horizontalPadding, 64)
-        XCTAssertLessThanOrEqual(layout.bottomPadding, 64)
+        XCTAssertEqual(layout.referenceSize.width, 1_920)
+        XCTAssertEqual(layout.referenceSize.height, 1_080)
+        XCTAssertEqual(layout.gradientHeight / layout.referenceSize.height, 1.0 / 3.0, accuracy: 0.01)
+        XCTAssertEqual(layout.horizontalPadding / layout.referenceSize.width, 1.0 / 24.0, accuracy: 0.002)
+        XCTAssertEqual(layout.circleDiameter / layout.referenceSize.height, 70.0 / 1_080.0, accuracy: 0.002)
+        XCTAssertEqual(layout.timelineY / layout.referenceSize.height, 900.0 / 1_080.0, accuracy: 0.015)
+        XCTAssertEqual(layout.utilityRowY / layout.referenceSize.height, 985.0 / 1_080.0, accuracy: 0.015)
+        XCTAssertGreaterThanOrEqual(layout.titleMinimumScaleFactor, 0.55)
+        XCTAssertLessThanOrEqual(layout.maximumTitleWidthRatio, 0.70)
         XCTAssertLessThanOrEqual(layout.timelineHeight, 8)
+    }
+
+    func testTVChromeUtilityPillsAreFunctionalAndReferenceOrdered() {
+        XCTAssertEqual(
+            NativePlayerTVChromeUtilityAction.allCases,
+            [.info, .insight, .continueWatching]
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeUtilityAction.allCases.map(\.title),
+            ["Info", "InSight", "Continue Watching"]
+        )
+        XCTAssertEqual(NativePlayerTVChromeUtilityAction.info.destination, .playbackInfoPanel)
+        XCTAssertEqual(NativePlayerTVChromeUtilityAction.insight.destination, .itemInsightPanel)
+        XCTAssertEqual(NativePlayerTVChromeUtilityAction.continueWatching.destination, .continueWatching)
+        XCTAssertTrue(NativePlayerTVChromeUtilityAction.allCases.allSatisfy { $0.controlShape == .capsule })
+        XCTAssertTrue(NativePlayerTVChromeUtilityAction.allCases.allSatisfy { !$0.accessibilityIdentifier.isEmpty })
+    }
+
+    func testTVChromeFocusCoversEveryCircularAndUtilityAction() {
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.subtitles), .subtitles)
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.audio), .audio)
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.video), .video)
+        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.info), .info)
+        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.insight), .insight)
+        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.continueWatching), .continueWatching)
+    }
+
+    func testCurrentTimeLabelTracksPlayheadWithoutCollidingWithEdges() {
+        XCTAssertEqual(
+            NativePlayerTVTimelineLabelLayout.currentCenterX(progress: 0.25, width: 1_760),
+            440,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            NativePlayerTVTimelineLabelLayout.currentCenterX(progress: 0, width: 1_760),
+            48,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            NativePlayerTVTimelineLabelLayout.currentCenterX(progress: 1, width: 1_760),
+            1_580,
+            accuracy: 0.001
+        )
+    }
+
+    func testContinueWatchingOnlyResumesPausedPlaybackBeforeHidingChrome() {
+        XCTAssertTrue(NativePlayerTVContinueWatchingPolicy.shouldResume(isPaused: true))
+        XCTAssertFalse(NativePlayerTVContinueWatchingPolicy.shouldResume(isPaused: false))
     }
 
     func testTVTrackPopoverUsesCompactRightSideMetrics() {

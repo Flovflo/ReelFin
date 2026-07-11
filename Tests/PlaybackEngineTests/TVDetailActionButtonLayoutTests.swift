@@ -91,10 +91,13 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
     }
 
     func testPlayerChromeActionsHaveNoDeadVideoDestination() {
-        XCTAssertEqual(NativePlayerTVChromeAction.allCases, [.audio, .subtitles, .video])
+        XCTAssertEqual(NativePlayerTVChromeAction.allCases, [.subtitles, .audio, .video])
         XCTAssertEqual(NativePlayerTVChromeAction.audio.destination, .trackMenu(.audio))
         XCTAssertEqual(NativePlayerTVChromeAction.subtitles.destination, .trackMenu(.subtitles))
         XCTAssertEqual(NativePlayerTVChromeAction.video.destination, .videoPanel)
+        XCTAssertEqual(NativePlayerTVChromeUtilityAction.info.destination, .playbackInfoPanel)
+        XCTAssertEqual(NativePlayerTVChromeUtilityAction.insight.destination, .itemInsightPanel)
+        XCTAssertEqual(NativePlayerTVChromeUtilityAction.continueWatching.destination, .continueWatching)
     }
 
     func testTVCommandDispatcherInvokesExactlyOneProductionCallbackPerCommand() {
@@ -120,6 +123,9 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.audio), .audio)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.subtitles), .subtitles)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.video), .video)
+        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.info), .info)
+        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.insight), .insight)
+        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.continueWatching), .continueWatching)
     }
 
     func testExplicitChromeSuppressionIsTVOSOnly() {

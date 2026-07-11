@@ -580,6 +580,9 @@ struct CustomPlayerView: View {
                 onInteraction: revealTVChrome,
                 onShowTrackPicker: showTVTrackPicker,
                 onShowVideoPanel: showTVVideoPanel,
+                onShowPlaybackInfo: showTVPlaybackInfo,
+                onShowItemInsight: showTVItemInsight,
+                onContinueWatching: continueTVWatching,
                 onToggleChrome: hideTVChrome,
                 onDismiss: requestDismissal,
                 isInteractionEnabled: activeTVPanel == nil,
@@ -603,6 +606,17 @@ struct CustomPlayerView: View {
                     NativePlayerVideoInformationView(
                         qualityLabel: engine.sourceQualityLabel ?? "Originale",
                         routeLabel: engine.hasLocalCacheReservoir ? "Lecture directe optimisée" : "Lecture directe"
+                    )
+                case .playbackInfo:
+                    NativePlayerVideoInformationView(
+                        title: "Info",
+                        qualityLabel: engine.sourceQualityLabel ?? "Originale",
+                        routeLabel: engine.hasLocalCacheReservoir ? "Lecture directe optimisée" : "Lecture directe"
+                    )
+                case .insight:
+                    NativePlayerItemInsightView(
+                        item: launchContext?.item ?? engine.currentMediaItem,
+                        qualityLabel: engine.sourceQualityLabel ?? "Originale"
                     )
                 }
             }
@@ -731,6 +745,26 @@ struct CustomPlayerView: View {
         revealTVChrome()
     }
 
+    private func showTVPlaybackInfo() {
+        preferredTVChromeFocus = .info
+        activeTVPanel = .playbackInfo
+        revealTVChrome()
+    }
+
+    private func showTVItemInsight() {
+        preferredTVChromeFocus = .insight
+        activeTVPanel = .insight
+        revealTVChrome()
+    }
+
+    private func continueTVWatching() {
+        preferredTVChromeFocus = .continueWatching
+        if NativePlayerTVContinueWatchingPolicy.shouldResume(isPaused: engine.transportState == .paused) {
+            engine.play()
+        }
+        hideTVChrome()
+    }
+
     private func handleTVTrackSelection(_ selection: PlaybackControlSelection) {
         switch selection {
         case let .audio(trackID):
@@ -818,6 +852,8 @@ struct CustomPlayerView: View {
 private enum CustomPlayerTVPanel: Equatable {
     case tracks(PlaybackTrackMenuKind)
     case video
+    case playbackInfo
+    case insight
 }
 #endif
 

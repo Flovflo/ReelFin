@@ -41,6 +41,26 @@ struct NativePlayerTimelineView: View {
     }
 
     private var timeLabels: some View {
+#if os(tvOS)
+        GeometryReader { proxy in
+            ZStack {
+                Text(presentation.currentTimeText)
+                    .position(
+                        x: NativePlayerTVTimelineLabelLayout.currentCenterX(
+                            progress: presentation.progress,
+                            width: proxy.size.width
+                        ),
+                        y: 13
+                    )
+                Text(presentation.remainingTimeText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+            }
+        }
+        .frame(height: 26)
+        .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.82))
+        .shadow(color: .black.opacity(0.32), radius: 4, y: 1)
+#else
         HStack(spacing: 20) {
             Text(presentation.currentTimeText)
             Spacer(minLength: 0)
@@ -50,6 +70,7 @@ struct NativePlayerTimelineView: View {
         .foregroundStyle(.white.opacity(0.82))
         .shadow(color: .black.opacity(0.32), radius: 4, y: 1)
         .frame(height: 26)
+#endif
     }
 
     private var scrubBinding: Binding<Double> {

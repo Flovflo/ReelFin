@@ -57,27 +57,59 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         let app = try launchStarCityDetail()
         try startPlayback(in: app, choice: .continueDefault)
         try requireHealthyPlayback(in: app)
+        attachScreenshot(app, name: "player-hidden")
         revealChrome(in: app)
+        attachScreenshot(app, name: "liquid-glass-chrome")
 
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(app.otherElements["native_player_audio_menu"].waitForExistence(timeout: 8))
-        assertStableTrackSelection(in: app)
-        XCUIRemote.shared.press(.menu)
-        XCTAssertTrue(app.otherElements["native_player_chrome"].waitForExistence(timeout: 5))
-
-        XCUIRemote.shared.press(.right)
+        focusButton(
+            "native_player_subtitles_button",
+            in: app,
+            using: [.up, .left, .left, .right, .right]
+        )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.otherElements["native_player_subtitles_menu"].waitForExistence(timeout: 8))
         assertStableTrackSelection(in: app)
         XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(app.otherElements["native_player_chrome"].waitForExistence(timeout: 5))
 
-        XCUIRemote.shared.press(.right)
+        focusButton("native_player_audio_button", in: app, using: [.right, .left, .right])
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["native_player_audio_menu"].waitForExistence(timeout: 8))
+        assertStableTrackSelection(in: app)
+        XCUIRemote.shared.press(.menu)
+
+        focusButton("native_player_video_button", in: app, using: [.right, .right, .left, .right])
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.otherElements["native_player_video_panel"].waitForExistence(timeout: 8))
         attachScreenshot(app, name: "video-panel")
-
         XCUIRemote.shared.press(.menu)
+
+        focusButton(
+            "native_player_info_button",
+            in: app,
+            using: [.down, .down, .left, .left, .left, .right]
+        )
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["native_player_video_panel"].waitForExistence(timeout: 8))
+        attachScreenshot(app, name: "info-panel")
+        XCUIRemote.shared.press(.menu)
+
+        focusButton("native_player_insight_button", in: app, using: [.right, .left, .right])
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["native_player_insight_panel"].waitForExistence(timeout: 8))
+        attachScreenshot(app, name: "insight-panel")
+        XCUIRemote.shared.press(.menu)
+
+        focusButton(
+            "native_player_continue_watching_button",
+            in: app,
+            using: [.right, .left, .right]
+        )
+        XCUIRemote.shared.press(.select)
+        XCTAssertFalse(app.otherElements["native_player_chrome"].waitForExistence(timeout: 2))
+        XCTAssertTrue(waitForTransport("playing", in: app, timeout: 8))
+
+        XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.otherElements["native_player_chrome"].waitForExistence(timeout: 5))
         XCUIRemote.shared.press(.menu)
         XCTAssertFalse(app.otherElements["native_player_chrome"].waitForExistence(timeout: 2))
@@ -176,6 +208,19 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             XCUIRemote.shared.press(.select)
         }
         XCTAssertTrue(app.otherElements["native_player_chrome"].waitForExistence(timeout: 5))
+    }
+
+    private func focusButton(
+        _ identifier: String,
+        in app: XCUIApplication,
+        using directions: [XCUIRemote.Button]
+    ) {
+        let button = app.buttons[identifier]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        for direction in directions where !button.hasFocus {
+            XCUIRemote.shared.press(direction)
+        }
+        XCTAssertTrue(button.hasFocus, "Remote navigation did not focus \(identifier).")
     }
 
     private func assertStableTrackSelection(in app: XCUIApplication) {
