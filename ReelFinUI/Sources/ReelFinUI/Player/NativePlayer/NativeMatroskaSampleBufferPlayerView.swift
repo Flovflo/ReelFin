@@ -148,6 +148,18 @@ private struct NativeMatroskaRestartConfiguration {
     let isPaused: Bool
 }
 
+private final class NativeMatroskaActiveByteSource {
+    let generation: Int
+    let source: any MediaByteSource
+    var cancellationTask: Task<Void, Never>?
+    var cancellationCompleted = false
+
+    init(generation: Int, source: any MediaByteSource) {
+        self.generation = generation
+        self.source = source
+    }
+}
+
 enum NativeMatroskaTeardownEvent: Equatable {
     case generationInvalidated
     case sourceCancelled
@@ -186,17 +198,18 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private var onDiagnostics: (([String]) -> Void)?
     private var onPlaybackTime: ((Double) -> Void)?
     private var playbackTask: Task<Void, Never>?
-    private var retiringPlaybackTask: Task<Void, Never>?
+    private var retirementTask: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
     private var pendingRestartConfiguration: NativeMatroskaRestartConfiguration?
     private var seekCommitPolicy = NativePlayerSeekCommitPolicy()
     private var readerGeneration = NativeMatroskaPlaybackGeneration()
     private var invalidatedCallbackGenerations: Set<Int> = []
-    private var activeByteSource: (generation: Int, source: any MediaByteSource)?
+    private var activeByteSource: NativeMatroskaActiveByteSource?
     private var activeReaderCount = 0
     private var cancelledSourceGenerations: Set<Int> = []
     private var recordedSourceCancellationGenerations: Set<Int> = []
     private var restartCoordinatorID = 0
+    private var retirementCoordinatorID = 0
     private var diagnosticTimer: Timer?
     private var metrics = NativeMatroskaSampleBufferMetrics()
     private var subtitleCues: [SubtitleCue] = []
@@ -226,6 +239,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private(set) var maximumConcurrentReaderCount = 0
     private(set) var callbackCountAfterDismantle = 0
     private(set) var teardownEvents: [NativeMatroskaTeardownEvent] = []
+    var teardownEventObserver: ((NativeMatroskaTeardownEvent) -> Void)?
+    var beforePlaybackTaskCancellation: (() async -> Void)?
     var readerPhase: NativeMatroskaPlaybackGeneration.Phase {
         generationLock.withLock { readerGeneration.phase }
     }
@@ -285,7 +300,6 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
 
     deinit {
         resetPreferredDisplayCriteria()
-        stopPlayback(publishFinalPlaybackTime: false)
     }
 
     func stopForDismantle() {
@@ -353,7 +367,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             invalidatedCallbackGenerations.insert(generation).inserted
         }
         if inserted {
-            teardownEvents.append(.generationInvalidated)
+            recordTeardownEvent(.generationInvalidated)
         }
     }
 
@@ -484,18 +498,18 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         if let retiringGeneration = beginReaderRetirement() {
             invalidateCallbackOwnership(for: retiringGeneration)
         }
+        let sharedRetirementTask = startOrReuseRetirement()
         guard shouldStartCoordinator else { return }
         restartCoordinatorID += 1
         let coordinatorID = restartCoordinatorID
         restartCoordinatorStartCount += 1
-        restartTask = Task { [weak self] in
+        restartTask = Task { [weak self, sharedRetirementTask] in
+            await sharedRetirementTask?.value
             await self?.commitPendingRestart(coordinatorID: coordinatorID)
         }
     }
 
     private func commitPendingRestart(coordinatorID: Int) async {
-        await retireActiveGeneration()
-
         guard coordinatorID == restartCoordinatorID, !Task.isCancelled, !isTornDown else { return }
         guard let commit = seekCommitPolicy.takePendingRestart(),
               let configuration = pendingRestartConfiguration,
@@ -555,28 +569,49 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         }
     }
 
-    private func retireActiveGeneration() async {
+    private func startOrReuseRetirement() -> Task<Void, Never>? {
+        if let retirementTask { return retirementTask }
         let retiringGeneration = beginReaderRetirement()
         if let retiringGeneration {
             invalidateCallbackOwnership(for: retiringGeneration)
         }
-        let previousTask = playbackTask ?? retiringPlaybackTask
-        guard retiringGeneration != nil || previousTask != nil else { return }
+        let previousTask = playbackTask
+        guard retiringGeneration != nil || previousTask != nil || activeByteSource != nil else { return nil }
         playbackTask = nil
-        retiringPlaybackTask = previousTask
         diagnosticTimer?.invalidate()
         diagnosticTimer = nil
         stopDrainTimers()
         displayLayer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()
+        retirementCoordinatorID += 1
+        let coordinatorID = retirementCoordinatorID
+        let task = Task { [self] in
+            await performRetirement(generation: retiringGeneration, playbackTask: previousTask)
+            if retirementCoordinatorID == coordinatorID {
+                retirementTask = nil
+            }
+        }
+        retirementTask = task
+        return task
+    }
+
+    private func performRetirement(
+        generation retiringGeneration: Int?,
+        playbackTask previousTask: Task<Void, Never>?
+    ) async {
+        await beforePlaybackTaskCancellation?()
         previousTask?.cancel()
+        if let retiringGeneration,
+           let activeByteSource,
+           activeByteSource.generation == retiringGeneration {
+            await cancelActiveByteSourceIfNeeded(activeByteSource)
+        }
         await previousTask?.value
         if let retiringGeneration {
             recordSourceCancellationIfNeeded(for: retiringGeneration)
-            teardownEvents.append(.readerFinished)
+            recordTeardownEvent(.readerFinished)
             finishReaderRetirement(retiringGeneration)
         }
-        retiringPlaybackTask = nil
         quiesceRenderQueuesAndFlush()
     }
 
@@ -588,12 +623,12 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             return
         }
         videoQueue.sync {}
-        teardownEvents.append(.videoQueueQuiesced)
+        recordTeardownEvent(.videoQueueQuiesced)
         audioQueue.sync {}
-        teardownEvents.append(.audioQueueQuiesced)
+        recordTeardownEvent(.audioQueueQuiesced)
         displayLayer.flushAndRemoveImage()
         audioRenderer.flush()
-        teardownEvents.append(.renderersFlushed)
+        recordTeardownEvent(.renderersFlushed)
         videoSamples.removeAll()
         audioSamples.removeAll()
         videoHDRMetadata = nil
@@ -627,19 +662,12 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         pendingRestartConfiguration = nil
         restartCoordinatorID += 1
         restartTask?.cancel()
+        restartTask = nil
         let retiringGeneration = beginReaderRetirement()
         if let retiringGeneration {
             invalidateCallbackOwnership(for: retiringGeneration)
         }
-        let hasRetirementWork = retiringGeneration != nil || playbackTask != nil || retiringPlaybackTask != nil
-        if restartTask == nil, hasRetirementWork {
-            let coordinatorID = restartCoordinatorID
-            restartTask = Task { [weak self] in
-                await self?.retireActiveGeneration()
-                guard let self, coordinatorID == self.restartCoordinatorID else { return }
-                self.restartTask = nil
-            }
-        }
+        _ = startOrReuseRetirement()
     }
 
     private func openDemuxAndPump(
@@ -655,16 +683,41 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         AppLog.playback.notice("nativeplayer.sampleReader.start — backend=\(Self.demuxerName(for: container), privacy: .public)")
         let source = byteSourceFactory(url, headers)
         setActiveByteSource(source, generation: generation)
+        let completedWithOwnedCallbacks = await runDemuxAndPump(
+            source: source,
+            container: container,
+            startTimeSeconds: startTimeSeconds,
+            selectedAudioTrackID: selectedAudioTrackID,
+            selectedSubtitleTrackID: selectedSubtitleTrackID,
+            generation: generation
+        )
+        if let activeByteSource, activeByteSource.generation == generation {
+            await cancelActiveByteSourceIfNeeded(activeByteSource)
+        }
+        clearActiveByteSource(source, generation: generation)
+        if completedWithOwnedCallbacks {
+            finishReaderAfterCompletion(generation)
+        }
+    }
+
+    private func runDemuxAndPump(
+        source: any MediaByteSource,
+        container: ContainerFormat,
+        startTimeSeconds: Double,
+        selectedAudioTrackID: String?,
+        selectedSubtitleTrackID: String?,
+        generation: Int
+    ) async -> Bool {
         var completedWithOwnedCallbacks = false
         do {
             let demuxer = Self.makeDemuxer(source: source, container: container)
             let stream = try await demuxer.open()
             try Task.checkCancellation()
-            guard ownsCallbacks(from: generation) else { return }
+            guard ownsCallbacks(from: generation) else { return false }
             if startTimeSeconds > 0 {
                 try await demuxer.seek(to: CMTime(seconds: startTimeSeconds, preferredTimescale: 1000))
                 try Task.checkCancellation()
-                guard ownsCallbacks(from: generation) else { return }
+                guard ownsCallbacks(from: generation) else { return false }
             }
             guard let videoTrack = stream.tracks.first(where: { $0.kind == .video }) else {
                 throw NativeMatroskaSampleBufferPlayerError.noVideoTrack
@@ -682,10 +735,10 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             let videoDecoder = try VideoDecoderFactory().makeDecoder(for: videoTrack)
             try await videoDecoder.configure(track: videoTrack)
             try Task.checkCancellation()
-            guard ownsCallbacks(from: generation) else { return }
+            guard ownsCallbacks(from: generation) else { return false }
             let audioDecoder = await makeAudioDecoder(audioTrack, generation: generation)
             try Task.checkCancellation()
-            guard ownsCallbacks(from: generation) else { return }
+            guard ownsCallbacks(from: generation) else { return false }
             markReaderActive(generation)
             resetPlaybackReadiness(hasAudio: audioDecoder != nil)
 
@@ -722,18 +775,12 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 completedWithOwnedCallbacks = true
             }
         }
-        await source.cancel()
-        cancelledSourceGenerations.insert(generation)
-        recordSourceCancellationIfNeeded(for: generation)
-        clearActiveByteSource(source, generation: generation)
-        if completedWithOwnedCallbacks {
-            finishReaderAfterCompletion(generation)
-        }
+        return completedWithOwnedCallbacks
     }
 
     private func setActiveByteSource(_ source: any MediaByteSource, generation: Int) {
         precondition(activeByteSource == nil, "A Matroska byte source was replaced before retirement finished")
-        activeByteSource = (generation, source)
+        activeByteSource = NativeMatroskaActiveByteSource(generation: generation, source: source)
         activeReaderCount += 1
         maximumConcurrentReaderCount = max(maximumConcurrentReaderCount, activeReaderCount)
     }
@@ -745,11 +792,33 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         activeReaderCount = max(0, activeReaderCount - 1)
     }
 
+    private func cancelActiveByteSourceIfNeeded(_ activeSource: NativeMatroskaActiveByteSource) async {
+        let cancellationTask: Task<Void, Never>
+        if let existingTask = activeSource.cancellationTask {
+            cancellationTask = existingTask
+        } else {
+            let source = activeSource.source
+            let task = Task { await source.cancel() }
+            activeSource.cancellationTask = task
+            cancellationTask = task
+        }
+        await cancellationTask.value
+        guard !activeSource.cancellationCompleted else { return }
+        activeSource.cancellationCompleted = true
+        cancelledSourceGenerations.insert(activeSource.generation)
+        recordSourceCancellationIfNeeded(for: activeSource.generation)
+    }
+
     private func recordSourceCancellationIfNeeded(for generation: Int) {
         guard cancelledSourceGenerations.contains(generation),
               invalidatedCallbackGenerations.contains(generation),
               recordedSourceCancellationGenerations.insert(generation).inserted else { return }
-        teardownEvents.append(.sourceCancelled)
+        recordTeardownEvent(.sourceCancelled)
+    }
+
+    private func recordTeardownEvent(_ event: NativeMatroskaTeardownEvent) {
+        teardownEvents.append(event)
+        teardownEventObserver?(event)
     }
 
     private func makeAudioDecoder(

@@ -8,6 +8,150 @@ import XCTest
 
 @MainActor
 final class NativePlayerConfigurationTests: XCTestCase {
+    func testMatroskaInvalidatedReadStillCancelsAndClearsSourceExactlyOnce() async throws {
+        let factory = InvalidationResumeByteSourceFactory()
+        let controller = NativeMatroskaSampleBufferPlayerController {
+            factory.make(url: $0, headers: $1)
+        }
+        controller.beforePlaybackTaskCancellation = {
+            factory.source?.resumeInitialRead()
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        _ = controller.view
+        controller.configure(
+            url: URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv"),
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 0,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        let sourceWasCreated = await waitUntil { factory.source != nil }
+        XCTAssertTrue(sourceWasCreated)
+        var source: InvalidationResumeByteSource? = try XCTUnwrap(factory.source)
+        let readSuspended = await waitUntil { source?.hasSuspendedInitialRead == true }
+        XCTAssertTrue(readSuspended)
+
+        controller.stopForDismantle()
+
+        let becameIdle = await waitUntil { controller.readerPhase == .idle }
+        XCTAssertTrue(becameIdle)
+        XCTAssertEqual(source?.cancelCount, 1)
+        weak var weakSource = source
+        factory.releaseSource()
+        source = nil
+        let sourceWasCleared = await waitUntil { weakSource == nil }
+        XCTAssertTrue(sourceWasCleared)
+    }
+
+    func testMatroskaStopThenReconfigureSharesOneSuspendedRetirement() async throws {
+        let factory = SuspendingCancellationByteSourceFactory()
+        let controller = NativeMatroskaSampleBufferPlayerController {
+            factory.make(url: $0, headers: $1)
+        }
+        _ = controller.view
+        let firstURL = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
+        controller.configure(
+            url: firstURL,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 0,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        let firstReaderBecameActive = await waitUntil { controller.readerPhase == .active }
+        XCTAssertTrue(firstReaderBecameActive)
+        let firstSource = try XCTUnwrap(factory.firstSource)
+
+        controller.stopForDismantle()
+        let firstCancellationStarted = await firstSource.waitForCancellationStart()
+        XCTAssertTrue(firstCancellationStarted)
+        controller.configure(
+            url: URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv"),
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 0,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(factory.sourceCount, 1)
+        XCTAssertFalse(controller.teardownEvents.contains(.renderersFlushed))
+
+        await firstSource.resumeCancellation()
+
+        let replacementBecameActive = await waitUntil {
+            controller.readerPhase == .active && factory.sourceCount == 2
+        }
+        XCTAssertTrue(replacementBecameActive)
+        let firstCancelCount = await firstSource.cancelCount
+        XCTAssertEqual(firstCancelCount, 1)
+        XCTAssertEqual(controller.teardownEvents.filter { $0 == .readerFinished }.count, 1)
+        XCTAssertEqual(controller.teardownEvents.filter { $0 == .renderersFlushed }.count, 1)
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(controller.teardownEvents.filter { $0 == .renderersFlushed }.count, 1)
+        controller.stopForDismantle()
+    }
+
+    func testMatroskaDismantleRetainsCleanupUntilQueuesFlush() async throws {
+        let factory = RetainedFinishedByteSourceFactory()
+        let recorder = MatroskaLifecycleRecorder()
+        var controller: NativeMatroskaSampleBufferPlayerController? =
+            NativeMatroskaSampleBufferPlayerController {
+                factory.make(url: $0, headers: $1)
+            }
+        controller?.teardownEventObserver = { recorder.record($0) }
+        _ = controller?.view
+        controller?.configure(
+            url: URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv"),
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 0,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in recorder.recordCallback() },
+            onPlaybackTime: { _ in recorder.recordCallback() }
+        )
+        let readerFinished = await waitUntil { controller?.readerPhase == .retiring }
+        XCTAssertTrue(readerFinished)
+        var source: FinishedByteSource? = try XCTUnwrap(factory.source)
+        let sourceCancelCount = await source?.cancelCount
+        XCTAssertEqual(sourceCancelCount, 1)
+
+        recorder.markDismantled()
+        controller?.stopForDismantle()
+        weak var weakController = controller
+        weak var weakSource = source
+        controller = nil
+        XCTAssertNotNil(weakController)
+        factory.releaseSource()
+        source = nil
+
+        let cleanupFlushed = await waitUntil { recorder.didFlushRenderers }
+        XCTAssertTrue(cleanupFlushed)
+        let resourcesReleased = await waitUntil { weakController == nil && weakSource == nil }
+        XCTAssertTrue(resourcesReleased)
+        XCTAssertEqual(recorder.callbackCountAfterDismantle, 0)
+    }
+
     func testMatroskaReplacementCancelsSourceAndQuiescesBeforeRendererFlush() async throws {
         let factory = RecordingByteSourceFactory()
         let controller = NativeMatroskaSampleBufferPlayerController {
@@ -890,6 +1034,187 @@ private final class RecordingByteSourceFactory: @unchecked Sendable {
     }
 }
 
+private final class InvalidationResumeByteSourceFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var retainedSource: InvalidationResumeByteSource?
+
+    var source: InvalidationResumeByteSource? { lock.withLock { retainedSource } }
+
+    func make(url: URL, headers: [String: String]) -> any MediaByteSource {
+        _ = headers
+        return lock.withLock {
+            if let retainedSource { return retainedSource }
+            let source = InvalidationResumeByteSource(url: url)
+            retainedSource = source
+            return source
+        }
+    }
+
+    func releaseSource() {
+        lock.withLock { retainedSource = nil }
+    }
+}
+
+private final class InvalidationResumeByteSource: MediaByteSource, @unchecked Sendable {
+    nonisolated let url: URL
+    private let lock = NSLock()
+    private var initialReadContinuation: CheckedContinuation<Data, Error>?
+    private var didServeInitialRead = false
+    private var _cancelCount = 0
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    var hasSuspendedInitialRead: Bool { lock.withLock { initialReadContinuation != nil } }
+    var cancelCount: Int { lock.withLock { _cancelCount } }
+
+    func read(range: ByteRange) async throws -> Data {
+        if lock.withLock({ !didServeInitialRead }) {
+            return try await withCheckedThrowingContinuation { continuation in
+                lock.withLock {
+                    didServeInitialRead = true
+                    initialReadContinuation = continuation
+                }
+            }
+        }
+        while true {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    func resumeInitialRead() {
+        let continuation = lock.withLock {
+            defer { initialReadContinuation = nil }
+            return initialReadContinuation
+        }
+        continuation?.resume(returning: RecordingByteSourceFactory.matroskaBootstrapData)
+    }
+
+    func size() async throws -> Int64? { 16 * 1_024 * 1_024 }
+    func cancel() async { lock.withLock { _cancelCount += 1 } }
+    func metrics() async -> MediaAccessMetrics { MediaAccessMetrics() }
+}
+
+private final class SuspendingCancellationByteSourceFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sources: [any MediaByteSource] = []
+    private var first: SuspendingCancellationByteSource?
+
+    var firstSource: SuspendingCancellationByteSource? { lock.withLock { first } }
+    var sourceCount: Int { lock.withLock { sources.count } }
+
+    func make(url: URL, headers: [String: String]) -> any MediaByteSource {
+        _ = headers
+        return lock.withLock {
+            if sources.isEmpty {
+                let source = SuspendingCancellationByteSource(
+                    url: url,
+                    bootstrapData: RecordingByteSourceFactory.matroskaBootstrapData
+                )
+                first = source
+                sources.append(source)
+                return source
+            }
+            let source = BlockingByteSource(
+                url: url,
+                bootstrapData: RecordingByteSourceFactory.matroskaBootstrapData
+            )
+            sources.append(source)
+            return source
+        }
+    }
+
+    func releaseSources() {
+        lock.withLock {
+            sources.removeAll()
+            first = nil
+        }
+    }
+}
+
+private actor SuspendingCancellationByteSource: MediaByteSource {
+    nonisolated let url: URL
+    private let bootstrapData: Data
+    private var servedBootstrap = false
+    private var readsShouldFinish = false
+    private var cancellationContinuation: CheckedContinuation<Void, Never>?
+    private var cancellationCanFinish = false
+    private(set) var cancelCount = 0
+    private var cancellationStarted = false
+
+    init(url: URL, bootstrapData: Data) {
+        self.url = url
+        self.bootstrapData = bootstrapData
+    }
+
+    func read(range: ByteRange) async throws -> Data {
+        if range.offset == 0, !servedBootstrap {
+            servedBootstrap = true
+            return bootstrapData
+        }
+        while !readsShouldFinish {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        return Data()
+    }
+
+    func size() async throws -> Int64? { 16 * 1_024 * 1_024 }
+
+    func cancel() async {
+        cancelCount += 1
+        cancellationStarted = true
+        guard !cancellationCanFinish else { return }
+        await withCheckedContinuation { continuation in
+            cancellationContinuation = continuation
+        }
+    }
+
+    func waitForCancellationStart() async -> Bool {
+        for _ in 0..<100 {
+            if cancellationStarted { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return cancellationStarted
+    }
+
+    func resumeCancellation() {
+        cancellationCanFinish = true
+        cancellationContinuation?.resume()
+        cancellationContinuation = nil
+    }
+
+    func finishReads() {
+        readsShouldFinish = true
+    }
+
+    func metrics() async -> MediaAccessMetrics { MediaAccessMetrics() }
+}
+
+private final class MatroskaLifecycleRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [NativeMatroskaTeardownEvent] = []
+    private var dismantled = false
+    private var lateCallbacks = 0
+
+    var didFlushRenderers: Bool { lock.withLock { events.contains(.renderersFlushed) } }
+    var callbackCountAfterDismantle: Int { lock.withLock { lateCallbacks } }
+
+    func record(_ event: NativeMatroskaTeardownEvent) {
+        lock.withLock { events.append(event) }
+    }
+
+    func markDismantled() {
+        lock.withLock { dismantled = true }
+    }
+
+    func recordCallback() {
+        lock.withLock {
+            if dismantled { lateCallbacks += 1 }
+        }
+    }
+}
+
 private final class FinishedByteSourceFactory: @unchecked Sendable {
     func make(url: URL, headers: [String: String]) -> any MediaByteSource {
         _ = headers
@@ -897,6 +1222,27 @@ private final class FinishedByteSourceFactory: @unchecked Sendable {
             url: url,
             data: RecordingByteSourceFactory.matroskaBootstrapData
         )
+    }
+}
+
+private final class RetainedFinishedByteSourceFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var retainedSource: FinishedByteSource?
+
+    var source: FinishedByteSource? { lock.withLock { retainedSource } }
+
+    func make(url: URL, headers: [String: String]) -> any MediaByteSource {
+        _ = headers
+        let source = FinishedByteSource(
+            url: url,
+            data: RecordingByteSourceFactory.matroskaBootstrapData
+        )
+        lock.withLock { retainedSource = source }
+        return source
+    }
+
+    func releaseSource() {
+        lock.withLock { retainedSource = nil }
     }
 }
 
