@@ -9,6 +9,7 @@ struct NativePlayerTimelineView: View {
     let onSelect: () -> Void
 #if os(tvOS)
     let focus: FocusState<NativePlayerTVChromeFocus?>.Binding
+    let availableActions: [NativePlayerTVChromeAction]
     let onCommand: (NativePlayerTVTransportCommand) -> Void
 #endif
     @State private var scrubValue: Double?
@@ -29,6 +30,7 @@ struct NativePlayerTimelineView: View {
             playbackTime: scrubValue ?? playbackTime,
             durationSeconds: durationSeconds,
             focus: focus,
+            availableActions: availableActions,
             onCommand: onCommand
         )
 #else

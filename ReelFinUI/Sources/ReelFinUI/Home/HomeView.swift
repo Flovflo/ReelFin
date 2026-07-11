@@ -1949,7 +1949,29 @@ struct HomeView: View {
 
     @MainActor
     private func openLiveUITestTargetIfRequested() async {
-        guard !liveUITestTargetOpenAttempted, let itemID = liveUITestTargetItemID else { return }
+        guard !liveUITestTargetOpenAttempted else { return }
+        if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+            liveUITestTargetOpenAttempted = true
+            do {
+                guard let item = try await TVLiveUIFixtureResolver.resolveStarCityEpisodeOne(
+                    apiClient: dependencies.apiClient
+                ) else {
+                    AppLog.ui.error("live_ui_fixture.open_failed alias=star-city-s1e1 reason=not_found")
+                    return
+                }
+                selectedDetailNamespace = nil
+                selectedDetailTransitionSourceID = nil
+                selectedDetailContextItems = [item]
+                selectedDetailContextTitle = "Live UI Fixture"
+                AppLog.ui.info("live_ui_fixture.open alias=star-city-s1e1")
+                presentDetail(item)
+            } catch {
+                AppLog.ui.error("live_ui_fixture.open_failed alias=star-city-s1e1 error=\(error.localizedDescription, privacy: .public)")
+            }
+            return
+        }
+
+        guard let itemID = liveUITestTargetItemID else { return }
         liveUITestTargetOpenAttempted = true
 
         do {
@@ -2111,10 +2133,13 @@ struct HomeView: View {
         }
 
         let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
+        let reporter: CustomPlaybackProgressReporting? = TVLiveUIAutomationPolicy.isEnabledForCurrentProcess
+            ? nil
+            : JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient)
         let engine = CustomPlaybackEngine(
             resolver: JellyfinOriginalSourceResolver(coordinator: coordinator),
             store: store,
-            reporter: JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient),
+            reporter: reporter,
             prewarmer: customPrewarmer,
             markers: JellyfinCustomPlaybackMarkers(apiClient: dependencies.apiClient)
         )

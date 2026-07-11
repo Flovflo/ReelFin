@@ -270,6 +270,8 @@ public final class CustomPlaybackEngine {
     /// Skip intro/credits suggestion (same resolver as everywhere in the app) — nil when none.
     public private(set) var activeSkipSuggestion: PlaybackSkipSuggestion?
     public private(set) var audioTracks: [CustomPlaybackAudioTrack] = []
+    /// True only when AVFoundation reports a selected option in the active audible media group.
+    public private(set) var hasSelectedAudibleMediaOption = false
     public private(set) var transportState: CustomPlaybackTransportState = .paused
     /// Item metadata + binge queue, provided by the host (drives episode skip/next semantics).
     public var currentMediaItem: MediaItem?
@@ -553,6 +555,7 @@ public final class CustomPlaybackEngine {
               let option = audioOptionsByID[id]
         else { return }
         item.select(option, in: group)
+        hasSelectedAudibleMediaOption = item.currentMediaSelection.selectedMediaOption(in: group) != nil
         audioTracks = audioTracks.map { track in
             CustomPlaybackAudioTrack(id: track.id, title: track.title, isSelected: track.id == id)
         }
@@ -1420,6 +1423,7 @@ public final class CustomPlaybackEngine {
         audioSelectionGroup = nil
         audioOptionsByID = [:]
         audioTracks = []
+        hasSelectedAudibleMediaOption = false
         audioTracksTask = Task { @MainActor [weak self, weak item] in
             guard let self, let item else { return }
             let group = try? await item.asset.loadMediaSelectionGroup(for: .audible)
@@ -1442,6 +1446,7 @@ public final class CustomPlaybackEngine {
             self.audioSelectionGroup = group
             self.audioOptionsByID = optionsByID
             self.audioTracks = tracks
+            self.hasSelectedAudibleMediaOption = selected != nil
         }
     }
 
@@ -1647,6 +1652,7 @@ public final class CustomPlaybackEngine {
         activeSkipSuggestion = nil
         audioTracks = []
         audioSelectionGroup = nil
+        hasSelectedAudibleMediaOption = false
         audioOptionsByID = [:]
         removeItemObservers()
         if let observer = audioInterruptionObserver { NotificationCenter.default.removeObserver(observer) }

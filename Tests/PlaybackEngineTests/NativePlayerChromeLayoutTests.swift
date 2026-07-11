@@ -1,4 +1,5 @@
 import XCTest
+import PlaybackEngine
 @testable import ReelFinUI
 
 final class NativePlayerChromeLayoutTests: XCTestCase {
@@ -26,6 +27,25 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertNil(evidence.readerGeneration)
     }
 
+    func testPlaybackEvidenceExpiresWhenPausedOrSamplesFreeze() {
+        var evidence = PlayerAccessibilityEvidenceState()
+
+        evidence.observe(playbackTime: 8, generation: 1, transportState: .playing, observedAt: 10)
+        evidence.observe(playbackTime: 8.6, generation: 1, transportState: .playing, observedAt: 11)
+        evidence.observe(playbackTime: 9.2, generation: 1, transportState: .playing, observedAt: 12)
+        XCTAssertTrue(evidence.isAdvancing)
+
+        evidence.setTransportState(.paused)
+        XCTAssertFalse(evidence.isAdvancing)
+
+        evidence.observe(playbackTime: 10, generation: 1, transportState: .playing, observedAt: 20)
+        evidence.observe(playbackTime: 10.6, generation: 1, transportState: .playing, observedAt: 21)
+        evidence.observe(playbackTime: 11.2, generation: 1, transportState: .playing, observedAt: 22)
+        XCTAssertTrue(evidence.isAdvancing)
+        evidence.expireAdvancing(observedAt: 25)
+        XCTAssertFalse(evidence.isAdvancing)
+    }
+
     func testNativeRendererEvidenceRequiresAcceptedSamplesRatherThanTrackMetadata() {
         let metadataOnly = NativePlayerAccessibilityDiagnostics(
             rows: [
@@ -48,6 +68,12 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(rendered.transportState, .playing)
         XCTAssertTrue(rendered.videoRenderingReady)
         XCTAssertTrue(rendered.audioRenderingReady)
+
+        let packetMetadataOnly = NativePlayerAccessibilityDiagnostics(
+            rows: ["state=playing", "packets video=5 audio=9"]
+        )
+        XCTAssertTrue(packetMetadataOnly.videoRenderingReady)
+        XCTAssertFalse(packetMetadataOnly.audioRenderingReady)
     }
 
     func testAccessibilityGenerationValueContainsNoMediaIdentity() {
@@ -118,12 +144,29 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(layout.referenceSize.height, 1_080)
         XCTAssertEqual(layout.gradientHeight / layout.referenceSize.height, 1.0 / 3.0, accuracy: 0.01)
         XCTAssertEqual(layout.horizontalPadding / layout.referenceSize.width, 1.0 / 24.0, accuracy: 0.002)
+        XCTAssertEqual(layout.bottomPadding / layout.referenceSize.height, 50.0 / 1_080.0, accuracy: 0.005)
         XCTAssertEqual(layout.circleDiameter / layout.referenceSize.height, 70.0 / 1_080.0, accuracy: 0.002)
         XCTAssertEqual(layout.timelineY / layout.referenceSize.height, 900.0 / 1_080.0, accuracy: 0.015)
         XCTAssertEqual(layout.utilityRowY / layout.referenceSize.height, 985.0 / 1_080.0, accuracy: 0.015)
         XCTAssertGreaterThanOrEqual(layout.titleMinimumScaleFactor, 0.55)
         XCTAssertLessThanOrEqual(layout.maximumTitleWidthRatio, 0.70)
         XCTAssertLessThanOrEqual(layout.timelineHeight, 8)
+    }
+
+    func testTVChromeUsesReferenceRegularInteractiveLiquidGlassWithWhiteFocus() {
+        let layout = NativePlayerTVChromeLayout.standard
+        let style = NativePlayerTVChromeGlassStyle.standard
+
+        XCTAssertEqual(layout.circleDiameter, 70)
+        XCTAssertEqual(layout.utilityHeight, 64)
+        XCTAssertEqual(layout.iconSize, 28)
+        XCTAssertEqual(style.variant, .regular)
+        XCTAssertTrue(style.isInteractive)
+        XCTAssertEqual(style.opaqueFillOpacity, 0)
+        XCTAssertGreaterThanOrEqual(style.focusedFillOpacity, 0.32)
+        XCTAssertLessThanOrEqual(style.focusedFillOpacity, 0.42)
+        XCTAssertLessThanOrEqual(style.unfocusedStrokeOpacity, 0.10)
+        XCTAssertEqual(style.focusedScale, 1)
     }
 
     func testTVChromeUtilityPillsAreFunctionalAndReferenceOrdered() {
@@ -133,7 +176,7 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         )
         XCTAssertEqual(
             NativePlayerTVChromeUtilityAction.allCases.map(\.title),
-            ["Info", "InSight", "Continue Watching"]
+            ["Info", "Détails", "Continuer"]
         )
         XCTAssertEqual(NativePlayerTVChromeUtilityAction.info.destination, .playbackInfoPanel)
         XCTAssertEqual(NativePlayerTVChromeUtilityAction.insight.destination, .itemInsightPanel)
@@ -149,6 +192,157 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeFocus.utility(.info), .info)
         XCTAssertEqual(NativePlayerTVChromeFocus.utility(.insight), .insight)
         XCTAssertEqual(NativePlayerTVChromeFocus.utility(.continueWatching), .continueWatching)
+    }
+
+    func testTVChromeAvailableActionsRequireRealSelectableTracks() {
+        let disabledOnly = PlaybackTrackOption(
+            trackID: nil,
+            title: "Désactivés",
+            badge: nil,
+            iconName: nil,
+            isSelected: true
+        )
+        let subtitle = PlaybackTrackOption(
+            trackID: "subtitle-1",
+            title: "Français",
+            badge: nil,
+            iconName: nil,
+            isSelected: false
+        )
+        let audioOne = PlaybackTrackOption(
+            trackID: "audio-1",
+            title: "Français",
+            badge: nil,
+            iconName: nil,
+            isSelected: true
+        )
+        let audioTwo = PlaybackTrackOption(
+            trackID: "audio-2",
+            title: "English",
+            badge: nil,
+            iconName: nil,
+            isSelected: false
+        )
+
+        XCTAssertEqual(
+            NativePlayerTVChromeAvailability.actions(for: PlaybackControlsModel(
+                audioOptions: [audioOne],
+                subtitleOptions: [disabledOnly]
+            )),
+            [.video]
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeAvailability.actions(for: PlaybackControlsModel(
+                audioOptions: [audioOne, audioTwo],
+                subtitleOptions: [disabledOnly, subtitle]
+            )),
+            [.subtitles, .audio, .video]
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeAvailability.actions(for: PlaybackControlsModel(
+                subtitleOptions: [subtitle]
+            )),
+            [.subtitles, .video]
+        )
+    }
+
+    func testTVChromeCircularFocusMovesHorizontallyAndDownToTimeline() {
+        let actions: [NativePlayerTVChromeAction] = [.subtitles, .audio, .video]
+
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .subtitles, direction: .left, availableActions: actions),
+            .subtitles
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .subtitles, direction: .right, availableActions: actions),
+            .audio
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .audio, direction: .left, availableActions: actions),
+            .subtitles
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .audio, direction: .right, availableActions: actions),
+            .video
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .video, direction: .right, availableActions: actions),
+            .video
+        )
+        for action in actions {
+            XCTAssertEqual(
+                NativePlayerTVChromeFocusGraph.destination(
+                    from: .action(action),
+                    direction: .down,
+                    availableActions: actions
+                ),
+                .timeline
+            )
+        }
+    }
+
+    func testTVChromeTimelineFocusConnectsAvailableActionRowAndInfo() {
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(
+                from: .timeline,
+                direction: .up,
+                availableActions: [.audio, .video]
+            ),
+            .audio
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(
+                from: .timeline,
+                direction: .up,
+                availableActions: [.video]
+            ),
+            .video
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(
+                from: .timeline,
+                direction: .down,
+                availableActions: [.video]
+            ),
+            .info
+        )
+    }
+
+    func testTVChromeUtilityFocusMovesHorizontallyAndUpToTimeline() {
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .info, direction: .left, availableActions: [.video]),
+            .info
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .info, direction: .right, availableActions: [.video]),
+            .insight
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .insight, direction: .left, availableActions: [.video]),
+            .info
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .insight, direction: .right, availableActions: [.video]),
+            .continueWatching
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(
+                from: .continueWatching,
+                direction: .right,
+                availableActions: [.video]
+            ),
+            .continueWatching
+        )
+        for action in NativePlayerTVChromeUtilityAction.allCases {
+            XCTAssertEqual(
+                NativePlayerTVChromeFocusGraph.destination(
+                    from: .utility(action),
+                    direction: .up,
+                    availableActions: [.video]
+                ),
+                .timeline
+            )
+        }
     }
 
     func testCurrentTimeLabelTracksPlayheadWithoutCollidingWithEdges() {
@@ -174,12 +368,122 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertFalse(NativePlayerTVContinueWatchingPolicy.shouldResume(isPaused: false))
     }
 
+    func testContinueWatchingSuppressesThePauseObserverRevealForOneTransition() {
+        var transition = NativePlayerTVContinueWatchingTransition()
+
+        transition.beginContinueWatching(isPaused: true)
+        XCTAssertFalse(transition.shouldRevealChromeAfterPauseChange())
+        XCTAssertTrue(transition.shouldRevealChromeAfterPauseChange())
+    }
+
+    func testLiveAutomationRequiresDebugTVOSOptInAndExactRedactedAlias() {
+        let values = [
+            "REELFIN_TV_UI_AUTOMATION": "1",
+            "REELFIN_LIVE_UI_FIXTURE_ALIAS": "star-city-s1e1"
+        ]
+        XCTAssertTrue(TVLiveUIAutomationPolicy.isEnabled(isDebug: true, isTVOS: true, environment: values))
+        XCTAssertFalse(TVLiveUIAutomationPolicy.isEnabled(isDebug: false, isTVOS: true, environment: values))
+        XCTAssertFalse(TVLiveUIAutomationPolicy.isEnabled(isDebug: true, isTVOS: false, environment: values))
+        XCTAssertFalse(TVLiveUIAutomationPolicy.isEnabled(
+            isDebug: true,
+            isTVOS: true,
+            environment: [
+                "REELFIN_TV_UI_AUTOMATION": "1",
+                "REELFIN_LIVE_UI_FIXTURE_ALIAS": "not-the-fixture"
+            ]
+        ))
+        XCTAssertEqual(TVLiveUIAutomationPolicy.minimumLoopCount(requested: 1), 10)
+        XCTAssertEqual(TVLiveUIAutomationPolicy.minimumLoopCount(requested: 14), 14)
+    }
+
     func testTVTrackPopoverUsesCompactRightSideMetrics() {
         let layout = NativePlayerTrackMenuLayout.tvOS
 
-        XCTAssertLessThanOrEqual(layout.panelWidth, 560)
-        XCTAssertLessThanOrEqual(layout.contentMaxHeight, 480)
-        XCTAssertLessThanOrEqual(layout.cornerRadius, 42)
+        XCTAssertEqual(layout.panelWidth, 460)
+        XCTAssertEqual(layout.rowHeight, 58)
+        XCTAssertEqual(layout.rowTitleSize, 22)
+        XCTAssertEqual(layout.titleSize, 24)
+        XCTAssertLessThanOrEqual(layout.contentMaxHeight, 360)
+        XCTAssertLessThanOrEqual(layout.cornerRadius, 30)
+    }
+
+    func testTVTrackPopoverUsesTranslucentGlassAndDistinctSelectedFocusStates() {
+        let style = NativePlayerTrackMenuVisualStyle.tvOS
+
+        XCTAssertEqual(style.panelOpaqueFillOpacity, 0)
+        XCTAssertLessThanOrEqual(style.panelBlackTintOpacity, 0.12)
+        XCTAssertGreaterThanOrEqual(style.focusedFillOpacity, 0.22)
+        XCTAssertLessThanOrEqual(style.focusedFillOpacity, 0.34)
+        XCTAssertGreaterThan(style.selectedFillOpacity, 0)
+        XCTAssertLessThan(style.selectedFillOpacity, style.focusedFillOpacity)
+    }
+
+    func testTVTrackPopoverStructuresRawJellyfinSubtitleLabels() {
+        let forced = PlaybackTrackMenuOptionPresentation(
+            option: PlaybackTrackOption(
+                trackID: "forced",
+                title: "VFF Forced - French - Default - SUBRIP",
+                badge: nil,
+                iconName: nil,
+                isSelected: false
+            )
+        )
+        XCTAssertEqual(forced.title, "Français · VFF")
+        XCTAssertEqual(forced.details, "Forcé · Défaut · SRT")
+
+        let sdh = PlaybackTrackMenuOptionPresentation(
+            option: PlaybackTrackOption(
+                trackID: "sdh",
+                title: "VFF SDH - French - Hearing Impaired - SUBRIP",
+                badge: nil,
+                iconName: nil,
+                isSelected: false
+            )
+        )
+        XCTAssertEqual(sdh.title, "Français · VFF")
+        XCTAssertEqual(sdh.details, "Malentendants · SRT")
+
+        let english = PlaybackTrackMenuOptionPresentation(
+            option: PlaybackTrackOption(
+                trackID: "english",
+                title: "English - SUBRIP",
+                badge: nil,
+                iconName: nil,
+                isSelected: true
+            )
+        )
+        XCTAssertEqual(english.title, "Anglais")
+        XCTAssertEqual(english.details, "SRT")
+    }
+
+    func testTrackAccessibilityLabelDistinguishesSameLanguageAudioOptions() {
+        let dolby = PlaybackTrackOption(
+            trackID: "dolby",
+            title: "English",
+            badge: "Dolby Digital+ · Default",
+            iconName: nil,
+            isSelected: true
+        )
+        let aac = PlaybackTrackOption(
+            trackID: "aac",
+            title: "English",
+            badge: "AAC",
+            iconName: nil,
+            isSelected: false
+        )
+
+        XCTAssertNotEqual(dolby.accessibilityLabel, aac.accessibilityLabel)
+        XCTAssertEqual(dolby.accessibilityLabel, "English, Dolby Digital+ · Default")
+    }
+
+    func testCustomAudioOptionsDisambiguateDuplicateDisplayNames() {
+        let options = PlaybackControlsModel.customAudioOptions(from: [
+            CustomPlaybackAudioTrack(id: "audio-0", title: "English", isSelected: true),
+            CustomPlaybackAudioTrack(id: "audio-1", title: "English", isSelected: false)
+        ])
+
+        XCTAssertEqual(options.map(\.badge), ["Piste 1", "Piste 2"])
+        XCTAssertEqual(options.map(\.accessibilityLabel), ["English, Piste 1", "English, Piste 2"])
     }
 
     func testTVTimelineRemoteSeeksAreUsefulAndClamped() {

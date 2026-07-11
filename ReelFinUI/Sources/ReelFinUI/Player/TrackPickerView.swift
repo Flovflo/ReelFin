@@ -7,7 +7,7 @@ enum PlaybackControlSelection {
     case subtitle(String?)
 }
 
-enum PlaybackTrackMenuKind: Equatable {
+enum PlaybackTrackMenuKind: Hashable {
     case audio
     case subtitles
 }
@@ -21,6 +21,11 @@ struct PlaybackTrackOption: Identifiable, Equatable {
 
     var id: String {
         trackID ?? "__none__"
+    }
+
+    var accessibilityLabel: String {
+        guard let badge, !badge.isEmpty else { return title }
+        return "\(title), \(badge)"
     }
 }
 
@@ -103,6 +108,24 @@ struct PlaybackControlsModel: Equatable {
             subtitleOptions: subtitleOptions
         )
     }
+
+    static func customAudioOptions(from tracks: [CustomPlaybackAudioTrack]) -> [PlaybackTrackOption] {
+        let titleCounts = Dictionary(grouping: tracks, by: \.title).mapValues(\.count)
+        var occurrences: [String: Int] = [:]
+        return tracks.map { track in
+            occurrences[track.title, default: 0] += 1
+            let badge = titleCounts[track.title, default: 0] > 1
+                ? "Piste \(occurrences[track.title, default: 1])"
+                : nil
+            return PlaybackTrackOption(
+                trackID: track.id,
+                title: track.title,
+                badge: badge,
+                iconName: "waveform",
+                isSelected: track.isSelected
+            )
+        }
+    }
 }
 
 enum PlaybackTrackPresentation {
@@ -168,6 +191,119 @@ enum PlaybackTrackPresentation {
     }
 }
 
+/// Compact, user-facing text for the player popover. Jellyfin and sidecar sources can expose
+/// labels such as “VFF Forced - French - Default - SUBRIP”; the popover keeps the original option
+/// identity while presenting that metadata as a short title and a secondary detail line.
+struct PlaybackTrackMenuOptionPresentation: Equatable {
+    let title: String
+    let details: String?
+
+    init(option: PlaybackTrackOption) {
+        let rawTokens = Self.tokens(in: option.title) + Self.tokens(in: option.badge)
+        var language: String?
+        var labels: [String] = []
+        var metadata: [String] = []
+
+        for rawToken in rawTokens {
+            var token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !token.isEmpty else { continue }
+            let lowered = token.lowercased()
+
+            if ["off", "disabled", "désactivés", "désactivé"].contains(lowered) {
+                language = "Désactivés"
+                continue
+            }
+            if let localizedLanguage = Self.localizedLanguage(lowered) {
+                language = localizedLanguage
+                continue
+            }
+            if let codec = Self.codecLabel(lowered) {
+                Self.appendUnique(codec, to: &metadata)
+                continue
+            }
+
+            if lowered.contains("forced") || lowered.contains("forcé") {
+                Self.appendUnique("Forcé", to: &metadata)
+                token = Self.removing(["Forced", "forced", "Forcé", "forcé"], from: token)
+            }
+            if lowered.contains("hearing impaired") || lowered.contains("malentendant") || lowered.contains("sdh") {
+                Self.appendUnique("Malentendants", to: &metadata)
+                token = Self.removing(
+                    ["Hearing Impaired", "hearing impaired", "Malentendants", "malentendants", "SDH", "sdh"],
+                    from: token
+                )
+            }
+
+            let cleaned = token.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanedLower = cleaned.lowercased()
+            if ["default", "défaut"].contains(cleanedLower) {
+                Self.appendUnique("Défaut", to: &metadata)
+            } else if !cleaned.isEmpty {
+                Self.appendUnique(cleaned, to: &labels)
+            }
+        }
+
+        if language == "Désactivés" {
+            title = "Désactivés"
+            details = nil
+            return
+        }
+
+        let primaryParts = [language].compactMap { $0 } + labels
+        title = primaryParts.isEmpty ? option.title : primaryParts.joined(separator: " · ")
+        details = metadata.isEmpty ? nil : metadata.joined(separator: " · ")
+    }
+
+    private static func tokens(in value: String?) -> [String] {
+        guard let value, !value.isEmpty else { return [] }
+        return value
+            .replacingOccurrences(of: " – ", with: " - ")
+            .replacingOccurrences(of: " — ", with: " - ")
+            .components(separatedBy: " - ")
+            .flatMap { $0.components(separatedBy: " · ") }
+    }
+
+    private static func localizedLanguage(_ token: String) -> String? {
+        switch token {
+        case "french", "français", "francais", "fre", "fra", "fr": return "Français"
+        case "english", "anglais", "eng", "en": return "Anglais"
+        case "arabic", "arabe", "ara", "ar": return "Arabe"
+        case "spanish", "espagnol", "spa", "es": return "Espagnol"
+        case "german", "allemand", "deu", "ger", "de": return "Allemand"
+        case "italian", "italien", "ita", "it": return "Italien"
+        default: return nil
+        }
+    }
+
+    private static func codecLabel(_ token: String) -> String? {
+        switch token {
+        case "subrip", "srt": return "SRT"
+        case "webvtt", "vtt": return "WebVTT"
+        case "ass": return "ASS"
+        case "ssa": return "SSA"
+        case "pgs", "pgssub": return "PGS"
+        case "aac": return "AAC"
+        case "ac3": return "Dolby Digital"
+        case "eac3", "ec-3", "ec3": return "Dolby Digital+"
+        case "truehd": return "TrueHD"
+        default: return nil
+        }
+    }
+
+    private static func removing(_ fragments: [String], from value: String) -> String {
+        fragments.reduce(value) { result, fragment in
+            result.replacingOccurrences(of: fragment, with: "")
+        }
+        .split(whereSeparator: \.isWhitespace)
+        .joined(separator: " ")
+    }
+
+    private static func appendUnique(_ value: String, to values: inout [String]) {
+        guard !values.contains(value) else { return }
+        values.append(value)
+    }
+}
+
 struct NativePlayerTrackSelectionMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
@@ -182,7 +318,7 @@ struct NativePlayerTrackSelectionMenuView: View {
         VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
             Text(primaryTitle)
                 .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(.white.opacity(0.82))
                 .padding(.horizontal, metrics.horizontalPadding)
 
             ScrollView {
@@ -200,29 +336,40 @@ struct NativePlayerTrackSelectionMenuView: View {
         .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
         .nativePlayerTrackMenuFocusScope(focusNamespace)
         .defaultFocus($focusedOptionID, defaultOptionID)
-        .onAppear {
 #if os(tvOS)
+        .task(id: "\(mode)-\(defaultOptionID)") {
+            // Let the parent release the chrome focus before the menu requests its default row.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
             focusedOptionID = defaultOptionID
             resetFocus(in: focusNamespace)
-#endif
         }
+#endif
         .background(alignment: .topLeading) {
-            PlayerAccessibilityMarkerView(identifier: accessibilityIdentifier)
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+                ZStack {
+                    PlayerAccessibilityMarkerView(identifier: accessibilityIdentifier)
+                    PlayerAccessibilityMarkerView(
+                        identifier: "native_player_track_focused_title",
+                        value: focusedOptionTitle
+                    )
+                }
                 .frame(width: 1, height: 1)
+            }
         }
     }
 
     private var audioTrackSection: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
             if controls.audioOptions.isEmpty {
-                NativePlayerTrackMenuEmptyRow(title: "No alternate audio")
+                NativePlayerTrackMenuEmptyRow(title: "Aucune piste audio")
             } else {
-                sectionLabel("Audio Track")
                 ForEach(controls.audioOptions) { option in
                     NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
                         guard let trackID = option.trackID else { return }
                         onSelect(.audio(trackID))
                     }
+                    .nativePlayerPrefersDefaultTrackFocus(option.id == defaultOptionID, in: focusNamespace)
                 }
             }
         }
@@ -231,23 +378,16 @@ struct NativePlayerTrackSelectionMenuView: View {
     private var subtitlesSection: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
             if controls.subtitleOptions.isEmpty {
-                NativePlayerTrackMenuEmptyRow(title: "No subtitles")
+                NativePlayerTrackMenuEmptyRow(title: "Aucun sous-titre")
             } else {
                 ForEach(controls.subtitleOptions) { option in
                     NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
                         onSelect(.subtitle(option.trackID))
                     }
+                    .nativePlayerPrefersDefaultTrackFocus(option.id == defaultOptionID, in: focusNamespace)
                 }
             }
         }
-    }
-
-    private func sectionLabel(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: metrics.sectionTitleSize, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.46))
-            .padding(.horizontal, metrics.horizontalPadding)
-            .padding(.top, mode == .audio ? 4 : 0)
     }
 
     private var primaryTitle: String {
@@ -276,12 +416,19 @@ struct NativePlayerTrackSelectionMenuView: View {
         let options = controls.options(for: mode)
         return (options.first(where: \.isSelected) ?? options.first)?.id ?? "__empty__"
     }
+
+    private var focusedOptionTitle: String? {
+        guard let focusedOptionID else { return nil }
+        return controls.options(for: mode).first(where: { $0.id == focusedOptionID })?.accessibilityLabel
+    }
+
 }
 
 /// A real destination for the tvOS “Vidéo” action. It intentionally reports only user-relevant
 /// facts already known by the active route; diagnostics remain in the DEBUG-only panel.
 struct NativePlayerVideoInformationView: View {
     var title: String = "Vidéo"
+    var accessibilityIdentifier: String = "native_player_video_panel"
     let qualityLabel: String
     let routeLabel: String
 
@@ -299,8 +446,10 @@ struct NativePlayerVideoInformationView: View {
         .frame(width: metrics.panelWidth, alignment: .leading)
         .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
         .background(alignment: .topLeading) {
-            PlayerAccessibilityMarkerView(identifier: "native_player_video_panel")
-                .frame(width: 1, height: 1)
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+                PlayerAccessibilityMarkerView(identifier: accessibilityIdentifier)
+                    .frame(width: 1, height: 1)
+            }
         }
     }
 
@@ -323,7 +472,7 @@ struct NativePlayerVideoInformationView: View {
     private var metrics: NativePlayerTrackMenuLayout { .current }
 }
 
-/// Honest item context for the tvOS InSight action. This intentionally uses only metadata already
+/// Honest Jellyfin metadata for the tvOS Détails action.
 /// supplied by Jellyfin; it does not imply people recognition or scene analysis.
 struct NativePlayerItemInsightView: View {
     let item: MediaItem?
@@ -331,7 +480,7 @@ struct NativePlayerItemInsightView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Text("InSight")
+            Text("Détails")
                 .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.66))
 
@@ -352,8 +501,10 @@ struct NativePlayerItemInsightView: View {
         .frame(width: metrics.panelWidth, alignment: .leading)
         .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
         .background(alignment: .topLeading) {
-            PlayerAccessibilityMarkerView(identifier: "native_player_insight_panel")
-                .frame(width: 1, height: 1)
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+                PlayerAccessibilityMarkerView(identifier: "native_player_insight_panel")
+                    .frame(width: 1, height: 1)
+            }
         }
     }
 
@@ -389,36 +540,41 @@ private struct NativePlayerTrackMenuRow: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 18) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: metrics.checkSize, weight: .semibold, design: .rounded))
-                    .foregroundStyle(option.isSelected ? foreground : .clear)
-                    .frame(width: metrics.checkColumnWidth)
-
+            HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(option.title)
+                    Text(presentation.title)
                         .font(.system(size: metrics.rowTitleSize, weight: .semibold, design: .rounded))
                         .foregroundStyle(foreground)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                        .minimumScaleFactor(0.82)
 
-                    if let badge = option.badge {
-                        Text(badge)
+                    if let details = presentation.details {
+                        Text(details)
                             .font(.system(size: metrics.badgeSize, weight: .medium, design: .rounded))
-                            .foregroundStyle(foreground.opacity(isHighlighted ? 0.62 : 0.46))
+                            .foregroundStyle(foreground.opacity(isFocused ? 0.68 : 0.52))
                             .lineLimit(1)
-                            .minimumScaleFactor(0.75)
+                            .minimumScaleFactor(0.82)
                     }
                 }
 
                 Spacer(minLength: 0)
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: metrics.checkSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(option.isSelected ? foreground.opacity(0.92) : .clear)
+                    .frame(width: metrics.checkColumnWidth)
             }
             .padding(.horizontal, metrics.rowHorizontalPadding)
             .frame(height: metrics.rowHeight)
-            .contentShape(Capsule(style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous))
             .background {
-                Capsule(style: .continuous)
-                    .fill(isHighlighted ? Color.white.opacity(0.96) : Color.clear)
+                RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(rowFillOpacity))
+                    .glassEffect(.clear.interactive(), in: .rect(cornerRadius: rowCornerRadius))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(rowStrokeOpacity), lineWidth: 1)
             }
         }
         .buttonStyle(TVNoChromeButtonStyle())
@@ -426,22 +582,44 @@ private struct NativePlayerTrackMenuRow: View {
         .nativePlayerTrackMenuFocusDisabled()
         .padding(.horizontal, metrics.rowOuterPadding)
         .accessibilityIdentifier("native_player_track_option")
-        .accessibilityLabel(option.title)
+        .accessibilityLabel(option.accessibilityLabel)
         .accessibilityValue(option.isSelected ? "selected" : "not_selected")
         .accessibilityAddTraits(option.isSelected ? .isSelected : [])
     }
 
-    private var isHighlighted: Bool {
-        focusedOptionID.wrappedValue == option.id || option.isSelected
+    private var isFocused: Bool {
+        focusedOptionID.wrappedValue == option.id
     }
 
     private var foreground: Color {
-        isHighlighted ? .black : .white
+        isFocused ? Color.black.opacity(0.86) : Color.white.opacity(0.96)
+    }
+
+    private var rowFillOpacity: Double {
+        if isFocused { return style.focusedFillOpacity }
+        if option.isSelected { return style.selectedFillOpacity }
+        return style.restingFillOpacity
+    }
+
+    private var rowStrokeOpacity: Double {
+        if isFocused { return style.focusedStrokeOpacity }
+        if option.isSelected { return style.selectedStrokeOpacity }
+        return style.restingStrokeOpacity
     }
 
     private var metrics: NativePlayerTrackMenuLayout {
         NativePlayerTrackMenuLayout.current
     }
+
+    private var style: NativePlayerTrackMenuVisualStyle {
+        NativePlayerTrackMenuVisualStyle.current
+    }
+
+    private var presentation: PlaybackTrackMenuOptionPresentation {
+        PlaybackTrackMenuOptionPresentation(option: option)
+    }
+
+    private var rowCornerRadius: CGFloat { metrics.rowHeight * 0.32 }
 }
 
 private struct NativePlayerTrackMenuEmptyRow: View {
@@ -476,22 +654,22 @@ struct NativePlayerTrackMenuLayout {
     let contentMaxHeight: CGFloat
 
     static let tvOS = NativePlayerTrackMenuLayout(
-        panelWidth: 540,
-        cornerRadius: 38,
-        horizontalPadding: 38,
-        verticalPadding: 30,
-        sectionSpacing: 24,
-        rowSpacing: 10,
-        rowHeight: 76,
-        rowOuterPadding: 18,
-        rowHorizontalPadding: 26,
-        checkColumnWidth: 40,
-        titleSize: 32,
-        sectionTitleSize: 26,
-        rowTitleSize: 30,
-        badgeSize: 18,
-        checkSize: 28,
-        contentMaxHeight: 440
+        panelWidth: 460,
+        cornerRadius: 28,
+        horizontalPadding: 24,
+        verticalPadding: 20,
+        sectionSpacing: 14,
+        rowSpacing: 6,
+        rowHeight: 58,
+        rowOuterPadding: 10,
+        rowHorizontalPadding: 16,
+        checkColumnWidth: 28,
+        titleSize: 24,
+        sectionTitleSize: 20,
+        rowTitleSize: 22,
+        badgeSize: 15,
+        checkSize: 18,
+        contentMaxHeight: 360
     )
 
     static let iOS = NativePlayerTrackMenuLayout(
@@ -522,6 +700,47 @@ struct NativePlayerTrackMenuLayout {
     }
 }
 
+struct NativePlayerTrackMenuVisualStyle: Equatable {
+    let panelOpaqueFillOpacity: Double
+    let panelBlackTintOpacity: Double
+    let focusedFillOpacity: Double
+    let selectedFillOpacity: Double
+    let restingFillOpacity: Double
+    let focusedStrokeOpacity: Double
+    let selectedStrokeOpacity: Double
+    let restingStrokeOpacity: Double
+
+    static let tvOS = NativePlayerTrackMenuVisualStyle(
+        panelOpaqueFillOpacity: 0,
+        panelBlackTintOpacity: 0.08,
+        focusedFillOpacity: 0.28,
+        selectedFillOpacity: 0.055,
+        restingFillOpacity: 0.012,
+        focusedStrokeOpacity: 0.16,
+        selectedStrokeOpacity: 0.08,
+        restingStrokeOpacity: 0.025
+    )
+
+    static let iOS = NativePlayerTrackMenuVisualStyle(
+        panelOpaqueFillOpacity: 0,
+        panelBlackTintOpacity: 0.06,
+        focusedFillOpacity: 0.20,
+        selectedFillOpacity: 0.05,
+        restingFillOpacity: 0.01,
+        focusedStrokeOpacity: 0.12,
+        selectedStrokeOpacity: 0.07,
+        restingStrokeOpacity: 0.02
+    )
+
+    static var current: NativePlayerTrackMenuVisualStyle {
+#if os(tvOS)
+        tvOS
+#else
+        iOS
+#endif
+    }
+}
+
 private extension View {
     @ViewBuilder
     func nativePlayerTrackMenuFocusScope(_ namespace: Namespace.ID) -> some View {
@@ -544,16 +763,17 @@ private extension View {
     }
 
     func nativePlayerTrackMenuGlass(cornerRadius: CGFloat) -> some View {
-        background {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.black.opacity(0.48))
-                .glassEffect(.regular.tint(.black.opacity(0.20)), in: .rect(cornerRadius: cornerRadius))
-        }
+        let style = NativePlayerTrackMenuVisualStyle.current
+        return self
+        .glassEffect(
+            .regular.tint(.black.opacity(style.panelBlackTintOpacity)),
+            in: .rect(cornerRadius: cornerRadius)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1.2)
+                .stroke(.white.opacity(0.09), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.22), radius: 16, x: 0, y: 8)
+        .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 6)
     }
 
     @ViewBuilder
@@ -566,6 +786,7 @@ private extension View {
         self
 #endif
     }
+
 }
 
 /// A sheet that lets the user switch audio language and subtitle tracks

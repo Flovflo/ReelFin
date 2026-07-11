@@ -5,6 +5,7 @@ struct NativePlayerTVProgressScrubberView: View {
     let playbackTime: Double
     let durationSeconds: Double?
     let focus: FocusState<NativePlayerTVChromeFocus?>.Binding
+    let availableActions: [NativePlayerTVChromeAction]
     let onCommand: (NativePlayerTVTransportCommand) -> Void
 
     var body: some View {
@@ -49,8 +50,20 @@ struct NativePlayerTVProgressScrubberView: View {
                 onCommand(.move(.left))
             case .right:
                 onCommand(.move(.right))
-            case .up, .down:
-                break
+            case .up:
+                onCommand(.move(.up))
+                focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
+                    from: .timeline,
+                    direction: .up,
+                    availableActions: availableActions
+                )
+            case .down:
+                onCommand(.move(.down))
+                focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
+                    from: .timeline,
+                    direction: .down,
+                    availableActions: availableActions
+                )
             @unknown default:
                 break
             }

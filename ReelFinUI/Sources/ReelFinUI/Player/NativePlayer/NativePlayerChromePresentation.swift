@@ -1,5 +1,6 @@
 import Foundation
 import Shared
+import SwiftUI
 
 struct NativePlayerSeekRequest: Equatable {
     let id: Int
@@ -185,6 +186,116 @@ enum NativePlayerTVChromeFocus: Hashable {
         case .continueWatching: return .continueWatching
         }
     }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .timeline: return "native_player_timeline_scrubber"
+        case .audio: return NativePlayerTVChromeAction.audio.accessibilityIdentifier
+        case .subtitles: return NativePlayerTVChromeAction.subtitles.accessibilityIdentifier
+        case .video: return NativePlayerTVChromeAction.video.accessibilityIdentifier
+        case .info: return NativePlayerTVChromeUtilityAction.info.accessibilityIdentifier
+        case .insight: return NativePlayerTVChromeUtilityAction.insight.accessibilityIdentifier
+        case .continueWatching: return NativePlayerTVChromeUtilityAction.continueWatching.accessibilityIdentifier
+        }
+    }
+}
+
+enum NativePlayerTVChromeFocusGraph {
+    static func effectivePreferredFocus(
+        _ preferred: NativePlayerTVChromeFocus,
+        availableActions: [NativePlayerTVChromeAction]
+    ) -> NativePlayerTVChromeFocus {
+        if let action = preferred.chromeAction, availableActions.contains(action) {
+            return preferred
+        }
+        if preferred.chromeAction == nil { return preferred }
+        return availableActions.first.map(NativePlayerTVChromeFocus.action) ?? .timeline
+    }
+
+    static func destination(
+        from current: NativePlayerTVChromeFocus,
+        direction: NativePlayerRemoteMoveDirection,
+        availableActions: [NativePlayerTVChromeAction]
+    ) -> NativePlayerTVChromeFocus? {
+        if let action = current.chromeAction,
+           let index = availableActions.firstIndex(of: action) {
+            switch direction {
+            case .left:
+                let target = max(availableActions.startIndex, index - 1)
+                return .action(availableActions[target])
+            case .right:
+                let target = min(availableActions.index(before: availableActions.endIndex), index + 1)
+                return .action(availableActions[target])
+            case .down:
+                return .timeline
+            case .up:
+                return nil
+            }
+        }
+
+        if current == .timeline {
+            switch direction {
+            case .up:
+                return availableActions.first.map(NativePlayerTVChromeFocus.action)
+            case .down:
+                return .info
+            case .left, .right:
+                return nil
+            }
+        }
+
+        if let utility = current.utilityAction,
+           let index = NativePlayerTVChromeUtilityAction.allCases.firstIndex(of: utility) {
+            switch direction {
+            case .left:
+                let target = max(NativePlayerTVChromeUtilityAction.allCases.startIndex, index - 1)
+                return .utility(NativePlayerTVChromeUtilityAction.allCases[target])
+            case .right:
+                let target = min(
+                    NativePlayerTVChromeUtilityAction.allCases.index(before: NativePlayerTVChromeUtilityAction.allCases.endIndex),
+                    index + 1
+                )
+                return .utility(NativePlayerTVChromeUtilityAction.allCases[target])
+            case .up:
+                return .timeline
+            case .down:
+                return nil
+            }
+        }
+        return nil
+    }
+
+#if os(tvOS)
+    static func remoteDirection(from direction: MoveCommandDirection) -> NativePlayerRemoteMoveDirection? {
+        switch direction {
+        case .left: return .left
+        case .right: return .right
+        case .up: return .up
+        case .down: return .down
+        @unknown default: return nil
+        }
+    }
+#endif
+}
+
+private extension NativePlayerTVChromeFocus {
+    var chromeAction: NativePlayerTVChromeAction? {
+        switch self {
+        case .subtitles: return .subtitles
+        case .audio: return .audio
+        case .video: return .video
+        case .timeline, .info, .insight, .continueWatching: return nil
+        }
+    }
+
+    var utilityAction: NativePlayerTVChromeUtilityAction? {
+        switch self {
+        case .info: return .info
+        case .insight: return .insight
+        case .continueWatching: return .continueWatching
+        case .timeline, .subtitles, .audio, .video: return nil
+        }
+    }
 }
 
 struct NativePlayerChromeExplicitVisibilityPolicy {
@@ -207,6 +318,20 @@ struct NativePlayerTVTimelineLabelLayout {
 
 struct NativePlayerTVContinueWatchingPolicy {
     static func shouldResume(isPaused: Bool) -> Bool { isPaused }
+}
+
+struct NativePlayerTVContinueWatchingTransition: Equatable {
+    private var suppressesNextPauseReveal = false
+
+    mutating func beginContinueWatching(isPaused: Bool) {
+        suppressesNextPauseReveal = isPaused
+    }
+
+    mutating func shouldRevealChromeAfterPauseChange() -> Bool {
+        guard suppressesNextPauseReveal else { return true }
+        suppressesNextPauseReveal = false
+        return false
+    }
 }
 
 enum NativePlayerRemoteMoveDirection: Equatable {

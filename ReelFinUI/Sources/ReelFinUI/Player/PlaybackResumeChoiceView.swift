@@ -283,8 +283,10 @@ struct PlaybackResumeChoiceView: View {
             }
             .shadow(color: .black.opacity(0.42), radius: 50, y: 24)
 
-            PlaybackResumeChoiceAccessibilityAnchor(focusedChoice: focusedChoice)
-                .frame(width: 1, height: 1)
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+                PlaybackResumeChoiceAccessibilityAnchor(focusedChoice: focusedChoice)
+                    .frame(width: 1, height: 1)
+            }
         }
         .onExitCommand(perform: onCancel)
         .onAppear {

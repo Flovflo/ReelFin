@@ -28,7 +28,6 @@ struct NativePlayerView: View {
     @State private var seekDisplayHoldUntil: Date?
     @State private var activeTrackMenu: PlaybackTrackMenuKind?
     @State private var activeInformationPanel: NativePlayerInformationPanel?
-    @State private var focusReturnToken: UInt = 0
     @State private var showsDiagnostics = false
     @State private var isChromeUserActive = true
 #if os(tvOS)
@@ -39,10 +38,13 @@ struct NativePlayerView: View {
     @State private var lastDeepEvidenceLogDate: Date?
     @State private var lastDeepEvidencePlaybackTime: Double?
     @State private var accessibilityEvidence = PlayerAccessibilityEvidenceState()
+    @State private var accessibilityEvidenceExpiryTask: Task<Void, Never>?
 #if os(tvOS)
+    @State private var continueWatchingTransition = NativePlayerTVContinueWatchingTransition()
     @FocusState private var remoteInputFocused: Bool
     @Namespace private var remoteFocusNamespace
     @State private var preferredChromeFocus: NativePlayerTVChromeFocus = .timeline
+    @State private var chromeFocusRequestToken: UInt = 0
 #endif
 
     var body: some View {
@@ -116,10 +118,11 @@ struct NativePlayerView: View {
                     onToggleChrome: hideChrome,
                     onDismiss: { dismiss() },
                     isInteractionEnabled: activeTrackMenu == nil && activeInformationPanel == nil,
+                    availableActions: NativePlayerTVChromeAvailability.actions(for: playbackControls),
                     preferredFocus: playerChromePreferredFocus,
+                    focusRequestToken: playerChromeFocusRequestToken,
                     onTVCommand: dispatchTVCommand
                 )
-                .id(focusReturnToken)
                 .transition(.opacity)
             }
             if shouldShowChrome, let activeTrackMenu {
@@ -128,6 +131,7 @@ struct NativePlayerView: View {
                     controls: playbackControls,
                     onSelect: handleTrackMenuSelection
                 )
+                .id(activeTrackMenu)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(trackMenuPadding)
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
@@ -143,6 +147,7 @@ struct NativePlayerView: View {
                     case .playbackInfo:
                         NativePlayerVideoInformationView(
                             title: "Info",
+                            accessibilityIdentifier: "native_player_info_panel",
                             qualityLabel: videoQualityLabel,
                             routeLabel: "Lecture directe originale"
                         )
@@ -154,18 +159,23 @@ struct NativePlayerView: View {
                 .padding(trackMenuPadding)
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
             }
-            PlayerAccessibilityEvidenceView(
-                playbackTime: playbackTime,
-                transportState: accessibilityTransportState,
-                videoRenderingReady: accessibilityDiagnostics.videoRenderingReady,
-                audioRenderingReady: accessibilityDiagnostics.audioRenderingReady,
-                isAdvancing: accessibilityEvidence.isAdvancing,
-                completedSeekTarget: accessibilityEvidence.completedSeekTarget,
-                didCompleteSeekToZero: accessibilityEvidence.didCompleteSeekToZero,
-                readerGeneration: accessibilityDiagnostics.readerGeneration,
-                errorMessage: visibleErrorMessage
-            )
-            .frame(width: 1, height: 1)
+#if DEBUG && os(tvOS)
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+                PlayerAccessibilityEvidenceView(
+                    playbackTime: playbackTime,
+                    transportState: accessibilityTransportState,
+                    videoRenderingReady: accessibilityDiagnostics.videoRenderingReady,
+                    audioRenderingReady: accessibilityDiagnostics.audioRenderingReady,
+                    audioEvidenceRoute: "native_sample_buffer_audio_renderer_accepted",
+                    isAdvancing: accessibilityEvidence.isAdvancing,
+                    completedSeekTarget: accessibilityEvidence.completedSeekTarget,
+                    didCompleteSeekToZero: accessibilityEvidence.didCompleteSeekToZero,
+                    readerGeneration: accessibilityDiagnostics.readerGeneration,
+                    errorMessage: visibleErrorMessage
+                )
+                .frame(width: 1, height: 1)
+            }
+#endif
         }
         .contentShape(Rectangle())
 #if os(iOS)
@@ -197,10 +207,19 @@ struct NativePlayerView: View {
             pendingSeekTask = nil
             pendingSeekTarget = nil
             seekDisplayHoldUntil = nil
+            liveDiagnostics = []
             accessibilityEvidence.reset()
             revealChrome()
         }
         .onChange(of: isPaused) { _, _ in
+            accessibilityEvidence.setTransportState(accessibilityTransportState)
+            if accessibilityTransportState != .playing {
+                accessibilityEvidenceExpiryTask?.cancel()
+                accessibilityEvidenceExpiryTask = nil
+            }
+#if os(tvOS)
+            guard continueWatchingTransition.shouldRevealChromeAfterPauseChange() else { return }
+#endif
             revealChrome()
         }
         .onChange(of: showsDiagnostics) { _, _ in
@@ -217,6 +236,7 @@ struct NativePlayerView: View {
             chromeAutoHideTask?.cancel()
             chromeAutoHideTask = nil
             pendingSeekTask?.cancel()
+            accessibilityEvidenceExpiryTask?.cancel()
             pendingSeekTask = nil
             pendingSeekTarget = nil
             activeTrackMenu = nil
@@ -334,6 +354,14 @@ struct NativePlayerView: View {
 #endif
     }
 
+    private var playerChromeFocusRequestToken: UInt {
+#if os(tvOS)
+        chromeFocusRequestToken
+#else
+        0
+#endif
+    }
+
     private func dispatchTVCommand(_ command: NativePlayerTVTransportCommand) {
 #if os(tvOS)
         tvCommandDispatcher.dispatch(command)
@@ -397,8 +425,11 @@ struct NativePlayerView: View {
             playbackTime = nextPlaybackTime
             accessibilityEvidence.observe(
                 playbackTime: nextPlaybackTime,
-                generation: accessibilityDiagnostics.readerGeneration
+                generation: accessibilityDiagnostics.readerGeneration,
+                transportState: accessibilityTransportState,
+                observedAt: ProcessInfo.processInfo.systemUptime
             )
+            scheduleAccessibilityEvidenceExpiryIfNeeded()
             clearSatisfiedSeekHold(for: nextPlaybackTime)
             onPlaybackTime(nextPlaybackTime)
             emitDeepSampleBufferEvidenceIfNeeded(
@@ -489,6 +520,7 @@ struct NativePlayerView: View {
     private func continueWatching() {
 #if os(tvOS)
         preferredChromeFocus = .continueWatching
+        continueWatchingTransition.beginContinueWatching(isPaused: isPaused)
 #endif
         if NativePlayerTVContinueWatchingPolicy.shouldResume(isPaused: isPaused) {
             isPaused = false
@@ -496,8 +528,26 @@ struct NativePlayerView: View {
         hideChrome()
     }
 
+    private func scheduleAccessibilityEvidenceExpiryIfNeeded() {
+        accessibilityEvidenceExpiryTask?.cancel()
+        guard accessibilityEvidence.isAdvancing else { return }
+        accessibilityEvidenceExpiryTask = Task { @MainActor in
+            try? await Task.sleep(
+                nanoseconds: UInt64((PlayerAccessibilityEvidenceState.advancingFreshnessSeconds + 0.1) * 1_000_000_000)
+            )
+            guard !Task.isCancelled else { return }
+            accessibilityEvidence.expireAdvancing(observedAt: ProcessInfo.processInfo.systemUptime)
+            accessibilityEvidenceExpiryTask = nil
+        }
+    }
+
     private func handleTrackMenuSelection(_ selection: PlaybackControlSelection) {
         activeTrackMenu = nil
+#if os(tvOS)
+        chromeFocusRequestToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(
+            after: chromeFocusRequestToken
+        )
+#endif
         onSelectTrack(selection)
         revealChrome()
     }
@@ -505,7 +555,11 @@ struct NativePlayerView: View {
     private func dismissActivePanel() {
         activeTrackMenu = nil
         activeInformationPanel = nil
-        focusReturnToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(after: focusReturnToken)
+#if os(tvOS)
+        chromeFocusRequestToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(
+            after: chromeFocusRequestToken
+        )
+#endif
         revealChrome()
     }
 

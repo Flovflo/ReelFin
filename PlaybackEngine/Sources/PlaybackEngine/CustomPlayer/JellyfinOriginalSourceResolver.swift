@@ -234,7 +234,8 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         let apiKey = components.queryItems?.first { $0.name.lowercased() == "api_key" }?.value
         return source.subtitleTracks.compactMap { track in
             guard let codec = track.codec?.lowercased(), textCodecs.contains(codec) else { return nil }
-            components.path = "/Videos/\(source.itemID)/\(source.id)/Subtitles/\(track.index)/0/Stream.srt"
+            let deliverySourceID = track.deliverySourceID ?? source.id
+            components.path = "/Videos/\(source.itemID)/\(deliverySourceID)/Subtitles/\(track.index)/0/Stream.srt"
             components.queryItems = apiKey.map { [URLQueryItem(name: "api_key", value: $0)] }
             guard let url = components.url else { return nil }
             let label = track.title.isEmpty ? (track.language ?? "Subtitle \(track.index)") : track.title

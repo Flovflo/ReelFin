@@ -88,11 +88,12 @@ struct CustomPlayerView: View {
     @State private var isChromeVisible = true
     @State private var activeTVPanel: CustomPlayerTVPanel?
     @State private var preferredTVChromeFocus: NativePlayerTVChromeFocus = .timeline
+    @State private var tvChromeFocusRequestToken: UInt = 0
     @State private var pendingTVSeekTarget: Double?
     @State private var pendingTVSeekTask: Task<Void, Never>?
     @State private var chromeAutoHideTask: Task<Void, Never>?
-    @State private var focusReturnToken: UInt = 0
     @State private var accessibilityEvidence = PlayerAccessibilityEvidenceState()
+    @State private var accessibilityEvidenceExpiryTask: Task<Void, Never>?
 #endif
 
     /// What the launch screen shows the instant Play is pressed — the immediate "your action is
@@ -132,18 +133,21 @@ struct CustomPlayerView: View {
             skipOverlay
             overlay
 #if os(tvOS)
-            PlayerAccessibilityEvidenceView(
-                playbackTime: engine.lastObservedSeconds,
-                transportState: customAccessibilityTransportState,
-                videoRenderingReady: engine.hasRenderedFirstFrame,
-                audioRenderingReady: customAudioRenderingReady,
-                isAdvancing: accessibilityEvidence.isAdvancing,
-                completedSeekTarget: accessibilityEvidence.completedSeekTarget,
-                didCompleteSeekToZero: accessibilityEvidence.didCompleteSeekToZero,
-                readerGeneration: engine.loadGeneration,
-                errorMessage: customAccessibilityError
-            )
-            .frame(width: 1, height: 1)
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+                PlayerAccessibilityEvidenceView(
+                    playbackTime: engine.lastObservedSeconds,
+                    transportState: customAccessibilityTransportState,
+                    videoRenderingReady: engine.hasRenderedFirstFrame,
+                    audioRenderingReady: customAudioRenderingReady,
+                    audioEvidenceRoute: "custom_avfoundation_selected_audible_advancing",
+                    isAdvancing: accessibilityEvidence.isAdvancing,
+                    completedSeekTarget: accessibilityEvidence.completedSeekTarget,
+                    didCompleteSeekToZero: accessibilityEvidence.didCompleteSeekToZero,
+                    readerGeneration: engine.loadGeneration,
+                    errorMessage: customAccessibilityError
+                )
+                .frame(width: 1, height: 1)
+            }
 #endif
         }
 #if os(tvOS)
@@ -155,6 +159,11 @@ struct CustomPlayerView: View {
             handleTVMenu()
         }
         .onChange(of: engine.transportState) { _, transportState in
+            accessibilityEvidence.setTransportState(customAccessibilityTransportState)
+            if customAccessibilityTransportState != .playing {
+                accessibilityEvidenceExpiryTask?.cancel()
+                accessibilityEvidenceExpiryTask = nil
+            }
             if transportState == .paused {
                 revealTVChrome()
             } else {
@@ -164,14 +173,19 @@ struct CustomPlayerView: View {
         .onChange(of: engine.lastObservedSeconds) { _, seconds in
             accessibilityEvidence.observe(
                 playbackTime: seconds,
-                generation: engine.loadGeneration
+                generation: engine.loadGeneration,
+                transportState: customAccessibilityTransportState,
+                observedAt: ProcessInfo.processInfo.systemUptime
             )
+            scheduleAccessibilityEvidenceExpiryIfNeeded()
         }
         .onChange(of: engine.loadGeneration) { _, generation in
             accessibilityEvidence.reset()
             accessibilityEvidence.observe(
                 playbackTime: engine.lastObservedSeconds,
-                generation: generation
+                generation: generation,
+                transportState: customAccessibilityTransportState,
+                observedAt: ProcessInfo.processInfo.systemUptime
             )
         }
         .onChange(of: engine.activeSkipSuggestion != nil) { hadSuggestion, hasSuggestion in
@@ -196,7 +210,9 @@ struct CustomPlayerView: View {
             accessibilityEvidence.reset()
             accessibilityEvidence.observe(
                 playbackTime: engine.lastObservedSeconds,
-                generation: engine.loadGeneration
+                generation: engine.loadGeneration,
+                transportState: customAccessibilityTransportState,
+                observedAt: ProcessInfo.processInfo.systemUptime
             )
             revealTVChrome()
 #endif
@@ -213,6 +229,7 @@ struct CustomPlayerView: View {
 #if os(tvOS)
             pendingTVSeekTask?.cancel()
             chromeAutoHideTask?.cancel()
+            accessibilityEvidenceExpiryTask?.cancel()
             isRemoteInputFocused = false
             accessibilityEvidence.reset()
 #endif
@@ -586,10 +603,11 @@ struct CustomPlayerView: View {
                 onToggleChrome: hideTVChrome,
                 onDismiss: requestDismissal,
                 isInteractionEnabled: activeTVPanel == nil,
+                availableActions: NativePlayerTVChromeAvailability.actions(for: customPlaybackControls),
                 preferredFocus: preferredTVChromeFocus,
+                focusRequestToken: tvChromeFocusRequestToken,
                 onTVCommand: tvCommandDispatcher.dispatch
             )
-            .id(focusReturnToken)
             .transition(.opacity)
         }
 
@@ -602,6 +620,7 @@ struct CustomPlayerView: View {
                         controls: customPlaybackControls,
                         onSelect: handleTVTrackSelection
                     )
+                    .id(mode)
                 case .video:
                     NativePlayerVideoInformationView(
                         qualityLabel: engine.sourceQualityLabel ?? "Originale",
@@ -610,6 +629,7 @@ struct CustomPlayerView: View {
                 case .playbackInfo:
                     NativePlayerVideoInformationView(
                         title: "Info",
+                        accessibilityIdentifier: "native_player_info_panel",
                         qualityLabel: engine.sourceQualityLabel ?? "Originale",
                         routeLabel: engine.hasLocalCacheReservoir ? "Lecture directe optimisée" : "Lecture directe"
                     )
@@ -663,15 +683,7 @@ struct CustomPlayerView: View {
     }
 
     private var customPlaybackControls: PlaybackControlsModel {
-        let audio = engine.audioTracks.map { track in
-            PlaybackTrackOption(
-                trackID: track.id,
-                title: track.title,
-                badge: nil,
-                iconName: "waveform",
-                isSelected: track.isSelected
-            )
-        }
+        let audio = PlaybackControlsModel.customAudioOptions(from: engine.audioTracks)
         let subtitles = [
             PlaybackTrackOption(
                 trackID: nil,
@@ -791,7 +803,9 @@ struct CustomPlayerView: View {
 
     private func dismissTVPanel() {
         activeTVPanel = nil
-        focusReturnToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(after: focusReturnToken)
+        tvChromeFocusRequestToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(
+            after: tvChromeFocusRequestToken
+        )
         revealTVChrome()
     }
 
@@ -838,7 +852,20 @@ struct CustomPlayerView: View {
     }
 
     private var customAudioRenderingReady: Bool {
-        engine.audioTracks.contains(where: \.isSelected) && accessibilityEvidence.isAdvancing
+        engine.hasSelectedAudibleMediaOption && accessibilityEvidence.isAdvancing
+    }
+
+    private func scheduleAccessibilityEvidenceExpiryIfNeeded() {
+        accessibilityEvidenceExpiryTask?.cancel()
+        guard accessibilityEvidence.isAdvancing else { return }
+        accessibilityEvidenceExpiryTask = Task { @MainActor in
+            try? await Task.sleep(
+                nanoseconds: UInt64((PlayerAccessibilityEvidenceState.advancingFreshnessSeconds + 0.1) * 1_000_000_000)
+            )
+            guard !Task.isCancelled else { return }
+            accessibilityEvidence.expireAdvancing(observedAt: ProcessInfo.processInfo.systemUptime)
+            accessibilityEvidenceExpiryTask = nil
+        }
     }
 
     private var customAccessibilityError: String? {

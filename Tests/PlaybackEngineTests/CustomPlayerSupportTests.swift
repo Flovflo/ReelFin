@@ -303,6 +303,41 @@ final class CustomPlayerSupportTests: XCTestCase {
         XCTAssertEqual(tracks[1].label, "en", "untitled tracks fall back to their language")
     }
 
+    func testPreferredStableTwinKeepsSiblingSubtitleDeliverySource() throws {
+        var subtitleOwner = makeSource(container: "mkv", filePath: "/media/episode.mkv")
+        subtitleOwner.id = "subtitle-owner"
+        subtitleOwner.subtitleTracks = [
+            MediaTrack(
+                id: "s1",
+                title: "Français",
+                language: "fr",
+                codec: "subrip",
+                isDefault: false,
+                index: 7
+            )
+        ]
+        var stable = makeSource(container: "mp4", filePath: "/media/episode.mp4")
+        stable.id = "stable-video"
+
+        let enriched = try XCTUnwrap(
+            PlaybackCoordinator.preferringContainers(
+                [subtitleOwner, stable],
+                ["mp4"],
+                itemID: stable.itemID
+            ).first
+        )
+        let tracks = JellyfinOriginalSourceResolver.externalSubtitleTracks(
+            for: enriched,
+            assetURL: URL(string: "https://server.example/Videos/item/stream?api_key=redacted")!
+        )
+
+        XCTAssertEqual(tracks.count, 1)
+        XCTAssertEqual(
+            tracks.first?.url.path,
+            "/Videos/\(stable.itemID)/subtitle-owner/Subtitles/7/0/Stream.srt"
+        )
+    }
+
     // MARK: - Subtitle cue pipeline
 
     @MainActor

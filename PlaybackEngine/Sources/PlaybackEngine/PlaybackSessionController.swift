@@ -317,6 +317,7 @@ public final class PlaybackSessionController {
     private let coordinator: PlaybackCoordinator
     private let nativePlayerController: NativePlayerPlaybackController
     private let warmupManager: (any PlaybackWarmupManaging)?
+    private let progressPersistenceEnabled: Bool
     private let playbackDiagnostics = PlaybackDiagnostics()
     private let fallbackPlanner = FallbackPlanner()
 
@@ -543,7 +544,8 @@ public final class PlaybackSessionController {
         repository: MetadataRepositoryProtocol,
         episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)? = nil,
         warmupManager: (any PlaybackWarmupManaging)? = nil,
-        decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
+        decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine(),
+        progressPersistenceEnabled: Bool = true
     ) {
         self.apiClient = apiClient
         self.repository = repository
@@ -556,6 +558,7 @@ public final class PlaybackSessionController {
             mediaGatewayStore: mediaGatewayStore
         )
         self.warmupManager = warmupManager
+        self.progressPersistenceEnabled = progressPersistenceEnabled
         self.preferredProfilesByItemID = Self.loadStoredPreferredProfiles()
         configurePlayerBase()
         setupLifecycleObservers()
@@ -3057,7 +3060,7 @@ public final class PlaybackSessionController {
         localHLSServer?.stop(reason: "session_stopped")
         localHLSServer = nil
 
-        if let progressSnapshot {
+        if progressPersistenceEnabled, let progressSnapshot {
             Task {
                 await Self.persistProgress(
                     snapshot: progressSnapshot,
@@ -7507,6 +7510,7 @@ public final class PlaybackSessionController {
     }
 
     private func persistProgress(isPaused: Bool, didFinish: Bool) async {
+        guard progressPersistenceEnabled else { return }
         guard let snapshot = makeProgressSnapshot(isPaused: isPaused, didFinish: didFinish) else { return }
         await persistProgress(snapshot: snapshot)
     }
@@ -7692,6 +7696,7 @@ public final class PlaybackSessionController {
 
     func finishCurrentPlayback() async {
         pause()
+        guard progressPersistenceEnabled else { return }
         if let snapshot = makeProgressSnapshot(isPaused: true, didFinish: true) {
             await Self.persistProgress(
                 snapshot: snapshot,

@@ -51,6 +51,21 @@ enum NativePlayerTVChromeAction: CaseIterable, Equatable, Hashable {
     }
 }
 
+enum NativePlayerTVChromeAvailability {
+    static func actions(for controls: PlaybackControlsModel) -> [NativePlayerTVChromeAction] {
+        NativePlayerTVChromeAction.allCases.filter { action in
+            switch action {
+            case .subtitles:
+                return controls.subtitleOptions.contains { $0.trackID != nil }
+            case .audio:
+                return controls.audioOptions.count > 1
+            case .video:
+                return true
+            }
+        }
+    }
+}
+
 enum NativePlayerTVChromeDestination: Equatable {
     case trackMenu(PlaybackTrackMenuKind)
     case videoPanel
@@ -72,8 +87,8 @@ enum NativePlayerTVChromeUtilityAction: CaseIterable, Equatable, Hashable {
     var title: String {
         switch self {
         case .info: return "Info"
-        case .insight: return "InSight"
-        case .continueWatching: return "Continue Watching"
+        case .insight: return "Détails"
+        case .continueWatching: return "Continuer"
         }
     }
 
@@ -140,6 +155,34 @@ struct NativePlayerTVChromeLayout: Equatable {
     )
 }
 
+enum NativePlayerTVChromeGlassVariant: Equatable {
+    case regular
+}
+
+/// Visual policy for the tvOS chrome. Keeping these values separate from the focus graph makes
+/// the native Liquid Glass treatment testable without coupling appearance to remote behavior.
+struct NativePlayerTVChromeGlassStyle: Equatable {
+    let variant: NativePlayerTVChromeGlassVariant
+    let isInteractive: Bool
+    let opaqueFillOpacity: Double
+    let focusedFillOpacity: Double
+    let unfocusedStrokeOpacity: Double
+    let focusedStrokeOpacity: Double
+    let focusedGlowOpacity: Double
+    let focusedScale: CGFloat
+
+    static let standard = NativePlayerTVChromeGlassStyle(
+        variant: .regular,
+        isInteractive: true,
+        opaqueFillOpacity: 0,
+        focusedFillOpacity: 0.38,
+        unfocusedStrokeOpacity: 0,
+        focusedStrokeOpacity: 0.18,
+        focusedGlowOpacity: 0.08,
+        focusedScale: 1
+    )
+}
+
 struct NativePlayerTransportOverlayView: View {
     let item: MediaItem
     @Binding var isPaused: Bool
@@ -158,7 +201,9 @@ struct NativePlayerTransportOverlayView: View {
     let onToggleChrome: () -> Void
     let onDismiss: () -> Void
     let isInteractionEnabled: Bool
+    let availableActions: [NativePlayerTVChromeAction]
     let preferredFocus: NativePlayerTVChromeFocus
+    let focusRequestToken: UInt
     let onTVCommand: (NativePlayerTVTransportCommand) -> Void
 #if os(tvOS)
     @Environment(\.resetFocus) private var resetFocus
@@ -206,27 +251,26 @@ struct NativePlayerTransportOverlayView: View {
                     onSeekAbsolute: onSeekAbsolute,
                     onSelect: onToggleChrome,
                     focus: $focusedControl,
-                    onCommand: onTVCommand
+                    availableActions: availableActions,
+                    onCommand: { command in
+                        guard isInteractionEnabled else { return }
+                        onTVCommand(command)
+                    }
                 )
                 utilityBar(layout: layout)
             }
             .focusScope(chromeFocusNamespace)
-            .defaultFocus($focusedControl, preferredFocus)
-            .disabled(!isInteractionEnabled)
-            .onChange(of: preferredFocus) { _, focus in
+            .defaultFocus($focusedControl, effectivePreferredFocus)
+            .task(id: focusRequestID) {
                 guard isInteractionEnabled else { return }
-                focusedControl = focus
+                await Task.yield()
+                guard !Task.isCancelled, isInteractionEnabled else { return }
                 resetFocus(in: chromeFocusNamespace)
-            }
-            .onChange(of: isInteractionEnabled) { _, isEnabled in
-                guard isEnabled else { return }
-                focusedControl = preferredFocus
-                resetFocus(in: chromeFocusNamespace)
-            }
-            .onAppear {
-                guard isInteractionEnabled else { return }
-                focusedControl = preferredFocus
-                resetFocus(in: chromeFocusNamespace)
+                // resetFocus can synchronously clear the FocusState while SwiftUI rebuilds the
+                // candidate graph. Reassert the concrete destination on the following actor turn.
+                await Task.yield()
+                guard !Task.isCancelled, isInteractionEnabled else { return }
+                focusedControl = effectivePreferredFocus
             }
             .padding(.horizontal, layout.horizontalPadding)
             .padding(.bottom, layout.bottomPadding)
@@ -234,8 +278,16 @@ struct NativePlayerTransportOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea()
         .background(alignment: .topLeading) {
-            PlayerAccessibilityMarkerView(identifier: "native_player_chrome")
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
+                ZStack {
+                    PlayerAccessibilityMarkerView(identifier: "native_player_chrome")
+                    PlayerAccessibilityMarkerView(
+                        identifier: "native_player_chrome_focused_control",
+                        value: focusedControl?.accessibilityIdentifier
+                    )
+                }
                 .frame(width: 1, height: 1)
+            }
         }
 #endif
     }
@@ -269,13 +321,15 @@ struct NativePlayerTransportOverlayView: View {
 
 #if os(tvOS)
     private func headerRow(layout: NativePlayerTVChromeLayout) -> some View {
-        HStack {
+        let glassStyle = NativePlayerTVChromeGlassStyle.standard
+        return HStack {
             metadata(layout: layout)
             Spacer(minLength: 0)
             GlassEffectContainer(spacing: 12) {
                 HStack(spacing: layout.circleSpacing) {
-                    ForEach(NativePlayerTVChromeAction.allCases, id: \.self) { action in
+                    ForEach(availableActions, id: \.self) { action in
                         Button {
+                            guard isInteractionEnabled else { return }
                             onInteraction()
                             if let trackMenuKind = action.trackMenuKind {
                                 onShowTrackPicker(trackMenuKind)
@@ -285,13 +339,57 @@ struct NativePlayerTransportOverlayView: View {
                         } label: {
                             Image(systemName: action.systemName)
                                 .font(.system(size: layout.iconSize, weight: .semibold, design: .rounded))
+                                .foregroundStyle(
+                                    focusedControl == .action(action)
+                                        ? Color.black.opacity(0.82)
+                                        : Color.white.opacity(0.96)
+                                )
                                 .frame(width: layout.circleDiameter, height: layout.circleDiameter)
-                                .glassEffect(.regular.interactive(), in: Circle())
+                                .contentShape(Circle())
+                                .background {
+                                    Circle()
+                                        .fill(
+                                            Color.white.opacity(
+                                                focusedControl == .action(action)
+                                                    ? glassStyle.focusedFillOpacity
+                                                    : glassStyle.opaqueFillOpacity
+                                            )
+                                        )
+                                }
+                                .glassEffect(.regular.interactive(glassStyle.isInteractive), in: .circle)
+                                .overlay {
+                                    Circle()
+                                        .stroke(
+                                            Color.white.opacity(
+                                                focusedControl == .action(action)
+                                                    ? glassStyle.focusedStrokeOpacity
+                                                    : glassStyle.unfocusedStrokeOpacity
+                                            ),
+                                            lineWidth: 1
+                                        )
+                                }
+                                .shadow(
+                                    color: .white.opacity(
+                                        focusedControl == .action(action) ? glassStyle.focusedGlowOpacity : 0
+                                    ),
+                                    radius: focusedControl == .action(action) ? 10 : 0
+                                )
                         }
                         .buttonStyle(.plain)
                         .focusEffectDisabled(true)
                         .hoverEffectDisabled(true)
                         .focused($focusedControl, equals: .action(action))
+                        .scaleEffect(
+                            focusedControl == .action(action) ? glassStyle.focusedScale : 1
+                        )
+                        .animation(.easeOut(duration: 0.16), value: focusedControl)
+                        .prefersDefaultFocus(
+                            effectivePreferredFocus == .action(action),
+                            in: chromeFocusNamespace
+                        )
+                        .onMoveCommand { direction in
+                            moveChromeFocus(from: .action(action), direction: direction)
+                        }
                         .accessibilityLabel(action.title)
                         .accessibilityIdentifier(action.accessibilityIdentifier)
                     }
@@ -303,23 +401,69 @@ struct NativePlayerTransportOverlayView: View {
     }
 
     private func utilityBar(layout: NativePlayerTVChromeLayout) -> some View {
-        GlassEffectContainer(spacing: 12) {
+        let glassStyle = NativePlayerTVChromeGlassStyle.standard
+        return GlassEffectContainer(spacing: 12) {
             HStack(spacing: layout.utilitySpacing) {
                 ForEach(NativePlayerTVChromeUtilityAction.allCases, id: \.self) { action in
                     Button {
+                        guard isInteractionEnabled else { return }
                         onInteraction()
                         perform(action)
                     } label: {
                         Text(action.title)
                             .font(.system(size: 23, weight: .semibold, design: .rounded))
+                            .foregroundStyle(
+                                focusedControl == .utility(action)
+                                    ? Color.black.opacity(0.82)
+                                    : Color.white.opacity(0.96)
+                            )
                             .padding(.horizontal, action == .continueWatching ? 30 : 24)
                             .frame(height: layout.utilityHeight)
-                            .glassEffect(.regular.interactive(), in: Capsule())
+                            .contentShape(Capsule())
+                            .background {
+                                Capsule()
+                                    .fill(
+                                        Color.white.opacity(
+                                            focusedControl == .utility(action)
+                                                ? glassStyle.focusedFillOpacity
+                                                : glassStyle.opaqueFillOpacity
+                                        )
+                                    )
+                            }
+                            .glassEffect(.regular.interactive(glassStyle.isInteractive), in: .capsule)
+                            .overlay {
+                                Capsule()
+                                    .stroke(
+                                        Color.white.opacity(
+                                            focusedControl == .utility(action)
+                                                ? glassStyle.focusedStrokeOpacity
+                                                : glassStyle.unfocusedStrokeOpacity
+                                        ),
+                                        lineWidth: 1
+                                    )
+                            }
+                            .shadow(
+                                color: .white.opacity(
+                                    focusedControl == .utility(action) ? glassStyle.focusedGlowOpacity : 0
+                                ),
+                                radius: focusedControl == .utility(action) ? 10 : 0
+                            )
                     }
                     .buttonStyle(.plain)
                     .focusEffectDisabled(true)
                     .hoverEffectDisabled(true)
                     .focused($focusedControl, equals: .utility(action))
+                    .scaleEffect(
+                        focusedControl == .utility(action) ? glassStyle.focusedScale : 1
+                    )
+                    .animation(.easeOut(duration: 0.16), value: focusedControl)
+                    .prefersDefaultFocus(
+                        effectivePreferredFocus == .utility(action),
+                        in: chromeFocusNamespace
+                    )
+                    .onMoveCommand { direction in
+                        moveChromeFocus(from: .utility(action), direction: direction)
+                    }
                     .accessibilityIdentifier(action.accessibilityIdentifier)
                 }
             }
@@ -334,6 +478,33 @@ struct NativePlayerTransportOverlayView: View {
         case .continueWatching: onContinueWatching()
         case .trackMenu, .videoPanel: break
         }
+    }
+
+    private var effectivePreferredFocus: NativePlayerTVChromeFocus {
+        NativePlayerTVChromeFocusGraph.effectivePreferredFocus(
+            preferredFocus,
+            availableActions: availableActions
+        )
+    }
+
+    private var focusRequestID: String {
+        let actions = availableActions.map(\.accessibilityIdentifier).joined(separator: ",")
+        return "\(focusRequestToken)-\(isInteractionEnabled)-\(effectivePreferredFocus.accessibilityIdentifier)-\(actions)"
+    }
+
+    private func moveChromeFocus(
+        from current: NativePlayerTVChromeFocus,
+        direction: MoveCommandDirection
+    ) {
+        guard isInteractionEnabled else { return }
+        guard let remoteDirection = NativePlayerTVChromeFocusGraph.remoteDirection(from: direction),
+              let destination = NativePlayerTVChromeFocusGraph.destination(
+                from: current,
+                direction: remoteDirection,
+                availableActions: availableActions
+              ) else { return }
+        onInteraction()
+        focusedControl = destination
     }
 #endif
 

@@ -199,7 +199,9 @@ struct DetailView: View {
         }
 #if os(tvOS)
         .overlay(alignment: .topLeading) {
-            if playerPresentation == nil, playbackLaunchRouter.presentationIntent == nil {
+            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess,
+               playerPresentation == nil,
+               playbackLaunchRouter.presentationIntent == nil {
                 DetailScreenAccessibilityAnchor(
                     primaryPlayFocused: focusedHeroAction == .play
                 )
@@ -1181,20 +1183,7 @@ struct DetailView: View {
     }
 
     private func liveUITestPlaybackItem(from item: MediaItem) -> MediaItem {
-#if DEBUG
-        let environment = ProcessInfo.processInfo.environment
-        guard environment["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] == "1",
-              let rawSeconds = environment["REELFIN_LIVE_UI_RESUME_SECONDS"],
-              let seconds = Double(rawSeconds), seconds > 0 else {
-            return item
-        }
-        var overridden = item
-        overridden.isPlayed = false
-        overridden.playbackPositionTicks = Int64(seconds * 10_000_000)
-        return overridden
-#else
-        return item
-#endif
+        TVLiveUIAutomationPolicy.fixturePlaybackItem(item)
     }
 
     private var playbackLaunchEffects: PlaybackLaunchEntryEffects {
@@ -1327,7 +1316,9 @@ struct DetailView: View {
         }
         let coordinator = PlaybackCoordinator(apiClient: dependencies.apiClient)
         let resolver = JellyfinOriginalSourceResolver(coordinator: coordinator)
-        let reporter = JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient)
+        let reporter: CustomPlaybackProgressReporting? = TVLiveUIAutomationPolicy.isEnabledForCurrentProcess
+            ? nil
+            : JellyfinCustomPlaybackReporter(apiClient: dependencies.apiClient)
         let engine = CustomPlaybackEngine(
             resolver: resolver, store: store, reporter: reporter, prewarmer: customPrewarmer,
             markers: JellyfinCustomPlaybackMarkers(apiClient: dependencies.apiClient))
