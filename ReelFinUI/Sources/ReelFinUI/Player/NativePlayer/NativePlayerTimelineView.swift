@@ -7,6 +7,10 @@ struct NativePlayerTimelineView: View {
     let onSeekRelative: (Double) -> Void
     let onSeekAbsolute: (Double) -> Void
     let onSelect: () -> Void
+#if os(tvOS)
+    let focus: FocusState<NativePlayerTVChromeFocus?>.Binding
+    let onCommand: (NativePlayerTVTransportCommand) -> Void
+#endif
     @State private var scrubValue: Double?
 
     var body: some View {
@@ -24,8 +28,8 @@ struct NativePlayerTimelineView: View {
         NativePlayerTVProgressScrubberView(
             playbackTime: scrubValue ?? playbackTime,
             durationSeconds: durationSeconds,
-            onSeekRelative: onSeekRelative,
-            onSelect: onSelect
+            focus: focus,
+            onCommand: onCommand
         )
 #else
         Slider(

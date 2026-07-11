@@ -84,8 +84,13 @@ struct NativePlayerTransportOverlayView: View {
     let onShowVideoPanel: () -> Void
     let onToggleChrome: () -> Void
     let onDismiss: () -> Void
+    let isInteractionEnabled: Bool
+    let preferredFocus: NativePlayerTVChromeFocus
+    let onTVCommand: (NativePlayerTVTransportCommand) -> Void
 #if os(tvOS)
+    @Environment(\.resetFocus) private var resetFocus
     @Namespace private var chromeFocusNamespace
+    @FocusState private var focusedControl: NativePlayerTVChromeFocus?
 #endif
 
     @ViewBuilder
@@ -126,12 +131,30 @@ struct NativePlayerTransportOverlayView: View {
                     durationSeconds: durationSeconds,
                     onSeekRelative: onSeekRelative,
                     onSeekAbsolute: onSeekAbsolute,
-                    onSelect: onToggleChrome
+                    onSelect: onToggleChrome,
+                    focus: $focusedControl,
+                    onCommand: onTVCommand
                 )
-                .prefersDefaultFocus(true, in: chromeFocusNamespace)
                 actionBar
             }
             .focusScope(chromeFocusNamespace)
+            .defaultFocus($focusedControl, preferredFocus)
+            .disabled(!isInteractionEnabled)
+            .onChange(of: preferredFocus) { _, focus in
+                guard isInteractionEnabled else { return }
+                focusedControl = focus
+                resetFocus(in: chromeFocusNamespace)
+            }
+            .onChange(of: isInteractionEnabled) { _, isEnabled in
+                guard isEnabled else { return }
+                focusedControl = preferredFocus
+                resetFocus(in: chromeFocusNamespace)
+            }
+            .onAppear {
+                guard isInteractionEnabled else { return }
+                focusedControl = preferredFocus
+                resetFocus(in: chromeFocusNamespace)
+            }
             .padding(.horizontal, layout.horizontalPadding)
             .padding(.bottom, layout.bottomPadding)
         }
@@ -187,6 +210,7 @@ struct NativePlayerTransportOverlayView: View {
                                 .frame(height: 54)
                         }
                         .buttonStyle(.glass)
+                        .focused($focusedControl, equals: .action(action))
                         .accessibilityIdentifier("native_player_\(action.accessibilityName)_button")
                     }
                 }

@@ -136,7 +136,58 @@ struct NativePlayerTVRemoteControlPolicy: Equatable {
     }
 }
 
-enum NativePlayerRemoteMoveDirection {
+enum NativePlayerTVTransportCommand: Equatable {
+    case select
+    case playPause
+    case move(NativePlayerRemoteMoveDirection)
+}
+
+/// The sole imperative command router used by both the hidden transport surface and focused
+/// timeline. Each input selects exactly one callback; views never fan a press out to AVKit.
+struct NativePlayerTVCommandDispatcher {
+    let onSelect: () -> Void
+    let onPlayPause: () -> Void
+    let onMove: (NativePlayerRemoteMoveDirection) -> Void
+
+    func dispatch(_ command: NativePlayerTVTransportCommand) {
+        switch command {
+        case .select:
+            onSelect()
+        case .playPause:
+            onPlayPause()
+        case let .move(direction):
+            onMove(direction)
+        }
+    }
+}
+
+enum NativePlayerTVChromeFocus: Hashable {
+    case timeline
+    case audio
+    case subtitles
+    case video
+
+    static func action(_ action: NativePlayerTVChromeAction) -> Self {
+        switch action {
+        case .audio: return .audio
+        case .subtitles: return .subtitles
+        case .video: return .video
+        }
+    }
+}
+
+struct NativePlayerChromeExplicitVisibilityPolicy {
+    static func canHideChrome(isTVOS: Bool) -> Bool { isTVOS }
+}
+
+struct NativePlayerTVTimelineAccessibility {
+    static func value(playbackTime: Double, durationSeconds: Double?) -> String {
+        guard let durationSeconds, durationSeconds > 0 else { return "Position unavailable" }
+        return "\(Int(playbackTime.rounded())) of \(Int(durationSeconds.rounded())) seconds"
+    }
+}
+
+enum NativePlayerRemoteMoveDirection: Equatable {
     case left
     case right
     case up

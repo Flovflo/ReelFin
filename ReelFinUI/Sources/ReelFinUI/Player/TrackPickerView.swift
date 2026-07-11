@@ -172,7 +172,11 @@ struct NativePlayerTrackSelectionMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
     let onSelect: (PlaybackControlSelection) -> Void
+#if os(tvOS)
+    @Environment(\.resetFocus) private var resetFocus
+#endif
     @Namespace private var focusNamespace
+    @FocusState private var focusedOptionID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
@@ -195,6 +199,13 @@ struct NativePlayerTrackSelectionMenuView: View {
         .frame(width: metrics.panelWidth, alignment: .leading)
         .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
         .nativePlayerTrackMenuFocusScope(focusNamespace)
+        .defaultFocus($focusedOptionID, defaultOptionID)
+        .onAppear {
+#if os(tvOS)
+            focusedOptionID = defaultOptionID
+            resetFocus(in: focusNamespace)
+#endif
+        }
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 
@@ -205,7 +216,7 @@ struct NativePlayerTrackSelectionMenuView: View {
             } else {
                 sectionLabel("Audio Track")
                 ForEach(controls.audioOptions) { option in
-                    NativePlayerTrackMenuRow(option: option, focusNamespace: focusNamespace) {
+                    NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
                         guard let trackID = option.trackID else { return }
                         onSelect(.audio(trackID))
                     }
@@ -220,7 +231,7 @@ struct NativePlayerTrackSelectionMenuView: View {
                 NativePlayerTrackMenuEmptyRow(title: "No subtitles")
             } else {
                 ForEach(controls.subtitleOptions) { option in
-                    NativePlayerTrackMenuRow(option: option, focusNamespace: focusNamespace) {
+                    NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
                         onSelect(.subtitle(option.trackID))
                     }
                 }
@@ -256,6 +267,11 @@ struct NativePlayerTrackSelectionMenuView: View {
 
     private var metrics: NativePlayerTrackMenuLayout {
         NativePlayerTrackMenuLayout.current
+    }
+
+    private var defaultOptionID: String {
+        let options = controls.options(for: mode)
+        return (options.first(where: \.isSelected) ?? options.first)?.id ?? "__empty__"
     }
 }
 
@@ -302,9 +318,8 @@ struct NativePlayerVideoInformationView: View {
 
 private struct NativePlayerTrackMenuRow: View {
     let option: PlaybackTrackOption
-    let focusNamespace: Namespace.ID
+    let focusedOptionID: FocusState<String?>.Binding
     let onSelect: () -> Void
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button(action: onSelect) {
@@ -341,15 +356,14 @@ private struct NativePlayerTrackMenuRow: View {
             }
         }
         .buttonStyle(TVNoChromeButtonStyle())
-        .focused($isFocused)
-        .nativePlayerPrefersDefaultTrackFocus(option.isSelected, in: focusNamespace)
+        .focused(focusedOptionID, equals: option.id)
         .nativePlayerTrackMenuFocusDisabled()
         .padding(.horizontal, metrics.rowOuterPadding)
         .accessibilityLabel(option.title)
     }
 
     private var isHighlighted: Bool {
-        isFocused || option.isSelected
+        focusedOptionID.wrappedValue == option.id || option.isSelected
     }
 
     private var foreground: Color {

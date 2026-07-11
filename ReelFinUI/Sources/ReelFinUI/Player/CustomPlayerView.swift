@@ -86,8 +86,8 @@ struct CustomPlayerView: View {
     @FocusState private var isRemoteInputFocused: Bool
     @Namespace private var playerFocusNamespace
     @State private var isChromeVisible = true
-    @State private var isTransportPaused = false
     @State private var activeTVPanel: CustomPlayerTVPanel?
+    @State private var preferredTVChromeFocus: NativePlayerTVChromeFocus = .timeline
     @State private var pendingTVSeekTarget: Double?
     @State private var pendingTVSeekTask: Task<Void, Never>?
     @State private var chromeAutoHideTask: Task<Void, Never>?
@@ -133,9 +133,18 @@ struct CustomPlayerView: View {
         }
 #if os(tvOS)
         .focusScope(playerFocusNamespace)
-        .onPlayPauseCommand(perform: toggleTVPlayPause)
+        .onPlayPauseCommand {
+            tvCommandDispatcher.dispatch(.playPause)
+        }
         .onExitCommand {
             handleTVMenu()
+        }
+        .onChange(of: engine.transportState) { _, transportState in
+            if transportState == .paused {
+                revealTVChrome()
+            } else {
+                scheduleTVChromeAutoHide()
+            }
         }
         .onChange(of: engine.activeSkipSuggestion != nil) { hadSuggestion, hasSuggestion in
             guard CustomPlayerSkipFocusPolicy.shouldRequestFocus(
@@ -527,7 +536,7 @@ struct CustomPlayerView: View {
         if isChromeVisible, let item = launchContext?.item ?? engine.currentMediaItem {
             NativePlayerTransportOverlayView(
                 item: item,
-                isPaused: $isTransportPaused,
+                isPaused: transportPausedBinding,
                 showsDiagnostics: .constant(false),
                 playbackTime: pendingTVSeekTarget ?? engine.lastObservedSeconds,
                 durationSeconds: customDurationSeconds,
@@ -538,7 +547,10 @@ struct CustomPlayerView: View {
                 onShowTrackPicker: showTVTrackPicker,
                 onShowVideoPanel: showTVVideoPanel,
                 onToggleChrome: hideTVChrome,
-                onDismiss: requestDismissal
+                onDismiss: requestDismissal,
+                isInteractionEnabled: activeTVPanel == nil,
+                preferredFocus: preferredTVChromeFocus,
+                onTVCommand: tvCommandDispatcher.dispatch
             )
             .id(focusReturnToken)
             .transition(.opacity)
@@ -569,11 +581,31 @@ struct CustomPlayerView: View {
     private var tvRemoteInputLayer: some View {
         NativePlayerRemoteInputLayer(
             isEnabled: !isChromeVisible,
-            onSelect: revealTVChrome,
-            onMove: handleTVRemoteMove
+            focusNamespace: playerFocusNamespace,
+            onCommand: tvCommandDispatcher.dispatch
         )
         .focused($isRemoteInputFocused)
+        .onAppear(perform: updateTVRemoteInputFocus)
+        .onChange(of: isChromeVisible) { _, _ in updateTVRemoteInputFocus() }
         .ignoresSafeArea()
+    }
+
+    private var transportPausedBinding: Binding<Bool> {
+        Binding(
+            get: { engine.transportState == .paused },
+            set: { shouldPause in
+                guard shouldPause != (engine.transportState == .paused) else { return }
+                shouldPause ? engine.pause() : engine.play()
+            }
+        )
+    }
+
+    private var tvCommandDispatcher: NativePlayerTVCommandDispatcher {
+        NativePlayerTVCommandDispatcher(
+            onSelect: { isChromeVisible ? hideTVChrome() : revealTVChrome() },
+            onPlayPause: toggleTVPlayPause,
+            onMove: handleTVRemoteMove
+        )
     }
 
     private var customDurationSeconds: Double? {
@@ -583,6 +615,15 @@ struct CustomPlayerView: View {
     }
 
     private var customPlaybackControls: PlaybackControlsModel {
+        let audio = engine.audioTracks.map { track in
+            PlaybackTrackOption(
+                trackID: track.id,
+                title: track.title,
+                badge: nil,
+                iconName: "waveform",
+                isSelected: track.isSelected
+            )
+        }
         let subtitles = [
             PlaybackTrackOption(
                 trackID: nil,
@@ -600,17 +641,16 @@ struct CustomPlayerView: View {
                 isSelected: engine.subtitles.activeTrackID == track.id
             )
         }
-        return PlaybackControlsModel(audioOptions: [], subtitleOptions: subtitles)
+        return PlaybackControlsModel(audioOptions: audio, subtitleOptions: subtitles)
     }
 
     private func toggleTVPlayPause() {
         engine.togglePlayPause()
-        isTransportPaused.toggle()
         revealTVChrome()
         AppLog.ui.notice("customplayer.remote.command — input=playPause")
     }
 
-    private func handleTVRemoteMove(_ direction: MoveCommandDirection) {
+    private func handleTVRemoteMove(_ direction: NativePlayerRemoteMoveDirection) {
         switch direction {
         case .left:
             seekTVRelative(NativePlayerRemoteControlPolicy.rewindSeconds)
@@ -618,8 +658,6 @@ struct CustomPlayerView: View {
             seekTVRelative(NativePlayerRemoteControlPolicy.fastForwardSeconds)
         case .up, .down:
             revealTVChrome()
-        @unknown default:
-            break
         }
     }
 
@@ -647,19 +685,21 @@ struct CustomPlayerView: View {
     }
 
     private func showTVTrackPicker(_ mode: PlaybackTrackMenuKind) {
+        preferredTVChromeFocus = mode == .audio ? .audio : .subtitles
         activeTVPanel = .tracks(mode)
         revealTVChrome()
     }
 
     private func showTVVideoPanel() {
+        preferredTVChromeFocus = .video
         activeTVPanel = .video
         revealTVChrome()
     }
 
     private func handleTVTrackSelection(_ selection: PlaybackControlSelection) {
         switch selection {
-        case .audio:
-            break
+        case let .audio(trackID):
+            engine.selectAudioTrack(id: trackID)
         case let .subtitle(trackID):
             engine.subtitles.select(trackID: trackID)
         }
@@ -697,23 +737,23 @@ struct CustomPlayerView: View {
         chromeAutoHideTask = nil
         activeTVPanel = nil
         isChromeVisible = false
-        Task { @MainActor in
-            await Task.yield()
-            guard !isChromeVisible else { return }
-            isRemoteInputFocused = true
-        }
+        updateTVRemoteInputFocus()
     }
 
     private func scheduleTVChromeAutoHide() {
         chromeAutoHideTask?.cancel()
-        guard !isTransportPaused, activeTVPanel == nil else { return }
+        guard engine.transportState != .paused, activeTVPanel == nil else { return }
         chromeAutoHideTask = Task { @MainActor in
             try? await Task.sleep(
                 nanoseconds: UInt64(NativePlayerChromeVisibilityPolicy.autoHideDelaySeconds * 1_000_000_000)
             )
-            guard !Task.isCancelled, activeTVPanel == nil, !isTransportPaused else { return }
+            guard !Task.isCancelled, activeTVPanel == nil, engine.transportState != .paused else { return }
             hideTVChrome()
         }
+    }
+
+    private func updateTVRemoteInputFocus() {
+        isRemoteInputFocused = !isChromeVisible && activeTVPanel == nil
     }
 #endif
 }

@@ -3,21 +3,37 @@ import SwiftUI
 #if os(tvOS)
 struct NativePlayerRemoteInputLayer: View {
     let isEnabled: Bool
-    let onSelect: () -> Void
-    let onMove: (MoveCommandDirection) -> Void
+    let focusNamespace: Namespace.ID
+    let onCommand: (NativePlayerTVTransportCommand) -> Void
 
     var body: some View {
-        Button(action: onSelect) {
+        Button {
+            onCommand(.select)
+        } label: {
             Color.clear
                 .contentShape(Rectangle())
         }
             .buttonStyle(.plain)
-            .focusable(isEnabled)
+            .disabled(!isEnabled)
             .focusEffectDisabled(true)
             .hoverEffectDisabled(true)
-            .onMoveCommand(perform: onMove)
+            .onMoveCommand { direction in
+                guard let direction = remoteDirection(from: direction) else { return }
+                onCommand(.move(direction))
+            }
+            .prefersDefaultFocus(isEnabled, in: focusNamespace)
             .allowsHitTesting(isEnabled)
             .accessibilityHidden(true)
+    }
+
+    private func remoteDirection(from direction: MoveCommandDirection) -> NativePlayerRemoteMoveDirection? {
+        switch direction {
+        case .left: return .left
+        case .right: return .right
+        case .up: return .up
+        case .down: return .down
+        @unknown default: return nil
+        }
     }
 }
 #endif

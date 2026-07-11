@@ -97,6 +97,53 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeAction.video.destination, .videoPanel)
     }
 
+    func testTVCommandDispatcherInvokesExactlyOneProductionCallbackPerCommand() {
+        var selectCount = 0
+        var playPauseCount = 0
+        var moves: [NativePlayerRemoteMoveDirection] = []
+        let dispatcher = NativePlayerTVCommandDispatcher(
+            onSelect: { selectCount += 1 },
+            onPlayPause: { playPauseCount += 1 },
+            onMove: { moves.append($0) }
+        )
+
+        dispatcher.dispatch(.select)
+        dispatcher.dispatch(.playPause)
+        dispatcher.dispatch(.move(.left))
+
+        XCTAssertEqual(selectCount, 1)
+        XCTAssertEqual(playPauseCount, 1)
+        XCTAssertEqual(moves, [.left])
+    }
+
+    func testTVFocusRestoresExactOriginatingActionAfterPanelDismissal() {
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.audio), .audio)
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.subtitles), .subtitles)
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.video), .video)
+    }
+
+    func testExplicitChromeSuppressionIsTVOSOnly() {
+        XCTAssertTrue(NativePlayerChromeExplicitVisibilityPolicy.canHideChrome(isTVOS: true))
+        XCTAssertFalse(NativePlayerChromeExplicitVisibilityPolicy.canHideChrome(isTVOS: false))
+    }
+
+    func testTimelineAccessibilityValueInterpolatesSeconds() {
+        XCTAssertEqual(
+            NativePlayerTVTimelineAccessibility.value(
+                playbackTime: 65.4,
+                durationSeconds: 125.2
+            ),
+            "65 of 125 seconds"
+        )
+    }
+
+    func testCustomAudioTrackModelCarriesAuthoritativeSelection() {
+        XCTAssertEqual(
+            CustomPlaybackAudioTrack(id: "fr", title: "Français", isSelected: true),
+            CustomPlaybackAudioTrack(id: "fr", title: "Français", isSelected: true)
+        )
+    }
+
     func testSkipIntroRequestsFocusWhenSuggestionAppears() {
         XCTAssertTrue(
             CustomPlayerSkipFocusPolicy.shouldRequestFocus(

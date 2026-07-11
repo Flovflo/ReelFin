@@ -4,12 +4,13 @@ import SwiftUI
 struct NativePlayerTVProgressScrubberView: View {
     let playbackTime: Double
     let durationSeconds: Double?
-    let onSeekRelative: (Double) -> Void
-    let onSelect: () -> Void
-    @FocusState private var isFocused: Bool
+    let focus: FocusState<NativePlayerTVChromeFocus?>.Binding
+    let onCommand: (NativePlayerTVTransportCommand) -> Void
 
     var body: some View {
-        Button(action: onSelect) {
+        Button {
+            onCommand(.select)
+        } label: {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     ZStack(alignment: .leading) {
@@ -39,16 +40,15 @@ struct NativePlayerTVProgressScrubberView: View {
             .animation(.easeOut(duration: 0.14), value: isFocused)
         }
         .buttonStyle(.plain)
-        .focused($isFocused)
-        .focusable(true)
+        .focused(focus, equals: .timeline)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .onMoveCommand { direction in
             switch direction {
             case .left:
-                onSeekRelative(NativePlayerRemoteControlPolicy.rewindSeconds)
+                onCommand(.move(.left))
             case .right:
-                onSeekRelative(NativePlayerRemoteControlPolicy.fastForwardSeconds)
+                onCommand(.move(.right))
             case .up, .down:
                 break
             @unknown default:
@@ -56,7 +56,12 @@ struct NativePlayerTVProgressScrubberView: View {
             }
         }
         .accessibilityLabel("Playback position")
-        .accessibilityValue(accessibilityValue)
+        .accessibilityValue(
+            NativePlayerTVTimelineAccessibility.value(
+                playbackTime: playbackTime,
+                durationSeconds: durationSeconds
+            )
+        )
         .accessibilityIdentifier("native_player_timeline_scrubber")
     }
 
@@ -70,9 +75,6 @@ struct NativePlayerTVProgressScrubberView: View {
         min(max(0, filledWidth(for: width) - 1.5), max(0, width - 3))
     }
 
-    private var accessibilityValue: String {
-        guard let durationSeconds, durationSeconds > 0 else { return "Position unavailable" }
-        return "(Int(playbackTime.rounded())) of (Int(durationSeconds.rounded())) seconds"
-    }
+    private var isFocused: Bool { focus.wrappedValue == .timeline }
 }
 #endif

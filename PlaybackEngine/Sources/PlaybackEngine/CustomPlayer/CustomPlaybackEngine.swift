@@ -219,6 +219,23 @@ public protocol CustomPlaybackAdaptiveFallbackResolving: Sendable {
     func resolveAdaptiveFallback(itemID: String, startSeconds: Double) async -> URL?
 }
 
+public struct CustomPlaybackAudioTrack: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let isSelected: Bool
+
+    public init(id: String, title: String, isSelected: Bool) {
+        self.id = id
+        self.title = title
+        self.isSelected = isSelected
+    }
+}
+
+public enum CustomPlaybackTransportState: Equatable, Sendable {
+    case playing
+    case paused
+}
+
 /// The clean custom player (blueprint §2). ONE `AVPlayer`, fed the original bytes from the local
 /// disk cache over `http://127.0.0.1` (DV-safe), with the ORIGINAL-FIRST dynamic brain driving a
 /// loading bar instead of cuts or quality drops. The cache's own fill rate is the connection probe
@@ -252,6 +269,8 @@ public final class CustomPlaybackEngine {
     public let subtitles = SubtitleOverlayModel()
     /// Skip intro/credits suggestion (same resolver as everywhere in the app) — nil when none.
     public private(set) var activeSkipSuggestion: PlaybackSkipSuggestion?
+    public private(set) var audioTracks: [CustomPlaybackAudioTrack] = []
+    public private(set) var transportState: CustomPlaybackTransportState = .paused
     /// Item metadata + binge queue, provided by the host (drives episode skip/next semantics).
     public var currentMediaItem: MediaItem?
     public var nextEpisodeQueue: [MediaItem] = []
@@ -297,6 +316,10 @@ public final class CustomPlaybackEngine {
     private var audioRecoveryTask: Task<Void, Never>?
     private var wasPlayingBeforeAudioInterruption = false
     private var itemStatusObservation: NSKeyValueObservation?
+    private var timeControlStatusObservation: NSKeyValueObservation?
+    private var audioTracksTask: Task<Void, Never>?
+    private var audioSelectionGroup: AVMediaSelectionGroup?
+    private var audioOptionsByID: [String: AVMediaSelectionOption] = [:]
 
     // Recovery ladder state.
     private var currentItemID: String?
@@ -398,6 +421,12 @@ public final class CustomPlaybackEngine {
                 self?.handleExternalPlaybackChange(active: active)
             }
         }
+        timeControlStatusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
+            let status = player.timeControlStatus
+            Task { @MainActor [weak self] in
+                self?.transportState = status == .paused ? .paused : .playing
+            }
+        }
     }
 
     /// Route audio to playback (movie) so there IS sound — and it ignores the silent switch, like a
@@ -494,7 +523,7 @@ public final class CustomPlaybackEngine {
     /// Explicit tvOS remote fallback. A SwiftUI overlay above `AVPlayerViewController` can own the
     /// focus responder, so relying solely on AVKit to receive the Play/Pause press is unreliable.
     public func togglePlayPause() {
-        if player.timeControlStatus == .paused || player.rate == 0 {
+        if transportState == .paused {
             wasPlayingBeforeAudioInterruption = true
             AppLog.playback.notice(
                 "customplayer.remote.play_pause — action=play status=\(self.player.timeControlStatus.rawValue, privacy: .public) rate=\(self.player.rate, format: .fixed(precision: 2))"
@@ -516,6 +545,17 @@ public final class CustomPlaybackEngine {
         session?.setPlayheadOffset(session?.byteOffset(forSeconds: seconds) ?? 0)
         player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 1, preferredTimescale: 600))
+    }
+
+    public func selectAudioTrack(id: String) {
+        guard let item = player.currentItem,
+              let group = audioSelectionGroup,
+              let option = audioOptionsByID[id]
+        else { return }
+        item.select(option, in: group)
+        audioTracks = audioTracks.map { track in
+            CustomPlaybackAudioTrack(id: track.id, title: track.title, isSelected: track.id == id)
+        }
     }
 
     /// Last playback position the engine observed (drives resume reporting and retry).
@@ -1321,6 +1361,7 @@ public final class CustomPlaybackEngine {
 
     private func observeItemLifecycle(_ item: AVPlayerItem) {
         removeItemObservers()
+        loadAudioTracks(for: item)
 #if os(tvOS)
         // Native-format probe (nil attributes → zero conversion cost), kept attached and DRAINED
         // for the item's whole life — the render heartbeat. tvOS only — see `videoOutputProbe` doc.
@@ -1371,6 +1412,36 @@ public final class CustomPlaybackEngine {
                 self?.observedPlaybackStall = true
                 await self?.monitorTick()
             }
+        }
+    }
+
+    private func loadAudioTracks(for item: AVPlayerItem) {
+        audioTracksTask?.cancel()
+        audioSelectionGroup = nil
+        audioOptionsByID = [:]
+        audioTracks = []
+        audioTracksTask = Task { @MainActor [weak self, weak item] in
+            guard let self, let item else { return }
+            let group = try? await item.asset.loadMediaSelectionGroup(for: .audible)
+            guard !Task.isCancelled,
+                  self.player.currentItem === item,
+                  let group
+            else { return }
+
+            let selected = item.currentMediaSelection.selectedMediaOption(in: group)
+            var optionsByID: [String: AVMediaSelectionOption] = [:]
+            let tracks = group.options.enumerated().map { index, option in
+                let id = "audio-\(index)"
+                optionsByID[id] = option
+                return CustomPlaybackAudioTrack(
+                    id: id,
+                    title: option.displayName,
+                    isSelected: option === selected
+                )
+            }
+            self.audioSelectionGroup = group
+            self.audioOptionsByID = optionsByID
+            self.audioTracks = tracks
         }
     }
 
@@ -1569,10 +1640,14 @@ public final class CustomPlaybackEngine {
         markersTask?.cancel(); markersTask = nil
         firstFrameWatchdogTask?.cancel(); firstFrameWatchdogTask = nil
         audioRecoveryTask?.cancel(); audioRecoveryTask = nil
+        audioTracksTask?.cancel(); audioTracksTask = nil
         if let timeObserverToken { player.removeTimeObserver(timeObserverToken) }
         timeObserverToken = nil
         subtitles.configure(tracks: [])
         activeSkipSuggestion = nil
+        audioTracks = []
+        audioSelectionGroup = nil
+        audioOptionsByID = [:]
         removeItemObservers()
         if let observer = audioInterruptionObserver { NotificationCenter.default.removeObserver(observer) }
         audioInterruptionObserver = nil
