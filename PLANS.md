@@ -589,3 +589,10 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Follow-up live UI evidence exposed a Direct Play readiness timeout after AVKit had already produced a resumed first frame. Startup readiness can now accept first-frame evidence for Direct Play only when playback is actively requested, the item is ready, and the pending resume target is satisfied.
 - Latest validation: `xcodegen generate`, Mac Catalyst build/run verification, focused Mac Catalyst layout/readiness tests, live player E2E with artifacts `.artifacts/player-e2e/20260509-110718`, tvOS build gate, and runtime-log cleanliness passed. Mac Catalyst XCUITest UI traversal is still blocked before app interaction by Xcode's `Timed out while enabling automation mode`.
 - 2026-05-10 Mac shell validation: focused `RootDesktopLayoutPolicyTests` passed, `scripts/run_reelfin_macos.sh --verify` built and launched `ReelFin=RUNNING`, and `ReelFinTV` simulator build passed after the shared root change.
+
+## tvOS Player Chrome And Remote Ownership - 2026-07-11
+
+- CustomPlayer and NativePlayer now share the Apple-style bottom metadata/timeline/action composition. The normal action set is Audio, Sous-titres, and Vidéo; Vidéo opens a real route/quality panel and track choices use the compact right-side glass panel.
+- ReelFin is the sole tvOS remote owner: inline AVKit controls and UIKit press interception are disabled, one SwiftUI command handles Play/Pause, Select shows/hides chrome, Left rewinds 10 seconds, Right advances 30 seconds, and Menu closes panel, then chrome, then player.
+- Horizontal seeks are clamped and coalesced before reaching the active engine. Focus returns through state tokens and task yielding, never fixed-delay focus sleeps.
+- Validation: policy/layout tests were red before implementation; 51 focused tests passed after implementation, iOS 27 and tvOS 27 simulator builds passed, `xcodegen generate` passed, and the authenticated tvOS simulator retained its Jellyfin session during update-install. Full XCUIRemote journeys remain Task 5.

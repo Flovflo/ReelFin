@@ -4,10 +4,12 @@ import SwiftUI
 struct NativePlayerTVProgressScrubberView: View {
     let playbackTime: Double
     let durationSeconds: Double?
+    let onSeekRelative: (Double) -> Void
+    let onSelect: () -> Void
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        Button(action: {}) {
+        Button(action: onSelect) {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     ZStack(alignment: .leading) {
@@ -41,12 +43,21 @@ struct NativePlayerTVProgressScrubberView: View {
         .focusable(true)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
-        .onAppear {
-            DispatchQueue.main.async {
-                isFocused = true
+        .onMoveCommand { direction in
+            switch direction {
+            case .left:
+                onSeekRelative(NativePlayerRemoteControlPolicy.rewindSeconds)
+            case .right:
+                onSeekRelative(NativePlayerRemoteControlPolicy.fastForwardSeconds)
+            case .up, .down:
+                break
+            @unknown default:
+                break
             }
         }
         .accessibilityLabel("Playback position")
+        .accessibilityValue(accessibilityValue)
+        .accessibilityIdentifier("native_player_timeline_scrubber")
     }
 
     private func filledWidth(for width: CGFloat) -> CGFloat {
@@ -57,6 +68,11 @@ struct NativePlayerTVProgressScrubberView: View {
 
     private func playheadOffset(for width: CGFloat) -> CGFloat {
         min(max(0, filledWidth(for: width) - 1.5), max(0, width - 3))
+    }
+
+    private var accessibilityValue: String {
+        guard let durationSeconds, durationSeconds > 0 else { return "Position unavailable" }
+        return "(Int(playbackTime.rounded())) of (Int(durationSeconds.rounded())) seconds"
     }
 }
 #endif

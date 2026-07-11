@@ -4,7 +4,9 @@ struct NativePlayerTimelineView: View {
     let presentation: NativePlayerChromePresentation
     let playbackTime: Double
     let durationSeconds: Double?
+    let onSeekRelative: (Double) -> Void
     let onSeekAbsolute: (Double) -> Void
+    let onSelect: () -> Void
     @State private var scrubValue: Double?
 
     var body: some View {
@@ -21,7 +23,9 @@ struct NativePlayerTimelineView: View {
 #if os(tvOS)
         NativePlayerTVProgressScrubberView(
             playbackTime: scrubValue ?? playbackTime,
-            durationSeconds: durationSeconds
+            durationSeconds: durationSeconds,
+            onSeekRelative: onSeekRelative,
+            onSelect: onSelect
         )
 #else
         Slider(

@@ -521,6 +521,12 @@ public final class CustomPlaybackEngine {
     /// Last playback position the engine observed (drives resume reporting and retry).
     public var lastObservedSeconds: Double { lastKnownTimeSeconds }
 
+    /// Normalized title duration discovered from the active AVPlayerItem. Exposed for ReelFin's
+    /// own tvOS timeline because AVKit's inline controls are deliberately disabled there.
+    public var observedDurationSeconds: Double? {
+        durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : nil
+    }
+
     /// Stops playback, reports the final position to the server, and returns it so the UI can
     /// update its local state (resume badge) immediately.
     @discardableResult

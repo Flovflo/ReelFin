@@ -27,8 +27,11 @@ struct NativePlayerView: View {
     @State private var committedSeekDirection: NativePlayerSeekDirection = .forward
     @State private var seekDisplayHoldUntil: Date?
     @State private var activeTrackMenu: PlaybackTrackMenuKind?
+    @State private var showsVideoPanel = false
+    @State private var focusReturnToken: UInt = 0
     @State private var showsDiagnostics = false
     @State private var isChromeUserActive = true
+    @State private var isChromeExplicitlyHidden = false
     @State private var chromeAutoHideTask: Task<Void, Never>?
     @State private var isViewActive = false
     @State private var lastDeepEvidenceLogDate: Date?
@@ -75,8 +78,8 @@ struct NativePlayerView: View {
 #if os(tvOS)
             NativePlayerRemoteInputLayer(
                 isEnabled: !shouldShowChrome,
-                onReveal: revealChrome,
-                onPlayPause: togglePlayPause
+                onSelect: revealChrome,
+                onMove: handleRemoteMove
             )
             .focused($remoteInputFocused)
             .ignoresSafeArea()
@@ -99,8 +102,11 @@ struct NativePlayerView: View {
                     onSeekAbsolute: seekAbsolute,
                     onInteraction: revealChrome,
                     onShowTrackPicker: showTrackPicker,
+                    onShowVideoPanel: showVideoPanel,
+                    onToggleChrome: hideChrome,
                     onDismiss: { dismiss() }
                 )
+                .id(focusReturnToken)
                 .transition(.opacity)
             }
             if shouldShowChrome, let activeTrackMenu {
@@ -113,12 +119,28 @@ struct NativePlayerView: View {
                 .padding(trackMenuPadding)
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
             }
+            if shouldShowChrome, showsVideoPanel {
+                NativePlayerVideoInformationView(
+                    qualityLabel: videoQualityLabel,
+                    routeLabel: "Lecture directe originale"
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(trackMenuPadding)
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+            }
         }
         .contentShape(Rectangle())
+#if os(iOS)
         .onTapGesture {
-            activeTrackMenu = nil
-            revealChrome()
+            if activeTrackMenu != nil || showsVideoPanel {
+                dismissActivePanel()
+            } else if shouldShowChrome {
+                hideChrome()
+            } else {
+                revealChrome()
+            }
         }
+#endif
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native_engine_player_screen")
         .onAppear {
@@ -162,6 +184,7 @@ struct NativePlayerView: View {
             pendingSeekTask = nil
             pendingSeekTarget = nil
             activeTrackMenu = nil
+            showsVideoPanel = false
 #if os(tvOS)
             remoteInputFocused = false
 #endif
@@ -178,16 +201,21 @@ struct NativePlayerView: View {
         }
 #if os(tvOS)
         .onExitCommand {
-            if activeTrackMenu != nil {
-                dismissTrackMenu()
-            } else {
+            switch NativePlayerTVRemoteControlPolicy.menuAction(
+                chromeVisible: shouldShowChrome,
+                pickerVisible: activeTrackMenu != nil || showsVideoPanel
+            ) {
+            case .dismissPicker:
+                dismissActivePanel()
+            case .hideChrome:
+                hideChrome()
+            case .exitPlayer:
                 dismiss()
             }
         }
         .onPlayPauseCommand {
             togglePlayPause()
         }
-        .onMoveCommand(perform: handleRemoteMove)
 #endif
     }
 
@@ -213,7 +241,10 @@ struct NativePlayerView: View {
     }
 
     private var shouldShowChrome: Bool {
-        activeTrackMenu != nil || NativePlayerChromeVisibilityPolicy.shouldShowChrome(
+        if isChromeExplicitlyHidden, activeTrackMenu == nil, !showsVideoPanel {
+            return false
+        }
+        return activeTrackMenu != nil || showsVideoPanel || NativePlayerChromeVisibilityPolicy.shouldShowChrome(
             isUserActive: isChromeUserActive,
             isPaused: isPaused,
             isBuffering: isBuffering,
@@ -353,7 +384,14 @@ struct NativePlayerView: View {
             activeTrackMenu = nil
             return
         }
+        showsVideoPanel = false
         activeTrackMenu = mode
+    }
+
+    private func showVideoPanel() {
+        revealChrome()
+        activeTrackMenu = nil
+        showsVideoPanel = true
     }
 
     private func handleTrackMenuSelection(_ selection: PlaybackControlSelection) {
@@ -362,9 +400,31 @@ struct NativePlayerView: View {
         revealChrome()
     }
 
-    private func dismissTrackMenu() {
+    private func dismissActivePanel() {
         activeTrackMenu = nil
+        showsVideoPanel = false
+        focusReturnToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(after: focusReturnToken)
         revealChrome()
+    }
+
+    private func hideChrome() {
+        chromeAutoHideTask?.cancel()
+        chromeAutoHideTask = nil
+        activeTrackMenu = nil
+        showsVideoPanel = false
+        isChromeUserActive = false
+        isChromeExplicitlyHidden = true
+#if os(tvOS)
+        focusRemoteInputWhenChromeHidden()
+#endif
+    }
+
+    private var videoQualityLabel: String {
+        if let hdrLine = activeDiagnostics.first(where: { $0.hasPrefix("hdr=") }),
+           !hdrLine.contains("hdr=sdr") {
+            return hdrLine.replacingOccurrences(of: "hdr=", with: "").uppercased()
+        }
+        return "Originale"
     }
 
     private func shouldHoldSeekDisplay(for reportedSeconds: Double, now: Date) -> Bool {
@@ -485,6 +545,7 @@ struct NativePlayerView: View {
 
     private func revealChrome() {
         isChromeUserActive = true
+        isChromeExplicitlyHidden = false
 #if os(tvOS)
         releaseRemoteInputFocus()
 #endif
@@ -505,13 +566,13 @@ struct NativePlayerView: View {
             showsDiagnostics: shouldShowDiagnosticsPanel,
             hasError: visibleErrorMessage != nil,
             isPinnedForAutomation: keepsChromeVisibleForAutomation
-        ), activeTrackMenu == nil else {
+        ), activeTrackMenu == nil, !showsVideoPanel else {
             return
         }
         chromeAutoHideTask = Task { @MainActor in
             let delay = UInt64(NativePlayerChromeVisibilityPolicy.autoHideDelaySeconds * 1_000_000_000)
             try? await Task.sleep(nanoseconds: delay)
-            guard !Task.isCancelled, activeTrackMenu == nil else { return }
+            guard !Task.isCancelled, activeTrackMenu == nil, !showsVideoPanel else { return }
             isChromeUserActive = false
 #if os(tvOS)
             focusRemoteInputWhenChromeHidden()
@@ -521,7 +582,7 @@ struct NativePlayerView: View {
 
 #if os(tvOS)
     private func handleRemoteMove(_ direction: MoveCommandDirection) {
-        guard activeTrackMenu == nil else { return }
+        guard activeTrackMenu == nil, !showsVideoPanel else { return }
         guard let remoteDirection = nativeRemoteDirection(from: direction),
               let seekDelta = NativePlayerRemoteControlPolicy.relativeSeekSeconds(for: remoteDirection) else {
             revealChrome()
@@ -546,17 +607,15 @@ struct NativePlayerView: View {
     }
 
     private func focusRemoteInputWhenChromeHidden() {
-        DispatchQueue.main.async {
+        Task { @MainActor in
+            await Task.yield()
             guard isViewActive, !shouldShowChrome else { return }
             remoteInputFocused = true
         }
     }
 
     private func releaseRemoteInputFocus() {
-        DispatchQueue.main.async {
-            guard isViewActive else { return }
-            remoteInputFocused = false
-        }
+        remoteInputFocused = false
     }
 #endif
 }

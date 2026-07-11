@@ -32,20 +32,30 @@ enum CustomPlayerTVRemoteRouting {
     enum Input: Equatable {
         case menu
         case playPause
+        case select
+        case left
+        case right
         case other
     }
 
     enum Action: Equatable {
-        case exitPlayer
+        case handleMenu
         case togglePlayPause
-        case system
+        case toggleChrome
+        case seekRelative(Double)
+        case ignore
     }
+
+    static let showsInlineAVKitControls = false
 
     static func action(for input: Input) -> Action {
         switch input {
-        case .menu: return .exitPlayer
+        case .menu: return .handleMenu
         case .playPause: return .togglePlayPause
-        case .other: return .system
+        case .select: return .toggleChrome
+        case .left: return .seekRelative(NativePlayerRemoteControlPolicy.rewindSeconds)
+        case .right: return .seekRelative(NativePlayerRemoteControlPolicy.fastForwardSeconds)
+        case .other: return .ignore
         }
     }
 }
@@ -73,6 +83,15 @@ struct CustomPlayerView: View {
     private let slowLaunchThresholdSeconds: UInt64 = 15
 #if os(tvOS)
     @FocusState private var isSkipActionFocused: Bool
+    @FocusState private var isRemoteInputFocused: Bool
+    @Namespace private var playerFocusNamespace
+    @State private var isChromeVisible = true
+    @State private var isTransportPaused = false
+    @State private var activeTVPanel: CustomPlayerTVPanel?
+    @State private var pendingTVSeekTarget: Double?
+    @State private var pendingTVSeekTask: Task<Void, Never>?
+    @State private var chromeAutoHideTask: Task<Void, Never>?
+    @State private var focusReturnToken: UInt = 0
 #endif
 
     /// What the launch screen shows the instant Play is pressed — the immediate "your action is
@@ -88,12 +107,15 @@ struct CustomPlayerView: View {
             Color.black.ignoresSafeArea()
             CustomPlayerSurface(
                 player: engine.player,
-                engine: engine,
-                onExitRequested: requestDismissal
+                engine: engine
             )
                 .ignoresSafeArea()
             launchOverlay
             if !isLaunching, engine.bufferingState.phase != .failed {
+#if os(tvOS)
+                tvRemoteInputLayer
+                tvPlayerChrome
+#else
                 VStack {
                     HStack {
                         Spacer()
@@ -103,15 +125,17 @@ struct CustomPlayerView: View {
                 }
                 .padding(.top, 8)
                 .padding(.horizontal, 8)
+#endif
             }
             subtitleCueOverlay
             skipOverlay
             overlay
         }
-        .modifier(CustomPlayerRemoteCommandModifier(engine: engine))
 #if os(tvOS)
+        .focusScope(playerFocusNamespace)
+        .onPlayPauseCommand(perform: toggleTVPlayPause)
         .onExitCommand {
-            requestDismissal()
+            handleTVMenu()
         }
         .onChange(of: engine.activeSkipSuggestion != nil) { hadSuggestion, hasSuggestion in
             guard CustomPlayerSkipFocusPolicy.shouldRequestFocus(
@@ -131,6 +155,9 @@ struct CustomPlayerView: View {
             // The one log line that separates "the player never presented" (screen stuck on the
             // detail while the engine plays unseen) from "the player is up but the picture froze".
             AppLog.ui.notice("customplayer.view.appeared")
+#if os(tvOS)
+            revealTVChrome()
+#endif
 #if os(iOS)
             OrientationManager.shared.lockLandscapeForPlayerPresentation()
 #endif
@@ -141,6 +168,11 @@ struct CustomPlayerView: View {
             if !engine.isPictureInPictureActive {
                 engine.stop()
             }
+#if os(tvOS)
+            pendingTVSeekTask?.cancel()
+            chromeAutoHideTask?.cancel()
+            isRemoteInputFocused = false
+#endif
 #if os(iOS)
             // A compatible MKV replaces this view with `PlayerView` inside the SAME full-screen
             // cover. Restoring portrait here races after the native view's landscape request and
@@ -488,24 +520,210 @@ struct CustomPlayerView: View {
             dismiss()
         }
     }
-}
 
-/// `AVPlayerViewController` normally handles the Siri Remote, but this player is hosted under
-/// SwiftUI HUD/overlay layers that can own the focus responder. Keep Play/Pause deterministic at
-/// the full-screen root as well; iOS remains entirely under AVKit's transport controls.
-private struct CustomPlayerRemoteCommandModifier: ViewModifier {
-    let engine: CustomPlaybackEngine
-
-    func body(content: Content) -> some View {
 #if os(tvOS)
-        content.onPlayPauseCommand {
-            engine.togglePlayPause()
+    @ViewBuilder
+    private var tvPlayerChrome: some View {
+        if isChromeVisible, let item = launchContext?.item ?? engine.currentMediaItem {
+            NativePlayerTransportOverlayView(
+                item: item,
+                isPaused: $isTransportPaused,
+                showsDiagnostics: .constant(false),
+                playbackTime: pendingTVSeekTarget ?? engine.lastObservedSeconds,
+                durationSeconds: customDurationSeconds,
+                isBuffering: engine.bufferingState.phase == .buffering,
+                onSeekRelative: seekTVRelative,
+                onSeekAbsolute: seekTVAbsolute,
+                onInteraction: revealTVChrome,
+                onShowTrackPicker: showTVTrackPicker,
+                onShowVideoPanel: showTVVideoPanel,
+                onToggleChrome: hideTVChrome,
+                onDismiss: requestDismissal
+            )
+            .id(focusReturnToken)
+            .transition(.opacity)
         }
-#else
-        content
-#endif
+
+        if isChromeVisible, let activeTVPanel {
+            Group {
+                switch activeTVPanel {
+                case let .tracks(mode):
+                    NativePlayerTrackSelectionMenuView(
+                        mode: mode,
+                        controls: customPlaybackControls,
+                        onSelect: handleTVTrackSelection
+                    )
+                case .video:
+                    NativePlayerVideoInformationView(
+                        qualityLabel: engine.sourceQualityLabel ?? "Originale",
+                        routeLabel: engine.hasLocalCacheReservoir ? "Lecture directe optimisée" : "Lecture directe"
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            .padding(.init(top: 0, leading: 0, bottom: 164, trailing: 86))
+            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+        }
     }
+
+    private var tvRemoteInputLayer: some View {
+        NativePlayerRemoteInputLayer(
+            isEnabled: !isChromeVisible,
+            onSelect: revealTVChrome,
+            onMove: handleTVRemoteMove
+        )
+        .focused($isRemoteInputFocused)
+        .ignoresSafeArea()
+    }
+
+    private var customDurationSeconds: Double? {
+        if let observed = engine.observedDurationSeconds { return observed }
+        guard let ticks = (launchContext?.item ?? engine.currentMediaItem)?.runtimeTicks, ticks > 0 else { return nil }
+        return Double(ticks) / 10_000_000
+    }
+
+    private var customPlaybackControls: PlaybackControlsModel {
+        let subtitles = [
+            PlaybackTrackOption(
+                trackID: nil,
+                title: "Désactivés",
+                badge: nil,
+                iconName: "captions.bubble",
+                isSelected: engine.subtitles.activeTrackID == nil
+            )
+        ] + engine.subtitles.availableTracks.map { track in
+            PlaybackTrackOption(
+                trackID: track.id,
+                title: track.label,
+                badge: nil,
+                iconName: "captions.bubble",
+                isSelected: engine.subtitles.activeTrackID == track.id
+            )
+        }
+        return PlaybackControlsModel(audioOptions: [], subtitleOptions: subtitles)
+    }
+
+    private func toggleTVPlayPause() {
+        engine.togglePlayPause()
+        isTransportPaused.toggle()
+        revealTVChrome()
+        AppLog.ui.notice("customplayer.remote.command — input=playPause")
+    }
+
+    private func handleTVRemoteMove(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left:
+            seekTVRelative(NativePlayerRemoteControlPolicy.rewindSeconds)
+        case .right:
+            seekTVRelative(NativePlayerRemoteControlPolicy.fastForwardSeconds)
+        case .up, .down:
+            revealTVChrome()
+        @unknown default:
+            break
+        }
+    }
+
+    private func seekTVRelative(_ delta: Double) {
+        seekTVAbsolute((pendingTVSeekTarget ?? engine.lastObservedSeconds) + delta)
+    }
+
+    private func seekTVAbsolute(_ seconds: Double) {
+        let target = NativePlayerRemoteControlPolicy.clampedSeekTarget(
+            from: seconds,
+            delta: 0,
+            durationSeconds: customDurationSeconds
+        )
+        pendingTVSeekTarget = target
+        pendingTVSeekTask?.cancel()
+        pendingTVSeekTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: NativePlayerRemoteControlPolicy.seekCommitDebounceNanoseconds)
+            guard !Task.isCancelled, pendingTVSeekTarget == target else { return }
+            engine.seek(toSeconds: target)
+            pendingTVSeekTarget = nil
+            pendingTVSeekTask = nil
+            AppLog.ui.notice("customplayer.remote.command — input=seek target=\(target, privacy: .public)")
+        }
+        revealTVChrome()
+    }
+
+    private func showTVTrackPicker(_ mode: PlaybackTrackMenuKind) {
+        activeTVPanel = .tracks(mode)
+        revealTVChrome()
+    }
+
+    private func showTVVideoPanel() {
+        activeTVPanel = .video
+        revealTVChrome()
+    }
+
+    private func handleTVTrackSelection(_ selection: PlaybackControlSelection) {
+        switch selection {
+        case .audio:
+            break
+        case let .subtitle(trackID):
+            engine.subtitles.select(trackID: trackID)
+        }
+        dismissTVPanel()
+    }
+
+    private func handleTVMenu() {
+        switch NativePlayerTVRemoteControlPolicy.menuAction(
+            chromeVisible: isChromeVisible,
+            pickerVisible: activeTVPanel != nil
+        ) {
+        case .dismissPicker:
+            dismissTVPanel()
+        case .hideChrome:
+            hideTVChrome()
+        case .exitPlayer:
+            requestDismissal()
+        }
+    }
+
+    private func dismissTVPanel() {
+        activeTVPanel = nil
+        focusReturnToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(after: focusReturnToken)
+        revealTVChrome()
+    }
+
+    private func revealTVChrome() {
+        isChromeVisible = true
+        isRemoteInputFocused = false
+        scheduleTVChromeAutoHide()
+    }
+
+    private func hideTVChrome() {
+        chromeAutoHideTask?.cancel()
+        chromeAutoHideTask = nil
+        activeTVPanel = nil
+        isChromeVisible = false
+        Task { @MainActor in
+            await Task.yield()
+            guard !isChromeVisible else { return }
+            isRemoteInputFocused = true
+        }
+    }
+
+    private func scheduleTVChromeAutoHide() {
+        chromeAutoHideTask?.cancel()
+        guard !isTransportPaused, activeTVPanel == nil else { return }
+        chromeAutoHideTask = Task { @MainActor in
+            try? await Task.sleep(
+                nanoseconds: UInt64(NativePlayerChromeVisibilityPolicy.autoHideDelaySeconds * 1_000_000_000)
+            )
+            guard !Task.isCancelled, activeTVPanel == nil, !isTransportPaused else { return }
+            hideTVChrome()
+        }
+    }
+#endif
 }
+
+#if os(tvOS)
+private enum CustomPlayerTVPanel: Equatable {
+    case tracks(PlaybackTrackMenuKind)
+    case video
+}
+#endif
 
 /// AVKit host for the custom engine. The engine creates its `AVPlayerItem` asynchronously after
 /// SwiftUI presents this controller. On iOS AVKit can leave its PlayerRemoteXPC video surface
@@ -519,23 +737,20 @@ private struct CustomPlayerSurface: UIViewControllerRepresentable {
 
     let player: AVPlayer
     let engine: CustomPlaybackEngine
-    let onExitRequested: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(engine: engine) }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-#if os(tvOS)
-        let controller = InlineCustomAVPlayerViewController()
-        controller.onExitRequested = onExitRequested
-        controller.onPlayPauseRequested = { engine.togglePlayPause() }
-#else
         let controller = AVPlayerViewController()
-#endif
         AppLog.playback.notice("customplayer.surface.make")
         installPlayerScreenAccessibilityMarker(in: controller)
         controller.player = player
         configureDisplayPolicy(on: controller)
+#if os(tvOS)
+        controller.showsPlaybackControls = CustomPlayerTVRemoteRouting.showsInlineAVKitControls
+#else
         controller.showsPlaybackControls = true
+#endif
         controller.allowsPictureInPicturePlayback = true
 #if os(iOS)
         controller.entersFullScreenWhenPlaybackBegins = false
@@ -551,12 +766,6 @@ private struct CustomPlayerSurface: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
-#if os(tvOS)
-        if let inlineController = controller as? InlineCustomAVPlayerViewController {
-            inlineController.onExitRequested = onExitRequested
-            inlineController.onPlayPauseRequested = { engine.togglePlayPause() }
-        }
-#endif
         installPlayerScreenAccessibilityMarker(in: controller)
         if context.coordinator.shouldDeferPlayerAssignment(to: player, controller: controller) {
             return
@@ -833,75 +1042,3 @@ private struct CustomPlayerSurface: UIViewControllerRepresentable {
         }
     }
 }
-
-#if os(tvOS)
-/// AVKit consumes the Siri Remote Menu press when embedded inline and tries to dismiss a UIKit
-/// presentation that does not exist. Intercept only that public tvOS press at the controller
-/// boundary so Home/Detail can tear down the engine and restore their own focus tree.
-private final class InlineCustomAVPlayerViewController: AVPlayerViewController {
-    var onExitRequested: (() -> Void)?
-    var onPlayPauseRequested: (() -> Void)?
-
-    override var canBecomeFirstResponder: Bool { true }
-
-    override var keyCommands: [UIKeyCommand]? {
-        let command = UIKeyCommand(
-            input: UIKeyCommand.inputEscape,
-            modifierFlags: [],
-            action: #selector(handleExitPress)
-        )
-        command.wantsPriorityOverSystemBehavior = true
-        return [command]
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleExitPress))
-        recognizer.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
-        recognizer.cancelsTouchesInView = true
-        view.addGestureRecognizer(recognizer)
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        becomeFirstResponder()
-    }
-
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        switch routedAction(for: presses) {
-        case .exitPlayer:
-            onExitRequested?()
-        case .togglePlayPause:
-            onPlayPauseRequested?()
-        case .system:
-            super.pressesBegan(presses, with: event)
-        }
-    }
-
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        switch routedAction(for: presses) {
-        case .exitPlayer, .togglePlayPause:
-            return // handled exactly once in pressesBegan
-        case .system:
-            super.pressesEnded(presses, with: event)
-        }
-    }
-
-    private func routedAction(for presses: Set<UIPress>) -> CustomPlayerTVRemoteRouting.Action {
-        let inputs = presses.map { press -> CustomPlayerTVRemoteRouting.Input in
-            switch press.type {
-            case .menu: return .menu
-            case .playPause: return .playPause
-            default: return .other
-            }
-        }
-        return inputs.lazy
-            .map(CustomPlayerTVRemoteRouting.action(for:))
-            .first(where: { $0 != .system }) ?? .system
-    }
-
-    @objc private func handleExitPress() {
-        onExitRequested?()
-    }
-}
-#endif

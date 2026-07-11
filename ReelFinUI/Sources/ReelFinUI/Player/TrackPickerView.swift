@@ -259,6 +259,47 @@ struct NativePlayerTrackSelectionMenuView: View {
     }
 }
 
+/// A real destination for the tvOS “Vidéo” action. It intentionally reports only user-relevant
+/// facts already known by the active route; diagnostics remain in the DEBUG-only panel.
+struct NativePlayerVideoInformationView: View {
+    let qualityLabel: String
+    let routeLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            Text("Vidéo")
+                .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.62))
+
+            videoRow(title: "Qualité", value: qualityLabel, systemName: "sparkles.tv")
+            videoRow(title: "Lecture", value: routeLabel, systemName: "play.rectangle.on.rectangle")
+        }
+        .padding(.horizontal, metrics.horizontalPadding)
+        .padding(.vertical, metrics.verticalPadding)
+        .frame(width: metrics.panelWidth, alignment: .leading)
+        .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
+        .accessibilityIdentifier("native_player_video_panel")
+    }
+
+    private func videoRow(title: String, value: String, systemName: String) -> some View {
+        HStack(spacing: 20) {
+            Image(systemName: systemName)
+                .frame(width: 38)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: metrics.sectionTitleSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.5))
+                Text(value)
+                    .font(.system(size: metrics.rowTitleSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private var metrics: NativePlayerTrackMenuLayout { .current }
+}
+
 private struct NativePlayerTrackMenuRow: View {
     let option: PlaybackTrackOption
     let focusNamespace: Namespace.ID

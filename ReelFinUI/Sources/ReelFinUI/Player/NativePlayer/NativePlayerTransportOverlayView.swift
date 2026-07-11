@@ -39,6 +39,15 @@ enum NativePlayerTVChromeAction: CaseIterable, Equatable, Hashable {
             return nil
         }
     }
+
+    var destination: NativePlayerTVChromeDestination {
+        trackMenuKind.map(NativePlayerTVChromeDestination.trackMenu) ?? .videoPanel
+    }
+}
+
+enum NativePlayerTVChromeDestination: Equatable {
+    case trackMenu(PlaybackTrackMenuKind)
+    case videoPanel
 }
 
 struct NativePlayerTVChromeLayout: Equatable {
@@ -72,7 +81,12 @@ struct NativePlayerTransportOverlayView: View {
     let onSeekAbsolute: (Double) -> Void
     let onInteraction: () -> Void
     let onShowTrackPicker: (PlaybackTrackMenuKind) -> Void
+    let onShowVideoPanel: () -> Void
+    let onToggleChrome: () -> Void
     let onDismiss: () -> Void
+#if os(tvOS)
+    @Namespace private var chromeFocusNamespace
+#endif
 
     @ViewBuilder
     var body: some View {
@@ -110,10 +124,14 @@ struct NativePlayerTransportOverlayView: View {
                     presentation: presentation,
                     playbackTime: playbackTime,
                     durationSeconds: durationSeconds,
-                    onSeekAbsolute: onSeekAbsolute
+                    onSeekRelative: onSeekRelative,
+                    onSeekAbsolute: onSeekAbsolute,
+                    onSelect: onToggleChrome
                 )
+                .prefersDefaultFocus(true, in: chromeFocusNamespace)
                 actionBar
             }
+            .focusScope(chromeFocusNamespace)
             .padding(.horizontal, layout.horizontalPadding)
             .padding(.bottom, layout.bottomPadding)
         }
@@ -159,6 +177,8 @@ struct NativePlayerTransportOverlayView: View {
                             onInteraction()
                             if let trackMenuKind = action.trackMenuKind {
                                 onShowTrackPicker(trackMenuKind)
+                            } else {
+                                onShowVideoPanel()
                             }
                         } label: {
                             Label(action.title, systemImage: action.systemName)

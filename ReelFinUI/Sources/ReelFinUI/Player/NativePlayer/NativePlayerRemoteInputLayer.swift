@@ -3,15 +3,19 @@ import SwiftUI
 #if os(tvOS)
 struct NativePlayerRemoteInputLayer: View {
     let isEnabled: Bool
-    let onReveal: () -> Void
-    let onPlayPause: () -> Void
+    let onSelect: () -> Void
+    let onMove: (MoveCommandDirection) -> Void
 
     var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
+        Button(action: onSelect) {
+            Color.clear
+                .contentShape(Rectangle())
+        }
+            .buttonStyle(.plain)
             .focusable(isEnabled)
-            .onTapGesture(perform: onReveal)
-            .onPlayPauseCommand(perform: onPlayPause)
+            .focusEffectDisabled(true)
+            .hoverEffectDisabled(true)
+            .onMoveCommand(perform: onMove)
             .allowsHitTesting(isEnabled)
             .accessibilityHidden(true)
     }

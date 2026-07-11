@@ -339,3 +339,11 @@
 - The final live-player loop found one real app-side blocker after a successful first frame: Direct Play startup readiness could still time out after a resumed frame was visible. The fix keeps the stricter Direct Play startup gate for inactive sessions, but lets an actively requested, ready, resume-satisfied Direct Play session finish readiness from first-frame evidence.
 - Validation passed for `xcodegen generate`, Mac Catalyst launch/process/log verification, focused Mac Catalyst tests, the full live Jellyfin player E2E with artifacts `.artifacts/player-e2e/20260509-110718`, tvOS build gate, and runtime-log cleanliness. Mac Catalyst XCUITest UI traversal remains blocked by Xcode automation initialization before ReelFin receives interactions, so the real UI player traversal proof for this run comes from the iOS live UI smoke plus live probes rather than macOS XCUITest.
 - 2026-05-10 validation passed: focused `RootDesktopLayoutPolicyTests`, `scripts/run_reelfin_macos.sh --verify`, and `ReelFinTV` simulator build.
+
+## tvOS Player Input/Chrome Audit - 2026-07-11
+
+- Removed competing `AVPlayerViewController` playback controls and `pressesBegan` interception from the CustomPlayer tvOS route. Play/Pause now has one SwiftUI command path; Select and directional input have one focusable transparent transport surface while chrome is hidden.
+- Remote seek previews accumulate against the pending target and commit after a 280 ms latest-wins debounce. Both playback routes clamp targets to zero/title duration; NativePlayer keeps its generation-guarded seek request path.
+- The timeline is no longer an empty-action button: it consumes Left/Right, publishes position accessibility state, and Select hides chrome. A hidden input surface has its focus/hover effects disabled so focus cannot render a full-screen white plate.
+- Simulator evidence: authenticated launch and real Jellyfin playback were preserved with update-install only; a live Device Hub pass exposed the white focus plate, which was corrected. Deterministic gates passed 18/18 chrome/remote tests plus 33/33 NativePlayer configuration tests, followed by clean iOS/tvOS builds.
+- Remaining validation: Task 5 must add a tvOS UI-test target and prove Play/Pause, Select, repeated Left/Right, panel focus restoration, Menu precedence, advancing video, and audio evidence with `XCUIRemote`.

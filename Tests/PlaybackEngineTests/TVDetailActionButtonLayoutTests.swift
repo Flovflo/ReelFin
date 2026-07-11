@@ -39,8 +39,62 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
             CustomPlayerTVRemoteRouting.action(for: .playPause),
             .togglePlayPause
         )
-        XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .menu), .exitPlayer)
-        XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .other), .system)
+        XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .menu), .handleMenu)
+        XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .other), .ignore)
+    }
+
+    func testCustomPlayerOwnsAllTransportCommandsAndDisablesInlineAVKitChrome() {
+        XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .select), .toggleChrome)
+        XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .left), .seekRelative(-10))
+        XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .right), .seekRelative(30))
+        XCTAssertFalse(CustomPlayerTVRemoteRouting.showsInlineAVKitControls)
+    }
+
+    func testPlayerMenuClosesPickerThenChromeThenPlayer() {
+        XCTAssertEqual(
+            NativePlayerTVRemoteControlPolicy.menuAction(chromeVisible: true, pickerVisible: true),
+            .dismissPicker
+        )
+        XCTAssertEqual(
+            NativePlayerTVRemoteControlPolicy.menuAction(chromeVisible: true, pickerVisible: false),
+            .hideChrome
+        )
+        XCTAssertEqual(
+            NativePlayerTVRemoteControlPolicy.menuAction(chromeVisible: false, pickerVisible: false),
+            .exitPlayer
+        )
+    }
+
+    func testPlayerSelectAndFocusReturnAreDeterministic() {
+        XCTAssertEqual(NativePlayerTVRemoteControlPolicy.selectAction(chromeVisible: false), .showChrome)
+        XCTAssertEqual(NativePlayerTVRemoteControlPolicy.selectAction(chromeVisible: true), .hideChrome)
+        XCTAssertEqual(NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(after: 41), 42)
+    }
+
+    func testPlayerTimelineRemoteSeeksClampAtTitleBounds() {
+        XCTAssertEqual(
+            NativePlayerRemoteControlPolicy.clampedSeekTarget(
+                from: 8,
+                delta: NativePlayerRemoteControlPolicy.rewindSeconds,
+                durationSeconds: 120
+            ),
+            0
+        )
+        XCTAssertEqual(
+            NativePlayerRemoteControlPolicy.clampedSeekTarget(
+                from: 110,
+                delta: NativePlayerRemoteControlPolicy.fastForwardSeconds,
+                durationSeconds: 120
+            ),
+            120
+        )
+    }
+
+    func testPlayerChromeActionsHaveNoDeadVideoDestination() {
+        XCTAssertEqual(NativePlayerTVChromeAction.allCases, [.audio, .subtitles, .video])
+        XCTAssertEqual(NativePlayerTVChromeAction.audio.destination, .trackMenu(.audio))
+        XCTAssertEqual(NativePlayerTVChromeAction.subtitles.destination, .trackMenu(.subtitles))
+        XCTAssertEqual(NativePlayerTVChromeAction.video.destination, .videoPanel)
     }
 
     func testSkipIntroRequestsFocusWhenSuggestionAppears() {
