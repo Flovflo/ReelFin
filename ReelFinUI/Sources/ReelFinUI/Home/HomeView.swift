@@ -1112,7 +1112,7 @@ struct HomeView: View {
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
     @State private var playerPresentation: HomePlayerPresentation?
-    @State private var playbackLaunchCoordinator = PlaybackLaunchCoordinator()
+    @State private var playbackLaunchRouter = PlaybackLaunchEntryRouter()
     @State private var customPrewarmer: CustomPlayerPrewarmer?
     @State private var isPreparingPlayback = false
     @State private var playbackErrorMessage: String?
@@ -1210,7 +1210,7 @@ struct HomeView: View {
         // can retain a frozen navigation snapshot above live playback on physical Apple TV.
         .disabled(
             playerPresentation != nil
-                || playbackLaunchCoordinator.presentationIntent != nil
+                || playbackLaunchRouter.presentationIntent != nil
         )
         .overlay {
             tvHomePlayerPresentation
@@ -1220,7 +1220,7 @@ struct HomeView: View {
             key: TVTopNavigationVisibilityPreferenceKey.self,
             value: HomePlayerPresentationPolicy.showsTopNavigation(
                 hasActivePlayer: playerPresentation != nil
-                    || playbackLaunchCoordinator.presentationIntent != nil
+                    || playbackLaunchRouter.presentationIntent != nil
             )
         )
 #endif
@@ -1277,7 +1277,7 @@ struct HomeView: View {
 #if os(tvOS)
     @ViewBuilder
     private var tvHomePlayerPresentation: some View {
-        if let presentationIntent = playbackLaunchCoordinator.presentationIntent {
+        if let presentationIntent = playbackLaunchRouter.presentationIntent {
             PlaybackResumeChoiceView(
                 itemTitle: presentationIntent.item.name,
                 resumePositionTicks: presentationIntent.resumePositionTicks,
@@ -2046,13 +2046,24 @@ struct HomeView: View {
 #else
         presentsExplicitChoice = false
 #endif
-        guard let request = playbackLaunchCoordinator.begin(
+        playbackLaunchRouter.begin(
             item: item,
             progress: nil,
-            presentsExplicitChoice: presentsExplicitChoice
-        ) else { return }
+            presentsExplicitChoice: presentsExplicitChoice,
+            effects: homePlaybackLaunchEffects
+        )
+    }
 
-        await launchResolvedHomePlayback(request)
+    private var homePlaybackLaunchEffects: PlaybackLaunchEntryEffects {
+        PlaybackLaunchEntryEffects(
+            select: { _ in },
+            prepare: { _ in },
+            launch: { request in
+                Task { @MainActor in
+                    await launchResolvedHomePlayback(request)
+                }
+            }
+        )
     }
 
     @MainActor
@@ -2070,14 +2081,11 @@ struct HomeView: View {
 #if os(tvOS)
     private func resolveHomePlaybackLaunch(startPosition: PlaybackStartPosition) {
         let choice: PlaybackLaunchChoice = startPosition == .beginning ? .restart : .resume
-        guard let request = playbackLaunchCoordinator.resolve(choice: choice) else { return }
-        Task { @MainActor in
-            await launchResolvedHomePlayback(request)
-        }
+        playbackLaunchRouter.resolve(choice: choice, effects: homePlaybackLaunchEffects)
     }
 
     private func cancelHomePlaybackLaunch() {
-        playbackLaunchCoordinator.cancel()
+        playbackLaunchRouter.cancel()
     }
 #endif
 

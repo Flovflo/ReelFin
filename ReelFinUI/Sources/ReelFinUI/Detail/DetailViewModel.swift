@@ -116,10 +116,17 @@ final class DetailViewModel {
     }
 
     func prepareEpisodePlayback(_ episode: MediaItem) {
+        selectEpisodeForPendingPlayback(episode)
+        prepareSelectedEpisodePlayback(episode)
+    }
+
+    func selectEpisodeForPendingPlayback(_ episode: MediaItem) {
         preferredEpisode = episode
         nextUpEpisode = episode
         syncDerivedFlags()
+    }
 
+    func prepareSelectedEpisodePlayback(_ episode: MediaItem) {
         // Custom engine: the press itself resolves the source. The legacy warm pipeline here only
         // fired a SECOND PlaybackInfo (different body — never coalesced) plus a 4 MiB range probe,
         // competing with the real resolve for the origin at the exact moment it matters most.

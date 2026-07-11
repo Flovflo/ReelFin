@@ -178,6 +178,57 @@ struct PlaybackLaunchCoordinator {
     }
 }
 
+@MainActor
+struct PlaybackLaunchEntryEffects {
+    let select: (MediaItem) -> Void
+    let prepare: (MediaItem) -> Void
+    let launch: (PlaybackLaunchRequest) -> Void
+}
+
+@MainActor
+struct PlaybackLaunchEntryRouter {
+    private var coordinator = PlaybackLaunchCoordinator()
+
+    var presentationIntent: PlaybackLaunchPresentationIntent? {
+        coordinator.presentationIntent
+    }
+
+    mutating func begin(
+        item: MediaItem,
+        progress: PlaybackProgress?,
+        presentsExplicitChoice: Bool,
+        effects: PlaybackLaunchEntryEffects
+    ) {
+        effects.select(item)
+        guard let request = coordinator.begin(
+            item: item,
+            progress: progress,
+            presentsExplicitChoice: presentsExplicitChoice
+        ) else { return }
+        emit(request, effects: effects)
+    }
+
+    mutating func resolve(
+        choice: PlaybackLaunchChoice,
+        effects: PlaybackLaunchEntryEffects
+    ) {
+        guard let request = coordinator.resolve(choice: choice) else { return }
+        emit(request, effects: effects)
+    }
+
+    mutating func cancel() {
+        coordinator.cancel()
+    }
+
+    private func emit(
+        _ request: PlaybackLaunchRequest,
+        effects: PlaybackLaunchEntryEffects
+    ) {
+        effects.prepare(request.item)
+        effects.launch(request)
+    }
+}
+
 #if os(tvOS)
 struct PlaybackResumeChoiceView: View {
     let itemTitle: String

@@ -65,7 +65,7 @@ struct DetailView: View {
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
     @State private var playerPresentation: DetailPlayerPresentation?
-    @State private var playbackLaunchCoordinator = PlaybackLaunchCoordinator()
+    @State private var playbackLaunchRouter = PlaybackLaunchEntryRouter()
     @State private var customPrewarmer: CustomPlayerPrewarmer?
     @State private var episodeFocusPrewarmTask: Task<Void, Never>?
     @State private var isLoadingPlayback = false
@@ -320,7 +320,7 @@ struct DetailView: View {
         .modifier(DetailZoomTransitionModifier(namespace: transitionNamespace, sourceID: transitionSourceID))
         .disabled(
             playerPresentation != nil
-                || playbackLaunchCoordinator.presentationIntent != nil
+                || playbackLaunchRouter.presentationIntent != nil
         )
         .overlay {
             tvPlaybackPresentation
@@ -362,7 +362,7 @@ struct DetailView: View {
 #if os(tvOS)
     @ViewBuilder
     private var tvPlaybackPresentation: some View {
-        if let presentationIntent = playbackLaunchCoordinator.presentationIntent {
+        if let presentationIntent = playbackLaunchRouter.presentationIntent {
             PlaybackResumeChoiceView(
                 itemTitle: presentationIntent.item.name,
                 resumePositionTicks: presentationIntent.resumePositionTicks,
@@ -725,7 +725,6 @@ struct DetailView: View {
                                 width: episodeCardWidth,
                                 isSelected: episode.id == viewModel.selectedEpisodeID,
                                 onSelect: {
-                                    viewModel.prepareEpisodePlayback(episode)
                                     startPlayback(item: episode)
                                 },
                                 onSetWatched: { isPlayed in
@@ -771,7 +770,6 @@ struct DetailView: View {
                                 width: episodeCardWidth,
                                 isSelected: episode.id == viewModel.selectedEpisodeID,
                                 onSelect: {
-                                    viewModel.prepareEpisodePlayback(episode)
                                     startPlayback(item: episode)
                                 },
                                 onSetWatched: { isPlayed in
@@ -1129,7 +1127,7 @@ struct DetailView: View {
     private func startPlayback(item: MediaItem? = nil) {
         guard !isLoadingPlayback else { return }
         let targetItem = item ?? viewModel.itemToPlay
-        guard playbackLaunchCoordinator.presentationIntent == nil else { return }
+        guard playbackLaunchRouter.presentationIntent == nil else { return }
 
         let presentsExplicitChoice: Bool
 #if os(tvOS)
@@ -1137,13 +1135,26 @@ struct DetailView: View {
 #else
         presentsExplicitChoice = false
 #endif
-        guard let request = playbackLaunchCoordinator.begin(
+        playbackLaunchRouter.begin(
             item: targetItem,
             progress: viewModel.playbackProgress,
-            presentsExplicitChoice: presentsExplicitChoice
-        ) else { return }
+            presentsExplicitChoice: presentsExplicitChoice,
+            effects: playbackLaunchEffects
+        )
+    }
 
-        launchPlayback(request)
+    private var playbackLaunchEffects: PlaybackLaunchEntryEffects {
+        PlaybackLaunchEntryEffects(
+            select: { item in
+                guard item.mediaType == .episode else { return }
+                viewModel.selectEpisodeForPendingPlayback(item)
+            },
+            prepare: { item in
+                guard item.mediaType == .episode else { return }
+                viewModel.prepareSelectedEpisodePlayback(item)
+            },
+            launch: launchPlayback
+        )
     }
 
     private func launchPlayback(_ request: PlaybackLaunchRequest) {
@@ -1302,12 +1313,11 @@ struct DetailView: View {
 #if os(tvOS)
     private func resolvePendingPlaybackLaunch(startPosition: PlaybackStartPosition) {
         let choice: PlaybackLaunchChoice = startPosition == .beginning ? .restart : .resume
-        guard let request = playbackLaunchCoordinator.resolve(choice: choice) else { return }
-        launchPlayback(request)
+        playbackLaunchRouter.resolve(choice: choice, effects: playbackLaunchEffects)
     }
 
     private func cancelPendingPlaybackLaunch() {
-        playbackLaunchCoordinator.cancel()
+        playbackLaunchRouter.cancel()
     }
 #endif
 

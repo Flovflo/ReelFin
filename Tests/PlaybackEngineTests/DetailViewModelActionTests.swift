@@ -288,6 +288,100 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertTrue(emittedRequests.isEmpty)
     }
 
+    func testEpisodeEntryAndHomeNextUpDeferPlaybackEffectsUntilChoice() {
+        let entries = [
+            MediaItem(
+                id: "detail-episode-entry",
+                name: "Episode",
+                mediaType: .episode,
+                runtimeTicks: Int64(45 * 60 * 10_000_000),
+                playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+            ),
+            MediaItem(
+                id: "home-next-up-entry",
+                name: "Next Up",
+                mediaType: .episode,
+                runtimeTicks: Int64(45 * 60 * 10_000_000),
+                playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+            )
+        ]
+
+        for item in entries {
+            var router = PlaybackLaunchEntryRouter()
+            let spy = PlaybackLaunchEntryEffectSpy()
+
+            router.begin(
+                item: item,
+                progress: nil,
+                presentsExplicitChoice: true,
+                effects: spy.effects
+            )
+
+            XCTAssertEqual(spy.selectedItemIDs, [item.id])
+            XCTAssertEqual(spy.prepareItemIDs, [])
+            XCTAssertEqual(spy.sessionStartCount, 0)
+            XCTAssertTrue(spy.loadRequests.isEmpty)
+            XCTAssertEqual(spy.progressReportCount, 0)
+            XCTAssertEqual(router.presentationIntent?.item.id, item.id)
+        }
+    }
+
+    func testMenuCancellationLeavesEpisodeEntryPlaybackEffectsAtZero() {
+        let item = MediaItem(
+            id: "episode-menu-cancel",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        var router = PlaybackLaunchEntryRouter()
+        let spy = PlaybackLaunchEntryEffectSpy()
+
+        router.begin(
+            item: item,
+            progress: nil,
+            presentsExplicitChoice: true,
+            effects: spy.effects
+        )
+        router.cancel()
+        router.resolve(choice: .resume, effects: spy.effects)
+
+        XCTAssertNil(router.presentationIntent)
+        XCTAssertEqual(spy.prepareItemIDs, [])
+        XCTAssertEqual(spy.sessionStartCount, 0)
+        XCTAssertTrue(spy.loadRequests.isEmpty)
+        XCTAssertEqual(spy.progressReportCount, 0)
+    }
+
+    func testEpisodeChoiceRunsEachPlaybackEffectOnceWithUnchangedStartPosition() throws {
+        let item = MediaItem(
+            id: "episode-resolved-choice",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        var router = PlaybackLaunchEntryRouter()
+        let spy = PlaybackLaunchEntryEffectSpy()
+
+        router.begin(
+            item: item,
+            progress: nil,
+            presentsExplicitChoice: true,
+            effects: spy.effects
+        )
+        router.resolve(choice: .restart, effects: spy.effects)
+
+        let request = try XCTUnwrap(spy.loadRequests.first)
+        XCTAssertEqual(spy.prepareItemIDs, [item.id])
+        XCTAssertEqual(spy.sessionStartCount, 1)
+        XCTAssertEqual(spy.loadRequests.count, 1)
+        XCTAssertEqual(spy.progressReportCount, 1)
+        XCTAssertEqual(request.startPosition, .beginning)
+        XCTAssertEqual(request.startPosition(for: .custom), .beginning)
+        XCTAssertEqual(request.startPosition(for: .legacy), .beginning)
+    }
+
     func testNearlyCompletedLaunchSkipsChoiceAndStartsFromBeginning() throws {
         let item = MediaItem(
             id: "episode-completed",
@@ -657,6 +751,40 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.preferredPlaybackSource?.id, "source-2")
     }
 
+    func testSelectingEpisodeForPendingChoiceDoesNotStartPlaybackWarmup() async {
+        let warmupManager = EpisodeWarmupManager(
+            delayByItemID: [:],
+            selectionByItemID: [:]
+        )
+        let episode = MediaItem(
+            id: "episode-pending-choice",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            parentID: "series-pending-choice",
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(
+                id: "series-pending-choice",
+                name: "Series",
+                mediaType: .series
+            ),
+            dependencies: makeDependencies(
+                apiClient: DetailActionSpyAPIClient(),
+                repository: MockMetadataRepository(),
+                warmupManager: warmupManager
+            )
+        )
+
+        viewModel.selectEpisodeForPendingPlayback(episode)
+        await Task.yield()
+        let warmupRequests = await warmupManager.startupWarmupRequests()
+
+        XCTAssertEqual(viewModel.itemToPlay.id, episode.id)
+        XCTAssertEqual(warmupRequests, [])
+    }
+
     func testLoadWarmsServerNextUpEpisodeFromMatchingSeason() async {
         let season1 = MediaItem(id: "season-1", name: "Season 1", mediaType: .season, indexNumber: 1)
         let season5 = MediaItem(id: "season-5", name: "Season 5", mediaType: .season, indexNumber: 5)
@@ -940,6 +1068,32 @@ final class DetailViewModelActionTests: XCTestCase {
 
         let progress = try? await repository.fetchPlaybackProgress(itemID: itemID)
         return progress?.positionTicks == expectedPositionTicks
+    }
+}
+
+@MainActor
+private final class PlaybackLaunchEntryEffectSpy {
+    private(set) var selectedItemIDs: [String] = []
+    private(set) var prepareItemIDs: [String] = []
+    private(set) var sessionStartCount = 0
+    private(set) var loadRequests: [PlaybackLaunchRequest] = []
+    private(set) var progressReportCount = 0
+
+    var effects: PlaybackLaunchEntryEffects {
+        PlaybackLaunchEntryEffects(
+            select: { [weak self] item in
+                self?.selectedItemIDs.append(item.id)
+            },
+            prepare: { [weak self] item in
+                self?.prepareItemIDs.append(item.id)
+            },
+            launch: { [weak self] request in
+                guard let self else { return }
+                sessionStartCount += 1
+                loadRequests.append(request)
+                progressReportCount += 1
+            }
+        )
     }
 }
 
