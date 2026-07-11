@@ -272,36 +272,46 @@ Expected: every entry-point test passes, no playback prepare call occurs before 
 
 ---
 
-### Task 4: Complete the Apple-style tvOS chrome and focus behavior
+### Task 4: Complete the Apple-style tvOS chrome, remote commands, and focus behavior
 
 **Files:**
+- Modify: `ReelFinUI/Sources/ReelFinUI/Player/CustomPlayerView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Player/CustomPlayer/CustomPlaybackEngine.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Player/NativePlayer/NativePlayerTransportOverlayView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Player/NativePlayer/NativePlayerTimelineView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Player/TrackPickerView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Player/NativePlayer/NativePlayerChromePresentation.swift`
+- Modify: `Tests/PlaybackEngineTests/TVDetailActionButtonLayoutTests.swift`
 - Modify: `Tests/PlaybackEngineTests/NativePlayerChromeLayoutTests.swift`
 - Modify: `Tests/PlaybackEngineTests/NativeMediaCore/NativePlayerConfigurationTests.swift`
 
 **Interfaces:**
-- Produces: bottom chrome, focusable timeline, anchored Audio/Subtitles popover, deterministic Menu hierarchy.
+- Produces: one bottom chrome and remote-input policy shared by CustomPlayer and NativePlayer, a
+  focusable timeline, anchored Audio/Subtitles popover, and deterministic Menu hierarchy.
 
 - [ ] **Step 1: Add failing policy/layout tests**
 
-Test `Menu` precedence (`popover → chrome → player`), focus restoration, timeline clamping, and that
-normal chrome actions are exactly Audio/Subtitles/Video.
+Test `Menu` precedence (`popover → chrome → player`), focus restoration, timeline clamping, remote
+mapping (`Select`, `Play/Pause`, `Left -10`, `Right +30`), and that normal chrome actions are exactly
+Audio/Subtitles/Video. Add a regression proving the CustomPlayer route does not delegate these
+owned commands to an inline `AVPlayerViewController`.
 
 - [ ] **Step 2: Run tests and confirm RED**
 
-- [ ] **Step 3: Implement native Liquid Glass composition**
+- [ ] **Step 3: Implement shared Liquid Glass composition**
 
 Keep metadata and timeline in the lower gradient. Wrap adjacent focusable actions in one
 `GlassEffectContainer`; use `.buttonStyle(.glass)` and no custom blur on controls. Keep diagnostics
-behind the existing debug-only route, never in normal chrome.
+behind the existing debug-only route, never in normal chrome. Render this composition for both the
+CustomPlayer/AVPlayer route observed in live Jellyfin testing and the NativePlayer route.
 
-- [ ] **Step 4: Implement focus without sleeps**
+- [ ] **Step 4: Give SwiftUI one deterministic owner for remote input and focus**
 
 Use `@FocusState`, `@Namespace`, `.focusScope`, and `.defaultFocus`. Publish an explicit focus-return
-token on dismissal rather than scheduling a fixed-delay request.
+token on dismissal rather than scheduling a fixed-delay request. On tvOS disable inline AVKit
+controls when the ReelFin chrome owns input. Route Select, Play/Pause, Left, Right, and Menu through
+one focusable input layer; commit clamped seeks through the active engine. Menu must close a picker,
+then hide chrome, then exit. Do not depend on `becomeFirstResponder()` without verifying ownership.
 
 - [ ] **Step 5: Run layout/policy tests plus tvOS build**
 
