@@ -197,3 +197,76 @@ the first pre-launch stall.
 - The one unresolved concern is verification infrastructure, not a silently ignored test failure:
   complete HTTP and final platform build gates are explicitly left for an independent clean Xcode
   run.
+
+## Follow-up — HTTP completion instrumentation and final gates (2026-07-11)
+
+### Status
+
+DONE
+
+The remaining HTTP test defect was isolated to test instrumentation. No production source was
+changed in this follow-up.
+
+### Root-cause evidence and RED
+
+On Xcode 27.0 beta (`27A5209h`), Foundation may call `URLProtocol.stopLoading()` after a request has
+already completed normally through `urlProtocolDidFinishLoading(_:)`. A standalone transport probe
+recorded the sequence `completion bytes=4 error=nil`, followed by `stopCount=1`. Therefore a raw
+`stopLoadingCount == 0` assertion cannot distinguish premature cancellation from Foundation's
+normal post-completion cleanup.
+
+The historical test was run alone on the iOS 27.0 iPhone 17 simulator:
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,id=98D9A848-5303-487D-8379-1EB2A788FA06' \
+  -only-testing:PlaybackEngineTests/HTTPRangeByteSourceTests/testCompletedClosedRangeDoesNotCancelTransportTask
+```
+
+Result: **TEST FAILED**, exit 65, one test with one failure:
+
+```text
+XCTAssertEqual failed: ("1") is not equal to ("0")
+```
+
+This reproduces the invalid assertion independently; the failure is not cross-test contamination.
+
+### Test correction
+
+`MockRangeProtocol` now keeps lock-protected completion state per protocol instance and increments a
+thread-safe counter only when `stopLoading()` arrives before normal completion is signalled. The
+replacement test also reads two closed ranges sequentially from the same `HTTPRangeByteSource` and
+asserts both payloads, proving the source remains usable after the first completed read.
+
+`testCancelStopsAnInFlightRangeExactlyOnce` and its dedicated `SuspendingRangeProtocol` remain in
+place unchanged. That test continues to assert exactly one transport stop for explicit in-flight
+`cancel()`.
+
+### GREEN verification
+
+The complete `HTTPRangeByteSourceTests` class was run twice independently on iOS 27.0:
+
+```text
+run 1: Executed 6 tests, with 0 failures (0 unexpected)
+run 2: Executed 6 tests, with 0 failures (0 unexpected)
+```
+
+The complete Task 2 configuration/lifecycle class also passed:
+
+```text
+NativePlayerConfigurationTests: Executed 30 tests, with 0 failures (0 unexpected)
+```
+
+This includes source cancellation and renderer-quiescence ordering, temporary probe-source
+cancellation, stop/dismantle lifecycle, and track replacement coverage.
+
+### Platform gates
+
+- `xcodegen generate`: succeeded.
+- `ReelFin` build, Xcode 27.0 / iPhone 17 simulator, iOS 27.0: **BUILD SUCCEEDED**.
+- `ReelFinTV` build, Xcode 27.0 / Apple TV 4K (3rd generation) simulator, tvOS 27.0:
+  **BUILD SUCCEEDED**.
+
+The generated project rewrite was not retained because the requested follow-up scope is limited to
+the HTTP test and this report. The only observed warnings were existing App Intents metadata-skip
+messages and simulator/media-framework diagnostics; no new compiler error or test failure remained.

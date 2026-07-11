@@ -4,7 +4,7 @@ import XCTest
 final class HTTPRangeByteSourceTests: XCTestCase {
     override func tearDown() {
         MockRangeProtocol.handler = nil
-        MockRangeProtocol.resetStopLoadingCount()
+        MockRangeProtocol.resetPrematureStopLoadingCount()
         SuspendingRangeProtocol.reset()
         super.tearDown()
     }
@@ -31,15 +31,30 @@ final class HTTPRangeByteSourceTests: XCTestCase {
         XCTAssertEqual(metrics.rangeRequestCount, 1)
     }
 
-    func testCompletedClosedRangeDoesNotCancelTransportTask() async throws {
+    func testCompletedClosedRangesKeepSourceUsableWithoutPrematureTransportStop() async throws {
         MockRangeProtocol.handler = { request in
+            let range = request.value(forHTTPHeaderField: "Range")
+            let data: Data
+            let contentRange: String
+            switch range {
+            case "bytes=0-3":
+                data = Data([0, 1, 2, 3])
+                contentRange = "bytes 0-3/10"
+            case "bytes=4-7":
+                data = Data([4, 5, 6, 7])
+                contentRange = "bytes 4-7/10"
+            default:
+                XCTFail("Unexpected range request: \(range ?? "nil")")
+                data = Data()
+                contentRange = "bytes */10"
+            }
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 206,
                 httpVersion: "HTTP/2",
-                headerFields: ["Content-Range": "bytes 0-3/10"]
+                headerFields: ["Content-Range": contentRange]
             )!
-            return (response, Data([0, 1, 2, 3]))
+            return (response, data)
         }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockRangeProtocol.self]
@@ -48,13 +63,15 @@ final class HTTPRangeByteSourceTests: XCTestCase {
             sessionConfiguration: config
         )
 
-        _ = try await source.read(range: ByteRange(offset: 0, length: 4))
-        try await Task.sleep(nanoseconds: 50_000_000)
+        let first = try await source.read(range: ByteRange(offset: 0, length: 4))
+        let second = try await source.read(range: ByteRange(offset: 4, length: 4))
 
+        XCTAssertEqual(first, Data([0, 1, 2, 3]))
+        XCTAssertEqual(second, Data([4, 5, 6, 7]))
         XCTAssertEqual(
-            MockRangeProtocol.stopLoadingCount,
+            MockRangeProtocol.prematureStopLoadingCount,
             0,
-            "A completed closed range must return its connection to the persistent session, not cancel it."
+            "A completed closed range must not stop its transport before normal completion."
         )
     }
 
@@ -140,15 +157,17 @@ final class HTTPRangeByteSourceTests: XCTestCase {
 
 private final class MockRangeProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    private let lifecycleLock = NSLock()
+    private var didSignalNormalFinish = false
     private static let stopLock = NSLock()
-    private static var _stopLoadingCount = 0
+    private static var _prematureStopLoadingCount = 0
 
-    static var stopLoadingCount: Int {
-        stopLock.withLock { _stopLoadingCount }
+    static var prematureStopLoadingCount: Int {
+        stopLock.withLock { _prematureStopLoadingCount }
     }
 
-    static func resetStopLoadingCount() {
-        stopLock.withLock { _stopLoadingCount = 0 }
+    static func resetPrematureStopLoadingCount() {
+        stopLock.withLock { _prematureStopLoadingCount = 0 }
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -159,6 +178,7 @@ private final class MockRangeProtocol: URLProtocol {
             let (response, data) = try Self.handler?(request) ?? (HTTPURLResponse(), Data())
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
+            lifecycleLock.withLock { didSignalNormalFinish = true }
             client?.urlProtocolDidFinishLoading(self)
         } catch {
             client?.urlProtocol(self, didFailWithError: error)
@@ -166,7 +186,10 @@ private final class MockRangeProtocol: URLProtocol {
     }
 
     override func stopLoading() {
-        Self.stopLock.withLock { Self._stopLoadingCount += 1 }
+        let stoppedBeforeNormalFinish = lifecycleLock.withLock { !didSignalNormalFinish }
+        if stoppedBeforeNormalFinish {
+            Self.stopLock.withLock { Self._prematureStopLoadingCount += 1 }
+        }
     }
 }
 
