@@ -160,6 +160,10 @@ struct NativePlayerTransportOverlayView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea()
+        .background(alignment: .topLeading) {
+            PlayerAccessibilityMarkerView(identifier: "native_player_chrome")
+                .frame(width: 1, height: 1)
+        }
 #endif
     }
 

@@ -7,6 +7,26 @@ import SwiftUI
 import UIKit
 #endif
 
+#if os(tvOS)
+private struct DetailScreenAccessibilityAnchor: UIViewRepresentable {
+    let primaryPlayFocused: Bool
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = "detail_screen"
+        view.accessibilityLabel = "Detail"
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        view.accessibilityValue = primaryPlayFocused ? "primary_play_focused" : "visible"
+    }
+}
+#endif
+
 private enum DetailHeroAction: Hashable {
     case previous
     case play
@@ -177,6 +197,16 @@ struct DetailView: View {
             }
 #endif
         }
+#if os(tvOS)
+        .overlay(alignment: .topLeading) {
+            if playerPresentation == nil, playbackLaunchRouter.presentationIntent == nil {
+                DetailScreenAccessibilityAnchor(
+                    primaryPlayFocused: focusedHeroAction == .play
+                )
+                .frame(width: 1, height: 1)
+            }
+        }
+#endif
         .navigationTitle("")
 #if os(iOS)
         .navigationBarBackButtonHidden(true)
@@ -1126,8 +1156,15 @@ struct DetailView: View {
 
     private func startPlayback(item: MediaItem? = nil) {
         guard !isLoadingPlayback else { return }
-        let targetItem = item ?? viewModel.itemToPlay
+        let targetItem = liveUITestPlaybackItem(from: item ?? viewModel.itemToPlay)
         guard playbackLaunchRouter.presentationIntent == nil else { return }
+        let matchingLocalProgress = viewModel.playbackProgress?.itemID == targetItem.id
+            ? viewModel.playbackProgress
+            : nil
+        let targetProgress = PlaybackProgress.resolvedResumeProgress(
+            for: targetItem,
+            localProgress: matchingLocalProgress
+        )
 
         let presentsExplicitChoice: Bool
 #if os(tvOS)
@@ -1137,10 +1174,27 @@ struct DetailView: View {
 #endif
         playbackLaunchRouter.begin(
             item: targetItem,
-            progress: viewModel.playbackProgress,
+            progress: targetProgress,
             presentsExplicitChoice: presentsExplicitChoice,
             effects: playbackLaunchEffects
         )
+    }
+
+    private func liveUITestPlaybackItem(from item: MediaItem) -> MediaItem {
+#if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] == "1",
+              let rawSeconds = environment["REELFIN_LIVE_UI_RESUME_SECONDS"],
+              let seconds = Double(rawSeconds), seconds > 0 else {
+            return item
+        }
+        var overridden = item
+        overridden.isPlayed = false
+        overridden.playbackPositionTicks = Int64(seconds * 10_000_000)
+        return overridden
+#else
+        return item
+#endif
     }
 
     private var playbackLaunchEffects: PlaybackLaunchEntryEffects {
@@ -3637,6 +3691,8 @@ private struct HeroPrimaryButton: View {
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: 24, x: 0, y: 14)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .accessibilityIdentifier("detail_primary_play_button")
+        .accessibilityValue(isFocused ? "focused" : "not_focused")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -3661,6 +3717,8 @@ private struct HeroPrimaryButton: View {
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: 24, x: 0, y: 14)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .accessibilityIdentifier("detail_primary_play_button")
+        .accessibilityValue(isFocused ? "focused" : "not_focused")
         .accessibilityAddTraits(.isButton)
     }
 

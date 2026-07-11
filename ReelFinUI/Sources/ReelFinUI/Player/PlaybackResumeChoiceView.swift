@@ -2,6 +2,9 @@ import Foundation
 import PlaybackEngine
 import Shared
 import SwiftUI
+#if os(tvOS)
+import UIKit
+#endif
 
 enum PlaybackLaunchChoice: Hashable, Sendable {
     case resume
@@ -279,12 +282,14 @@ struct PlaybackResumeChoiceView: View {
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.42), radius: 50, y: 24)
+
+            PlaybackResumeChoiceAccessibilityAnchor(focusedChoice: focusedChoice)
+                .frame(width: 1, height: 1)
         }
         .onExitCommand(perform: onCancel)
         .onAppear {
             focusedChoice = PlaybackLaunchChoicePolicy.defaultFocusedChoice
         }
-        .accessibilityIdentifier("playback_resume_choice")
     }
 
     private func choiceButton(
@@ -307,9 +312,43 @@ struct PlaybackResumeChoiceView: View {
         .buttonStyle(.glass)
         .focused($focusedChoice, equals: choice)
         .prefersDefaultFocus(choice == .resume, in: focusScope)
-        .accessibilityIdentifier(
-            choice == .resume ? "playback_resume_choice_continue" : "playback_resume_choice_restart"
-        )
+    }
+}
+
+private struct PlaybackResumeChoiceAccessibilityAnchor: UIViewRepresentable {
+    let focusedChoice: PlaybackLaunchChoice?
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView(frame: .zero)
+        container.isAccessibilityElement = false
+        container.isUserInteractionEnabled = false
+        for identifier in [
+            "playback_resume_choice",
+            "playback_resume_choice_continue",
+            "playback_resume_choice_restart"
+        ] {
+            let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+            marker.isAccessibilityElement = true
+            marker.accessibilityIdentifier = identifier
+            marker.accessibilityLabel = identifier
+            container.addSubview(marker)
+        }
+        return container
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        for marker in view.subviews {
+            switch marker.accessibilityIdentifier {
+            case "playback_resume_choice":
+                marker.accessibilityValue = focusedChoice == .restart ? "restart_focused" : "resume_focused"
+            case "playback_resume_choice_continue":
+                marker.accessibilityValue = focusedChoice == .resume ? "focused" : "not_focused"
+            case "playback_resume_choice_restart":
+                marker.accessibilityValue = focusedChoice == .restart ? "focused" : "not_focused"
+            default:
+                break
+            }
+        }
     }
 }
 #endif

@@ -92,6 +92,7 @@ struct CustomPlayerView: View {
     @State private var pendingTVSeekTask: Task<Void, Never>?
     @State private var chromeAutoHideTask: Task<Void, Never>?
     @State private var focusReturnToken: UInt = 0
+    @State private var accessibilityEvidence = PlayerAccessibilityEvidenceState()
 #endif
 
     /// What the launch screen shows the instant Play is pressed — the immediate "your action is
@@ -130,6 +131,20 @@ struct CustomPlayerView: View {
             subtitleCueOverlay
             skipOverlay
             overlay
+#if os(tvOS)
+            PlayerAccessibilityEvidenceView(
+                playbackTime: engine.lastObservedSeconds,
+                transportState: customAccessibilityTransportState,
+                videoRenderingReady: engine.hasRenderedFirstFrame,
+                audioRenderingReady: customAudioRenderingReady,
+                isAdvancing: accessibilityEvidence.isAdvancing,
+                completedSeekTarget: accessibilityEvidence.completedSeekTarget,
+                didCompleteSeekToZero: accessibilityEvidence.didCompleteSeekToZero,
+                readerGeneration: engine.loadGeneration,
+                errorMessage: customAccessibilityError
+            )
+            .frame(width: 1, height: 1)
+#endif
         }
 #if os(tvOS)
         .focusScope(playerFocusNamespace)
@@ -145,6 +160,19 @@ struct CustomPlayerView: View {
             } else {
                 scheduleTVChromeAutoHide()
             }
+        }
+        .onChange(of: engine.lastObservedSeconds) { _, seconds in
+            accessibilityEvidence.observe(
+                playbackTime: seconds,
+                generation: engine.loadGeneration
+            )
+        }
+        .onChange(of: engine.loadGeneration) { _, generation in
+            accessibilityEvidence.reset()
+            accessibilityEvidence.observe(
+                playbackTime: engine.lastObservedSeconds,
+                generation: generation
+            )
         }
         .onChange(of: engine.activeSkipSuggestion != nil) { hadSuggestion, hasSuggestion in
             guard CustomPlayerSkipFocusPolicy.shouldRequestFocus(
@@ -165,6 +193,11 @@ struct CustomPlayerView: View {
             // detail while the engine plays unseen) from "the player is up but the picture froze".
             AppLog.ui.notice("customplayer.view.appeared")
 #if os(tvOS)
+            accessibilityEvidence.reset()
+            accessibilityEvidence.observe(
+                playbackTime: engine.lastObservedSeconds,
+                generation: engine.loadGeneration
+            )
             revealTVChrome()
 #endif
 #if os(iOS)
@@ -181,6 +214,7 @@ struct CustomPlayerView: View {
             pendingTVSeekTask?.cancel()
             chromeAutoHideTask?.cancel()
             isRemoteInputFocused = false
+            accessibilityEvidence.reset()
 #endif
 #if os(iOS)
             // A compatible MKV replaces this view with `PlayerView` inside the SAME full-screen
@@ -671,6 +705,7 @@ struct CustomPlayerView: View {
             delta: 0,
             durationSeconds: customDurationSeconds
         )
+        accessibilityEvidence.beginSeek(target: target)
         pendingTVSeekTarget = target
         pendingTVSeekTask?.cancel()
         pendingTVSeekTask = Task { @MainActor in
@@ -754,6 +789,27 @@ struct CustomPlayerView: View {
 
     private func updateTVRemoteInputFocus() {
         isRemoteInputFocused = !isChromeVisible && activeTVPanel == nil
+    }
+
+    private var customAccessibilityTransportState: PlayerAccessibilityTransportState {
+        switch engine.bufferingState.phase {
+        case .failed: return .failed
+        case .ended: return .ended
+        case .prebuffering, .buffering, .idle: return .buffering
+        case .playing:
+            return engine.transportState == .paused ? .paused : .playing
+        case .degradedSDR:
+            return engine.transportState == .paused ? .paused : .playing
+        }
+    }
+
+    private var customAudioRenderingReady: Bool {
+        engine.audioTracks.contains(where: \.isSelected) && accessibilityEvidence.isAdvancing
+    }
+
+    private var customAccessibilityError: String? {
+        guard engine.bufferingState.phase == .failed else { return nil }
+        return engine.errorMessage ?? "Playback failed"
     }
 #endif
 }

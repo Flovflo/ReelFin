@@ -2,6 +2,63 @@ import XCTest
 @testable import ReelFinUI
 
 final class NativePlayerChromeLayoutTests: XCTestCase {
+    func testPlaybackEvidenceRequiresTwoAdvancingObservationsAndResetsAtSessionBoundaries() {
+        var evidence = PlayerAccessibilityEvidenceState()
+
+        evidence.observe(playbackTime: 8, generation: 1)
+        XCTAssertFalse(evidence.isAdvancing)
+        evidence.observe(playbackTime: 8.6, generation: 1)
+        XCTAssertFalse(evidence.isAdvancing)
+        evidence.observe(playbackTime: 9.2, generation: 1)
+        XCTAssertTrue(evidence.isAdvancing)
+
+        evidence.beginSeek(target: 0)
+        XCTAssertFalse(evidence.isAdvancing)
+        XCTAssertFalse(evidence.didCompleteSeek)
+        evidence.observe(playbackTime: 0.1, generation: 2)
+        XCTAssertTrue(evidence.didCompleteSeek)
+        XCTAssertTrue(evidence.didCompleteSeekToZero)
+        XCTAssertEqual(evidence.readerGeneration, 2)
+
+        evidence.reset()
+        XCTAssertFalse(evidence.isAdvancing)
+        XCTAssertFalse(evidence.didCompleteSeek)
+        XCTAssertNil(evidence.readerGeneration)
+    }
+
+    func testNativeRendererEvidenceRequiresAcceptedSamplesRatherThanTrackMetadata() {
+        let metadataOnly = NativePlayerAccessibilityDiagnostics(
+            rows: [
+                "state=buffering",
+                "audioDecoderBackend=AppleAudioToolbox",
+                "rendererBackend=AVSampleBufferDisplayLayer(compressed)",
+                "audioRendererBackend=AVSampleBufferAudioRenderer(compressed)"
+            ]
+        )
+        XCTAssertFalse(metadataOnly.videoRenderingReady)
+        XCTAssertFalse(metadataOnly.audioRenderingReady)
+
+        let rendered = NativePlayerAccessibilityDiagnostics(
+            rows: [
+                "state=playing",
+                "primed video=2 audio=3",
+                "audioSamples rendered=2048 maxPerBuffer=1024"
+            ]
+        )
+        XCTAssertEqual(rendered.transportState, .playing)
+        XCTAssertTrue(rendered.videoRenderingReady)
+        XCTAssertTrue(rendered.audioRenderingReady)
+    }
+
+    func testAccessibilityGenerationValueContainsNoMediaIdentity() {
+        var evidence = PlayerAccessibilityEvidenceState()
+        evidence.observe(playbackTime: 1, generation: 42)
+
+        XCTAssertEqual(evidence.readerGenerationValue, "42")
+        XCTAssertFalse(evidence.readerGenerationValue?.contains("/") == true)
+        XCTAssertFalse(evidence.readerGenerationValue?.contains("?") == true)
+    }
+
     func testCustomRemoteCommandsAreOwnedByReelFinExactlyOnce() {
         XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .playPause), .togglePlayPause)
         XCTAssertEqual(CustomPlayerTVRemoteRouting.action(for: .select), .toggleChrome)

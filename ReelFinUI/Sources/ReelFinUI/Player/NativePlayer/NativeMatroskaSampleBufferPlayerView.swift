@@ -1389,7 +1389,10 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             guard let self, self.ownsCallbacks(from: generation) else { return }
             self.recordCallbackDelivery()
             self.onPlaybackTime?(snapshot.playbackTime)
-            self.onDiagnostics?(snapshot.overlayLines(base: self.baseDiagnostics))
+            self.onDiagnostics?(
+                snapshot.overlayLines(base: self.baseDiagnostics)
+                    + ["readerGeneration=\(generation)"]
+            )
         }
     }
 

@@ -206,7 +206,10 @@ struct NativePlayerTrackSelectionMenuView: View {
             resetFocus(in: focusNamespace)
 #endif
         }
-        .accessibilityIdentifier(accessibilityIdentifier)
+        .background(alignment: .topLeading) {
+            PlayerAccessibilityMarkerView(identifier: accessibilityIdentifier)
+                .frame(width: 1, height: 1)
+        }
     }
 
     private var audioTrackSection: some View {
@@ -294,7 +297,10 @@ struct NativePlayerVideoInformationView: View {
         .padding(.vertical, metrics.verticalPadding)
         .frame(width: metrics.panelWidth, alignment: .leading)
         .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
-        .accessibilityIdentifier("native_player_video_panel")
+        .background(alignment: .topLeading) {
+            PlayerAccessibilityMarkerView(identifier: "native_player_video_panel")
+                .frame(width: 1, height: 1)
+        }
     }
 
     private func videoRow(title: String, value: String, systemName: String) -> some View {
@@ -359,7 +365,10 @@ private struct NativePlayerTrackMenuRow: View {
         .focused(focusedOptionID, equals: option.id)
         .nativePlayerTrackMenuFocusDisabled()
         .padding(.horizontal, metrics.rowOuterPadding)
+        .accessibilityIdentifier("native_player_track_option")
         .accessibilityLabel(option.title)
+        .accessibilityValue(option.isSelected ? "selected" : "not_selected")
+        .accessibilityAddTraits(option.isSelected ? .isSelected : [])
     }
 
     private var isHighlighted: Bool {

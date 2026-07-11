@@ -99,9 +99,10 @@ public struct EpisodeCardView: View {
         }
         .animation(.smooth(duration: 0.20, extraBounce: 0.01), value: isFocused)
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(tvEpisodeAccessibilityIdentifier)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Play episode")
-        .accessibilityValue(tvEpisodeAccessibilityStatus)
+        .accessibilityValue("\(isFocused ? "focused" : "not_focused")|\(tvEpisodeAccessibilityStatus)")
     }
 
     private var tvEpisodeLabel: String {
@@ -109,6 +110,10 @@ public struct EpisodeCardView: View {
             return "Episode \(num)"
         }
         return "Episode"
+    }
+
+    private var tvEpisodeAccessibilityIdentifier: String {
+        "detail_episode_\(episode.parentIndexNumber ?? 1)_\(episode.indexNumber ?? 0)"
     }
 
     private var tvArtworkLayer: some View {

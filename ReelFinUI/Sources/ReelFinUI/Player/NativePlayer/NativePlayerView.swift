@@ -38,6 +38,7 @@ struct NativePlayerView: View {
     @State private var isViewActive = false
     @State private var lastDeepEvidenceLogDate: Date?
     @State private var lastDeepEvidencePlaybackTime: Double?
+    @State private var accessibilityEvidence = PlayerAccessibilityEvidenceState()
 #if os(tvOS)
     @FocusState private var remoteInputFocused: Bool
     @Namespace private var remoteFocusNamespace
@@ -137,6 +138,18 @@ struct NativePlayerView: View {
                 .padding(trackMenuPadding)
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
             }
+            PlayerAccessibilityEvidenceView(
+                playbackTime: playbackTime,
+                transportState: accessibilityTransportState,
+                videoRenderingReady: accessibilityDiagnostics.videoRenderingReady,
+                audioRenderingReady: accessibilityDiagnostics.audioRenderingReady,
+                isAdvancing: accessibilityEvidence.isAdvancing,
+                completedSeekTarget: accessibilityEvidence.completedSeekTarget,
+                didCompleteSeekToZero: accessibilityEvidence.didCompleteSeekToZero,
+                readerGeneration: accessibilityDiagnostics.readerGeneration,
+                errorMessage: visibleErrorMessage
+            )
+            .frame(width: 1, height: 1)
         }
         .contentShape(Rectangle())
 #if os(iOS)
@@ -154,6 +167,7 @@ struct NativePlayerView: View {
             playbackTime = startTimeSeconds ?? 0
             lastDeepEvidenceLogDate = nil
             lastDeepEvidencePlaybackTime = nil
+            accessibilityEvidence.reset()
             revealChrome()
         }
         .onChange(of: playbackURL) { _, _ in
@@ -167,6 +181,7 @@ struct NativePlayerView: View {
             pendingSeekTask = nil
             pendingSeekTarget = nil
             seekDisplayHoldUntil = nil
+            accessibilityEvidence.reset()
             revealChrome()
         }
         .onChange(of: isPaused) { _, _ in
@@ -190,6 +205,7 @@ struct NativePlayerView: View {
             pendingSeekTarget = nil
             activeTrackMenu = nil
             showsVideoPanel = false
+            accessibilityEvidence.reset()
 #if os(tvOS)
             remoteInputFocused = false
 #endif
@@ -243,6 +259,16 @@ struct NativePlayerView: View {
 
     private var isBuffering: Bool {
         activeDiagnostics.contains("state=buffering")
+    }
+
+    private var accessibilityDiagnostics: NativePlayerAccessibilityDiagnostics {
+        NativePlayerAccessibilityDiagnostics(rows: activeDiagnostics)
+    }
+
+    private var accessibilityTransportState: PlayerAccessibilityTransportState {
+        if visibleErrorMessage != nil { return .failed }
+        if isPaused { return .paused }
+        return accessibilityDiagnostics.transportState
     }
 
     private var shouldShowChrome: Bool {
@@ -353,6 +379,10 @@ struct NativePlayerView: View {
                 return
             }
             playbackTime = nextPlaybackTime
+            accessibilityEvidence.observe(
+                playbackTime: nextPlaybackTime,
+                generation: accessibilityDiagnostics.readerGeneration
+            )
             clearSatisfiedSeekHold(for: nextPlaybackTime)
             onPlaybackTime(nextPlaybackTime)
             emitDeepSampleBufferEvidenceIfNeeded(
@@ -375,6 +405,7 @@ struct NativePlayerView: View {
             delta: 0,
             durationSeconds: durationSeconds
         )
+        accessibilityEvidence.beginSeek(target: target)
         pendingSeekDirection = NativePlayerRemoteControlPolicy.seekDirection(from: displayPlaybackTime, to: target)
         pendingSeekTarget = target
         playbackTime = target
