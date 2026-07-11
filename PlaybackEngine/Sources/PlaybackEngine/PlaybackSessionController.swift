@@ -3594,23 +3594,9 @@ public final class PlaybackSessionController {
         // category/activation calls on a background queue. AVPlayer activates the session
         // implicitly on play(), so a few ms of activation latency here is harmless.
         DispatchQueue.global(qos: .userInitiated).async {
-            let session = AVAudioSession.sharedInstance()
-            do {
-#if targetEnvironment(simulator)
-                // Simulator haptic/audio stack can reject moviePlayback options (OSStatus -50).
-                try session.setCategory(.playback)
-#else
-                try session.setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
-#endif
-                try session.setActive(true)
-            } catch {
-                // Fallback profile for devices/simulators that reject advanced movie session options.
-                do {
-                    try session.setCategory(.playback)
-                    try session.setActive(true)
-                } catch {
-                    AppLog.playback.warning("Audio session setup failed: \(error.localizedDescription, privacy: .public)")
-                }
+            let activated = PlaybackAudioSessionPolicy.activate()
+            if !activated {
+                AppLog.playback.warning("Audio session setup failed")
             }
         }
 #endif

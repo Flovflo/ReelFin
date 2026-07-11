@@ -108,6 +108,68 @@ enum CustomAdaptivePlaybackPolicy {
     }
 }
 
+/// One valid AVAudioSession configuration for every AVPlayer-backed playback path.
+/// `allowAirPlay` is intentionally absent: the iOS SDK only permits that option with
+/// `playAndRecord`; `.playback` already supports AirPlay without it.
+enum PlaybackAudioSessionPolicy {
+    struct Configuration: Equatable {
+        let category: AVAudioSession.Category
+        let mode: AVAudioSession.Mode
+        let options: AVAudioSession.CategoryOptions
+    }
+
+    static func configuration(isSimulator: Bool) -> Configuration {
+        Configuration(
+            category: .playback,
+            mode: isSimulator ? .default : .moviePlayback,
+            options: []
+        )
+    }
+
+    nonisolated static func activate() -> Bool {
+#if os(iOS) || os(tvOS)
+        let session = AVAudioSession.sharedInstance()
+        let configuration = configuration(isSimulator: isRunningInSimulator)
+        do {
+            try session.setCategory(
+                configuration.category,
+                mode: configuration.mode,
+                options: configuration.options
+            )
+            try session.setActive(true)
+            return true
+        } catch {
+            do {
+                try session.setCategory(.playback)
+                try session.setActive(true)
+                return true
+            } catch {
+                return false
+            }
+        }
+#else
+        return true
+#endif
+    }
+
+    nonisolated static func outputRouteSummary() -> String {
+#if os(iOS) || os(tvOS)
+        let kinds = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue }
+        return kinds.isEmpty ? "none" : kinds.joined(separator: ",")
+#else
+        return "not-applicable"
+#endif
+    }
+
+    private nonisolated static var isRunningInSimulator: Bool {
+#if targetEnvironment(simulator)
+        true
+#else
+        false
+#endif
+    }
+}
+
 /// Keeps audio-session recovery separate from transport intent. A route repair may reactivate the
 /// output device, but it must never turn a deliberate user pause into playback.
 enum CustomPlayerAudioRecoveryPolicy {
@@ -136,12 +198,13 @@ enum CustomPlayerAudioRecoveryPolicy {
 #if os(iOS) || os(tvOS)
     static func shouldRecoverRouteChange(_ reason: AVAudioSession.RouteChangeReason) -> Bool {
         switch reason {
-        case .newDeviceAvailable, .oldDeviceUnavailable, .override, .wakeFromSleep,
+        case .oldDeviceUnavailable, .override, .wakeFromSleep,
              .noSuitableRouteForCategory, .routeConfigurationChange:
             return true
-        case .unknown, .categoryChange:
+        case .unknown, .categoryChange, .newDeviceAvailable:
             // `setCategory` itself emits categoryChange. Reacting to it would create a recovery
-            // notification loop, so only genuine output-route events are actionable.
+            // notification loop. Activating a session can also announce newDeviceAvailable; the
+            // system already switches to a genuinely new device without another activation.
             return false
         @unknown default:
             return true
@@ -316,6 +379,7 @@ public final class CustomPlaybackEngine {
     private var audioInterruptionObserver: NSObjectProtocol?
     private var audioRouteChangeObserver: NSObjectProtocol?
     private var audioRecoveryTask: Task<Void, Never>?
+    private var audioSessionActivationGeneration: UInt = 0
     private var wasPlayingBeforeAudioInterruption = false
     private var itemStatusObservation: NSKeyValueObservation?
     private var timeControlStatusObservation: NSKeyValueObservation?
@@ -429,44 +493,6 @@ public final class CustomPlaybackEngine {
                 self?.transportState = status == .paused ? .paused : .playing
             }
         }
-    }
-
-    /// Route audio to playback (movie) so there IS sound — and it ignores the silent switch, like a
-    /// video player should. Run off the main thread (AVAudioSession.setActive is synchronous/blocking).
-    private nonisolated static func activateAudioSessionForPlayback() -> Bool {
-#if os(iOS) || os(tvOS)
-        let session = AVAudioSession.sharedInstance()
-        do {
-#if targetEnvironment(simulator)
-            try session.setCategory(.playback)
-#elseif os(iOS)
-            try session.setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
-#else
-            try session.setCategory(.playback, mode: .moviePlayback)
-#endif
-            try session.setActive(true)
-            return true
-        } catch {
-            do {
-                try session.setCategory(.playback)
-                try session.setActive(true)
-                return true
-            } catch {
-                AppLog.playback.warning("customplayer.audioSession.failed — \(error.localizedDescription, privacy: .public)")
-                return false
-            }
-        }
-#else
-        return true
-#endif
-    }
-
-    private static func configureAudioSessionForPlayback() {
-#if os(iOS) || os(tvOS)
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = activateAudioSessionForPlayback()
-        }
-#endif
     }
 
     // MARK: - Public control
@@ -639,7 +665,7 @@ public final class CustomPlaybackEngine {
                 return
             }
             if resolved.isAdaptiveStream {
-                startAdaptivePlayback(resolved: resolved, startTimeTicks: startTimeTicks, autoPlay: autoPlay)
+                await startAdaptivePlayback(resolved: resolved, startTimeTicks: startTimeTicks, autoPlay: autoPlay)
                 return
             }
             guard let warmSession = warm.session, let warmLocalURL = warm.localURL else {
@@ -671,7 +697,7 @@ public final class CustomPlaybackEngine {
                 // Not directly playable as a raw original — play the server's adaptive stream
                 // straight (AVPlayer's HLS stack). No cache session, no startup gate: segments
                 // start fast and carry their own recovery.
-                startAdaptivePlayback(resolved: resolved, startTimeTicks: startTimeTicks, autoPlay: autoPlay)
+                await startAdaptivePlayback(resolved: resolved, startTimeTicks: startTimeTicks, autoPlay: autoPlay)
                 return
             }
             let fresh = CacheProxySession(
@@ -691,8 +717,12 @@ public final class CustomPlaybackEngine {
             return
         }
 
-        Self.configureAudioSessionForPlayback()
         observeAudioSessionChanges()
+        await activateInitialAudioSession()
+        guard !Task.isCancelled else {
+            session.stop()
+            return
+        }
         sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
         resolvedMIMEType = resolved.overrideMIMEType
         monitor = ConnectionMonitor(sourceBitrateMbps: sourceBitrateMbps)
@@ -727,12 +757,17 @@ public final class CustomPlaybackEngine {
     /// Non-direct-playable source (container/codec AVFoundation can't open raw): play the server's
     /// adaptive HLS stream directly. The item lifecycle ladder still applies (rebuild on failure →
     /// honest error); the reservoir HUD stays hidden (no cache session — segments self-recover).
-    private func startAdaptivePlayback(resolved: ResolvedOriginalSource, startTimeTicks: Int64?, autoPlay: Bool) {
+    private func startAdaptivePlayback(
+        resolved: ResolvedOriginalSource,
+        startTimeTicks: Int64?,
+        autoPlay: Bool
+    ) async {
         AppLog.playback.notice(
             "customplayer.load.adaptive_lane — item=\(self.currentItemID?.prefix(8) ?? "-", privacy: .public)"
         )
-        Self.configureAudioSessionForPlayback()
         observeAudioSessionChanges()
+        await activateInitialAudioSession()
+        guard !Task.isCancelled else { return }
         sourceBitrateMbps = Double(resolved.sourceBitrate ?? 30_000_000) / 1_000_000
         adaptivePreservesOriginalVideo = resolved.preservesOriginalVideo
         sourceQualityLabel = resolved.isDolbyVision ? "HDR/DV" : (resolved.preservesOriginalVideo ? "Original" : nil)
@@ -1561,6 +1596,20 @@ public final class CustomPlaybackEngine {
 
     // MARK: - Audio session recovery
 
+    /// Complete the initial session activation before installing/playing the AVPlayerItem. The old
+    /// fire-and-forget call could reset the output route after the first audible samples.
+    private func activateInitialAudioSession() async {
+        audioSessionActivationGeneration &+= 1
+        let generation = audioSessionActivationGeneration
+        let activated = await Task.detached(priority: .userInitiated) {
+            PlaybackAudioSessionPolicy.activate()
+        }.value
+        guard !Task.isCancelled else { return }
+        AppLog.playback.notice(
+            "customplayer.audio.activation — source=initial generation=\(generation, privacy: .public) active=\(activated, privacy: .public) route=\(PlaybackAudioSessionPolicy.outputRouteSummary(), privacy: .public)"
+        )
+    }
+
     /// If the audio session gets interrupted (a call, Siri, another app), reactivate it and resume
     /// so sound comes back — otherwise the picture keeps playing silently (the "lost sound" symptom).
     private func observeAudioSessionChanges() {
@@ -1619,15 +1668,17 @@ public final class CustomPlaybackEngine {
     ) {
         guard decision.reactivateSession else { return }
         audioRecoveryTask?.cancel()
+        audioSessionActivationGeneration &+= 1
+        let generation = audioSessionActivationGeneration
         audioRecoveryTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 80_000_000)
             guard !Task.isCancelled else { return }
             let activated = await Task.detached(priority: .userInitiated) {
-                Self.activateAudioSessionForPlayback()
+                PlaybackAudioSessionPolicy.activate()
             }.value
             guard let self, !Task.isCancelled else { return }
             AppLog.playback.notice(
-                "customplayer.audio.recovered — reason=\(reason, privacy: .public) active=\(activated, privacy: .public) resume=\(decision.resumePlayback, privacy: .public)"
+                "customplayer.audio.recovered — reason=\(reason, privacy: .public) generation=\(generation, privacy: .public) active=\(activated, privacy: .public) resume=\(decision.resumePlayback, privacy: .public) route=\(PlaybackAudioSessionPolicy.outputRouteSummary(), privacy: .public)"
             )
             if decision.resumePlayback {
                 self.player.playImmediately(atRate: 1)

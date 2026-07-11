@@ -148,7 +148,29 @@ final class CustomPlayerSupportTests: XCTestCase {
 
     // MARK: - Audio output recovery
 
+    func testPhysicalIOSPlaybackAudioConfigurationNeverUsesPlayAndRecordOnlyAirPlayOption() {
+        let configuration = PlaybackAudioSessionPolicy.configuration(isSimulator: false)
+
+        XCTAssertEqual(configuration.category, .playback)
+        XCTAssertEqual(configuration.mode, .moviePlayback)
+        XCTAssertFalse(
+            configuration.options.contains(.allowAirPlay),
+            "the iOS SDK only permits allowAirPlay with playAndRecord; using it with playback returns OSStatus -50"
+        )
+    }
+
+    func testNewAudioDeviceRouteDoesNotReenterSessionActivation() {
+        XCTAssertFalse(
+            CustomPlayerAudioRecoveryPolicy.shouldRecoverRouteChange(.newDeviceAvailable),
+            "activating the playback session can publish this route event; reacting would activate a second time while playback starts"
+        )
+    }
+
     func testAudioRouteLossReactivatesSessionAndPreservesPlayingIntent() {
+        XCTAssertTrue(
+            CustomPlayerAudioRecoveryPolicy.shouldRecoverRouteChange(.oldDeviceUnavailable),
+            "a genuine output removal still needs session recovery"
+        )
         XCTAssertEqual(
             CustomPlayerAudioRecoveryPolicy.decision(
                 for: .routeChanged,
