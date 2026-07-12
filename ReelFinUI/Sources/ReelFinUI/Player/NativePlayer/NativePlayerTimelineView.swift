@@ -39,7 +39,9 @@ struct NativePlayerTimelineView: View {
             apply(circularScrubCoordinator.back())
         }
         .onDisappear {
-            apply(circularScrubCoordinator.back())
+            _ = circularScrubCoordinator.abandon()
+            scrubValue = nil
+            isCircularScrubbing = false
             isCircularScrubGestureAvailable = false
         }
         .background(alignment: .topLeading) {
@@ -78,6 +80,7 @@ struct NativePlayerTimelineView: View {
             onMove: handleTVMove,
             onScrubBegin: handleCircularScrubBegin,
             onScrubUpdate: handleCircularScrubUpdate,
+            onScrubCancel: handleCircularScrubCancel,
             onGestureAvailabilityChanged: { isCircularScrubGestureAvailable = $0 }
         )
 #else
@@ -149,6 +152,10 @@ struct NativePlayerTimelineView: View {
 
     private func handleCircularScrubUpdate(_ sample: TVRemoteScrubSample) {
         apply(circularScrubCoordinator.update(sample))
+    }
+
+    private func handleCircularScrubCancel() {
+        apply(circularScrubCoordinator.cancelGesture())
     }
 
     private func handleTVSelect() {

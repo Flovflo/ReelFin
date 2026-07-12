@@ -119,18 +119,49 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertFalse(CustomPlayerTVRemoteRouting.showsInlineAVKitControls)
     }
 
-    func testTVMenuPrecedenceClosesPickerThenChromeThenPlayer() {
+    func testTVBackPrecedenceClosesPanelBeforeCancellingCircularScrubBeforeChromeAndPlayer() {
         XCTAssertEqual(
-            NativePlayerTVRemoteControlPolicy.menuAction(chromeVisible: true, pickerVisible: true),
+            NativePlayerTVRemoteControlPolicy.menuAction(
+                chromeVisible: true,
+                pickerVisible: true,
+                isCircularScrubbing: true
+            ),
             .dismissPicker
         )
         XCTAssertEqual(
-            NativePlayerTVRemoteControlPolicy.menuAction(chromeVisible: true, pickerVisible: false),
+            NativePlayerTVRemoteControlPolicy.menuAction(
+                chromeVisible: true,
+                pickerVisible: false,
+                isCircularScrubbing: true
+            ),
+            .cancelCircularScrub
+        )
+        XCTAssertEqual(
+            NativePlayerTVRemoteControlPolicy.menuAction(
+                chromeVisible: true,
+                pickerVisible: false,
+                isCircularScrubbing: false
+            ),
             .hideChrome
         )
         XCTAssertEqual(
-            NativePlayerTVRemoteControlPolicy.menuAction(chromeVisible: false, pickerVisible: false),
+            NativePlayerTVRemoteControlPolicy.menuAction(
+                chromeVisible: false,
+                pickerVisible: false,
+                isCircularScrubbing: false
+            ),
             .exitPlayer
+        )
+    }
+
+    func testTVPlayPauseIsConsumedByBothRoutesDuringCircularScrub() {
+        XCTAssertEqual(
+            NativePlayerTVRemoteControlPolicy.playPauseAction(isCircularScrubbing: true),
+            .consume
+        )
+        XCTAssertEqual(
+            NativePlayerTVRemoteControlPolicy.playPauseAction(isCircularScrubbing: false),
+            .dispatch
         )
     }
 
@@ -966,6 +997,71 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertTrue(started.consumesInput)
         XCTAssertTrue(coordinator.isActive)
         XCTAssertEqual(coordinator.evidenceState, .previewing)
+    }
+
+    func testCircularScrubSecondBeginReanchorsWithoutPausingAgain() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+        _ = coordinator.begin(
+            sample: circularScrubSample(angle: 0, timestamp: 1),
+            originalTime: 300,
+            duration: 1_800,
+            wasPlaying: true,
+            isTimelineFocused: true
+        )
+
+        let reanchored = coordinator.begin(
+            sample: circularScrubSample(angle: .pi, timestamp: 10),
+            originalTime: 900,
+            duration: 3_600,
+            wasPlaying: false,
+            isTimelineFocused: true
+        )
+        let updated = coordinator.update(circularScrubSample(angle: -.pi / 2, timestamp: 11))
+
+        XCTAssertEqual(reanchored.effects, [])
+        XCTAssertTrue(reanchored.consumesInput)
+        XCTAssertEqual(updated.effects, [.setPreview(315)])
+        XCTAssertTrue(coordinator.isActive)
+    }
+
+    func testGestureCancellationRestoresOriginalTimeAndPlayingIntent() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+        _ = coordinator.begin(
+            sample: circularScrubSample(angle: 0, timestamp: 1),
+            originalTime: 240,
+            duration: 1_800,
+            wasPlaying: true,
+            isTimelineFocused: true
+        )
+        _ = coordinator.update(circularScrubSample(angle: .pi / 2, timestamp: 2))
+
+        let transition = coordinator.cancelGesture()
+
+        XCTAssertEqual(transition.effects, [
+            .seekAbsolute(240),
+            .setPaused(false),
+            .setPreview(nil)
+        ])
+        XCTAssertTrue(transition.consumesInput)
+        XCTAssertFalse(coordinator.isActive)
+    }
+
+    func testTimelineTeardownAbandonsScrubWithoutPlayerEffects() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+        _ = coordinator.begin(
+            sample: circularScrubSample(angle: 0, timestamp: 1),
+            originalTime: 240,
+            duration: 1_800,
+            wasPlaying: true,
+            isTimelineFocused: true
+        )
+
+        let transition = coordinator.abandon()
+
+        XCTAssertEqual(transition.effects, [])
+        XCTAssertFalse(transition.consumesInput)
+        XCTAssertFalse(coordinator.isActive)
+        XCTAssertEqual(coordinator.evidenceState, .idle)
     }
 
     func testSelectCommitsOneAbsoluteSeekAndRestoresPlayingIntent() {

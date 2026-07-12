@@ -283,16 +283,15 @@ struct NativePlayerView: View {
         }
 #if os(tvOS)
         .onExitCommand {
-            if isCircularScrubbing {
-                circularScrubCancelRequestToken &+= 1
-                return
-            }
             switch NativePlayerTVRemoteControlPolicy.menuAction(
                 chromeVisible: shouldShowChrome,
-                pickerVisible: activeTrackMenu != nil || activeInformationPanel != nil
+                pickerVisible: activeTrackMenu != nil || activeInformationPanel != nil,
+                isCircularScrubbing: isCircularScrubbing
             ) {
             case .dismissPicker:
                 dismissActivePanel()
+            case .cancelCircularScrub:
+                circularScrubCancelRequestToken &+= 1
             case .hideChrome:
                 hideChrome()
             case .exitPlayer:
@@ -300,7 +299,11 @@ struct NativePlayerView: View {
             }
         }
         .onPlayPauseCommand {
-            tvCommandDispatcher.dispatch(.playPause)
+            if NativePlayerTVRemoteControlPolicy.playPauseAction(
+                isCircularScrubbing: isCircularScrubbing
+            ) == .dispatch {
+                tvCommandDispatcher.dispatch(.playPause)
+            }
         }
 #endif
     }

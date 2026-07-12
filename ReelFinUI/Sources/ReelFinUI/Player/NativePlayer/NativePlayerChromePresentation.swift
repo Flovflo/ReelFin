@@ -110,8 +110,14 @@ struct NativePlayerChromeVisibilityPolicy: Equatable {
 
 enum NativePlayerTVMenuAction: Equatable {
     case dismissPicker
+    case cancelCircularScrub
     case hideChrome
     case exitPlayer
+}
+
+enum NativePlayerTVPlayPauseAction: Equatable {
+    case consume
+    case dispatch
 }
 
 enum NativePlayerTVSelectAction: Equatable {
@@ -122,10 +128,19 @@ enum NativePlayerTVSelectAction: Equatable {
 /// One platform policy shared by both playback surfaces. Views decide which focused control owns
 /// Select, but transport and Menu never fall through to AVKit or a second responder.
 struct NativePlayerTVRemoteControlPolicy: Equatable {
-    static func menuAction(chromeVisible: Bool, pickerVisible: Bool) -> NativePlayerTVMenuAction {
+    static func menuAction(
+        chromeVisible: Bool,
+        pickerVisible: Bool,
+        isCircularScrubbing: Bool = false
+    ) -> NativePlayerTVMenuAction {
         if pickerVisible { return .dismissPicker }
+        if isCircularScrubbing { return .cancelCircularScrub }
         if chromeVisible { return .hideChrome }
         return .exitPlayer
+    }
+
+    static func playPauseAction(isCircularScrubbing: Bool) -> NativePlayerTVPlayPauseAction {
+        isCircularScrubbing ? .consume : .dispatch
     }
 
     static func selectAction(chromeVisible: Bool) -> NativePlayerTVSelectAction {

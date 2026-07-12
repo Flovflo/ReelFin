@@ -141,6 +141,13 @@ struct TVRemoteCircularScrubSession: Equatable, Sendable {
         return preview.targetTime
     }
 
+    mutating func reanchor(_ sample: TVRemoteScrubSample) -> Bool {
+        guard case var .preview(preview) = phase, sample.isFinite else { return false }
+        preview.previousSample = sample
+        phase = .preview(preview)
+        return true
+    }
+
     mutating func commit() -> TVRemoteScrubResolution? {
         guard case let .preview(preview) = phase else { return nil }
         phase = .idle
@@ -157,6 +164,49 @@ struct TVRemoteCircularScrubSession: Equatable, Sendable {
             targetSeconds: preview.originalTime,
             wasPlaying: preview.wasPlaying
         )
+    }
+
+    mutating func abandon() -> Bool {
+        guard case .preview = phase else { return false }
+        phase = .idle
+        return true
+    }
+}
+
+enum TVRemoteCircularScrubGesturePhase: Equatable, Sendable {
+    case began
+    case changed
+    case ended
+    case cancelled
+    case failed
+}
+
+enum TVRemoteCircularScrubGestureAction: Equatable, Sendable {
+    case beginSample
+    case changeSample
+    case cancel
+    case none
+}
+
+struct TVRemoteCircularScrubGestureState: Equatable, Sendable {
+    private(set) var isContactActive = false
+
+    mutating func handle(
+        _ phase: TVRemoteCircularScrubGesturePhase
+    ) -> TVRemoteCircularScrubGestureAction {
+        switch phase {
+        case .began:
+            isContactActive = true
+            return .beginSample
+        case .changed:
+            return .changeSample
+        case .ended:
+            isContactActive = false
+            return .none
+        case .cancelled, .failed:
+            isContactActive = false
+            return .cancel
+        }
     }
 }
 
@@ -198,6 +248,10 @@ struct TVRemoteCircularScrubCoordinator: Equatable, Sendable {
         wasPlaying: Bool,
         isTimelineFocused: Bool
     ) -> TVRemoteCircularScrubTransition {
+        if isActive {
+            guard isTimelineFocused, session.reanchor(sample) else { return .ignored }
+            return TVRemoteCircularScrubTransition(effects: [], consumesInput: true)
+        }
         guard isTimelineFocused,
               session.begin(
                 sample: sample,
@@ -227,9 +281,19 @@ struct TVRemoteCircularScrubCoordinator: Equatable, Sendable {
     }
 
     mutating func back() -> TVRemoteCircularScrubTransition {
+        cancelGesture()
+    }
+
+    mutating func cancelGesture() -> TVRemoteCircularScrubTransition {
         guard let resolution = session.cancel() else { return .ignored }
         evidenceState = .cancelled
         return resolutionTransition(resolution)
+    }
+
+    mutating func abandon() -> TVRemoteCircularScrubTransition {
+        guard session.abandon() else { return .ignored }
+        evidenceState = .idle
+        return .ignored
     }
 
     mutating func focusChanged(isTimelineFocused: Bool) -> TVRemoteCircularScrubTransition {

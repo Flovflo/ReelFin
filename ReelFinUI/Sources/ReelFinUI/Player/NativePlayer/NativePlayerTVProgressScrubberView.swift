@@ -10,6 +10,7 @@ struct NativePlayerTVProgressScrubberView: View {
     let onMove: (NativePlayerRemoteMoveDirection) -> Void
     let onScrubBegin: (TVRemoteScrubSample) -> Void
     let onScrubUpdate: (TVRemoteScrubSample) -> Void
+    let onScrubCancel: () -> Void
     let onGestureAvailabilityChanged: (Bool) -> Void
 
     var body: some View {
@@ -52,6 +53,7 @@ struct NativePlayerTVProgressScrubberView: View {
                     TVRemoteCircularScrubGestureView(
                         onBegin: onScrubBegin,
                         onChange: onScrubUpdate,
+                        onCancel: onScrubCancel,
                         onAvailabilityChanged: onGestureAvailabilityChanged
                     )
                 }

@@ -216,7 +216,11 @@ struct CustomPlayerView: View {
 #if os(tvOS)
         .focusScope(playerFocusNamespace)
         .onPlayPauseCommand {
-            tvCommandDispatcher.dispatch(.playPause)
+            if NativePlayerTVRemoteControlPolicy.playPauseAction(
+                isCircularScrubbing: isCircularScrubbing
+            ) == .dispatch {
+                tvCommandDispatcher.dispatch(.playPause)
+            }
         }
         .onExitCommand {
             handleTVMenu()
@@ -1006,16 +1010,15 @@ struct CustomPlayerView: View {
     }
 
     private func handleTVMenu() {
-        if isCircularScrubbing {
-            circularScrubCancelRequestToken &+= 1
-            return
-        }
         switch NativePlayerTVRemoteControlPolicy.menuAction(
             chromeVisible: isChromeVisible,
-            pickerVisible: activeTVPanel != nil
+            pickerVisible: activeTVPanel != nil,
+            isCircularScrubbing: isCircularScrubbing
         ) {
         case .dismissPicker:
             dismissTVPanel()
+        case .cancelCircularScrub:
+            circularScrubCancelRequestToken &+= 1
         case .hideChrome:
             hideTVChrome()
         case .exitPlayer:

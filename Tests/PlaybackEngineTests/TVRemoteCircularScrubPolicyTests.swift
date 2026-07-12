@@ -292,6 +292,37 @@ final class TVRemoteCircularScrubPolicyTests: XCTestCase {
         XCTAssertNil(session.update(sample(angle: 0, timestamp: 4)))
     }
 
+    func testCircularSessionReanchorPreventsStaleAngularJumpAcrossContacts() throws {
+        var session = TVRemoteCircularScrubSession()
+        XCTAssertTrue(session.begin(
+            sample: sample(angle: 0, timestamp: 1),
+            originalTime: 300,
+            duration: 1_800,
+            wasPlaying: true
+        ))
+        XCTAssertEqual(
+            try XCTUnwrap(session.update(sample(angle: .pi / 2, timestamp: 2))),
+            315,
+            accuracy: 0.000_001
+        )
+
+        XCTAssertTrue(session.reanchor(sample(angle: -.pi / 2, timestamp: 10)))
+        let target = try XCTUnwrap(session.update(sample(angle: 0, timestamp: 11)))
+
+        XCTAssertEqual(target, 330, accuracy: 0.000_001)
+    }
+
+    func testGestureAdapterStateForwardsCancelledAndFailedButKeepsEndedPreview() {
+        var state = TVRemoteCircularScrubGestureState()
+
+        XCTAssertEqual(state.handle(.began), .beginSample)
+        XCTAssertEqual(state.handle(.changed), .changeSample)
+        XCTAssertEqual(state.handle(.ended), .none)
+        XCTAssertEqual(state.handle(.began), .beginSample)
+        XCTAssertEqual(state.handle(.cancelled), .cancel)
+        XCTAssertEqual(state.handle(.failed), .cancel)
+    }
+
     func testCircularSessionStressAlternatingDirectionsAndBounds() throws {
         let duration = 7_200.0
 
