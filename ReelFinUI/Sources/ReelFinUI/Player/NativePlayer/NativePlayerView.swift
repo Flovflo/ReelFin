@@ -33,6 +33,8 @@ struct NativePlayerView: View {
     @State private var isChromeUserActive = true
 #if os(tvOS)
     @State private var isChromeExplicitlyHidden = false
+    @State private var isCircularScrubbing = false
+    @State private var circularScrubCancelRequestToken: UInt = 0
 #endif
     @State private var chromeAutoHideTask: Task<Void, Never>?
     @State private var isViewActive = false
@@ -106,7 +108,9 @@ struct NativePlayerView: View {
                 NativePlayerTransportOverlayView(
                     item: item,
                     isPaused: $isPaused,
+                    isCircularScrubbing: circularScrubActiveBinding,
                     showsDiagnostics: $showsDiagnostics,
+                    circularScrubCancelRequestToken: playerCircularScrubCancelRequestToken,
                     playbackTime: displayPlaybackTime,
                     durationSeconds: durationSeconds,
                     isBuffering: isBuffering,
@@ -279,6 +283,10 @@ struct NativePlayerView: View {
         }
 #if os(tvOS)
         .onExitCommand {
+            if isCircularScrubbing {
+                circularScrubCancelRequestToken &+= 1
+                return
+            }
             switch NativePlayerTVRemoteControlPolicy.menuAction(
                 chromeVisible: shouldShowChrome,
                 pickerVisible: activeTrackMenu != nil || activeInformationPanel != nil
@@ -378,6 +386,22 @@ struct NativePlayerView: View {
     private var playerChromeFocusRequestToken: UInt {
 #if os(tvOS)
         chromeFocusRequestToken
+#else
+        0
+#endif
+    }
+
+    private var circularScrubActiveBinding: Binding<Bool> {
+#if os(tvOS)
+        $isCircularScrubbing
+#else
+        .constant(false)
+#endif
+    }
+
+    private var playerCircularScrubCancelRequestToken: UInt {
+#if os(tvOS)
+        circularScrubCancelRequestToken
 #else
         0
 #endif

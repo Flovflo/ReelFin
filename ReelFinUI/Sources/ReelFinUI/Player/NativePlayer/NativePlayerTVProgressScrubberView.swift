@@ -5,12 +5,16 @@ struct NativePlayerTVProgressScrubberView: View {
     let playbackTime: Double
     let durationSeconds: Double?
     let focus: FocusState<NativePlayerTVChromeFocus?>.Binding
-    let availableActions: [NativePlayerTVChromeAction]
-    let onCommand: (NativePlayerTVTransportCommand) -> Void
+    let isScrubbing: Bool
+    let onSelect: () -> Void
+    let onMove: (NativePlayerRemoteMoveDirection) -> Void
+    let onScrubBegin: (TVRemoteScrubSample) -> Void
+    let onScrubUpdate: (TVRemoteScrubSample) -> Void
+    let onGestureAvailabilityChanged: (Bool) -> Void
 
     var body: some View {
         Button {
-            onCommand(.select)
+            onSelect()
         } label: {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
@@ -21,7 +25,7 @@ struct NativePlayerTVProgressScrubberView: View {
                             .fill(Color.white.opacity(0.72))
                             .frame(width: filledWidth(for: proxy.size.width))
                     }
-                    .frame(height: isFocused ? 9 : 7)
+                    .frame(height: isScrubbing ? 11 : (isFocused ? 9 : 7))
                     .clipShape(Capsule())
                     .overlay {
                         Capsule()
@@ -31,7 +35,10 @@ struct NativePlayerTVProgressScrubberView: View {
 
                     Rectangle()
                         .fill(Color.white.opacity(0.96))
-                        .frame(width: 3, height: isFocused ? 32 : 24)
+                        .frame(
+                            width: isScrubbing ? 5 : 3,
+                            height: isScrubbing ? 42 : (isFocused ? 32 : 24)
+                        )
                         .shadow(color: .black.opacity(0.22), radius: 5, x: 0, y: 1)
                         .offset(x: playheadOffset(for: proxy.size.width))
                 }
@@ -39,6 +46,16 @@ struct NativePlayerTVProgressScrubberView: View {
             }
             .frame(height: 24)
             .animation(.easeOut(duration: 0.14), value: isFocused)
+            .animation(.easeOut(duration: 0.14), value: isScrubbing)
+            .overlay {
+                if isFocused {
+                    TVRemoteCircularScrubGestureView(
+                        onBegin: onScrubBegin,
+                        onChange: onScrubUpdate,
+                        onAvailabilityChanged: onGestureAvailabilityChanged
+                    )
+                }
+            }
         }
         .buttonStyle(.plain)
         .focused(focus, equals: .timeline)
@@ -47,30 +64,20 @@ struct NativePlayerTVProgressScrubberView: View {
         .onMoveCommand { direction in
             switch direction {
             case .left:
-                onCommand(.move(.left))
+                onMove(.left)
             case .right:
-                onCommand(.move(.right))
+                onMove(.right)
             case .up:
-                onCommand(.move(.up))
-                focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
-                    from: .timeline,
-                    direction: .up,
-                    availableActions: availableActions
-                )
+                onMove(.up)
             case .down:
-                onCommand(.move(.down))
-                focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
-                    from: .timeline,
-                    direction: .down,
-                    availableActions: availableActions
-                )
+                onMove(.down)
             @unknown default:
                 break
             }
         }
         .accessibilityLabel("Playback position")
         .accessibilityValue(
-            NativePlayerTVTimelineAccessibility.value(
+            (isScrubbing ? "Scrubbing, " : "") + NativePlayerTVTimelineAccessibility.value(
                 playbackTime: playbackTime,
                 durationSeconds: durationSeconds
             )

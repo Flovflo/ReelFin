@@ -156,6 +156,8 @@ struct CustomPlayerView: View {
     @State private var tvChromeFocusRequestToken: UInt = 0
     @State private var pendingTVSeekTarget: Double?
     @State private var pendingTVSeekTask: Task<Void, Never>?
+    @State private var isCircularScrubbing = false
+    @State private var circularScrubCancelRequestToken: UInt = 0
     @State private var chromeAutoHideTask: Task<Void, Never>?
     @State private var accessibilityEvidence = PlayerAccessibilityEvidenceState()
     @State private var accessibilityEvidenceExpiryTask: Task<Void, Never>?
@@ -800,7 +802,9 @@ struct CustomPlayerView: View {
             NativePlayerTransportOverlayView(
                 item: item,
                 isPaused: transportPausedBinding,
+                isCircularScrubbing: $isCircularScrubbing,
                 showsDiagnostics: .constant(false),
+                circularScrubCancelRequestToken: circularScrubCancelRequestToken,
                 playbackTime: pendingTVSeekTarget ?? engine.lastObservedSeconds,
                 durationSeconds: customDurationSeconds,
                 isBuffering: engine.bufferingState.phase == .buffering,
@@ -1002,6 +1006,10 @@ struct CustomPlayerView: View {
     }
 
     private func handleTVMenu() {
+        if isCircularScrubbing {
+            circularScrubCancelRequestToken &+= 1
+            return
+        }
         switch NativePlayerTVRemoteControlPolicy.menuAction(
             chromeVisible: isChromeVisible,
             pickerVisible: activeTVPanel != nil

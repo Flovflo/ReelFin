@@ -1,3 +1,4 @@
+import CoreGraphics
 import XCTest
 import PlaybackEngine
 import Shared
@@ -936,5 +937,149 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
             ),
             120
         )
+    }
+
+    func testCircularScrubBeginPausesOnlyWhenTimelineFocused() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+        let start = circularScrubSample(angle: 0, timestamp: 1)
+
+        let ignored = coordinator.begin(
+            sample: start,
+            originalTime: 300,
+            duration: 1_800,
+            wasPlaying: true,
+            isTimelineFocused: false
+        )
+
+        XCTAssertEqual(ignored, .ignored)
+        XCTAssertFalse(coordinator.isActive)
+
+        let started = coordinator.begin(
+            sample: start,
+            originalTime: 300,
+            duration: 1_800,
+            wasPlaying: true,
+            isTimelineFocused: true
+        )
+
+        XCTAssertEqual(started.effects, [.setPaused(true), .setPreview(300)])
+        XCTAssertTrue(started.consumesInput)
+        XCTAssertTrue(coordinator.isActive)
+        XCTAssertEqual(coordinator.evidenceState, .previewing)
+    }
+
+    func testSelectCommitsOneAbsoluteSeekAndRestoresPlayingIntent() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+        _ = coordinator.begin(
+            sample: circularScrubSample(angle: 0, timestamp: 1),
+            originalTime: 300,
+            duration: 1_800,
+            wasPlaying: true,
+            isTimelineFocused: true
+        )
+        _ = coordinator.update(circularScrubSample(angle: .pi / 2, timestamp: 2))
+
+        let transition = coordinator.select()
+
+        XCTAssertTrue(transition.consumesInput)
+        XCTAssertEqual(transition.effects.filter(\.isAbsoluteSeek).count, 1)
+        XCTAssertEqual(transition.effects, [
+            .seekAbsolute(315),
+            .setPaused(false),
+            .setPreview(nil)
+        ])
+        XCTAssertFalse(coordinator.isActive)
+        XCTAssertEqual(coordinator.evidenceState, .committed)
+        XCTAssertEqual(coordinator.select(), .ignored)
+    }
+
+    func testBackCancelsToOriginalTimeAndDoesNotDismissPlayer() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+        _ = coordinator.begin(
+            sample: circularScrubSample(angle: 0, timestamp: 1),
+            originalTime: 420,
+            duration: 1_800,
+            wasPlaying: false,
+            isTimelineFocused: true
+        )
+        _ = coordinator.update(circularScrubSample(angle: -.pi / 2, timestamp: 2))
+
+        let transition = coordinator.back()
+
+        XCTAssertTrue(transition.consumesInput)
+        XCTAssertEqual(transition.effects.filter(\.isAbsoluteSeek).count, 1)
+        XCTAssertEqual(transition.effects, [
+            .seekAbsolute(420),
+            .setPaused(true),
+            .setPreview(nil)
+        ])
+        XCTAssertFalse(coordinator.isActive)
+        XCTAssertEqual(coordinator.evidenceState, .cancelled)
+        XCTAssertEqual(coordinator.back(), .ignored)
+    }
+
+    func testLeavingTimelineCancelsActiveScrub() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+        _ = coordinator.begin(
+            sample: circularScrubSample(angle: 0, timestamp: 1),
+            originalTime: 120,
+            duration: 600,
+            wasPlaying: true,
+            isTimelineFocused: true
+        )
+
+        let transition = coordinator.focusChanged(isTimelineFocused: false)
+
+        XCTAssertEqual(transition.effects, [
+            .seekAbsolute(120),
+            .setPaused(false),
+            .setPreview(nil)
+        ])
+        XCTAssertFalse(coordinator.isActive)
+        XCTAssertEqual(coordinator.evidenceState, .cancelled)
+    }
+
+    func testCardinalShortcutsRemainMinus10Plus30OutsideScrub() {
+        var coordinator = TVRemoteCircularScrubCoordinator()
+
+        XCTAssertEqual(
+            coordinator.move(.left),
+            TVRemoteCircularScrubTransition(
+                effects: [.seekRelative(-10)],
+                consumesInput: true
+            )
+        )
+        XCTAssertEqual(
+            coordinator.move(.right),
+            TVRemoteCircularScrubTransition(
+                effects: [.seekRelative(30)],
+                consumesInput: true
+            )
+        )
+        XCTAssertEqual(coordinator.move(.up).effects, [.moveFocus(.up)])
+        XCTAssertEqual(coordinator.move(.down).effects, [.moveFocus(.down)])
+    }
+
+    private func circularScrubSample(
+        angle: Double,
+        radius: CGFloat = 40,
+        timestamp: TimeInterval
+    ) -> TVRemoteScrubSample {
+        let center = CGPoint(x: 100, y: 100)
+        return TVRemoteScrubSample(
+            location: CGPoint(
+                x: center.x + radius * CGFloat(cos(angle)),
+                y: center.y + radius * CGFloat(sin(angle))
+            ),
+            center: center,
+            timestamp: timestamp
+        )
+    }
+}
+
+private extension TVRemoteCircularScrubEffect {
+    var isAbsoluteSeek: Bool {
+        if case .seekAbsolute = self { return true }
+        return false
     }
 }

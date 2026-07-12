@@ -159,3 +159,132 @@ struct TVRemoteCircularScrubSession: Equatable, Sendable {
         )
     }
 }
+
+enum TVRemoteCircularScrubEvidenceState: String, Equatable, Sendable {
+    case idle
+    case previewing
+    case committed
+    case cancelled
+}
+
+enum TVRemoteCircularScrubEffect: Equatable, Sendable {
+    case setPaused(Bool)
+    case setPreview(Double?)
+    case seekAbsolute(Double)
+    case seekRelative(Double)
+    case moveFocus(NativePlayerRemoteMoveDirection)
+}
+
+struct TVRemoteCircularScrubTransition: Equatable, Sendable {
+    let effects: [TVRemoteCircularScrubEffect]
+    let consumesInput: Bool
+
+    static let ignored = TVRemoteCircularScrubTransition(effects: [], consumesInput: false)
+}
+
+struct TVRemoteCircularScrubCoordinator: Equatable, Sendable {
+    private var session = TVRemoteCircularScrubSession()
+    private(set) var evidenceState = TVRemoteCircularScrubEvidenceState.idle
+
+    var isActive: Bool {
+        if case .preview = session.phase { return true }
+        return false
+    }
+
+    mutating func begin(
+        sample: TVRemoteScrubSample,
+        originalTime: Double,
+        duration: Double,
+        wasPlaying: Bool,
+        isTimelineFocused: Bool
+    ) -> TVRemoteCircularScrubTransition {
+        guard isTimelineFocused,
+              session.begin(
+                sample: sample,
+                originalTime: originalTime,
+                duration: duration,
+                wasPlaying: wasPlaying
+              ) else { return .ignored }
+        evidenceState = .previewing
+        return TVRemoteCircularScrubTransition(
+            effects: [.setPaused(true), .setPreview(clamped(originalTime, duration: duration))],
+            consumesInput: true
+        )
+    }
+
+    mutating func update(_ sample: TVRemoteScrubSample) -> TVRemoteCircularScrubTransition {
+        guard isActive, let target = session.update(sample) else { return .ignored }
+        return TVRemoteCircularScrubTransition(
+            effects: [.setPreview(target)],
+            consumesInput: true
+        )
+    }
+
+    mutating func select() -> TVRemoteCircularScrubTransition {
+        guard let resolution = session.commit() else { return .ignored }
+        evidenceState = .committed
+        return resolutionTransition(resolution)
+    }
+
+    mutating func back() -> TVRemoteCircularScrubTransition {
+        guard let resolution = session.cancel() else { return .ignored }
+        evidenceState = .cancelled
+        return resolutionTransition(resolution)
+    }
+
+    mutating func focusChanged(isTimelineFocused: Bool) -> TVRemoteCircularScrubTransition {
+        guard !isTimelineFocused else { return .ignored }
+        return back()
+    }
+
+    mutating func move(
+        _ direction: NativePlayerRemoteMoveDirection
+    ) -> TVRemoteCircularScrubTransition {
+        if isActive {
+            switch direction {
+            case .left, .right:
+                return TVRemoteCircularScrubTransition(effects: [], consumesInput: true)
+            case .up, .down:
+                let cancellation = back()
+                return TVRemoteCircularScrubTransition(
+                    effects: cancellation.effects + [.moveFocus(direction)],
+                    consumesInput: true
+                )
+            }
+        }
+
+        let effect: TVRemoteCircularScrubEffect = switch direction {
+        case .left:
+            .seekRelative(NativePlayerRemoteControlPolicy.rewindSeconds)
+        case .right:
+            .seekRelative(NativePlayerRemoteControlPolicy.fastForwardSeconds)
+        case .up, .down:
+            .moveFocus(direction)
+        }
+        return TVRemoteCircularScrubTransition(effects: [effect], consumesInput: true)
+    }
+
+    static func previewBucket(seconds: Double?) -> String? {
+        guard let seconds, seconds.isFinite else { return nil }
+        let bucket = (max(0, seconds) / 30).rounded() * 30
+        guard bucket <= Double(Int.max) else { return nil }
+        return String(Int(bucket))
+    }
+
+    private func resolutionTransition(
+        _ resolution: TVRemoteScrubResolution
+    ) -> TVRemoteCircularScrubTransition {
+        TVRemoteCircularScrubTransition(
+            effects: [
+                .seekAbsolute(resolution.targetSeconds),
+                .setPaused(!resolution.wasPlaying),
+                .setPreview(nil)
+            ],
+            consumesInput: true
+        )
+    }
+
+    private func clamped(_ seconds: Double, duration: Double) -> Double {
+        min(max(seconds, 0), duration)
+    }
+}

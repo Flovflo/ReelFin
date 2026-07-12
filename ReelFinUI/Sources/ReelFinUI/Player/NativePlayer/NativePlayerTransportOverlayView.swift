@@ -186,7 +186,9 @@ struct NativePlayerTVChromeGlassStyle: Equatable {
 struct NativePlayerTransportOverlayView: View {
     let item: MediaItem
     @Binding var isPaused: Bool
+    @Binding var isCircularScrubbing: Bool
     @Binding var showsDiagnostics: Bool
+    let circularScrubCancelRequestToken: UInt
     let playbackTime: Double
     let durationSeconds: Double?
     let isBuffering: Bool
@@ -250,6 +252,9 @@ struct NativePlayerTransportOverlayView: View {
                     onSeekRelative: onSeekRelative,
                     onSeekAbsolute: onSeekAbsolute,
                     onSelect: onToggleChrome,
+                    isPaused: $isPaused,
+                    isCircularScrubbing: $isCircularScrubbing,
+                    circularScrubCancelRequestToken: circularScrubCancelRequestToken,
                     focus: $focusedControl,
                     availableActions: availableActions,
                     onCommand: { command in

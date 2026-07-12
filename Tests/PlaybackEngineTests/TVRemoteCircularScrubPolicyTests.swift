@@ -324,6 +324,15 @@ final class TVRemoteCircularScrubPolicyTests: XCTestCase {
         }
     }
 
+    func testCircularScrubPreviewEvidenceUsesRoundedThirtySecondBuckets() {
+        XCTAssertEqual(TVRemoteCircularScrubCoordinator.previewBucket(seconds: 0), "0")
+        XCTAssertEqual(TVRemoteCircularScrubCoordinator.previewBucket(seconds: 14.9), "0")
+        XCTAssertEqual(TVRemoteCircularScrubCoordinator.previewBucket(seconds: 15), "30")
+        XCTAssertEqual(TVRemoteCircularScrubCoordinator.previewBucket(seconds: 314), "300")
+        XCTAssertNil(TVRemoteCircularScrubCoordinator.previewBucket(seconds: nil))
+        XCTAssertNil(TVRemoteCircularScrubCoordinator.previewBucket(seconds: .nan))
+    }
+
     private func sample(
         angle: Double,
         radius: CGFloat = 40,
