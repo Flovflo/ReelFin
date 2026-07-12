@@ -8,6 +8,7 @@ xcuserdata/
 .artifacts/
 .claude/
 .superpowers/
+.worktrees/
 
 # Build output
 build/
