@@ -204,8 +204,9 @@ struct TVRemoteCircularScrubGestureState: Equatable, Sendable {
             isContactActive = false
             return .none
         case .cancelled, .failed:
+            let action: TVRemoteCircularScrubGestureAction = isContactActive ? .cancel : .none
             isContactActive = false
-            return .cancel
+            return action
         }
     }
 }

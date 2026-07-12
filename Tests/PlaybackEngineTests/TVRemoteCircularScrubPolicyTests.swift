@@ -312,15 +312,53 @@ final class TVRemoteCircularScrubPolicyTests: XCTestCase {
         XCTAssertEqual(target, 330, accuracy: 0.000_001)
     }
 
-    func testGestureAdapterStateForwardsCancelledAndFailedButKeepsEndedPreview() {
+    func testGestureAdapterStateCancelsOnlyActiveCancelledAndFailedContacts() {
         var state = TVRemoteCircularScrubGestureState()
 
+        XCTAssertEqual(state.handle(.failed), .none)
+        XCTAssertEqual(state.handle(.cancelled), .none)
         XCTAssertEqual(state.handle(.began), .beginSample)
         XCTAssertEqual(state.handle(.changed), .changeSample)
-        XCTAssertEqual(state.handle(.ended), .none)
-        XCTAssertEqual(state.handle(.began), .beginSample)
         XCTAssertEqual(state.handle(.cancelled), .cancel)
+        XCTAssertEqual(state.handle(.cancelled), .none)
+        XCTAssertEqual(state.handle(.began), .beginSample)
         XCTAssertEqual(state.handle(.failed), .cancel)
+        XCTAssertEqual(state.handle(.failed), .none)
+    }
+
+    func testEndedThenFailedWithoutNewBeginPreservesPreviewForOneSelectCommit() {
+        var gestureState = TVRemoteCircularScrubGestureState()
+        var coordinator = TVRemoteCircularScrubCoordinator()
+
+        XCTAssertEqual(gestureState.handle(.began), .beginSample)
+        _ = coordinator.begin(
+            sample: sample(angle: 0, timestamp: 1),
+            originalTime: 300,
+            duration: 1_800,
+            wasPlaying: true,
+            isTimelineFocused: true
+        )
+        XCTAssertEqual(gestureState.handle(.ended), .none)
+
+        let failedAction = gestureState.handle(.failed)
+        if failedAction == .cancel {
+            _ = coordinator.cancelGesture()
+        }
+        let commit = coordinator.select()
+        let absoluteSeekCount = commit.effects.reduce(into: 0) { count, effect in
+            if case .seekAbsolute = effect { count += 1 }
+        }
+
+        XCTAssertEqual(failedAction, .none)
+        XCTAssertEqual(commit.effects, [
+            .seekAbsolute(300),
+            .setPaused(false),
+            .setPreview(nil)
+        ])
+        XCTAssertEqual(absoluteSeekCount, 1)
+        XCTAssertTrue(commit.consumesInput)
+        XCTAssertEqual(coordinator.evidenceState, .committed)
+        XCTAssertEqual(coordinator.select(), .ignored)
     }
 
     func testCircularSessionStressAlternatingDirectionsAndBounds() throws {
