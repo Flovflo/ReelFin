@@ -283,6 +283,25 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         )
     }
 
+    func testSubtitleStylesHaveReferenceLabelsAndRealOpacityChanges() {
+        XCTAssertEqual(SubtitleBackgroundStyle.transparent.displayName, "Transparent Background")
+        XCTAssertEqual(SubtitleBackgroundStyle.subtle.displayName, "Subtle Background")
+        XCTAssertEqual(
+            CustomPlayerSubtitlePresentationPolicy.backgroundOpacity(
+                for: .transparent,
+                platform: .tvOS
+            ),
+            0
+        )
+        XCTAssertGreaterThan(
+            CustomPlayerSubtitlePresentationPolicy.backgroundOpacity(
+                for: .subtle,
+                platform: .tvOS
+            ),
+            0
+        )
+    }
+
     func testSubtitleOnRestoresLastTrackThenDefaultThenForcedThenFirst() {
         let first = PlaybackTrackOption(
             trackID: "first",

@@ -71,6 +71,18 @@ enum CustomPlayerSubtitlePresentationPolicy {
             )
         }
     }
+
+    static func backgroundOpacity(
+        for backgroundStyle: SubtitleBackgroundStyle,
+        platform: CustomPlayerSubtitlePlatform
+    ) -> Double {
+        switch backgroundStyle {
+        case .transparent:
+            return 0
+        case .subtle:
+            return style(for: platform).backgroundOpacity
+        }
+    }
 }
 
 enum CustomPlayerIOSSubtitleControlPolicy {
@@ -127,6 +139,8 @@ struct CustomPlayerView: View {
     var onRequestDismiss: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(SubtitleBackgroundStyle.defaultsKey)
+    private var subtitleBackgroundStyle: SubtitleBackgroundStyle = .transparent
     /// Slow-launch escalation: past this delay with still no picture, the overlay stops pretending
     /// ("Lancement…") and says the server is slow, with Retry/Quit — never an endless bare spinner.
     @State private var launchIsSlow = false
@@ -540,7 +554,12 @@ struct CustomPlayerView: View {
                         .padding(.horizontal, style.horizontalPadding)
                         .padding(.vertical, style.verticalPadding)
                         .background(
-                            .black.opacity(style.backgroundOpacity),
+                            .black.opacity(
+                                CustomPlayerSubtitlePresentationPolicy.backgroundOpacity(
+                                    for: subtitleBackgroundStyle,
+                                    platform: subtitlePlatform
+                                )
+                            ),
                             in: RoundedRectangle(cornerRadius: style.cornerRadius)
                         )
                         .frame(maxWidth: proxy.size.width * style.maximumWidthRatio)
@@ -553,12 +572,16 @@ struct CustomPlayerView: View {
         }
     }
 
-    private var subtitlePresentationStyle: CustomPlayerSubtitlePresentationStyle {
+    private var subtitlePlatform: CustomPlayerSubtitlePlatform {
 #if os(tvOS)
-        CustomPlayerSubtitlePresentationPolicy.style(for: .tvOS)
+        .tvOS
 #else
-        CustomPlayerSubtitlePresentationPolicy.style(for: .iOS)
+        .iOS
 #endif
+    }
+
+    private var subtitlePresentationStyle: CustomPlayerSubtitlePresentationStyle {
+        CustomPlayerSubtitlePresentationPolicy.style(for: subtitlePlatform)
     }
 
     /// Skip intro/credits + next-episode suggestion (same resolver as the rest of the app).
