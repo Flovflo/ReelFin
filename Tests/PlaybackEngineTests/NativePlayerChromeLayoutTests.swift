@@ -1,5 +1,6 @@
 import XCTest
 import PlaybackEngine
+import Shared
 @testable import ReelFinUI
 
 final class NativePlayerChromeLayoutTests: XCTestCase {
@@ -214,6 +215,106 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeFocus.utility(.info), .info)
         XCTAssertEqual(NativePlayerTVChromeFocus.utility(.insight), .insight)
         XCTAssertEqual(NativePlayerTVChromeFocus.utility(.continueWatching), .continueWatching)
+    }
+
+    func testAVKitSubtitleRootMatchesReferenceHierarchy() {
+        XCTAssertEqual(
+            NativePlayerAVKitMenuPage.subtitlesRoot.rowIDs,
+            [.subtitleOn, .subtitleOff, .subtitleLanguage, .subtitleStyle]
+        )
+    }
+
+    func testSubtitleBackgroundStylesExposeStablePreferenceValues() {
+        XCTAssertEqual(SubtitleBackgroundStyle.allCases, [.transparent, .subtle])
+        XCTAssertEqual(SubtitleBackgroundStyle.transparent.rawValue, "transparent")
+        XCTAssertEqual(SubtitleBackgroundStyle.subtle.rawValue, "subtle")
+        XCTAssertEqual(
+            SubtitleBackgroundStyle.defaultsKey,
+            "reelfin.subtitle.background-style"
+        )
+        XCTAssertEqual(
+            SubtitleBackgroundStyle.transparent.displayName,
+            "Transparent Background"
+        )
+        XCTAssertEqual(
+            SubtitleBackgroundStyle.subtle.displayName,
+            "Subtle Background"
+        )
+    }
+
+    func testSubtitleOnRestoresLastTrackThenDefaultThenForcedThenFirst() {
+        let first = PlaybackTrackOption(
+            trackID: "first",
+            title: "Spanish",
+            badge: nil,
+            iconName: nil,
+            isSelected: false
+        )
+        let forced = PlaybackTrackOption(
+            trackID: "forced",
+            title: "French",
+            badge: "Forced",
+            iconName: nil,
+            isSelected: false
+        )
+        let selected = PlaybackTrackOption(
+            trackID: "selected",
+            title: "English",
+            badge: nil,
+            iconName: nil,
+            isSelected: true
+        )
+
+        XCTAssertEqual(
+            NativePlayerSubtitleMenuPolicy.enabledTrackID(
+                options: [first, forced, selected],
+                lastEnabledID: "forced"
+            ),
+            "forced"
+        )
+        XCTAssertEqual(
+            NativePlayerSubtitleMenuPolicy.enabledTrackID(
+                options: [first, forced, selected],
+                lastEnabledID: nil
+            ),
+            "selected"
+        )
+        XCTAssertEqual(
+            NativePlayerSubtitleMenuPolicy.enabledTrackID(
+                options: [first, forced],
+                lastEnabledID: nil
+            ),
+            "forced"
+        )
+        XCTAssertEqual(
+            NativePlayerSubtitleMenuPolicy.enabledTrackID(
+                options: [first],
+                lastEnabledID: nil
+            ),
+            "first"
+        )
+    }
+
+    func testAVKitMenuFocusIsBoundedAndSubmenusReturnToRoot() {
+        let rows: [NativePlayerAVKitMenuRowID] = [
+            .subtitleOn,
+            .subtitleOff,
+            .subtitleLanguage,
+            .subtitleStyle
+        ]
+
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.move(from: .subtitleOn, delta: -1, rows: rows),
+            .subtitleOn
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.move(from: .subtitleOff, delta: 1, rows: rows),
+            .subtitleLanguage
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.parent(of: .subtitleLanguages),
+            .subtitlesRoot
+        )
     }
 
     func testTVChromeAvailableActionsRequireRealSelectableTracks() {
