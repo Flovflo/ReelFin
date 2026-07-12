@@ -284,7 +284,7 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCUIRemote.shared.press(.right)
         XCTAssertTrue(waitForValue("subtitle_styles", on: pageMarker, timeout: 5))
         let beforeFirstStyleSelection = try playbackTime(in: app)
-        _ = try changeFocusedChoiceAndSelect(in: app)
+        let firstOriginalStyle = try changeFocusedChoiceAndSelect(in: app)
         XCTAssertTrue(menu.exists, "Selecting a subtitle style must return to the Subtitles root.")
         XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
         XCTAssertTrue(waitForValue("Style", on: focusMarker, timeout: 5))
@@ -292,12 +292,51 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
 
         XCUIRemote.shared.press(.right)
         XCTAssertTrue(waitForValue("subtitle_styles", on: pageMarker, timeout: 5))
+        XCTAssertTrue(stylesMarker.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            waitForAnyValue(
+                ["Transparent Background", "Subtle Background"],
+                on: focusMarker,
+                timeout: 5
+            )
+        )
+        XCTAssertEqual(menuChoiceButtons(in: app).matching(selectedPredicate).count, 1)
+        let firstSelectedStyle = selectedChoice(in: app)
+        XCTAssertTrue(firstSelectedStyle.exists)
+        let firstSelectedStyleLabel = firstSelectedStyle.label
+        XCTAssertNotEqual(firstSelectedStyleLabel, firstOriginalStyle)
+
         let beforeSecondStyleSelection = try playbackTime(in: app)
-        _ = try changeFocusedChoiceAndSelect(in: app)
+        let secondOriginalStyle = try changeFocusedChoiceAndSelect(in: app)
         XCTAssertTrue(menu.exists, "Selecting the second subtitle style must return to the Subtitles root.")
         XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
         XCTAssertTrue(waitForValue("Style", on: focusMarker, timeout: 5))
         try assertPlaybackContinues(afterStartingAt: beforeSecondStyleSelection, in: app)
+
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(waitForValue("subtitle_styles", on: pageMarker, timeout: 5))
+        XCTAssertTrue(stylesMarker.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            waitForAnyValue(
+                ["Transparent Background", "Subtle Background"],
+                on: focusMarker,
+                timeout: 5
+            )
+        )
+        XCTAssertEqual(menuChoiceButtons(in: app).matching(selectedPredicate).count, 1)
+        let secondSelectedStyle = selectedChoice(in: app)
+        XCTAssertTrue(secondSelectedStyle.exists)
+        let secondSelectedStyleLabel = secondSelectedStyle.label
+        XCTAssertNotEqual(secondSelectedStyleLabel, secondOriginalStyle)
+        XCTAssertNotEqual(firstSelectedStyleLabel, secondSelectedStyleLabel)
+        XCTAssertEqual(
+            Set([firstSelectedStyleLabel, secondSelectedStyleLabel]),
+            Set(["Transparent Background", "Subtle Background"])
+        )
+
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("Style", on: focusMarker, timeout: 5))
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(waitForDisappearance(menu, timeout: 8))
         XCTAssertTrue(waitForFocus(app.buttons[buttonID], timeout: 5))
