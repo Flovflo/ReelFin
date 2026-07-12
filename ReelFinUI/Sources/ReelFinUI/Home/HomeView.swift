@@ -64,7 +64,6 @@ private struct HomePlayerPresentation: Identifiable {
 /// custom focus treatment that matches the rest of the home shelf motion.
 private struct TVCardButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
-    @FocusState private var isFocused: Bool
     @State private var isActivating = false
 
     let item: MediaItem
@@ -82,6 +81,10 @@ private struct TVCardButton: View {
     let onFocus: ((MediaItem) -> Void)?
     let onMoveUpFromContinueWatching: (() -> Void)?
     let onSelect: (MediaItem) -> Void
+
+    private var isFocused: Bool {
+        focusedItemID?.wrappedValue == transitionSourceID
+    }
 
     var body: some View {
         let transitionNamespace = namespaceProvider(item.id)
@@ -107,7 +110,6 @@ private struct TVCardButton: View {
         .onMoveCommand(perform: handleMoveCommand)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
-        .focused($isFocused)
         .modifier(TVHomeItemFocusModifier(itemID: transitionSourceID, focusedItemID: focusedItemID))
         .id(item.id)
         .accessibilityElement(children: .combine)
@@ -1242,11 +1244,6 @@ struct HomeView: View {
             if TVLiveUIAutomationPolicy.isHomeFocusEvidenceEnabledForCurrentProcess {
                 homeFocusTransitionCounter.recordChange(from: oldValue, to: newValue)
             }
-            guard oldValue != newValue, homeFocusHandoff.hasPendingRequest else { return }
-            // Re-enabling Home temporarily focuses the visible Hero while the saved shelf row
-            // scrolls into place. Remote moves still cancel through the explicit handler below.
-            guard newValue != featuredPrimaryActionFocusID else { return }
-            cancelHomeFocusHandoffForUserIntent()
         }
         .onMoveCommand { _ in
             guard homeFocusHandoff.hasPendingRequest else { return }

@@ -176,6 +176,7 @@ struct LibraryView: View {
                     TVLibraryPosterCard(
                         item: item,
                         dependencies: dependencies,
+                        isFocused: focusedLibraryItemID == item.id,
                         namespace: posterNamespace,
                         transitionSourceID: LibraryCardTransitionSource.id(itemID: item.id),
                         onFocus: { focusedItem in

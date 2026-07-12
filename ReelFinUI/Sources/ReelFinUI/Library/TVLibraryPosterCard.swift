@@ -3,11 +3,11 @@ import Shared
 import SwiftUI
 
 struct TVLibraryPosterCard: View {
-    @FocusState private var isFocused: Bool
     @State private var isActivating = false
 
     let item: MediaItem
     let dependencies: ReelFinDependencies
+    let isFocused: Bool
     var namespace: Namespace.ID? = nil
     var transitionSourceID: String? = nil
     let onFocus: (MediaItem) -> Void
@@ -51,7 +51,6 @@ struct TVLibraryPosterCard: View {
             y: isFocused ? TVFocusGeometry.focusedShadowY : 16
         )
         .onMoveCommand(perform: handleMoveCommand)
-        .focused($isFocused)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .accessibilityElement(children: .combine)

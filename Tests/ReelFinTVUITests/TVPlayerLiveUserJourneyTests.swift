@@ -393,7 +393,18 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
 
         while Date() < deadline {
             let focused = query.allElementsBoundByIndex.filter(\.hasFocus)
-            XCTAssertLessThanOrEqual(focused.count, 1, "Focus must never be ambiguous across media cards.")
+            if focused.count > 1 {
+                XCTAssertEqual(
+                    focused.count,
+                    2,
+                    "Only one outgoing/incoming XCUI focus snapshot may overlap transiently."
+                )
+                // XCUI can retain the outgoing and incoming accessibility snapshots for one
+                // focus-engine turn. Never accept that transient state as stable focus.
+                matchingObservations = 0
+                RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+                continue
+            }
             if focused.first?.identifier == expected.identifier {
                 matchingObservations += 1
                 if matchingObservations == 3 { return true }

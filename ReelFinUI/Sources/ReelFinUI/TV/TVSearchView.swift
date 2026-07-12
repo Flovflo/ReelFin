@@ -231,6 +231,8 @@ private struct TVSearchStateView: View {
 }
 
 private struct TVSearchCardButton: View {
+    @FocusState private var isFocused: Bool
+
     let item: MediaItem
     let dependencies: ReelFinDependencies
     var onMoveUp: (() -> Void)? = nil
@@ -240,10 +242,12 @@ private struct TVSearchCardButton: View {
         TVLibraryPosterCard(
             item: item,
             dependencies: dependencies,
+            isFocused: isFocused,
             onFocus: { _ in },
             onMoveUp: onMoveUp,
             onSelect: onSelect
         )
+        .focused($isFocused)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.name)
         .accessibilityAddTraits(.isButton)
