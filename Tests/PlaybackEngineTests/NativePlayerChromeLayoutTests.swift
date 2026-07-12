@@ -237,6 +237,7 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(layout.choiceHeight, 68)
         XCTAssertEqual(layout.navigationHeight, 108)
         XCTAssertLessThanOrEqual(layout.focusOpacity, 0.22)
+        XCTAssertEqual(layout.selectedOpacity, 0.045)
         XCTAssertEqual(layout.opaqueBackgroundOpacity, 0)
     }
 
@@ -245,6 +246,23 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleOff), .disableSubtitles)
         XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleLanguage), .openLanguages)
         XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleStyle), .openStyles)
+    }
+
+    func testAVKitMenuActionMappingPreservesAssociatedPayloads() {
+        XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.audio("fr")), .selectAudio("fr"))
+        XCTAssertEqual(
+            NativePlayerAVKitMenuAction.forRow(.subtitleTrack("forced-fr")),
+            .selectSubtitle("forced-fr")
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuAction.forRow(.style(.subtle)),
+            .selectStyle(.subtle)
+        )
+    }
+
+    func testAVKitMenuReplicaIsLimitedToTVOS() {
+        XCTAssertFalse(NativePlayerAVKitMenuPresentationPolicy.usesReplica(on: .iOS))
+        XCTAssertTrue(NativePlayerAVKitMenuPresentationPolicy.usesReplica(on: .tvOS))
     }
 
     func testSubtitleBackgroundStylesExposeStablePreferenceValues() {

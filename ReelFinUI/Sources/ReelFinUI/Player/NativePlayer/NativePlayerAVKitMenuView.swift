@@ -18,6 +18,17 @@ struct NativePlayerAVKitMenuLayout: Equatable {
     static let standard = Self()
 }
 
+enum NativePlayerAVKitMenuPlatform {
+    case iOS
+    case tvOS
+}
+
+enum NativePlayerAVKitMenuPresentationPolicy {
+    static func usesReplica(on platform: NativePlayerAVKitMenuPlatform) -> Bool {
+        platform == .tvOS
+    }
+}
+
 enum NativePlayerAVKitMenuAction: Equatable {
     case selectAudio(String)
     case enableSubtitles
