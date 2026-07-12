@@ -463,7 +463,9 @@ struct CustomPlayerView: View {
                 )
                 .font(.callout)
                 .foregroundStyle(.white.opacity(0.72))
-                .lineLimit(1)
+                .lineLimit(layout.statusLineLimit)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
 
                 if state.phase == .prebuffering, state.targetSeconds > 0 {
                     ProgressView(value: state.progress)

@@ -22,6 +22,18 @@ struct TVPlaybackResumeChoiceLayout: Equatable, Sendable {
     let verticalPadding: CGFloat
     let buttonHeight: CGFloat
     let focusOpacity: Double
+    let buttonSpacing: CGFloat
+    let buttonHorizontalPadding: CGFloat
+    let buttonFontSize: CGFloat
+    let buttonTitleLineLimit: Int
+    let buttonTitleAllowsTightening: Bool
+    let buttonTitleMinimumScaleFactor: CGFloat
+    let buttonIconAndSpacingWidth: CGFloat
+
+    var availableButtonContentWidth: CGFloat {
+        let buttonWidth = (maxWidth - (horizontalPadding * 2) - buttonSpacing) / 2
+        return buttonWidth - (buttonHorizontalPadding * 2)
+    }
 
     static let standard = TVPlaybackResumeChoiceLayout(
         maxWidth: 760,
@@ -29,7 +41,14 @@ struct TVPlaybackResumeChoiceLayout: Equatable, Sendable {
         horizontalPadding: 44,
         verticalPadding: 34,
         buttonHeight: 66,
-        focusOpacity: 0.20
+        focusOpacity: 0.20,
+        buttonSpacing: 20,
+        buttonHorizontalPadding: 16,
+        buttonFontSize: 22,
+        buttonTitleLineLimit: 1,
+        buttonTitleAllowsTightening: true,
+        buttonTitleMinimumScaleFactor: 0.82,
+        buttonIconAndSpacingWidth: 36
     )
 }
 
@@ -280,7 +299,7 @@ struct PlaybackResumeChoiceView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                HStack(spacing: 20) {
+                HStack(spacing: layout.buttonSpacing) {
                     choiceButton(.resume, systemImage: "play.fill", layout: layout)
                     choiceButton(.restart, systemImage: "arrow.counterclockwise", layout: layout)
                 }
@@ -323,7 +342,10 @@ struct PlaybackResumeChoiceView: View {
                 ),
                 systemImage: systemImage
             )
-            .font(.title3.weight(.semibold))
+            .font(.system(size: layout.buttonFontSize, weight: .semibold))
+            .lineLimit(layout.buttonTitleLineLimit)
+            .allowsTightening(layout.buttonTitleAllowsTightening)
+            .minimumScaleFactor(layout.buttonTitleMinimumScaleFactor)
         }
         .buttonStyle(
             PlaybackResumeChoiceButton(
@@ -343,7 +365,13 @@ private struct PlaybackResumeChoiceButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(.white)
-            .frame(minWidth: 270, minHeight: layout.buttonHeight, maxHeight: layout.buttonHeight)
+            .padding(.horizontal, layout.buttonHorizontalPadding)
+            .frame(
+                minWidth: 270,
+                maxWidth: .infinity,
+                minHeight: layout.buttonHeight,
+                maxHeight: layout.buttonHeight
+            )
             .background {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(

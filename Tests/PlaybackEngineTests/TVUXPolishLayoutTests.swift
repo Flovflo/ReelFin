@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import ReelFinUI
 
 final class TVUXPolishLayoutTests: XCTestCase {
@@ -31,6 +32,30 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertEqual(layout.verticalPadding, 34)
         XCTAssertEqual(layout.buttonHeight, 66)
         XCTAssertEqual(layout.focusOpacity, 0.20)
+        XCTAssertEqual(layout.buttonSpacing, 20)
+        XCTAssertEqual(layout.buttonHorizontalPadding, 16)
+        XCTAssertEqual(layout.buttonFontSize, 22)
+        XCTAssertEqual(layout.buttonTitleLineLimit, 1)
+        XCTAssertTrue(layout.buttonTitleAllowsTightening)
+        XCTAssertEqual(layout.buttonTitleMinimumScaleFactor, 0.82)
+    }
+
+    func testCompleteResumeChoicePolicyTitlesFitAvailableButtonWidth() {
+        let layout = TVPlaybackResumeChoiceLayout.standard
+        let font = UIFont.systemFont(ofSize: layout.buttonFontSize, weight: .semibold)
+        let titles = PlaybackLaunchChoicePolicy.orderedChoices.map {
+            PlaybackLaunchChoicePolicy.title(for: $0, resumeSeconds: 359_999)
+        }
+
+        XCTAssertEqual(titles, ["Continuer à 99:59:59", "Recommencer"])
+        for title in titles {
+            let textWidth = (title as NSString).size(withAttributes: [.font: font]).width
+            XCTAssertLessThanOrEqual(
+                textWidth + layout.buttonIconAndSpacingWidth,
+                layout.availableButtonContentWidth,
+                "The complete policy title \(title) must fit without ellipsis."
+            )
+        }
     }
 
     func testCompactPlayerLaunchMetrics() {
@@ -40,6 +65,7 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertEqual(layout.spinnerSize, 34)
         XCTAssertEqual(layout.progressWidth, 280)
         XCTAssertEqual(layout.screenInset, 64)
+        XCTAssertEqual(layout.statusLineLimit, 2)
     }
 
     func testTVFocusScalesMatchApprovedCouchDistanceGeometry() {
