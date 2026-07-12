@@ -27,6 +27,7 @@
 
 **Files:**
 - Create: `ReelFinUI/Sources/ReelFinUI/Player/NativePlayer/NativePlayerAVKitMenuModel.swift`
+- Create: `Shared/Sources/Shared/SubtitleBackgroundStyle.swift`
 - Test: `Tests/PlaybackEngineTests/NativePlayerChromeLayoutTests.swift`
 
 **Interfaces:**
@@ -75,7 +76,7 @@ Expected: FAIL because the four model/policy types do not exist.
 
 - [ ] **Step 3: Implement the pure model**
 
-Create the following API, keeping it free of SwiftUI state:
+Create `SubtitleBackgroundStyle` here as the shared value dependency used by the row ID, then create the following API, keeping it free of SwiftUI state. Task 3 wires this already-defined value into the renderers and persistence:
 
 ```swift
 enum NativePlayerAVKitMenuPage: Equatable {
@@ -255,7 +256,7 @@ git commit -m "feat(tvos): render AVKit-faithful Liquid Glass menus"
 ### Task 3: Functional Subtitle Style Preference
 
 **Files:**
-- Create: `Shared/Sources/Shared/SubtitleBackgroundStyle.swift`
+- Modify: `Shared/Sources/Shared/SubtitleBackgroundStyle.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Player/CustomPlayerView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Player/NativePlayer/NativeSubtitleOverlayView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Player/NativePlayer/NativePlayerAVKitMenuView.swift`
