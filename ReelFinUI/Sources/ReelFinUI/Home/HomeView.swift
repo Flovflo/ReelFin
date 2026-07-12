@@ -1209,6 +1209,14 @@ struct HomeView: View {
             guard newValue > 0 else { return }
             triggerTVHomeRefresh()
         }
+        .onChange(of: focusedHomeItemID) { oldValue, newValue in
+            guard oldValue != newValue, homeFocusHandoff.hasPendingRequest else { return }
+            cancelHomeFocusHandoffForUserIntent()
+        }
+        .onMoveCommand { _ in
+            guard homeFocusHandoff.hasPendingRequest else { return }
+            cancelHomeFocusHandoffForUserIntent()
+        }
 #endif
 #if os(iOS)
         .fullScreenCover(item: $playerPresentation, onDismiss: handlePlayerDismissal) { presentation in
@@ -2506,12 +2514,16 @@ struct HomeView: View {
         homeFocusHandoffTask = Task { @MainActor in
             await Task.yield()
             guard !Task.isCancelled, homeFocusHandoff.owns(request) else { return }
-            focusedHomeItemID = nil
-            await Task.yield()
-            guard !Task.isCancelled, homeFocusHandoff.owns(request) else { return }
-            focusedHomeItemID = request.targetID
+            guard let targetID = homeFocusHandoff.consume(request) else { return }
             homeFocusHandoffTask = nil
+            focusedHomeItemID = targetID
         }
+    }
+
+    private func cancelHomeFocusHandoffForUserIntent() {
+        homeFocusHandoffTask?.cancel()
+        homeFocusHandoffTask = nil
+        homeFocusHandoff.userFocusDidChange()
     }
 
     private func cancelHomeFocusHandoff() {

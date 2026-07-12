@@ -117,17 +117,35 @@ struct TVHomeFocusHandoffRequest: Equatable, Sendable {
 
 struct TVHomeFocusHandoffCoordinator: Equatable, Sendable {
     private var generation: UInt = 0
+    private var activeGeneration: UInt?
+
+    var hasPendingRequest: Bool {
+        activeGeneration != nil
+    }
 
     mutating func begin(targetID: String) -> TVHomeFocusHandoffRequest {
         generation &+= 1
+        activeGeneration = generation
         return TVHomeFocusHandoffRequest(generation: generation, targetID: targetID)
     }
 
     mutating func cancel() {
         generation &+= 1
+        activeGeneration = nil
+    }
+
+    mutating func userFocusDidChange() {
+        cancel()
     }
 
     func owns(_ request: TVHomeFocusHandoffRequest) -> Bool {
-        generation == request.generation
+        generation == request.generation && activeGeneration == request.generation
+    }
+
+    mutating func consume(_ request: TVHomeFocusHandoffRequest) -> String? {
+        guard owns(request) else { return nil }
+        activeGeneration = nil
+        generation &+= 1
+        return request.targetID
     }
 }

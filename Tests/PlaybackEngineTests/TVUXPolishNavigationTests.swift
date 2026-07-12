@@ -83,6 +83,16 @@ final class TVUXPolishNavigationTests: XCTestCase {
         XCTAssertFalse(coordinator.owns(latest))
     }
 
+    func testUserFocusChangeInvalidatesRestoreBeforeStaleCompletionCanApply() {
+        var coordinator = TVHomeFocusHandoffCoordinator()
+        let restore = coordinator.begin(targetID: "return-card")
+
+        coordinator.userFocusDidChange()
+
+        XCTAssertFalse(coordinator.owns(restore))
+        XCTAssertNil(coordinator.consume(restore))
+    }
+
     func testTVDetailHostsUseCoordinatorTimingsWithoutNestedViewModelAnimations() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -121,6 +131,10 @@ final class TVUXPolishNavigationTests: XCTestCase {
         XCTAssertTrue(home.contains("let request = beginHomeFocusHandoff(targetID: itemID)"))
         XCTAssertTrue(home.contains("completeHomeFocusHandoff(request)"))
         XCTAssertTrue(home.contains("guard homeFocusHandoff.owns(request) else { return }"))
+        XCTAssertTrue(home.contains(".onChange(of: focusedHomeItemID)"))
+        XCTAssertTrue(home.contains(".onMoveCommand { _ in"))
+        XCTAssertTrue(home.contains("homeFocusHandoff.userFocusDidChange()"))
+        XCTAssertTrue(home.contains("guard let targetID = homeFocusHandoff.consume(request) else { return }"))
         XCTAssertTrue(home.contains("homeFocusHandoffTask?.cancel()"))
     }
 }
