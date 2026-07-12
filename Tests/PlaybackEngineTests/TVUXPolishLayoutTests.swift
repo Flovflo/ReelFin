@@ -32,7 +32,8 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertEqual(layout.verticalPadding, 34)
         XCTAssertEqual(layout.buttonHeight, 66)
         XCTAssertEqual(layout.focusOpacity, 0.20)
-        XCTAssertEqual(layout.buttonSpacing, 20)
+        XCTAssertEqual(layout.buttonSpacing, 16)
+        XCTAssertEqual(layout.questionFontSize, 32)
         XCTAssertEqual(layout.buttonHorizontalPadding, 16)
         XCTAssertEqual(layout.buttonFontSize, 22)
         XCTAssertEqual(layout.buttonTitleLineLimit, 1)
@@ -73,6 +74,13 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertEqual(TVFocusGeometry.scale(for: .homeLandscapeCard, reduceMotion: false), 1.06)
         XCTAssertEqual(TVFocusGeometry.scale(for: .libraryPoster, reduceMotion: false), 1.06)
         XCTAssertEqual(TVFocusGeometry.scale(for: .homePosterCard, reduceMotion: true), 1.02)
+        XCTAssertEqual(TVFocusGeometry.libraryActivationScale, 1.025)
+    }
+
+    func testTVFocusMotionUsesApprovedNormalAndReducedMotionTimings() {
+        XCTAssertEqual(TVFocusAnimationMetrics.normalDuration, 0.28)
+        XCTAssertEqual(TVFocusAnimationMetrics.normalBounce, 0.80)
+        XCTAssertEqual(TVFocusAnimationMetrics.reducedMotionDuration, 0.18)
     }
 
     func testReduceMotionDoesNotRaiseNavigationRoleAboveItsNormalScale() {

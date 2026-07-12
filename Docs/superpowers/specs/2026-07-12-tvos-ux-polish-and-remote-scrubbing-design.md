@@ -1,7 +1,7 @@
 # tvOS UX Polish And Circular Remote Scrubbing Design
 
-**Date:** 2026-07-12  
-**Status:** Approved for implementation planning  
+**Date:** 2026-07-12
+**Status:** Approved for implementation planning
 **Scope:** ReelFin tvOS Home, Library, Detail presentation, playback launch UI, and custom-player timeline interaction
 
 ## Objective

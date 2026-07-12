@@ -395,3 +395,10 @@
 - The new focus-transition evidence is a local value counter, not an observer. Its mutation and 1×1 UIKit accessibility marker exist only for DEBUG tvOS processes explicitly launched with the automation flag; the marker publishes only the count.
 - The counter records only unequal `focusedHomeItemID` values. Authenticated proof requires one Down event to produce one distinct stable focused card and an exact settled count delta of one; the focus/Home-Back/Library-Back suite passed 3/3 in 63.011 seconds, and rapid Back passed 1/1 in 11.225 seconds.
 - Mandatory focus acquisition no longer converts a regression into an XCTest skip. Preparation evidence is captured after its marker exists. No production timer, detached task, lifecycle observer, media payload, or broad release-build focus observation was added.
+
+## tvOS Detail Return Provenance Follow-up - 2026-07-12
+
+- Return resolution is event-driven and bounded to the originating rail. It performs linear work over the small rail snapshot only on a displayed-item change or dismissal, introduces no timer, detached task, network request, artwork fetch, or per-frame allocation, and preserves the existing cancelable focus handoff.
+- Row-qualified focus IDs remain the sole automatic row focus target. Hero is considered only for Hero-origin presentations; a missing row target selects the nearest surviving snapshot item in that row and never consults the global first-row item map.
+- Motion and Resume changes are constant layout/animation tokens. Reduce Motion selects a 0.18-second ease-out in `TVMotionFocusModifier`; normal focus selects the 0.28/0.80 spring. Library activation is reduced to 1.025, with no additional glass layer or observation scope.
+- Verification passed 38/38 focused deterministic tests and the ReelFinTV build on the authenticated simulator. The nearest available live Home Back test passed twice consecutively after one initial transient timeout. No carousel-driving UI test exists in the suite; duplicated-rail, Hero-origin, neighbor navigation, removed-target fallback, and unique row-plus-item focus are covered deterministically.

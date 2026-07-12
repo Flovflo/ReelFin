@@ -634,3 +634,9 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Added a DEBUG tvOS automation-only UIKit accessibility marker, `tv_home_focus_transition_count`. It exposes only a monotonically increasing count, never an item ID or media value, and the mutation itself is disabled outside the automation policy.
 - The authenticated Home move proof reads the settled count around exactly one Down event and requires a delta of exactly one. The focused Home/Library/Home-Back/Library-Back suite passed 3/3 in 63.011 seconds (74.034-second Xcode test operation), and rapid Back passed 1/1 in 11.225 seconds (14.864-second Xcode test operation).
 - The preparation screenshot is now captured only after the preparation accessibility marker exists. Focus evidence policy/counter and source contracts followed RED/GREEN and passed 2/2 in 0.024 seconds (3.931-second Xcode test operation). The final tvOS build succeeded; its duration was not emitted or captured.
+
+## tvOS UX Polish Final Review Fixes - 2026-07-12
+
+- Home Detail return state now retains its immutable presentation origin and rail snapshot. Carousel changes resolve inside that Hero or row only; duplicated media cannot jump rails, and a removed target falls back to the nearest surviving item from the same presentation rail.
+- tvOS focus motion uses the approved 0.28-second spring with 0.80 bounce, while Reduce Motion uses a 0.18-second ease-out. Library activation is capped at 1.025. Resume choice spacing and question size are tokenized at 16 and 32 points.
+- Final deterministic verification passed 38/38 TVUX/Home tests. `xcodegen generate` and the ReelFinTV build on `092D088B-6307-4EFB-AE53-2457C2EE7F1A` passed. The focused Home-to-Detail Back journey passed twice consecutively after one transient focus-restoration timeout; no existing UI test drives carousel neighbor changes, which remain covered by deterministic provenance tests.

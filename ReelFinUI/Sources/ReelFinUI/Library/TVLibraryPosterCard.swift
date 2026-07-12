@@ -43,7 +43,7 @@ struct TVLibraryPosterCard: View {
         }
         .buttonStyle(TVNoChromeButtonStyle())
         .tvMotionFocus(.libraryPoster, isFocused: isFocused)
-        .scaleEffect(isActivating ? 1.04 : 1)
+        .scaleEffect(isActivating ? TVFocusGeometry.libraryActivationScale : 1)
         .shadow(
             color: .black.opacity(isFocused ? TVFocusGeometry.focusedShadowOpacity : 0.16),
             radius: isFocused ? TVFocusGeometry.focusedShadowRadius : 28,

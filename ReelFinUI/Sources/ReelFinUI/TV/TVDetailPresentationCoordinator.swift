@@ -97,6 +97,88 @@ enum TVBackNavigationDebugMarker: String, Equatable, Sendable {
     case root
 }
 
+enum TVHomeDetailPresentationOrigin: Equatable, Sendable {
+    case featured
+    case row(id: String)
+}
+
+struct TVHomeDetailPresentationContext: Equatable, Sendable {
+    let origin: TVHomeDetailPresentationOrigin
+    let presentedItemIDs: [String]
+}
+
+struct TVHomeDetailReturnTarget: Equatable, Sendable {
+    let origin: TVHomeDetailPresentationOrigin
+    let displayedItemID: String
+    let itemID: String
+
+    var focusTargetID: String? {
+        guard case let .row(rowID) = origin else { return nil }
+        return HomeCardTransitionSource.id(rowID: rowID, itemID: itemID)
+    }
+}
+
+enum TVHomeDetailReturnTargetResolver {
+    static func resolve(
+        context: TVHomeDetailPresentationContext,
+        displayedItemID: String,
+        featuredItemIDs: [String],
+        rowItemIDsByID: [String: [String]]
+    ) -> TVHomeDetailReturnTarget? {
+        let currentRailItemIDs: [String]
+        switch context.origin {
+        case .featured:
+            currentRailItemIDs = featuredItemIDs
+        case let .row(rowID):
+            guard let rowItemIDs = rowItemIDsByID[rowID] else { return nil }
+            currentRailItemIDs = rowItemIDs
+        }
+
+        guard let resolvedItemID = resolvedItemID(
+            displayedItemID: displayedItemID,
+            presentedItemIDs: context.presentedItemIDs,
+            currentRailItemIDs: currentRailItemIDs
+        ) else { return nil }
+
+        return TVHomeDetailReturnTarget(
+            origin: context.origin,
+            displayedItemID: displayedItemID,
+            itemID: resolvedItemID
+        )
+    }
+
+    private static func resolvedItemID(
+        displayedItemID: String,
+        presentedItemIDs: [String],
+        currentRailItemIDs: [String]
+    ) -> String? {
+        guard !currentRailItemIDs.isEmpty else { return nil }
+        if currentRailItemIDs.contains(displayedItemID) {
+            return displayedItemID
+        }
+
+        guard let displayedIndex = presentedItemIDs.firstIndex(of: displayedItemID) else {
+            return currentRailItemIDs.first
+        }
+
+        let presentedIndexByItemID = Dictionary(
+            uniqueKeysWithValues: presentedItemIDs.enumerated().map { ($1, $0) }
+        )
+        return currentRailItemIDs
+            .compactMap { itemID -> (itemID: String, index: Int, distance: Int)? in
+                guard let index = presentedIndexByItemID[itemID] else { return nil }
+                return (itemID, index, abs(index - displayedIndex))
+            }
+            .min { lhs, rhs in
+                if lhs.distance != rhs.distance {
+                    return lhs.distance < rhs.distance
+                }
+                return lhs.index < rhs.index
+            }?
+            .itemID
+    }
+}
+
 enum TVDetailDismissalRouter {
     static func request(
         explicit: (() -> Void)?,

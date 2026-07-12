@@ -216,6 +216,7 @@ enum TVFocusGeometry {
     static let focusedShadowOpacity = 0.48
     static let focusedShadowRadius: CGFloat = 34
     static let focusedShadowY: CGFloat = 18
+    static let libraryActivationScale: CGFloat = 1.025
 
     static func scale(for role: TVMotion.FocusRole, reduceMotion: Bool) -> CGFloat {
         let normalScale: CGFloat
@@ -228,6 +229,12 @@ enum TVFocusGeometry {
         }
         return reduceMotion ? min(normalScale, 1.02) : normalScale
     }
+}
+
+enum TVFocusAnimationMetrics {
+    static let normalDuration = 0.28
+    static let normalBounce = 0.80
+    static let reducedMotionDuration = 0.18
 }
 
 enum TVLibraryFocusLayout {
@@ -290,11 +297,21 @@ public enum TVMotion {
         }
     }
 
-    public static let focusAnimation = Animation.easeOut(duration: 0.16)
+    public static let focusAnimation = Animation.spring(
+        duration: TVFocusAnimationMetrics.normalDuration,
+        bounce: TVFocusAnimationMetrics.normalBounce
+    )
+    static let reducedMotionFocusAnimation = Animation.easeOut(
+        duration: TVFocusAnimationMetrics.reducedMotionDuration
+    )
     public static let contentFadeAnimation = Animation.easeInOut(duration: 0.18)
     public static let titleLoadAnimation = Animation.easeInOut(duration: 0.22)
     public static let heroPageAnimation = Animation.easeInOut(duration: 0.20)
     public static let overlayFadeAnimation = Animation.easeInOut(duration: 0.14)
+
+    static func focusAnimation(reduceMotion: Bool) -> Animation {
+        reduceMotion ? reducedMotionFocusAnimation : focusAnimation
+    }
 }
 
 public extension View {
@@ -324,8 +341,8 @@ private struct TVMotionFocusModifier: ViewModifier {
         content
             .scaleEffect(isFocused ? TVFocusGeometry.scale(for: role, reduceMotion: reduceMotion) : 1)
             .opacity(isFocused ? role.focusedOpacity : (isSelected ? role.selectedOpacity : role.restingOpacity))
-            .animation(TVMotion.focusAnimation, value: isFocused)
-            .animation(TVMotion.focusAnimation, value: isSelected)
+            .animation(TVMotion.focusAnimation(reduceMotion: reduceMotion), value: isFocused)
+            .animation(TVMotion.focusAnimation(reduceMotion: reduceMotion), value: isSelected)
     }
 }
 

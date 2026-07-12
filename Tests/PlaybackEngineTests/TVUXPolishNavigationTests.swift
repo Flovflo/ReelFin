@@ -2,6 +2,80 @@ import XCTest
 @testable import ReelFinUI
 
 final class TVUXPolishNavigationTests: XCTestCase {
+    func testHomeDetailCarouselKeepsOriginalRowForItemDuplicatedAcrossRails() throws {
+        let context = TVHomeDetailPresentationContext(
+            origin: .row(id: "second-row"),
+            presentedItemIDs: ["before", "duplicate", "after"]
+        )
+
+        let target = try XCTUnwrap(
+            TVHomeDetailReturnTargetResolver.resolve(
+                context: context,
+                displayedItemID: "duplicate",
+                featuredItemIDs: ["duplicate"],
+                rowItemIDsByID: [
+                    "first-row": ["duplicate", "other"],
+                    "second-row": ["before", "duplicate", "after"]
+                ]
+            )
+        )
+
+        XCTAssertEqual(target.origin, .row(id: "second-row"))
+        XCTAssertEqual(target.displayedItemID, "duplicate")
+        XCTAssertEqual(target.itemID, "duplicate")
+        XCTAssertEqual(
+            target.focusTargetID,
+            HomeCardTransitionSource.id(rowID: "second-row", itemID: "duplicate")
+        )
+    }
+
+    func testHomeDetailCarouselUsesHeroOnlyForHeroPresentationOrigin() throws {
+        let context = TVHomeDetailPresentationContext(
+            origin: .featured,
+            presentedItemIDs: ["hero-start", "duplicate"]
+        )
+
+        let target = try XCTUnwrap(
+            TVHomeDetailReturnTargetResolver.resolve(
+                context: context,
+                displayedItemID: "duplicate",
+                featuredItemIDs: ["hero-start", "duplicate"],
+                rowItemIDsByID: ["row": ["duplicate"]]
+            )
+        )
+
+        XCTAssertEqual(target.origin, .featured)
+        XCTAssertEqual(target.itemID, "duplicate")
+        XCTAssertNil(target.focusTargetID)
+    }
+
+    func testHomeDetailCarouselFallsBackToNearestSurvivorInOriginalRow() throws {
+        let context = TVHomeDetailPresentationContext(
+            origin: .row(id: "origin-row"),
+            presentedItemIDs: ["first", "second", "removed", "nearest"]
+        )
+
+        let target = try XCTUnwrap(
+            TVHomeDetailReturnTargetResolver.resolve(
+                context: context,
+                displayedItemID: "removed",
+                featuredItemIDs: ["removed"],
+                rowItemIDsByID: [
+                    "other-row": ["removed"],
+                    "origin-row": ["first", "nearest"]
+                ]
+            )
+        )
+
+        XCTAssertEqual(target.origin, .row(id: "origin-row"))
+        XCTAssertEqual(target.displayedItemID, "removed")
+        XCTAssertEqual(target.itemID, "nearest")
+        XCTAssertEqual(
+            target.focusTargetID,
+            HomeCardTransitionSource.id(rowID: "origin-row", itemID: "nearest")
+        )
+    }
+
     func testDetailBackIsConsumedUntilClosingCompletes() {
         var state = TVDetailPresentationCoordinator()
         state.beginOpening(itemID: "dexter", sourceID: "home-row-dexter")
@@ -132,10 +206,11 @@ final class TVUXPolishNavigationTests: XCTestCase {
         XCTAssertTrue(home.contains("completeHomeFocusHandoff(request)"))
         XCTAssertTrue(home.contains("guard homeFocusHandoff.owns(request) else { return }"))
         XCTAssertTrue(home.contains(".onChange(of: focusedHomeItemID)"))
-        XCTAssertTrue(home.contains("guard homeReturnTarget?.itemID != item.id else { return }"))
+        XCTAssertTrue(home.contains("guard homeReturnTarget?.displayedItemID != item.id else { return }"))
         XCTAssertTrue(home.contains("guard newValue != featuredPrimaryActionFocusID else { return }"))
         XCTAssertTrue(home.contains("TVHomeItemFocusModifier(itemID: transitionSourceID"))
-        XCTAssertTrue(home.contains("targetID: HomeCardTransitionSource.id(rowID: rowID, itemID: itemID)"))
+        XCTAssertTrue(home.contains("targetID: focusTargetID"))
+        XCTAssertFalse(home.contains("viewModel.rowIDByItemID[item.id]"))
         XCTAssertTrue(home.contains("TVHomeFocusTransitionAccessibilityMarker("))
         XCTAssertTrue(home.contains("identifier: \"tv_home_focus_transition_count\""))
         XCTAssertTrue(home.contains("homeFocusTransitionCounter.recordChange(from: oldValue, to: newValue)"))

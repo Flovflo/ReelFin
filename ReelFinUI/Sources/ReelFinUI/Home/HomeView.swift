@@ -510,18 +510,6 @@ private enum TVHomeWarmupScope {
     static let focus = "home.focus"
 }
 
-private enum TVHomeReturnTarget: Equatable {
-    case featured(itemID: String)
-    case row(rowID: String, itemID: String)
-
-    var itemID: String {
-        switch self {
-        case let .featured(itemID), let .row(_, itemID):
-            return itemID
-        }
-    }
-}
-
 private struct TVHomeItemFocusModifier: ViewModifier {
     let itemID: String
     let focusedItemID: FocusState<String?>.Binding?
@@ -1136,7 +1124,8 @@ struct HomeView: View {
     @State private var lastSelectedHomeRowID: String?
     @State private var lastSelectedHomeItemID: String?
     @State private var featuredHeroItemID: String?
-    @State private var homeReturnTarget: TVHomeReturnTarget?
+    @State private var homeDetailPresentationContext: TVHomeDetailPresentationContext?
+    @State private var homeReturnTarget: TVHomeDetailReturnTarget?
     @State private var homeReturnRequest = 0
     @State private var localHeroFocusRequest = 0
     @State private var tvOpeningArtworkItem: MediaItem?
@@ -1532,7 +1521,15 @@ struct HomeView: View {
 #if os(tvOS)
                             lastSelectedHomeRowID = row.id
                             lastSelectedHomeItemID = item.id
-                            homeReturnTarget = .row(rowID: row.id, itemID: item.id)
+                            let context = TVHomeDetailPresentationContext(
+                                origin: .row(id: row.id),
+                                presentedItemIDs: row.items.map(\.id)
+                            )
+                            homeDetailPresentationContext = context
+                            homeReturnTarget = resolveHomeReturnTarget(
+                                context: context,
+                                displayedItemID: item.id
+                            )
 #endif
 #if os(iOS)
                             ambientItem = item
@@ -2116,7 +2113,15 @@ struct HomeView: View {
         lastSelectedHomeRowID = nil
         lastSelectedHomeItemID = nil
         featuredHeroItemID = item.id
-        homeReturnTarget = .featured(itemID: item.id)
+        let context = TVHomeDetailPresentationContext(
+            origin: .featured,
+            presentedItemIDs: featuredItems.map(\.id)
+        )
+        homeDetailPresentationContext = context
+        homeReturnTarget = resolveHomeReturnTarget(
+            context: context,
+            displayedItemID: item.id
+        )
 #endif
 
         let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
@@ -2518,18 +2523,27 @@ struct HomeView: View {
     }
 
     private func restoreHomeSelection(using proxy: ScrollViewProxy) {
-        guard let homeReturnTarget else { return }
+        guard
+            let homeDetailPresentationContext,
+            let previousTarget = homeReturnTarget,
+            let homeReturnTarget = resolveHomeReturnTarget(
+                context: homeDetailPresentationContext,
+                displayedItemID: previousTarget.displayedItemID
+            )
+        else { return }
+        self.homeReturnTarget = homeReturnTarget
         cancelHomeFocusHandoff()
 
-        switch homeReturnTarget {
-        case let .featured(itemID):
-            featuredHeroItemID = itemID
+        switch homeReturnTarget.origin {
+        case .featured:
+            featuredHeroItemID = homeReturnTarget.itemID
             withAnimation(.easeInOut(duration: 0.34)) {
                 proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
             }
-        case let .row(rowID, itemID):
+        case let .row(rowID):
+            guard let focusTargetID = homeReturnTarget.focusTargetID else { return }
             let request = beginHomeFocusHandoff(
-                targetID: HomeCardTransitionSource.id(rowID: rowID, itemID: itemID)
+                targetID: focusTargetID
             )
             withAnimation(.easeInOut(duration: 0.34), completionCriteria: .logicallyComplete) {
                 proxy.scrollTo(rowID, anchor: .top)
@@ -2610,35 +2624,53 @@ struct HomeView: View {
 
     private func handleDisplayedDetailSourceItemChange(_ item: MediaItem) {
 #if os(tvOS)
-        // Detail reports its initially displayed source as well as real carousel changes. Keep the
-        // exact shelf/hero origin when the item did not change, even if that item appears in both.
-        guard homeReturnTarget?.itemID != item.id else { return }
-        if featuredItems.contains(where: { $0.id == item.id }) {
+        // Detail reports its initial source and every carousel change. Resolve only inside the
+        // presentation rail so duplicate media never jumps to Hero or another shelf.
+        guard let homeDetailPresentationContext else { return }
+        guard homeReturnTarget?.displayedItemID != item.id else { return }
+        guard let target = resolveHomeReturnTarget(
+            context: homeDetailPresentationContext,
+            displayedItemID: item.id
+        ) else { return }
+
+        homeReturnTarget = target
+        switch target.origin {
+        case .featured:
             selectedDetailNamespace = posterNamespace
-            selectedDetailTransitionSourceID = HomeFeaturedTransitionSource.id(itemID: item.id)
-            featuredHeroItemID = item.id
-            homeReturnTarget = .featured(itemID: item.id)
+            selectedDetailTransitionSourceID = HomeFeaturedTransitionSource.id(itemID: target.itemID)
+            featuredHeroItemID = target.itemID
             lastSelectedHomeRowID = nil
             lastSelectedHomeItemID = nil
-            return
+        case let .row(rowID):
+            selectedDetailNamespace = posterNamespace
+            selectedDetailTransitionSourceID = HomeCardTransitionSource.id(
+                rowID: rowID,
+                itemID: target.itemID
+            )
+            lastSelectedHomeRowID = rowID
+            lastSelectedHomeItemID = target.itemID
         }
-
-        guard let rowID = viewModel.rowIDByItemID[item.id] else {
-            // Keep the last valid transition anchors. Nil-ing them flipped the structural branch
-            // in DetailZoomTransitionModifier and REMOUNTED the whole inline DetailView mid-
-            // interaction — the just-presented player's state (showPlayer/customEngine) died with
-            // the old instance: pressing an EPISODE froze the screen while the engine played
-            // unseen (tvOS device log 2026-07-03, double 'Detail navigation started').
-            return
-        }
-
-        selectedDetailNamespace = posterNamespace
-        selectedDetailTransitionSourceID = HomeCardTransitionSource.id(rowID: rowID, itemID: item.id)
-        lastSelectedHomeRowID = rowID
-        lastSelectedHomeItemID = item.id
-        homeReturnTarget = .row(rowID: rowID, itemID: item.id)
 #endif
     }
+
+#if os(tvOS)
+    private func resolveHomeReturnTarget(
+        context: TVHomeDetailPresentationContext,
+        displayedItemID: String
+    ) -> TVHomeDetailReturnTarget? {
+        var rowItemIDsByID: [String: [String]] = [:]
+        for row in viewModel.visibleRows {
+            rowItemIDsByID[row.id] = row.items.map(\.id)
+        }
+
+        return TVHomeDetailReturnTargetResolver.resolve(
+            context: context,
+            displayedItemID: displayedItemID,
+            featuredItemIDs: featuredItems.map(\.id),
+            rowItemIDsByID: rowItemIDsByID
+        )
+    }
+#endif
 }
 
 #if os(tvOS)

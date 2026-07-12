@@ -23,6 +23,7 @@ struct TVPlaybackResumeChoiceLayout: Equatable, Sendable {
     let buttonHeight: CGFloat
     let focusOpacity: Double
     let buttonSpacing: CGFloat
+    let questionFontSize: CGFloat
     let buttonHorizontalPadding: CGFloat
     let buttonFontSize: CGFloat
     let buttonTitleLineLimit: Int
@@ -42,7 +43,8 @@ struct TVPlaybackResumeChoiceLayout: Equatable, Sendable {
         verticalPadding: 34,
         buttonHeight: 66,
         focusOpacity: 0.20,
-        buttonSpacing: 20,
+        buttonSpacing: 16,
+        questionFontSize: 32,
         buttonHorizontalPadding: 16,
         buttonFontSize: 22,
         buttonTitleLineLimit: 1,
@@ -294,7 +296,7 @@ struct PlaybackResumeChoiceView: View {
                         .lineLimit(1)
 
                     Text("Comment voulez-vous regarder ?")
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .font(.system(size: layout.questionFontSize, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
                 }
