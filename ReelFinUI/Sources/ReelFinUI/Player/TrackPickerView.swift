@@ -308,120 +308,18 @@ struct NativePlayerTrackSelectionMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
     let onSelect: (PlaybackControlSelection) -> Void
-#if os(tvOS)
-    @Environment(\.resetFocus) private var resetFocus
-#endif
-    @Namespace private var focusNamespace
-    @FocusState private var focusedOptionID: String?
+    @State private var subtitleStyle: SubtitleBackgroundStyle = .transparent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
-            Text(primaryTitle)
-                .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.82))
-                .padding(.horizontal, metrics.horizontalPadding)
-
-            ScrollView {
-                if mode == .audio {
-                    audioTrackSection
-                } else {
-                    subtitlesSection
-                }
-            }
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: metrics.contentMaxHeight)
-        }
-        .padding(.vertical, metrics.verticalPadding)
-        .frame(width: metrics.panelWidth, alignment: .leading)
-        .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
-        .nativePlayerTrackMenuFocusScope(focusNamespace)
-        .defaultFocus($focusedOptionID, defaultOptionID)
-#if os(tvOS)
-        .task(id: "\(mode)-\(defaultOptionID)") {
-            // Let the parent release the chrome focus before the menu requests its default row.
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            focusedOptionID = defaultOptionID
-            resetFocus(in: focusNamespace)
-        }
-#endif
-        .background(alignment: .topLeading) {
-            if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
-                ZStack {
-                    PlayerAccessibilityMarkerView(identifier: accessibilityIdentifier)
-                    PlayerAccessibilityMarkerView(
-                        identifier: "native_player_track_focused_title",
-                        value: focusedOptionTitle
-                    )
-                }
-                .frame(width: 1, height: 1)
-            }
-        }
+        NativePlayerAVKitMenuView(
+            mode: mode,
+            controls: controls,
+            subtitleStyle: subtitleStyle,
+            onSelect: onSelect,
+            onSelectStyle: { subtitleStyle = $0 },
+            onDismiss: {}
+        )
     }
-
-    private var audioTrackSection: some View {
-        VStack(alignment: .leading, spacing: metrics.rowSpacing) {
-            if controls.audioOptions.isEmpty {
-                NativePlayerTrackMenuEmptyRow(title: "Aucune piste audio")
-            } else {
-                ForEach(controls.audioOptions) { option in
-                    NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
-                        guard let trackID = option.trackID else { return }
-                        onSelect(.audio(trackID))
-                    }
-                    .nativePlayerPrefersDefaultTrackFocus(option.id == defaultOptionID, in: focusNamespace)
-                }
-            }
-        }
-    }
-
-    private var subtitlesSection: some View {
-        VStack(alignment: .leading, spacing: metrics.rowSpacing) {
-            if controls.subtitleOptions.isEmpty {
-                NativePlayerTrackMenuEmptyRow(title: "Aucun sous-titre")
-            } else {
-                ForEach(controls.subtitleOptions) { option in
-                    NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
-                        onSelect(.subtitle(option.trackID))
-                    }
-                    .nativePlayerPrefersDefaultTrackFocus(option.id == defaultOptionID, in: focusNamespace)
-                }
-            }
-        }
-    }
-
-    private var primaryTitle: String {
-        switch mode {
-        case .audio:
-            return "Audio"
-        case .subtitles:
-            return "Sous-titres"
-        }
-    }
-
-    private var accessibilityIdentifier: String {
-        switch mode {
-        case .audio:
-            return "native_player_audio_menu"
-        case .subtitles:
-            return "native_player_subtitles_menu"
-        }
-    }
-
-    private var metrics: NativePlayerTrackMenuLayout {
-        NativePlayerTrackMenuLayout.current
-    }
-
-    private var defaultOptionID: String {
-        let options = controls.options(for: mode)
-        return (options.first(where: \.isSelected) ?? options.first)?.id ?? "__empty__"
-    }
-
-    private var focusedOptionTitle: String? {
-        guard let focusedOptionID else { return nil }
-        return controls.options(for: mode).first(where: { $0.id == focusedOptionID })?.accessibilityLabel
-    }
-
 }
 
 /// A real destination for the tvOS “Vidéo” action. It intentionally reports only user-relevant
@@ -533,108 +431,6 @@ struct NativePlayerItemInsightView: View {
     private var metrics: NativePlayerTrackMenuLayout { .current }
 }
 
-private struct NativePlayerTrackMenuRow: View {
-    let option: PlaybackTrackOption
-    let focusedOptionID: FocusState<String?>.Binding
-    let onSelect: () -> Void
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(presentation.title)
-                        .font(.system(size: metrics.rowTitleSize, weight: .semibold, design: .rounded))
-                        .foregroundStyle(foreground)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-
-                    if let details = presentation.details {
-                        Text(details)
-                            .font(.system(size: metrics.badgeSize, weight: .medium, design: .rounded))
-                            .foregroundStyle(foreground.opacity(isFocused ? 0.68 : 0.52))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-                    }
-                }
-
-                Spacer(minLength: 0)
-
-                Image(systemName: "checkmark")
-                    .font(.system(size: metrics.checkSize, weight: .semibold, design: .rounded))
-                    .foregroundStyle(option.isSelected ? foreground.opacity(0.92) : .clear)
-                    .frame(width: metrics.checkColumnWidth)
-            }
-            .padding(.horizontal, metrics.rowHorizontalPadding)
-            .frame(height: metrics.rowHeight)
-            .contentShape(RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous))
-            .background {
-                RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(rowFillOpacity))
-                    .glassEffect(.clear.interactive(), in: .rect(cornerRadius: rowCornerRadius))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(rowStrokeOpacity), lineWidth: 1)
-            }
-        }
-        .buttonStyle(TVNoChromeButtonStyle())
-        .focused(focusedOptionID, equals: option.id)
-        .nativePlayerTrackMenuFocusDisabled()
-        .padding(.horizontal, metrics.rowOuterPadding)
-        .accessibilityIdentifier("native_player_track_option")
-        .accessibilityLabel(option.accessibilityLabel)
-        .accessibilityValue(option.isSelected ? "selected" : "not_selected")
-        .accessibilityAddTraits(option.isSelected ? .isSelected : [])
-    }
-
-    private var isFocused: Bool {
-        focusedOptionID.wrappedValue == option.id
-    }
-
-    private var foreground: Color {
-        isFocused ? Color.black.opacity(0.86) : Color.white.opacity(0.96)
-    }
-
-    private var rowFillOpacity: Double {
-        if isFocused { return style.focusedFillOpacity }
-        if option.isSelected { return style.selectedFillOpacity }
-        return style.restingFillOpacity
-    }
-
-    private var rowStrokeOpacity: Double {
-        if isFocused { return style.focusedStrokeOpacity }
-        if option.isSelected { return style.selectedStrokeOpacity }
-        return style.restingStrokeOpacity
-    }
-
-    private var metrics: NativePlayerTrackMenuLayout {
-        NativePlayerTrackMenuLayout.current
-    }
-
-    private var style: NativePlayerTrackMenuVisualStyle {
-        NativePlayerTrackMenuVisualStyle.current
-    }
-
-    private var presentation: PlaybackTrackMenuOptionPresentation {
-        PlaybackTrackMenuOptionPresentation(option: option)
-    }
-
-    private var rowCornerRadius: CGFloat { metrics.rowHeight * 0.32 }
-}
-
-private struct NativePlayerTrackMenuEmptyRow: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: NativePlayerTrackMenuLayout.current.rowTitleSize, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.5))
-            .padding(.horizontal, NativePlayerTrackMenuLayout.current.horizontalPadding)
-            .frame(height: NativePlayerTrackMenuLayout.current.rowHeight)
-            .accessibilityLabel(title)
-    }
-}
-
 struct NativePlayerTrackMenuLayout {
     let panelWidth: CGFloat
     let cornerRadius: CGFloat
@@ -742,26 +538,6 @@ struct NativePlayerTrackMenuVisualStyle: Equatable {
 }
 
 private extension View {
-    @ViewBuilder
-    func nativePlayerTrackMenuFocusScope(_ namespace: Namespace.ID) -> some View {
-#if os(tvOS)
-        self
-            .focusScope(namespace)
-            .focusSection()
-#else
-        self
-#endif
-    }
-
-    @ViewBuilder
-    func nativePlayerPrefersDefaultTrackFocus(_ enabled: Bool, in namespace: Namespace.ID) -> some View {
-#if os(tvOS)
-        self.prefersDefaultFocus(enabled, in: namespace)
-#else
-        self
-#endif
-    }
-
     func nativePlayerTrackMenuGlass(cornerRadius: CGFloat) -> some View {
         let style = NativePlayerTrackMenuVisualStyle.current
         return self
@@ -774,17 +550,6 @@ private extension View {
                 .stroke(.white.opacity(0.09), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 6)
-    }
-
-    @ViewBuilder
-    func nativePlayerTrackMenuFocusDisabled() -> some View {
-#if os(tvOS)
-        self
-            .focusEffectDisabled(true)
-            .hoverEffectDisabled(true)
-#else
-        self
-#endif
     }
 
 }

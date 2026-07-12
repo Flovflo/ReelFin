@@ -224,6 +224,29 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         )
     }
 
+    func testAVKitMenuLayoutMatchesApprovedReferenceMetrics() {
+        let layout = NativePlayerAVKitMenuLayout.standard
+
+        XCTAssertEqual(layout.width, 600)
+        XCTAssertEqual(layout.cornerRadius, 44)
+        XCTAssertEqual(layout.horizontalInset, 54)
+        XCTAssertEqual(layout.verticalInset, 42)
+        XCTAssertEqual(layout.headerSize, 30)
+        XCTAssertEqual(layout.primarySize, 34)
+        XCTAssertEqual(layout.secondarySize, 22)
+        XCTAssertEqual(layout.choiceHeight, 68)
+        XCTAssertEqual(layout.navigationHeight, 108)
+        XCTAssertLessThanOrEqual(layout.focusOpacity, 0.22)
+        XCTAssertEqual(layout.opaqueBackgroundOpacity, 0)
+    }
+
+    func testEveryReferenceRowMapsToARealAction() {
+        XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleOn), .enableSubtitles)
+        XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleOff), .disableSubtitles)
+        XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleLanguage), .openLanguages)
+        XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleStyle), .openStyles)
+    }
+
     func testSubtitleBackgroundStylesExposeStablePreferenceValues() {
         XCTAssertEqual(SubtitleBackgroundStyle.allCases, [.transparent, .subtle])
         XCTAssertEqual(SubtitleBackgroundStyle.transparent.rawValue, "transparent")
