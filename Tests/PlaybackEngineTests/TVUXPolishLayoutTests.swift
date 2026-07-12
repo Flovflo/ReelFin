@@ -9,6 +9,10 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertEqual(TVFocusGeometry.scale(for: .homePosterCard, reduceMotion: true), 1.02)
     }
 
+    func testReduceMotionDoesNotRaiseNavigationRoleAboveItsNormalScale() {
+        XCTAssertEqual(TVFocusGeometry.scale(for: .navItem, reduceMotion: true), 1.0)
+    }
+
     func testLibraryFirstRowReserveContainsScaleOverflowAndShadow() {
         let reserve = TVLibraryFocusLayout.firstRowTopReserve(
             cardWidth: 240,

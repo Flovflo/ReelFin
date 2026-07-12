@@ -218,14 +218,15 @@ enum TVFocusGeometry {
     static let focusedShadowY: CGFloat = 18
 
     static func scale(for role: TVMotion.FocusRole, reduceMotion: Bool) -> CGFloat {
-        if reduceMotion { return 1.02 }
+        let normalScale: CGFloat
         switch role {
-        case .homePosterCard: return 1.07
-        case .homeLandscapeCard, .libraryPoster: return 1.06
-        case .posterCard: return 1.04
-        case .heroButton, .chip, .episodeCard: return 1.03
-        case .navItem: return 1
+        case .homePosterCard: normalScale = 1.07
+        case .homeLandscapeCard, .libraryPoster: normalScale = 1.06
+        case .posterCard: normalScale = 1.04
+        case .heroButton, .chip, .episodeCard: normalScale = 1.03
+        case .navItem: normalScale = 1
         }
+        return reduceMotion ? min(normalScale, 1.02) : normalScale
     }
 }
 
