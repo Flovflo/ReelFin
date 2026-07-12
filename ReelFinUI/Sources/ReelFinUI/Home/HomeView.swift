@@ -192,7 +192,7 @@ private struct TVHomeShelfCard: View {
         }
         .clipShape(cardShape)
         .contentShape(cardShape)
-        .tvMotionFocus(.posterCard, isFocused: isFocused)
+        .tvMotionFocus(focusRole, isFocused: isFocused)
         .scaleEffect(activationPhase ? 1.075 : 1, anchor: .center)
         .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
         .animation(TVMotion.focusAnimation, value: isFocused)
@@ -372,6 +372,10 @@ private struct TVHomeShelfCard: View {
 
     private var cardShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: layoutStyle == .landscape ? 30 : 26, style: .continuous)
+    }
+
+    private var focusRole: TVMotion.FocusRole {
+        layoutStyle == .landscape ? .homeLandscapeCard : .homePosterCard
     }
 
     private var cardWidth: CGFloat {

@@ -45,10 +45,10 @@ struct TVLibraryPosterCard: View {
         .tvMotionFocus(.libraryPoster, isFocused: isFocused)
         .scaleEffect(isActivating ? 1.04 : 1)
         .shadow(
-            color: .black.opacity(isFocused ? 0.34 : 0.16),
-            radius: 28,
+            color: .black.opacity(isFocused ? TVFocusGeometry.focusedShadowOpacity : 0.16),
+            radius: isFocused ? TVFocusGeometry.focusedShadowRadius : 28,
             x: 0,
-            y: 16
+            y: isFocused ? TVFocusGeometry.focusedShadowY : 16
         )
         .onMoveCommand(perform: handleMoveCommand)
         .focused($isFocused)
@@ -80,7 +80,7 @@ struct TVLibraryPosterCard: View {
                     )
                     .overlay {
                         surfaceShape
-                            .stroke(surfaceStroke, lineWidth: 1.35)
+                            .stroke(surfaceStroke, lineWidth: TVFocusGeometry.focusedStrokeWidth)
                     }
             } else {
                 surfaceShape
@@ -102,7 +102,7 @@ struct TVLibraryPosterCard: View {
     private var surfaceStroke: LinearGradient {
         LinearGradient(
             colors: [
-                Color.white.opacity(isFocused ? 0.36 : 0.14),
+                Color.white.opacity(isFocused ? TVFocusGeometry.focusedStrokeOpacity : 0.14),
                 Color.white.opacity(isFocused ? 0.12 : 0.04)
             ],
             startPoint: .topLeading,

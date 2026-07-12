@@ -80,7 +80,7 @@ public enum ReelFinTheme {
     public static let tvSectionSpacing: CGFloat = 36
     public static let tvRailSpacing: CGFloat = 28
     public static let tvSectionHeaderSpacing: CGFloat = 18
-    public static let tvRailVerticalPadding: CGFloat = 20
+    public static let tvRailVerticalPadding: CGFloat = 34
     public static let tvCardMetadataSpacing: CGFloat = 16
     public static let tvSectionHorizontalPadding: CGFloat = 56
     public static let tvTopNavigationBarMaxWidth: CGFloat = 760
@@ -151,9 +151,17 @@ public extension View {
             )
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(tvCardSurfaceStroke(focused: focused, selected: selected), lineWidth: focused ? 1.6 : 1)
+                    .stroke(
+                        tvCardSurfaceStroke(focused: focused, selected: selected),
+                        lineWidth: focused ? TVFocusGeometry.focusedStrokeWidth : 1
+                    )
             }
-            .shadow(color: .black.opacity(focused ? 0.42 : 0.24), radius: focused ? 32 : 18, x: 0, y: focused ? 18 : 10)
+            .shadow(
+                color: .black.opacity(focused ? TVFocusGeometry.focusedShadowOpacity : 0.24),
+                radius: focused ? TVFocusGeometry.focusedShadowRadius : 18,
+                x: 0,
+                y: focused ? TVFocusGeometry.focusedShadowY : 10
+            )
     }
 
     func tvSectionPanel(cornerRadius: CGFloat = 30) -> some View {
@@ -179,7 +187,7 @@ public extension View {
 
     private func tvCardSurfaceStroke(focused: Bool, selected: Bool) -> Color {
         if focused {
-            return ReelFinTheme.tvStrongStroke
+            return Color.white.opacity(TVFocusGeometry.focusedStrokeOpacity)
         }
         if selected {
             return Color.white.opacity(0.16)
@@ -202,6 +210,35 @@ public extension View {
     }
 }
 
+enum TVFocusGeometry {
+    static let focusedStrokeOpacity = 0.31
+    static let focusedStrokeWidth: CGFloat = 1.4
+    static let focusedShadowOpacity = 0.48
+    static let focusedShadowRadius: CGFloat = 34
+    static let focusedShadowY: CGFloat = 18
+
+    static func scale(for role: TVMotion.FocusRole, reduceMotion: Bool) -> CGFloat {
+        if reduceMotion { return 1.02 }
+        switch role {
+        case .homePosterCard: return 1.07
+        case .homeLandscapeCard, .libraryPoster: return 1.06
+        case .posterCard: return 1.04
+        case .heroButton, .chip, .episodeCard: return 1.03
+        case .navItem: return 1
+        }
+    }
+}
+
+enum TVLibraryFocusLayout {
+    static func firstRowTopReserve(
+        cardWidth: CGFloat,
+        scale: CGFloat,
+        minimumReserve: CGFloat = 34
+    ) -> CGFloat {
+        minimumReserve + max(0, (cardWidth * scale - cardWidth) / 2)
+    }
+}
+
 public enum TVMotion {
     public enum FocusRole: Sendable {
         case heroButton
@@ -210,27 +247,13 @@ public enum TVMotion {
         case posterCard
         case episodeCard
         case libraryPoster
-
-        fileprivate var scale: CGFloat {
-            switch self {
-            case .heroButton:
-                return 1.03
-            case .navItem:
-                return 1
-            case .chip:
-                return 1.03
-            case .posterCard:
-                return 1.04
-            case .episodeCard:
-                return 1.03
-            case .libraryPoster:
-                return 1.03
-            }
-        }
+        case homePosterCard
+        case homeLandscapeCard
 
         fileprivate var focusedOpacity: Double {
             switch self {
-            case .heroButton, .navItem, .chip, .posterCard, .episodeCard, .libraryPoster:
+            case .heroButton, .navItem, .chip, .posterCard, .episodeCard, .libraryPoster,
+                 .homePosterCard, .homeLandscapeCard:
                 return 1.0
             }
         }
@@ -243,7 +266,7 @@ public enum TVMotion {
                 return 0.94
             case .chip:
                 return 0.90
-            case .posterCard:
+            case .posterCard, .homePosterCard, .homeLandscapeCard:
                 return 0.96
             case .episodeCard:
                 return 0.95
@@ -260,7 +283,7 @@ public enum TVMotion {
                 return 0.98
             case .chip:
                 return 0.96
-            case .posterCard, .episodeCard, .libraryPoster:
+            case .posterCard, .episodeCard, .libraryPoster, .homePosterCard, .homeLandscapeCard:
                 return 1.0
             }
         }
@@ -290,13 +313,15 @@ public extension View {
 }
 
 private struct TVMotionFocusModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let role: TVMotion.FocusRole
     let isFocused: Bool
     let isSelected: Bool
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isFocused ? role.scale : 1)
+            .scaleEffect(isFocused ? TVFocusGeometry.scale(for: role, reduceMotion: reduceMotion) : 1)
             .opacity(isFocused ? role.focusedOpacity : (isSelected ? role.selectedOpacity : role.restingOpacity))
             .animation(TVMotion.focusAnimation, value: isFocused)
             .animation(TVMotion.focusAnimation, value: isSelected)

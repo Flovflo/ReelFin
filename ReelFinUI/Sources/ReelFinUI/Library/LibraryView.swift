@@ -143,6 +143,11 @@ struct LibraryView: View {
         ScrollView(showsIndicators: false) {
             libraryGridContent(topRowItemIDs: topRowItemIDs)
         }
+        .contentMargins(
+            .top,
+            TVLibraryFocusLayout.firstRowTopReserve(cardWidth: 240, scale: 1.06),
+            for: .scrollContent
+        )
     }
 
     private func libraryGridContent(
