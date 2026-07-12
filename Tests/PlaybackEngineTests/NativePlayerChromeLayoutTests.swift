@@ -241,6 +241,24 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(layout.opaqueBackgroundOpacity, 0)
     }
 
+    func testAVKitAudioFourRowsHugTheirContentHeight() {
+        let layout = NativePlayerAVKitMenuLayout.standard
+
+        XCTAssertEqual(layout.contentHeight(choiceRowCount: 4), 278)
+    }
+
+    func testAVKitStyleTwoRowsHugTheirContentHeight() {
+        let layout = NativePlayerAVKitMenuLayout.standard
+
+        XCTAssertEqual(layout.contentHeight(choiceRowCount: 2), 138)
+    }
+
+    func testAVKitLongChoiceListCapsScrollableContentAt520() {
+        let layout = NativePlayerAVKitMenuLayout.standard
+
+        XCTAssertEqual(layout.contentHeight(choiceRowCount: 12), 520)
+    }
+
     func testEveryReferenceRowMapsToARealAction() {
         XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleOn), .enableSubtitles)
         XCTAssertEqual(NativePlayerAVKitMenuAction.forRow(.subtitleOff), .disableSubtitles)

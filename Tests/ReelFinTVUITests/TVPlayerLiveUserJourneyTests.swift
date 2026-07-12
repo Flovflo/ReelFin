@@ -196,16 +196,22 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     private func changeSubtitleLanguageAndStyle(in app: XCUIApplication) throws {
         let buttonID = "native_player_subtitles_button"
         let menu = app.otherElements["native_player_subtitles_menu"]
+        let rootMarker = app.otherElements["native_player_avkit_subtitles_root"]
+        let languagesMarker = app.otherElements["native_player_avkit_subtitle_languages"]
+        let stylesMarker = app.otherElements["native_player_avkit_subtitle_styles"]
         let focusMarker = app.otherElements["native_player_track_focused_title"]
         let pageMarker = app.otherElements["native_player_track_menu_page"]
 
         focusButton(buttonID, in: app, using: [.up])
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(menu.waitForExistence(timeout: 8))
+        XCTAssertTrue(rootMarker.waitForExistence(timeout: 8))
         XCTAssertTrue(focusMarker.waitForExistence(timeout: 5))
         XCTAssertTrue(pageMarker.waitForExistence(timeout: 5))
         XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
         XCTAssertTrue(waitForAnyValue(["On", "Off"], on: focusMarker, timeout: 5))
+        XCTAssertTrue(app.staticTexts["Transparent Background"].exists)
+        attachScreenshot(app, name: "avkit-subtitles-root")
 
         let initialRootFocus = focusMarker.value as? String ?? ""
         XCUIRemote.shared.press(.down)
@@ -225,11 +231,14 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             waitForValue("subtitle_languages", on: pageMarker, timeout: 5),
             "Right on Language must open the language submenu exactly once; page is \(String(describing: pageMarker.value)), focus is \(String(describing: focusMarker.value))."
         )
+        XCTAssertTrue(languagesMarker.waitForExistence(timeout: 8))
         XCTAssertGreaterThanOrEqual(menuChoiceButtons(in: app).count, 2)
+        XCTAssertEqual(menuChoiceButtons(in: app).matching(selectedPredicate).count, 1)
         XCTAssertTrue(
             waitForDifferentValue(from: "Language", on: focusMarker, timeout: 5),
             "The Language submenu must establish focus before handling Left."
         )
+        attachScreenshot(app, name: "avkit-language")
 
         XCUIRemote.shared.press(.left)
         XCTAssertTrue(menu.exists)
@@ -238,10 +247,12 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
 
         XCUIRemote.shared.press(.right)
         XCTAssertTrue(waitForValue("subtitle_languages", on: pageMarker, timeout: 5))
+        let beforeLanguageSelection = try playbackTime(in: app)
         let originalLanguage = try changeFocusedChoiceAndSelect(in: app)
         XCTAssertTrue(menu.exists, "Selecting a subtitle language must return to the Subtitles root.")
         XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
         XCTAssertTrue(waitForValue("Language", on: focusMarker, timeout: 5))
+        try assertPlaybackContinues(afterStartingAt: beforeLanguageSelection, in: app)
 
         XCUIRemote.shared.press(.right)
         XCTAssertTrue(waitForValue("subtitle_languages", on: pageMarker, timeout: 5))
@@ -257,10 +268,14 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             waitForValue("subtitle_styles", on: pageMarker, timeout: 5),
             "Right on Style must open the style submenu exactly once; page is \(String(describing: pageMarker.value)), focus is \(String(describing: focusMarker.value))."
         )
+        XCTAssertTrue(stylesMarker.waitForExistence(timeout: 8))
         XCTAssertTrue(
             waitForDifferentValue(from: "Style", on: focusMarker, timeout: 5),
             "The Style submenu must establish focus before handling Menu."
         )
+        XCTAssertTrue(app.staticTexts["Transparent Background"].exists)
+        XCTAssertTrue(app.staticTexts["Subtle Background"].exists)
+        attachScreenshot(app, name: "avkit-style")
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(menu.exists, "Menu in the Style submenu must return to Subtitles root.")
         XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
@@ -268,10 +283,21 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
 
         XCUIRemote.shared.press(.right)
         XCTAssertTrue(waitForValue("subtitle_styles", on: pageMarker, timeout: 5))
+        let beforeFirstStyleSelection = try playbackTime(in: app)
         _ = try changeFocusedChoiceAndSelect(in: app)
         XCTAssertTrue(menu.exists, "Selecting a subtitle style must return to the Subtitles root.")
         XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
         XCTAssertTrue(waitForValue("Style", on: focusMarker, timeout: 5))
+        try assertPlaybackContinues(afterStartingAt: beforeFirstStyleSelection, in: app)
+
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(waitForValue("subtitle_styles", on: pageMarker, timeout: 5))
+        let beforeSecondStyleSelection = try playbackTime(in: app)
+        _ = try changeFocusedChoiceAndSelect(in: app)
+        XCTAssertTrue(menu.exists, "Selecting the second subtitle style must return to the Subtitles root.")
+        XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("Style", on: focusMarker, timeout: 5))
+        try assertPlaybackContinues(afterStartingAt: beforeSecondStyleSelection, in: app)
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(waitForDisappearance(menu, timeout: 8))
         XCTAssertTrue(waitForFocus(app.buttons[buttonID], timeout: 5))
@@ -283,13 +309,19 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     ) throws {
         let buttonID = "native_player_audio_button"
         let menu = app.otherElements["native_player_audio_menu"]
+        let audioMarker = app.otherElements["native_player_avkit_audio_menu"]
 
         focusButton(buttonID, in: app, using: navigation)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(menu.waitForExistence(timeout: 8))
+        XCTAssertTrue(audioMarker.waitForExistence(timeout: 8))
+        attachScreenshot(app, name: "avkit-audio")
+        let beforeAudioSelection = try playbackTime(in: app)
         let originalLabel = try changeFocusedChoiceAndSelect(in: app)
         XCTAssertTrue(waitForDisappearance(menu, timeout: 8), "Audio selection may close its root card.")
+        try assertPlaybackContinues(afterStartingAt: beforeAudioSelection, in: app)
 
+        revealChromeAfterAutoHide(in: app)
         focusButton(buttonID, in: app, using: navigation)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(menu.waitForExistence(timeout: 8))
@@ -302,6 +334,16 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(waitForDisappearance(menu, timeout: 8))
         XCTAssertTrue(waitForFocus(app.buttons[buttonID], timeout: 5))
+    }
+
+    private func assertPlaybackContinues(
+        afterStartingAt baseline: Double,
+        in app: XCUIApplication
+    ) throws {
+        XCTAssertTrue(waitForTransport("playing", in: app, timeout: 12))
+        XCTAssertTrue(app.otherElements["player_playback_advancing"].waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForPlaybackTime(greaterThan: baseline + 0.5, in: app, timeout: 15))
+        XCTAssertFalse(app.otherElements["player_error"].exists)
     }
 
     private func changeFocusedChoiceAndSelect(in app: XCUIApplication) throws -> String {
@@ -376,6 +418,15 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     private func revealChrome(in app: XCUIApplication) {
         if !app.otherElements["native_player_chrome"].exists { XCUIRemote.shared.press(.select) }
         XCTAssertTrue(app.otherElements["native_player_chrome"].waitForExistence(timeout: 5))
+    }
+
+    private func revealChromeAfterAutoHide(in app: XCUIApplication) {
+        let chrome = app.otherElements["native_player_chrome"]
+        if chrome.exists {
+            XCTAssertTrue(waitForDisappearance(chrome, timeout: 5))
+        }
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(chrome.waitForExistence(timeout: 5))
     }
 
     private func focusButton(_ identifier: String, in app: XCUIApplication, using directions: [XCUIRemote.Button]) {

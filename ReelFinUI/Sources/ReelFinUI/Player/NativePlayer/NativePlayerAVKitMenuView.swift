@@ -11,11 +11,30 @@ struct NativePlayerAVKitMenuLayout: Equatable {
     let secondarySize: CGFloat = 22
     let choiceHeight: CGFloat = 68
     let navigationHeight: CGFloat = 108
+    let rowSpacing: CGFloat = 2
+    let dividerExtent: CGFloat = 21
+    let maximumContentHeight: CGFloat = 520
     let focusOpacity: Double = 0.20
     let selectedOpacity: Double = 0.045
     let opaqueBackgroundOpacity: Double = 0
 
     static let standard = Self()
+
+    func contentHeight(
+        choiceRowCount: Int,
+        navigationRowCount: Int = 0,
+        dividerCount: Int = 0
+    ) -> CGFloat {
+        let choices = max(0, choiceRowCount)
+        let navigation = max(0, navigationRowCount)
+        let dividers = max(0, dividerCount)
+        let elementCount = choices + navigation + dividers
+        let total = CGFloat(choices) * choiceHeight
+            + CGFloat(navigation) * navigationHeight
+            + CGFloat(dividers) * dividerExtent
+            + CGFloat(max(0, elementCount - 1)) * rowSpacing
+        return min(total, maximumContentHeight)
+    }
 }
 
 enum NativePlayerAVKitMenuPlatform {
@@ -238,12 +257,12 @@ struct NativePlayerAVKitMenuView: View {
                 .foregroundStyle(.white.opacity(0.62))
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: layout.rowSpacing) {
                     rows
                 }
             }
             .scrollIndicators(.hidden)
-            .frame(maxHeight: 520)
+            .frame(height: contentHeight)
         }
         .padding(.horizontal, layout.horizontalInset)
         .padding(.vertical, layout.verticalInset)
@@ -262,6 +281,7 @@ struct NativePlayerAVKitMenuView: View {
             if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
                 ZStack {
                     PlayerAccessibilityMarkerView(identifier: accessibilityIdentifier)
+                    PlayerAccessibilityMarkerView(identifier: accessibilityPageIdentifier)
                     PlayerAccessibilityMarkerView(
                         identifier: "native_player_track_focused_title",
                         value: focusedRowTitle
@@ -351,7 +371,7 @@ struct NativePlayerAVKitMenuView: View {
                 NativePlayerAVKitChoiceRow(
                     title: presentation(for: option).title,
                     detail: presentation(for: option).details,
-                    isSelected: option.trackID == selectedSubtitleID,
+                    isSelected: option.trackID == preferredSubtitleID,
                     isFocused: focusedRow == rowID,
                     layout: layout
                 ) {
@@ -369,8 +389,8 @@ struct NativePlayerAVKitMenuView: View {
                     await requestFocus(on: rowID)
                 }
                 .accessibilityLabel(option.accessibilityLabel)
-                .accessibilityValue(option.trackID == selectedSubtitleID ? "selected" : "not_selected")
-                .accessibilityAddTraits(option.trackID == selectedSubtitleID ? .isSelected : [])
+                .accessibilityValue(option.trackID == preferredSubtitleID ? "selected" : "not_selected")
+                .accessibilityAddTraits(option.trackID == preferredSubtitleID ? .isSelected : [])
             }
 
         case .subtitleStyles:
@@ -510,9 +530,15 @@ struct NativePlayerAVKitMenuView: View {
         realSubtitleOptions.first(where: \.isSelected)?.trackID
     }
 
+    private var preferredSubtitleID: String? {
+        NativePlayerSubtitleMenuPolicy.enabledTrackID(
+            options: controls.subtitleOptions,
+            lastEnabledID: lastEnabledSubtitleID
+        )
+    }
+
     private var selectedSubtitlePresentation: PlaybackTrackMenuOptionPresentation? {
-        let option = realSubtitleOptions.first(where: \.isSelected)
-            ?? realSubtitleOptions.first(where: { $0.trackID == lastEnabledSubtitleID })
+        let option = realSubtitleOptions.first(where: { $0.trackID == preferredSubtitleID })
             ?? realSubtitleOptions.first
         return option.map(presentation(for:))
     }
@@ -529,8 +555,7 @@ struct NativePlayerAVKitMenuView: View {
         case .subtitlesRoot:
             return selectedSubtitleID == nil ? .subtitleOff : .subtitleOn
         case .subtitleLanguages:
-            let option = realSubtitleOptions.first(where: \.isSelected)
-                ?? realSubtitleOptions.first(where: { $0.trackID == lastEnabledSubtitleID })
+            let option = realSubtitleOptions.first(where: { $0.trackID == preferredSubtitleID })
                 ?? realSubtitleOptions.first
             return .subtitleTrack(option?.id ?? "__empty_subtitle__")
         case .subtitleStyles:
@@ -602,6 +627,15 @@ struct NativePlayerAVKitMenuView: View {
         }
     }
 
+    private var accessibilityPageIdentifier: String {
+        switch menuState.page {
+        case .audio: return "native_player_avkit_audio_menu"
+        case .subtitlesRoot: return "native_player_avkit_subtitles_root"
+        case .subtitleLanguages: return "native_player_avkit_subtitle_languages"
+        case .subtitleStyles: return "native_player_avkit_subtitle_styles"
+        }
+    }
+
     private var focusRequestID: String {
         let page: String
         switch menuState.page {
@@ -620,6 +654,24 @@ struct NativePlayerAVKitMenuView: View {
     }
 
     private var layout: NativePlayerAVKitMenuLayout { .standard }
+
+    private var contentHeight: CGFloat {
+        switch menuState.page {
+        case .audio:
+            return layout.contentHeight(choiceRowCount: realAudioOptions.count)
+        case .subtitlesRoot:
+            guard !realSubtitleOptions.isEmpty else { return 0 }
+            return layout.contentHeight(
+                choiceRowCount: 2,
+                navigationRowCount: 2,
+                dividerCount: 1
+            )
+        case .subtitleLanguages:
+            return layout.contentHeight(choiceRowCount: realSubtitleOptions.count)
+        case .subtitleStyles:
+            return layout.contentHeight(choiceRowCount: SubtitleBackgroundStyle.allCases.count)
+        }
+    }
 
     private func handleMoveCommand(
         _ direction: NativePlayerAVKitMenuMoveDirection,
