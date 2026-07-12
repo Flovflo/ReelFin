@@ -317,6 +317,56 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         )
     }
 
+    func testAVKitMenuFocusHandlesEveryBoundaryWithoutOverflow() {
+        let rows: [NativePlayerAVKitMenuRowID] = [
+            .subtitleOn,
+            .subtitleOff,
+            .subtitleLanguage,
+            .subtitleStyle
+        ]
+
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.move(from: .subtitleStyle, delta: 1, rows: rows),
+            .subtitleStyle
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.move(
+                from: .subtitleTrack("missing"),
+                delta: 1,
+                rows: rows
+            ),
+            .subtitleOn
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.move(
+                from: .subtitleTrack("missing"),
+                delta: 1,
+                rows: []
+            ),
+            .subtitleTrack("missing")
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.move(
+                from: .subtitleOff,
+                delta: .max,
+                rows: rows
+            ),
+            .subtitleStyle
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.move(
+                from: .subtitleLanguage,
+                delta: .min,
+                rows: rows
+            ),
+            .subtitleOn
+        )
+        XCTAssertEqual(
+            NativePlayerAVKitMenuFocusPolicy.parent(of: .subtitleStyles),
+            .subtitlesRoot
+        )
+    }
+
     func testTVChromeAvailableActionsRequireRealSelectableTracks() {
         let disabledOnly = PlaybackTrackOption(
             trackID: nil,

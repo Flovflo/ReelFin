@@ -59,7 +59,13 @@ enum NativePlayerAVKitMenuFocusPolicy {
         guard let index = rows.firstIndex(of: current), !rows.isEmpty else {
             return rows.first ?? current
         }
-        return rows[min(max(index + delta, 0), rows.count - 1)]
+        let boundedDelta: Int
+        if delta >= 0 {
+            boundedDelta = min(delta, rows.count - 1 - index)
+        } else {
+            boundedDelta = max(delta, -index)
+        }
+        return rows[index + boundedDelta]
     }
 
     static func parent(
