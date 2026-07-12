@@ -10,9 +10,11 @@ private enum TVLibraryWarmupScope {
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reelFinDisplayDensity) private var displayDensity
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Namespace private var posterNamespace
 #if os(tvOS)
     @FocusState private var focusedControl: TVLibraryControlFocus?
+    @FocusState private var focusedLibraryItemID: String?
 #endif
     @State private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
@@ -21,6 +23,12 @@ struct LibraryView: View {
 #if os(tvOS)
     @State private var allowsControlBarTopNavigation = true
     @State private var controlBarNavigationUnlockTask: Task<Void, Never>?
+    @State private var savedSelectedPosterID: String?
+    @State private var tvOpeningArtworkItem: MediaItem?
+    @State private var tvOpeningArtworkVisible = false
+    @State private var tvDetailFocusRequest = 0
+    @State private var detailPresentation = TVDetailPresentationCoordinator()
+    @State private var detailPresentationVisualState = TVDetailPresentationVisualState.opening
 #endif
 
     init(dependencies: ReelFinDependencies) {
@@ -31,18 +39,25 @@ struct LibraryView: View {
     var body: some View {
         ZStack {
             ReelFinTheme.pageGradient.ignoresSafeArea()
+#if os(tvOS)
             libraryContent
+                .disabled(detailPresentation.keepsDetailMounted)
+                .scaleEffect(detailPresentation.keepsDetailMounted ? 0.982 : 1)
+                .opacity(detailPresentation.keepsDetailMounted ? 0.34 : 1)
+                .overlay {
+                    Color.black.opacity(detailPresentation.keepsDetailMounted ? 0.45 : 0)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+                .animation(tvDetailOpenAnimation, value: detailPresentation.keepsDetailMounted)
+
+            tvInlineDetailPresentation
+#else
+            libraryContent
+#endif
         }
         .navigationDestination(
-            isPresented: Binding(
-                get: { viewModel.selectedItem != nil },
-                set: {
-                    if !$0 {
-                        viewModel.selectedItem = nil
-                        selectedDetailTransitionSourceID = nil
-                    }
-                }
-            )
+            isPresented: nativeDetailNavigationBinding
         ) {
             if let item = viewModel.selectedItem {
                 DetailView(
@@ -165,18 +180,15 @@ struct LibraryView: View {
                         namespace: posterNamespace,
                         transitionSourceID: LibraryCardTransitionSource.id(itemID: item.id),
                         onFocus: { focusedItem in
+                            focusedLibraryItemID = focusedItem.id
                             handleFocusedItem(focusedItem)
                         },
                         onMoveUp: topRowItemIDs.contains(item.id) ? focusPreferredControlBar : nil,
                         onSelect: { selectedItem in
-                            selectedDetailTransitionSourceID = LibraryCardTransitionSource.id(itemID: selectedItem.id)
-                            let detailItemID = selectedItem.mediaType == .episode ? (selectedItem.parentID ?? selectedItem.id) : selectedItem.id
-                            Task {
-                                await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
-                            }
-                            viewModel.select(item: selectedItem)
+                            presentTVDetail(selectedItem)
                         }
                     )
+                    .focused($focusedLibraryItemID, equals: item.id)
                     .onAppear {
                         handleVisibleItem(item)
                     }
@@ -574,7 +586,160 @@ struct LibraryView: View {
         }
     }
 
+    private var nativeDetailNavigationBinding: Binding<Bool> {
+        Binding(
+            get: {
 #if os(tvOS)
+                false
+#else
+                viewModel.selectedItem != nil
+#endif
+            },
+            set: { isPresented in
+                guard !isPresented else { return }
+#if os(tvOS)
+                dismissTVDetailPresentation()
+#else
+                viewModel.selectedItem = nil
+                selectedDetailTransitionSourceID = nil
+#endif
+            }
+        )
+    }
+
+#if os(tvOS)
+    @ViewBuilder
+    private var tvInlineDetailPresentation: some View {
+        if let item = viewModel.selectedItem {
+            ZStack {
+                Color.black
+                    .ignoresSafeArea()
+
+                DetailView(
+                    dependencies: dependencies,
+                    item: item,
+                    namespace: posterNamespace,
+                    transitionSourceID: selectedDetailTransitionSourceID,
+                    tvPresentationFocusRequest: tvDetailFocusRequest,
+                    onDismissRequest: dismissTVDetailPresentation
+                )
+                .ignoresSafeArea()
+
+                if let tvOpeningArtworkItem {
+                    TVDetailOpeningArtworkView(
+                        item: tvOpeningArtworkItem,
+                        apiClient: dependencies.apiClient,
+                        imagePipeline: dependencies.imagePipeline
+                    )
+                    .modifier(
+                        TVInlineDetailArtworkDestinationModifier(
+                            namespace: posterNamespace,
+                            sourceID: selectedDetailTransitionSourceID
+                        )
+                    )
+                    .opacity(tvOpeningArtworkVisible ? 1 : 0)
+                    .allowsHitTesting(false)
+                    .zIndex(2)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.ignoresSafeArea())
+            .opacity(detailPresentationVisualState == .closing ? 0 : 1)
+            .scaleEffect(
+                detailPresentationVisualState == .closing && !accessibilityReduceMotion ? 0.97 : 1,
+                anchor: .center
+            )
+            .transition(tvInlineDetailTransition)
+            .zIndex(10)
+        }
+    }
+
+    private var tvInlineDetailTransition: AnyTransition {
+        if accessibilityReduceMotion {
+            return .opacity
+        }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .center)),
+            removal: .opacity
+        )
+    }
+
+    private var tvDetailOpenAnimation: Animation {
+        .smooth(
+            duration: accessibilityReduceMotion
+                ? TVDetailTransitionMetrics.reducedMotionDuration
+                : TVDetailTransitionMetrics.openingDuration,
+            extraBounce: accessibilityReduceMotion ? 0 : 0.04
+        )
+    }
+
+    private var tvDetailCloseAnimation: Animation {
+        .smooth(
+            duration: accessibilityReduceMotion
+                ? TVDetailTransitionMetrics.reducedMotionDuration
+                : TVDetailTransitionMetrics.closingDuration,
+            extraBounce: 0
+        )
+    }
+
+    private func presentTVDetail(_ item: MediaItem) {
+        let sourceID = LibraryCardTransitionSource.id(itemID: item.id)
+        let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+        selectedDetailTransitionSourceID = sourceID
+        savedSelectedPosterID = item.id
+        detailPresentation.beginOpening(itemID: detailItemID, sourceID: sourceID)
+        guard case .opening = detailPresentation.phase else { return }
+
+        detailPresentationVisualState = .opening
+        tvOpeningArtworkItem = item
+        tvOpeningArtworkVisible = true
+
+        Task {
+            await DetailPresentationTelemetry.shared.beginNavigation(for: detailItemID)
+        }
+
+        withAnimation(tvDetailOpenAnimation, completionCriteria: .logicallyComplete) {
+            viewModel.select(item: item)
+            detailPresentationVisualState = .presented
+            tvOpeningArtworkVisible = false
+        } completion: {
+            guard viewModel.selectedItem?.id == item.id else { return }
+            guard case .opening = detailPresentation.phase else { return }
+            detailPresentation.finishOpening()
+            tvOpeningArtworkItem = nil
+            tvDetailFocusRequest &+= 1
+        }
+    }
+
+    private func dismissTVDetailPresentation() {
+        let backResult = detailPresentation.handleBack()
+        logTVBackNavigationMarker(backResult == .allowRoot ? .root : .closing)
+        guard backResult == .beginClosing else { return }
+
+        let returnPosterID = savedSelectedPosterID
+        tvOpeningArtworkItem = viewModel.selectedItem
+        tvOpeningArtworkVisible = false
+
+        withAnimation(tvDetailCloseAnimation, completionCriteria: .logicallyComplete) {
+            detailPresentationVisualState = .closing
+            tvOpeningArtworkVisible = true
+        } completion: {
+            viewModel.dismissDetail()
+            detailPresentation.finishClosing()
+            tvOpeningArtworkVisible = false
+            tvOpeningArtworkItem = nil
+            selectedDetailTransitionSourceID = nil
+            savedSelectedPosterID = nil
+            focusedLibraryItemID = returnPosterID
+        }
+    }
+
+    private func logTVBackNavigationMarker(_ marker: TVBackNavigationDebugMarker) {
+#if DEBUG
+        AppLog.ui.notice("tv.back.owner value=\(marker.rawValue, privacy: .public)")
+#endif
+    }
+
     private func setTVFilter(_ filter: MediaType) {
         viewModel.selectedFilter = filter
     }

@@ -218,7 +218,7 @@ struct DetailView: View {
         .focusScope(tvDetailFocusScope)
         .preference(key: TVTopNavigationVisibilityPreferenceKey.self, value: false)
         .onExitCommand {
-            dismissDetail()
+            requestTVDetailDismissal()
         }
 #endif
         .task {
@@ -918,6 +918,17 @@ struct DetailView: View {
             dismiss()
         }
     }
+
+#if os(tvOS)
+    private func requestTVDetailDismissal() {
+#if DEBUG
+        AppLog.ui.notice(
+            "tv.back.owner value=\(TVBackNavigationDebugMarker.detail.rawValue, privacy: .public)"
+        )
+#endif
+        onDismissRequest?()
+    }
+#endif
 
     private var heroNeighbors: (previous: MediaItem?, next: MediaItem?) {
         let navigationState = DetailNeighborNavigationState(

@@ -142,6 +142,98 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         }
     }
 
+    func testHomeCardBackRestoresExactFocusAndKeepsAppForeground() throws {
+        let app = launchAuthenticatedRoot()
+        let sourceCard = try focusFirstMediaCard(in: app)
+        let sourceIdentifier = sourceCard.identifier
+
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 15))
+        XCUIRemote.shared.press(.menu)
+
+        XCTAssertTrue(waitForDisappearance(app.otherElements["detail_screen"], timeout: 8))
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        XCTAssertTrue(
+            waitForFocus(app.buttons[sourceIdentifier], timeout: 8),
+            "Back from Detail must restore the exact Home card \(sourceIdentifier)."
+        )
+    }
+
+    func testLibraryPosterBackRestoresExactFocusAndKeepsAppForeground() throws {
+        let app = launchAuthenticatedRoot()
+        try openLibrary(in: app)
+        let sourcePoster = try focusFirstMediaCard(in: app)
+        let sourceIdentifier = sourcePoster.identifier
+
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 15))
+        XCUIRemote.shared.press(.menu)
+
+        XCTAssertTrue(waitForDisappearance(app.otherElements["detail_screen"], timeout: 8))
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        XCTAssertTrue(
+            waitForFocus(app.buttons[sourceIdentifier], timeout: 8),
+            "Back from Detail must restore the exact Library poster \(sourceIdentifier)."
+        )
+    }
+
+    func testRapidDetailBackPressesRemainInsideApp() throws {
+        let app = launchAuthenticatedRoot()
+        let sourceCard = try focusFirstMediaCard(in: app)
+        let sourceIdentifier = sourceCard.identifier
+
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 15))
+        XCUIRemote.shared.press(.menu)
+        XCUIRemote.shared.press(.menu)
+
+        XCTAssertTrue(waitForDisappearance(app.otherElements["detail_screen"], timeout: 8))
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        XCTAssertTrue(
+            waitForFocus(app.buttons[sourceIdentifier], timeout: 8),
+            "A repeated Back during close must be consumed without leaving ReelFin."
+        )
+    }
+
+    private func launchAuthenticatedRoot() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["REELFIN_TV_UI_AUTOMATION"] = "0"
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        return app
+    }
+
+    private func openLibrary(in app: XCUIApplication) throws {
+        let library = app.buttons["Library"]
+        XCTAssertTrue(library.waitForExistence(timeout: 15))
+
+        for _ in 0..<4 where !library.hasFocus {
+            XCUIRemote.shared.press(.up)
+        }
+        for _ in 0..<3 where !library.hasFocus {
+            XCUIRemote.shared.press(.right)
+        }
+        XCTAssertTrue(library.hasFocus, "Remote navigation must focus the Library destination.")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 15))
+    }
+
+    private func focusFirstMediaCard(in app: XCUIApplication) throws -> XCUIElement {
+        let mediaCards = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        )
+        XCTAssertTrue(mediaCards.firstMatch.waitForExistence(timeout: 20))
+
+        for _ in 0..<12 {
+            if let focused = mediaCards.allElementsBoundByIndex.first(where: \.hasFocus) {
+                return focused
+            }
+            XCUIRemote.shared.press(.down)
+        }
+
+        throw XCTSkip("The authenticated live library did not expose a focusable media card.")
+    }
+
     private func launchStarCityDetail() throws -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["REELFIN_TV_UI_AUTOMATION"] = "1"

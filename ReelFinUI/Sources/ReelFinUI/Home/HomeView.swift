@@ -1086,6 +1086,7 @@ public struct SectionRow: View {
 struct HomeView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reelFinDisplayDensity) private var displayDensity
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var viewModel: HomeViewModel
     @Namespace private var posterNamespace
 #if os(tvOS)
@@ -1112,6 +1113,8 @@ struct HomeView: View {
     @State private var tvOpeningArtworkItem: MediaItem?
     @State private var tvOpeningArtworkVisible = false
     @State private var tvDetailFocusRequest = 0
+    @State private var detailPresentation = TVDetailPresentationCoordinator()
+    @State private var detailPresentationVisualState = TVDetailPresentationVisualState.opening
 #endif
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
@@ -1318,15 +1321,15 @@ struct HomeView: View {
                     // stays alive behind it. Select then activates the hidden shelf card again
                     // instead of the visible Play button. Removing Home from focus participation
                     // lets DetailView's default focus resolve immediately and deterministically.
-                    .disabled(viewModel.selectedItem != nil)
-                    .scaleEffect(viewModel.selectedItem == nil ? 1 : 0.982)
-                    .opacity(viewModel.selectedItem == nil ? 1 : 0.34)
+                    .disabled(detailPresentation.keepsDetailMounted)
+                    .scaleEffect(detailPresentation.keepsDetailMounted ? 0.982 : 1)
+                    .opacity(detailPresentation.keepsDetailMounted ? 0.34 : 1)
                     .overlay {
-                        Color.black.opacity(viewModel.selectedItem == nil ? 0 : 0.45)
+                        Color.black.opacity(detailPresentation.keepsDetailMounted ? 0.45 : 0)
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
                     }
-                    .animation(tvDetailPresentationAnimation, value: viewModel.selectedItem?.id)
+                    .animation(tvDetailOpenAnimation, value: detailPresentation.keepsDetailMounted)
 
                 TVHomeRefreshStatusView(isRefreshing: viewModel.isRefreshing && !viewModel.isInitialLoading)
                     .padding(.top, tvRefreshStatusTopPadding)
@@ -1695,6 +1698,11 @@ struct HomeView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black.ignoresSafeArea())
+            .opacity(detailPresentationVisualState == .closing ? 0 : 1)
+            .scaleEffect(
+                detailPresentationVisualState == .closing && !accessibilityReduceMotion ? 0.97 : 1,
+                anchor: .center
+            )
             .transition(tvInlineDetailTransition)
             .zIndex(10)
         }
@@ -1704,14 +1712,31 @@ struct HomeView: View {
         // The detail FADES while it zooms, so the (dimmed, scaled) home stays visible through the
         // whole move — the iOS "same page" continuity. A bare scale popped an opaque black sheet
         // over the home on frame one, which read as a hard cut between two screens.
-        .asymmetric(
+        if accessibilityReduceMotion {
+            return .opacity
+        }
+        return .asymmetric(
             insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .center)),
-            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .center))
+            removal: .opacity
         )
     }
 
-    private var tvDetailPresentationAnimation: Animation {
-        .smooth(duration: 0.38, extraBounce: 0.04)
+    private var tvDetailOpenAnimation: Animation {
+        .smooth(
+            duration: accessibilityReduceMotion
+                ? TVDetailTransitionMetrics.reducedMotionDuration
+                : TVDetailTransitionMetrics.openingDuration,
+            extraBounce: accessibilityReduceMotion ? 0 : 0.04
+        )
+    }
+
+    private var tvDetailCloseAnimation: Animation {
+        .smooth(
+            duration: accessibilityReduceMotion
+                ? TVDetailTransitionMetrics.reducedMotionDuration
+                : TVDetailTransitionMetrics.closingDuration,
+            extraBounce: 0
+        )
     }
 #endif
 
@@ -1853,22 +1878,24 @@ struct HomeView: View {
 
     private func dismissDetailPresentation() {
 #if os(tvOS)
-        let closingItem = viewModel.selectedItem
-        tvOpeningArtworkItem = closingItem
-        tvOpeningArtworkVisible = true
+        let backResult = detailPresentation.handleBack()
+        logTVBackNavigationMarker(backResult == .allowRoot ? .root : .closing)
+        guard backResult == .beginClosing else { return }
 
-        withAnimation(tvDetailPresentationAnimation) {
+        tvOpeningArtworkItem = viewModel.selectedItem
+        tvOpeningArtworkVisible = false
+
+        withAnimation(tvDetailCloseAnimation, completionCriteria: .logicallyComplete) {
             focusedHomeItemID = nil
-            homeReturnRequest += 1
-            tvOpeningArtworkVisible = false
+            detailPresentationVisualState = .closing
+            tvOpeningArtworkVisible = true
+        } completion: {
             viewModel.dismissDetail()
-        }
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 460_000_000)
-            if viewModel.selectedItem == nil {
-                tvOpeningArtworkItem = nil
-            }
+            detailPresentation.finishClosing()
+            tvOpeningArtworkVisible = false
+            tvOpeningArtworkItem = nil
+            selectedDetailTransitionSourceID = nil
+            homeReturnRequest &+= 1
         }
 #else
         ambientItem = nil
@@ -1879,30 +1906,38 @@ struct HomeView: View {
     private func presentDetail(_ item: MediaItem) {
 #if os(tvOS)
         let presentedItemID = presentedDetailItemID(for: item)
+        detailPresentation.beginOpening(
+            itemID: presentedItemID,
+            sourceID: selectedDetailTransitionSourceID
+        )
+        guard case .opening = detailPresentation.phase else { return }
+        detailPresentationVisualState = .opening
         tvOpeningArtworkItem = item
         tvOpeningArtworkVisible = true
 
-        withAnimation(tvDetailPresentationAnimation, completionCriteria: .logicallyComplete) {
+        withAnimation(tvDetailOpenAnimation, completionCriteria: .logicallyComplete) {
             viewModel.select(item: item)
+            detailPresentationVisualState = .presented
+            tvOpeningArtworkVisible = false
         } completion: {
             guard viewModel.selectedItem?.id == presentedItemID else { return }
-            tvDetailFocusRequest &+= 1
-        }
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 420_000_000)
-            guard viewModel.selectedItem?.id == presentedItemID else { return }
-            withAnimation(.easeOut(duration: 0.18)) {
-                tvOpeningArtworkVisible = false
-            }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            guard viewModel.selectedItem?.id == presentedItemID else { return }
+            guard case .opening = detailPresentation.phase else { return }
+            detailPresentation.finishOpening()
             tvOpeningArtworkItem = nil
+            tvDetailFocusRequest &+= 1
         }
 #else
         viewModel.select(item: item)
 #endif
     }
+
+#if os(tvOS)
+    private func logTVBackNavigationMarker(_ marker: TVBackNavigationDebugMarker) {
+#if DEBUG
+        AppLog.ui.notice("tv.back.owner value=\(marker.rawValue, privacy: .public)")
+#endif
+    }
+#endif
 
 #if os(iOS) || os(tvOS)
     private var liveUITestTargetItemID: String? {
@@ -2601,7 +2636,7 @@ private struct TVHomeRefreshStatusView: View {
     }
 }
 
-private struct TVDetailOpeningArtworkView: View {
+struct TVDetailOpeningArtworkView: View {
     let item: MediaItem
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
@@ -2644,7 +2679,7 @@ private struct TVDetailOpeningArtworkView: View {
     }
 }
 
-private struct TVInlineDetailArtworkDestinationModifier: ViewModifier {
+struct TVInlineDetailArtworkDestinationModifier: ViewModifier {
     let namespace: Namespace.ID?
     let sourceID: String?
 
