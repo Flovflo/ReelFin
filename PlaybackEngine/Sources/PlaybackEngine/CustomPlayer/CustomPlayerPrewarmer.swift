@@ -119,13 +119,20 @@ public final class CustomPlayerPrewarmer {
         resolveOnlyItemID = itemID
         resolveOnlyTask = Task { [weak self] in
             guard let self else { return }
-            // nil ticks on purpose: matches the press-path resolve exactly, so if the press lands
-            // while this is still in flight the two PlaybackInfo POSTs coalesce (same dedupe key).
+            // nil ticks are suitable only for a from-start focus warm. A Resume press uses a
+            // distinct resolver key and adaptive results are rejected below, so its exact ticks
+            // can never coalesce with or reuse this speculative request.
             guard let resolved = try? await self.resolver.resolveOriginal(itemID: itemID, startTimeTicks: nil) else {
                 if self.resolveOnlyItemID == itemID { self.resolveOnlyItemID = nil }
                 return
             }
             guard !Task.isCancelled else { return }
+            guard !resolved.isAdaptiveStream else {
+                // Adaptive URLs encode the start position and playback session. Resolve them only
+                // at Play with the exact resume ticks; a nil-tick focus result is never retained.
+                if self.resolveOnlyItemID == itemID { self.resolveOnlyItemID = nil }
+                return
+            }
             self.resolvedOnly[itemID] = (resolved, Date())
             if self.resolveOnlyItemID == itemID { self.resolveOnlyItemID = nil }
             self.trimResolvedOnly()
@@ -165,6 +172,7 @@ public final class CustomPlayerPrewarmer {
     func consumeResolvedOnly(itemID: String) -> ResolvedOriginalSource? {
         guard let entry = resolvedOnly.removeValue(forKey: itemID) else { return nil }
         guard Date().timeIntervalSince(entry.at) < resolvedOnlyTTL else { return nil }
+        guard !entry.resolved.isAdaptiveStream else { return nil }
         return entry.resolved
     }
 

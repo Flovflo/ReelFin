@@ -322,6 +322,9 @@ struct NativePlayerTrackSelectionMenuView: View {
             mode: mode,
             controls: controls,
             subtitleStyle: subtitleStyle,
+            lastEnabledSubtitleID: controls.subtitleOptions.first(where: {
+                $0.trackID != nil && $0.isSelected
+            })?.trackID,
             onSelect: onSelect,
             onSelectStyle: { subtitleStyle = $0 },
             onDismiss: {}

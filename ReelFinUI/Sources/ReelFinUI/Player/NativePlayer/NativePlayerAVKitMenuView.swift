@@ -214,12 +214,12 @@ struct NativePlayerAVKitMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
     let subtitleStyle: SubtitleBackgroundStyle
+    let lastEnabledSubtitleID: String?
     let onSelect: (PlaybackControlSelection) -> Void
     let onSelectStyle: (SubtitleBackgroundStyle) -> Void
     let onDismiss: () -> Void
 
     @State private var menuState: NativePlayerAVKitMenuState
-    @State private var lastEnabledSubtitleID: String?
     @State private var focusRequestToken: UInt = 0
     @FocusState private var focusedRow: NativePlayerAVKitMenuRowID?
     @Namespace private var focusNamespace
@@ -228,6 +228,7 @@ struct NativePlayerAVKitMenuView: View {
         mode: PlaybackTrackMenuKind,
         controls: PlaybackControlsModel,
         subtitleStyle: SubtitleBackgroundStyle,
+        lastEnabledSubtitleID: String?,
         onSelect: @escaping (PlaybackControlSelection) -> Void,
         onSelectStyle: @escaping (SubtitleBackgroundStyle) -> Void,
         onDismiss: @escaping () -> Void
@@ -235,6 +236,7 @@ struct NativePlayerAVKitMenuView: View {
         self.mode = mode
         self.controls = controls
         self.subtitleStyle = subtitleStyle
+        self.lastEnabledSubtitleID = lastEnabledSubtitleID
         self.onSelect = onSelect
         self.onSelectStyle = onSelectStyle
         self.onDismiss = onDismiss
@@ -242,11 +244,6 @@ struct NativePlayerAVKitMenuView: View {
             initialValue: NativePlayerAVKitMenuState(
                 page: mode == .audio ? .audio : .subtitlesRoot
             )
-        )
-        _lastEnabledSubtitleID = State(
-            initialValue: controls.subtitleOptions.first(where: {
-                $0.trackID != nil && $0.isSelected
-            })?.trackID
         )
     }
 
@@ -488,13 +485,9 @@ struct NativePlayerAVKitMenuView: View {
                 options: controls.subtitleOptions,
                 lastEnabledID: lastEnabledSubtitleID
             ) else { return }
-            lastEnabledSubtitleID = trackID
             NativePlayerAVKitMenuDispatch.dispatch(.subtitle(trackID), to: onSelect)
 
         case .disableSubtitles:
-            if let selectedSubtitleID {
-                lastEnabledSubtitleID = selectedSubtitleID
-            }
             NativePlayerAVKitMenuDispatch.dispatch(.subtitle(nil), to: onSelect)
 
         case .openLanguages:
@@ -506,7 +499,6 @@ struct NativePlayerAVKitMenuView: View {
             advanceFocusRequest()
 
         case let .selectSubtitle(trackID):
-            lastEnabledSubtitleID = trackID
             NativePlayerAVKitMenuDispatch.dispatch(.subtitle(trackID), to: onSelect)
             menuState.perform(action)
             advanceFocusRequest()

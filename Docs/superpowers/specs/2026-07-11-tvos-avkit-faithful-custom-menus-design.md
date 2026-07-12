@@ -132,4 +132,3 @@ TDD must cover:
 - iOS compilation and unchanged iOS policy.
 
 Live validation uses the authenticated tvOS simulator and Star City S1E1 without reset/uninstall/sign-out. It must change audio and subtitles, navigate both submenus, change subtitle style, restore focus, seek, and return to Detail without error. Captures of Audio, Subtitles root, Language, and Style are compared against the supplied references before approval.
-

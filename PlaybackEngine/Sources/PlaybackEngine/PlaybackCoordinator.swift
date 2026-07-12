@@ -85,6 +85,27 @@ public actor PlaybackCoordinator {
         self.ttffTuning = decisionEngine.ttffTuning
     }
 
+    /// Opaque authenticated scope used only by in-memory playback memoization. The fields are
+    /// deliberately never formatted or logged: a changed server, user, or token starts a distinct
+    /// cache generation so signed URLs and authorization headers cannot cross sessions.
+    struct AuthenticatedSessionScope: Hashable, Sendable {
+        let server: String
+        let userID: String
+        let token: String
+    }
+
+    func authenticatedSessionScope() async throws -> AuthenticatedSessionScope {
+        guard let configuration = await apiClient.currentConfiguration(),
+              let session = await apiClient.currentSession() else {
+            throw AppError.unauthenticated
+        }
+        return AuthenticatedSessionScope(
+            server: configuration.serverURL.absoluteString,
+            userID: session.userID,
+            token: session.token
+        )
+    }
+
     /// Restrict the candidate sources to a preferred CONTAINER when one exists (opt-in; `nil`/empty
     /// preference is a no-op). The custom player uses this to play a title's `.mp4` version over its
     /// `.mkv` twin: an MKV is read by AVKit's demuxer with index/Cues SEEKS that miss the contiguous

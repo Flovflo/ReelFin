@@ -3164,7 +3164,7 @@ public final class PlaybackSessionController {
     private func selectAudioTrack(_ track: MediaTrack) async {
         if isNativePlayerActive && nativePlayerPlaybackSurface == .sampleBuffer {
             selectedAudioTrackID = track.id
-            AppLog.playback.info("nativeplayer.audio.selection_changed — track='\(track.title, privacy: .public)' id=\(track.id, privacy: .public)")
+            AppLog.playback.info("nativeplayer.audio.selection_changed — status=requested")
             return
         }
 
@@ -3257,7 +3257,9 @@ public final class PlaybackSessionController {
     private func selectSubtitleTrackAsync(id: String?) async {
         if isNativePlayerActive && nativePlayerPlaybackSurface == .sampleBuffer {
             selectedSubtitleTrackID = id
-            AppLog.playback.info("nativeplayer.subtitle.selection_changed — id=\(id ?? "none", privacy: .public)")
+            AppLog.playback.info(
+                "nativeplayer.subtitle.selection_changed — status=\(id == nil ? "disabled" : "requested", privacy: .public)"
+            )
             return
         }
 

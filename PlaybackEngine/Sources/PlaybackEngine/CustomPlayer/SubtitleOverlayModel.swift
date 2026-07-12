@@ -18,14 +18,17 @@ public struct ExternalSubtitleTrack: Identifiable, Hashable, Sendable {
 }
 
 /// Downloads, parses, and serves external SRT/VTT cues by playback time. Pure text pipeline —
-/// download errors or malformed files degrade to "no subtitles", never disturb playback. The
-/// engine feeds `updateTime` from a periodic observer; the player view renders `currentCue`.
+/// selection is confirmed only after download and parsing succeed. Failures are surfaced through
+/// the owning player's existing error path. The engine feeds `updateTime` from a periodic observer;
+/// the player view renders `currentCue`.
 @MainActor
 @Observable
 public final class SubtitleOverlayModel {
     public private(set) var availableTracks: [ExternalSubtitleTrack] = []
+    public private(set) var pendingTrackID: String?
     public private(set) var activeTrackID: String?
     public private(set) var currentCue: String?
+    public private(set) var loadErrorMessage: String?
 
     struct TimedCue {
         let start: Double
@@ -35,29 +38,56 @@ public final class SubtitleOverlayModel {
 
     private var cues: [TimedCue] = []
     private var loadTask: Task<Void, Never>?
+    private let cueLoader: @Sendable (URL) async -> [TimedCue]?
+    var onLoadFailure: ((String) -> Void)?
     /// Cache of the last lookup index — cues are sorted and playback is monotonic, so lookup is
     /// O(1) amortized instead of a scan per tick.
     private var lookupIndex = 0
 
-    public init() {}
+    public init() {
+        cueLoader = { url in await Self.loadCues(from: url) }
+    }
+
+    init(loadCues: @escaping @Sendable (URL) async -> [TimedCue]?) {
+        cueLoader = loadCues
+    }
 
     public func configure(tracks: [ExternalSubtitleTrack]) {
         availableTracks = tracks
+        loadErrorMessage = nil
         select(trackID: nil)
     }
 
     /// Selects a track (nil = off). Downloading + parsing happen off the main thread.
     public func select(trackID: String?) {
         loadTask?.cancel()
-        activeTrackID = trackID
-        cues = []
-        currentCue = nil
-        lookupIndex = 0
-        guard let trackID, let track = availableTracks.first(where: { $0.id == trackID }) else { return }
+        pendingTrackID = nil
+        loadErrorMessage = nil
+        guard let trackID else {
+            activeTrackID = nil
+            cues = []
+            currentCue = nil
+            lookupIndex = 0
+            return
+        }
+        guard let track = availableTracks.first(where: { $0.id == trackID }) else { return }
+        pendingTrackID = trackID
         loadTask = Task { [weak self] in
-            guard let parsed = await Self.loadCues(from: track.url) else { return }
-            guard let self, !Task.isCancelled, self.activeTrackID == trackID else { return }
+            guard let self else { return }
+            guard let parsed = await self.cueLoader(track.url) else {
+                guard !Task.isCancelled, self.pendingTrackID == trackID else { return }
+                self.pendingTrackID = nil
+                let message = "Impossible de charger ou d’analyser les sous-titres sélectionnés."
+                self.loadErrorMessage = message
+                self.onLoadFailure?(message)
+                return
+            }
+            guard !Task.isCancelled, self.pendingTrackID == trackID else { return }
+            self.pendingTrackID = nil
+            self.activeTrackID = trackID
             self.cues = parsed
+            self.currentCue = nil
+            self.lookupIndex = 0
         }
     }
 

@@ -144,6 +144,7 @@ struct CustomPlayerView: View {
     /// Slow-launch escalation: past this delay with still no picture, the overlay stops pretending
     /// ("Lancement…") and says the server is slow, with Retry/Quit — never an endless bare spinner.
     @State private var launchIsSlow = false
+    @State private var subtitleSelectionMemory = NativePlayerSubtitleSelectionMemory()
     private let slowLaunchThresholdSeconds: UInt64 = 15
 #if os(tvOS)
     @FocusState private var isSkipActionFocused: Bool
@@ -270,9 +271,13 @@ struct CustomPlayerView: View {
             )
             revealTVChrome()
 #endif
+            subtitleSelectionMemory.confirm(trackID: engine.subtitles.activeTrackID)
 #if os(iOS)
             OrientationManager.shared.lockLandscapeForPlayerPresentation()
 #endif
+        }
+        .onChange(of: engine.subtitles.activeTrackID) { _, trackID in
+            subtitleSelectionMemory.confirm(trackID: trackID)
         }
         .onDisappear {
             AppLog.ui.notice("customplayer.view.disappeared")
@@ -699,6 +704,7 @@ struct CustomPlayerView: View {
                         mode: mode,
                         controls: customPlaybackControls,
                         subtitleStyle: subtitleBackgroundStyle,
+                        lastEnabledSubtitleID: subtitleSelectionMemory.lastEnabledID,
                         onSelect: handleTVAVKitMenuSelection,
                         onSelectStyle: { subtitleBackgroundStyle = $0 },
                         onDismiss: dismissTVPanel

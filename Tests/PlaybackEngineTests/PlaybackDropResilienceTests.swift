@@ -528,6 +528,58 @@ final class PlaybackDropResilienceTests: XCTestCase {
         )
     }
 
+    /// Focus prewarming resolves without a resume offset. If that resolution turns out to be HLS,
+    /// Play must discard it and resolve again with the exact resume ticks embedded in Jellyfin's
+    /// adaptive URL.
+    @MainActor
+    func testAdaptiveResolveOnlyPrewarmIsResolvedAgainWithExactResumeTicksAtPlay() async throws {
+        let origin = URL(string: "https://example.com/master.m3u8")!
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AdaptiveResolveOnly.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(
+                chunkSize: 1_024 * 1_024,
+                maxBytes: 2_000_000_000,
+                ttlSeconds: nil
+            )
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "adaptive",
+            userID: "u",
+            serverID: "s",
+            itemID: "adaptive-resolve-only",
+            sourceID: "src",
+            routeURL: origin
+        )
+        let requests = ResolveRequestRecorder()
+        var resolver = MockCustomSourceResolver(
+            originURL: origin,
+            sourceBitrate: 8_000_000,
+            cacheKey: key
+        )
+        resolver.adaptiveOnly = true
+        resolver.resolveRequests = requests
+        let prewarmer = CustomPlayerPrewarmer(resolver: resolver, store: store)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store, prewarmer: prewarmer)
+        defer { engine.stop() }
+
+        prewarmer.prewarmResolveOnly(itemID: "adaptive-resolve-only")
+        let didPrewarm = await waitUntil(timeout: 2) { requests.values.count == 1 }
+        XCTAssertTrue(didPrewarm)
+        XCTAssertEqual(requests.values.count, 1)
+        XCTAssertNil(requests.values[0])
+
+        let resumeTicks: Int64 = 987_654_321
+        engine.load(itemID: "adaptive-resolve-only", startTimeTicks: resumeTicks, autoPlay: false)
+
+        let didResolveAtPlay = await waitUntil(timeout: 2) { requests.values.count == 2 }
+        XCTAssertTrue(didResolveAtPlay)
+        XCTAssertEqual(requests.values, [nil, resumeTicks])
+    }
+
     /// A compatible MKV is not an AVPlayer progressive asset and Jellyfin's HEVC fMP4 remux can
     /// expose audio while reporting no video tracks. The custom engine must hand the item to the
     /// packet-demuxed native surface before creating any AVPlayer item.
@@ -1545,16 +1597,25 @@ final class PlaybackDropResilienceTests: XCTestCase {
         func increment() { lock.lock(); n += 1; lock.unlock() }
     }
 
+    private final class ResolveRequestRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var requests: [Int64?] = []
+        var values: [Int64?] { lock.lock(); defer { lock.unlock() }; return requests }
+        func append(_ ticks: Int64?) { lock.lock(); requests.append(ticks); lock.unlock() }
+    }
+
     private struct MockCustomSourceResolver: CustomPlaybackSourceResolving, CustomPlaybackAdaptiveFallbackResolving {
         let originURL: URL
         let sourceBitrate: Int
         let cacheKey: MediaGatewayCacheKey
         var resolveCounter: ResolveCounter? = nil
+        var resolveRequests: ResolveRequestRecorder? = nil
         var fallbackURL: URL? = nil
         var adaptiveOnly = false
         var requiresNativePlayback = false
         func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
             resolveCounter?.increment()
+            resolveRequests?.append(startTimeTicks)
             return ResolvedOriginalSource(
                 originURL: originURL, headers: [:], sourceBitrate: sourceBitrate,
                 overrideMIMEType: adaptiveOnly ? nil : "video/mp4", cacheKey: cacheKey,

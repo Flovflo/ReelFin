@@ -468,8 +468,15 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         )
         let forced = PlaybackTrackOption(
             trackID: "forced",
-            title: "French",
-            badge: "Forced",
+            title: "Français Forcé",
+            badge: nil,
+            iconName: nil,
+            isSelected: false
+        )
+        let defaultTrack = PlaybackTrackOption(
+            trackID: "default",
+            title: "German",
+            badge: "Défaut",
             iconName: nil,
             isSelected: false
         )
@@ -497,6 +504,13 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         )
         XCTAssertEqual(
             NativePlayerSubtitleMenuPolicy.enabledTrackID(
+                options: [first, forced, defaultTrack],
+                lastEnabledID: nil
+            ),
+            "default"
+        )
+        XCTAssertEqual(
+            NativePlayerSubtitleMenuPolicy.enabledTrackID(
                 options: [first, forced],
                 lastEnabledID: nil
             ),
@@ -508,6 +522,36 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
                 lastEnabledID: nil
             ),
             "first"
+        )
+    }
+
+    func testSubtitleSelectionMemorySurvivesOffDismissAndMenuReopen() {
+        let defaultTrack = PlaybackTrackOption(
+            trackID: "default",
+            title: "English",
+            badge: "Default",
+            iconName: nil,
+            isSelected: false
+        )
+        let rememberedTrack = PlaybackTrackOption(
+            trackID: "remembered",
+            title: "French",
+            badge: nil,
+            iconName: nil,
+            isSelected: false
+        )
+        var sessionMemory = NativePlayerSubtitleSelectionMemory()
+
+        sessionMemory.confirm(trackID: "remembered")
+        sessionMemory.confirm(trackID: nil) // Off must not erase the last confirmed choice.
+
+        // A newly-created menu receives route-owned memory after the old menu was dismissed.
+        XCTAssertEqual(
+            NativePlayerSubtitleMenuPolicy.enabledTrackID(
+                options: [defaultTrack, rememberedTrack],
+                lastEnabledID: sessionMemory.lastEnabledID
+            ),
+            "remembered"
         )
     }
 

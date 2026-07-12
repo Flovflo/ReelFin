@@ -33,35 +33,52 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
     /// degraded link that is MINUTES behind the play-press spinner. Every resolver instance (focus
     /// warm, detail prewarm, the engine at press time) shares this: any earlier resolution makes
     /// the press instant, and concurrent resolves for the same title coalesce into one.
-    private final class ResolutionMemo: @unchecked Sendable {
+    private actor ResolutionMemo {
         static let shared = ResolutionMemo()
-        private let lock = NSLock()
-        private var cached: [String: (resolved: ResolvedOriginalSource, at: Date)] = [:]
-        private var inFlight: [String: Task<ResolvedOriginalSource, Error>] = [:]
+        struct Key: Hashable, Sendable {
+            let itemID: String
+            let audioSignature: String
+            let subtitleSignature: String
+            let startTimeTicks: Int64?
+            let session: PlaybackCoordinator.AuthenticatedSessionScope
+        }
+
+        enum Claim {
+            case cached(ResolvedOriginalSource)
+            case joined(Task<ResolvedOriginalSource, Error>)
+            case owner(id: UUID, task: Task<ResolvedOriginalSource, Error>)
+        }
+
+        private struct InFlight {
+            let id: UUID
+            let task: Task<ResolvedOriginalSource, Error>
+        }
+
+        private var cached: [Key: (resolved: ResolvedOriginalSource, at: Date)] = [:]
+        private var inFlight: [Key: InFlight] = [:]
         private let ttl: TimeInterval = 180
 
-        func hit(_ key: String) -> ResolvedOriginalSource? {
-            lock.lock(); defer { lock.unlock() }
-            guard let entry = cached[key] else { return nil }
-            guard Date().timeIntervalSince(entry.at) < ttl else {
+        func claim(
+            key: Key,
+            operation: @escaping @Sendable () async throws -> ResolvedOriginalSource
+        ) -> Claim {
+            if let entry = cached[key] {
+                if Date().timeIntervalSince(entry.at) < ttl {
+                    return .cached(entry.resolved)
+                }
                 cached[key] = nil
-                return nil
             }
-            return entry.resolved
+            if let entry = inFlight[key] {
+                return .joined(entry.task)
+            }
+            let id = UUID()
+            let task = Task { try await operation() }
+            inFlight[key] = InFlight(id: id, task: task)
+            return .owner(id: id, task: task)
         }
 
-        func task(_ key: String) -> Task<ResolvedOriginalSource, Error>? {
-            lock.lock(); defer { lock.unlock() }
-            return inFlight[key]
-        }
-
-        func register(_ task: Task<ResolvedOriginalSource, Error>, for key: String) {
-            lock.lock(); defer { lock.unlock() }
-            inFlight[key] = task
-        }
-
-        func finish(_ key: String, result: ResolvedOriginalSource?) {
-            lock.lock(); defer { lock.unlock() }
+        func finish(key: Key, ownerID: UUID, result: ResolvedOriginalSource?) {
+            guard inFlight[key]?.id == ownerID else { return }
             inFlight[key] = nil
             // Adaptive streams embed the start position in their URL — never memoize those.
             if let result, !result.isAdaptiveStream {
@@ -74,29 +91,34 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         }
     }
 
-    private var memoKey: (String) -> String {
-        { itemID in "\(itemID)|\(self.audioSignature)|\(self.subtitleSignature)" }
-    }
-
     public func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
-        let key = memoKey(itemID)
-        if let hit = ResolutionMemo.shared.hit(key) {
+        let sessionScope = try await coordinator.authenticatedSessionScope()
+        let key = ResolutionMemo.Key(
+            itemID: itemID,
+            audioSignature: audioSignature,
+            subtitleSignature: subtitleSignature,
+            startTimeTicks: startTimeTicks,
+            session: sessionScope
+        )
+        let claim = await ResolutionMemo.shared.claim(key: key) {
+            try await performResolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks)
+        }
+        switch claim {
+        case let .cached(hit):
             AppLog.playback.notice("customplayer.resolve.memo_hit — item=\(itemID.prefix(8), privacy: .public)")
             return hit
-        }
-        if let inFlight = ResolutionMemo.shared.task(key) {
+        case let .joined(inFlight):
             AppLog.playback.notice("customplayer.resolve.memo_join — item=\(itemID.prefix(8), privacy: .public)")
             return try await inFlight.value
-        }
-        let task = Task { try await performResolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks) }
-        ResolutionMemo.shared.register(task, for: key)
-        do {
-            let resolved = try await task.value
-            ResolutionMemo.shared.finish(key, result: resolved)
-            return resolved
-        } catch {
-            ResolutionMemo.shared.finish(key, result: nil)
-            throw error
+        case let .owner(ownerID, task):
+            do {
+                let resolved = try await task.value
+                await ResolutionMemo.shared.finish(key: key, ownerID: ownerID, result: resolved)
+                return resolved
+            } catch {
+                await ResolutionMemo.shared.finish(key: key, ownerID: ownerID, result: nil)
+                throw error
+            }
         }
     }
 

@@ -67,4 +67,34 @@ final class PlaybackLoggingTests: XCTestCase {
         XCTAssertTrue(redacted.contains("api_key=REDACTED"))
         XCTAssertTrue(redacted.contains("VideoCodec=h264"))
     }
+
+    func testTrackSelectionLogsCannotEmitRawIDsURLsHeadersOrTokens() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = repositoryRoot
+            .appendingPathComponent("PlaybackEngine/Sources/PlaybackEngine/PlaybackSessionController.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        let selectionLogBlocks = lines.indices.compactMap { index -> String? in
+            guard lines[index].contains("nativeplayer.audio.selection_changed")
+                    || lines[index].contains("nativeplayer.subtitle.selection_changed") else {
+                return nil
+            }
+            let end = min(lines.index(index, offsetBy: 4, limitedBy: lines.endIndex) ?? lines.endIndex, lines.endIndex)
+            return lines[index..<end].joined(separator: "\n")
+        }
+
+        XCTAssertEqual(selectionLogBlocks.count, 2)
+        for block in selectionLogBlocks {
+            let lowered = block.lowercased()
+            XCTAssertFalse(lowered.contains(" id="))
+            XCTAssertFalse(lowered.contains("track.id"))
+            XCTAssertFalse(lowered.contains("url"))
+            XCTAssertFalse(lowered.contains("header"))
+            XCTAssertFalse(lowered.contains("token"))
+            XCTAssertFalse(lowered.contains("api_key"))
+        }
+    }
 }

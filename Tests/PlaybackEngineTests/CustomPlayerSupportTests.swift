@@ -395,6 +395,64 @@ final class CustomPlayerSupportTests: XCTestCase {
         XCTAssertNil(SubtitleOverlayModel.seconds(fromVTTTimestamp: "garbage"))
     }
 
+    @MainActor
+    func testSidecarSelectionBecomesActiveOnlyAfterSuccessfulLoadAndParse() async throws {
+        let parsed = try XCTUnwrap(SubtitleOverlayModel.parse(text: Self.validSRT))
+        let model = SubtitleOverlayModel(loadCues: { _ in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            return parsed
+        })
+        let track = ExternalSubtitleTrack(
+            id: "sidecar-success",
+            label: "French",
+            url: URL(string: "https://example.com/subtitle.srt")!
+        )
+        model.configure(tracks: [track])
+
+        model.select(trackID: track.id)
+
+        XCTAssertEqual(model.pendingTrackID, track.id)
+        XCTAssertNil(model.activeTrackID)
+        let confirmed = await waitUntil(timeout: 2) { model.activeTrackID == track.id }
+        XCTAssertTrue(confirmed)
+        XCTAssertNil(model.pendingTrackID)
+        XCTAssertNil(model.loadErrorMessage)
+    }
+
+    @MainActor
+    func testFailedSidecarIsNeverShownSelectedAndSurfacesPlayerError() async throws {
+        let model = SubtitleOverlayModel(loadCues: { _ in nil })
+        let track = ExternalSubtitleTrack(
+            id: "sidecar-failure",
+            label: "French",
+            url: URL(string: "https://example.com/broken.srt")!
+        )
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SubtitleFailure.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(maxBytes: 1_000_000)
+        )
+        let engine = CustomPlaybackEngine(
+            resolver: UnusedCustomSourceResolver(),
+            store: store,
+            subtitles: model
+        )
+        defer { engine.stop() }
+        model.configure(tracks: [track])
+
+        model.select(trackID: track.id)
+
+        let failed = await waitUntil(timeout: 2) { engine.bufferingState.phase == .failed }
+        XCTAssertTrue(failed)
+        XCTAssertNil(model.activeTrackID)
+        XCTAssertNil(model.pendingTrackID)
+        XCTAssertNotNil(model.loadErrorMessage)
+        XCTAssertNotNil(engine.errorMessage)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -403,6 +461,25 @@ final class CustomPlayerSupportTests: XCTestCase {
         model.debugInstall(cuesFrom: srt)
         return model
     }
+
+    @MainActor
+    private func waitUntil(
+        timeout: TimeInterval,
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+
+    private static let validSRT = """
+    1
+    00:00:01,000 --> 00:00:03,000
+    Bonjour
+    """
 
     private func makeSource(
         container: String?,
@@ -419,5 +496,11 @@ final class CustomPlayerSupportTests: XCTestCase {
             supportsDirectPlay: true,
             supportsDirectStream: true
         )
+    }
+}
+
+private struct UnusedCustomSourceResolver: CustomPlaybackSourceResolving {
+    func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
+        throw AppError.network("unused")
     }
 }

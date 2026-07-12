@@ -329,7 +329,7 @@ public final class CustomPlaybackEngine {
     public var onRequiresNativePlayback: (() -> Void)?
     /// External subtitles rendered by the player itself (AVFoundation can't inject sidecar text
     /// tracks into a progressive asset). The view binds the picker + the cue overlay.
-    public let subtitles = SubtitleOverlayModel()
+    public let subtitles: SubtitleOverlayModel
     /// Skip intro/credits suggestion (same resolver as everywhere in the app) — nil when none.
     public private(set) var activeSkipSuggestion: PlaybackSkipSuggestion?
     public private(set) var audioTracks: [CustomPlaybackAudioTrack] = []
@@ -468,13 +468,15 @@ public final class CustomPlaybackEngine {
         store: MediaGatewayStore,
         reporter: CustomPlaybackProgressReporting? = nil,
         prewarmer: CustomPlayerPrewarmer? = nil,
-        markers: CustomPlaybackMarkersProviding? = nil
+        markers: CustomPlaybackMarkersProviding? = nil,
+        subtitles: SubtitleOverlayModel? = nil
     ) {
         self.resolver = resolver
         self.store = store
         self.reporter = reporter
         self.prewarmer = prewarmer
         self.markers = markers
+        self.subtitles = subtitles ?? SubtitleOverlayModel()
         self.player = AVPlayer()
         self.player.automaticallyWaitsToMinimizeStalling = true
         // AirPlay is allowed — but the localhost cache URL is unreachable from a receiver, so the
@@ -492,6 +494,9 @@ public final class CustomPlaybackEngine {
             Task { @MainActor [weak self] in
                 self?.transportState = status == .paused ? .paused : .playing
             }
+        }
+        self.subtitles.onLoadFailure = { [weak self] message in
+            self?.enterFailedState(message: message)
         }
     }
 

@@ -41,12 +41,35 @@ enum NativePlayerSubtitleMenuPolicy {
         if let selected = real.first(where: \.isSelected)?.trackID {
             return selected
         }
+        if let defaultTrack = real.first(where: {
+            let label = normalizedLabel(for: $0)
+            return label.localizedCaseInsensitiveContains("default")
+                || label.localizedCaseInsensitiveContains("defaut")
+        })?.trackID {
+            return defaultTrack
+        }
         if let forced = real.first(where: {
-            ($0.badge ?? "").localizedCaseInsensitiveContains("forc")
+            normalizedLabel(for: $0).localizedCaseInsensitiveContains("forc")
         })?.trackID {
             return forced
         }
         return real.first?.trackID
+    }
+
+    private static func normalizedLabel(for option: PlaybackTrackOption) -> String {
+        "\(option.title) \(option.badge ?? "")"
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+}
+
+/// Player-route state that outlives the transient menu view. `nil` means Off and intentionally
+/// leaves the last confirmed enabled choice intact for Off → dismiss → reopen → On.
+struct NativePlayerSubtitleSelectionMemory: Equatable {
+    private(set) var lastEnabledID: String?
+
+    mutating func confirm(trackID: String?) {
+        guard let trackID else { return }
+        lastEnabledID = trackID
     }
 }
 

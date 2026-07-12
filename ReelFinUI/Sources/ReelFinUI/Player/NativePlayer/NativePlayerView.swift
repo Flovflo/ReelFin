@@ -27,6 +27,7 @@ struct NativePlayerView: View {
     @State private var committedSeekDirection: NativePlayerSeekDirection = .forward
     @State private var seekDisplayHoldUntil: Date?
     @State private var activeTrackMenu: PlaybackTrackMenuKind?
+    @State private var subtitleSelectionMemory = NativePlayerSubtitleSelectionMemory()
     @State private var activeInformationPanel: NativePlayerInformationPanel?
     @State private var showsDiagnostics = false
     @State private var isChromeUserActive = true
@@ -134,6 +135,7 @@ struct NativePlayerView: View {
                         mode: activeTrackMenu,
                         controls: playbackControls,
                         subtitleStyle: subtitleBackgroundStyle,
+                        lastEnabledSubtitleID: subtitleSelectionMemory.lastEnabledID,
                         onSelect: handleAVKitMenuSelection,
                         onSelectStyle: { subtitleBackgroundStyle = $0 },
                         onDismiss: dismissActivePanel
@@ -209,7 +211,11 @@ struct NativePlayerView: View {
             lastDeepEvidenceLogDate = nil
             lastDeepEvidencePlaybackTime = nil
             accessibilityEvidence.reset()
+            subtitleSelectionMemory.confirm(trackID: transportState.selectedSubtitleTrackID)
             revealChrome()
+        }
+        .onChange(of: transportState.selectedSubtitleTrackID) { _, trackID in
+            subtitleSelectionMemory.confirm(trackID: trackID)
         }
         .onChange(of: playbackURL) { _, _ in
             localStartTimeSeconds = startTimeSeconds ?? 0
