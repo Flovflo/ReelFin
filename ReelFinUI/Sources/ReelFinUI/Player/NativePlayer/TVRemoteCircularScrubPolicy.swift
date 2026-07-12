@@ -5,6 +5,12 @@ struct TVRemoteScrubSample: Equatable, Sendable {
     let location: CGPoint
     let center: CGPoint
     let timestamp: TimeInterval
+
+    fileprivate var isFinite: Bool {
+        location.x.isFinite && location.y.isFinite
+            && center.x.isFinite && center.y.isFinite
+            && timestamp.isFinite
+    }
 }
 
 struct TVRemoteScrubResolution: Equatable, Sendable {
@@ -19,6 +25,7 @@ enum TVRemoteCircularScrubPolicy {
         previous: TVRemoteScrubSample,
         current: TVRemoteScrubSample
     ) -> Double? {
+        guard previous.isFinite, current.isFinite else { return nil }
         let previousVector = CGPoint(
             x: previous.location.x - previous.center.x,
             y: previous.location.y - previous.center.y
@@ -40,11 +47,13 @@ enum TVRemoteCircularScrubPolicy {
     }
 
     static func secondsPerRevolution(duration: Double) -> Double {
-        min(max(duration / 30, 30), 300)
+        guard duration.isFinite else { return 30 }
+        return min(max(duration / 30, 30), 300)
     }
 
     static func velocityMultiplier(radiansPerSecond: Double) -> Double {
-        switch abs(radiansPerSecond) {
+        guard radiansPerSecond.isFinite else { return 1 }
+        return switch abs(radiansPerSecond) {
         case ..<0.6: 0.5
         case ..<2.2: 1
         case ..<4.0: 2
@@ -57,8 +66,14 @@ enum TVRemoteCircularScrubPolicy {
         weightedRadians: Double,
         duration: Double
     ) -> Double {
+        guard duration.isFinite, duration > 0 else { return 0 }
+        let clampedOriginal = original.isFinite ? min(max(original, 0), duration) : 0
+        guard weightedRadians.isFinite else { return clampedOriginal }
         let seconds = (weightedRadians / (2 * .pi)) * secondsPerRevolution(duration: duration)
-        return min(max(original + seconds, 0), duration)
+        guard seconds.isFinite else { return weightedRadians < 0 ? 0 : duration }
+        let candidate = clampedOriginal + seconds
+        guard candidate.isFinite else { return seconds < 0 ? 0 : duration }
+        return min(max(candidate, 0), duration)
     }
 }
 
@@ -86,6 +101,7 @@ struct TVRemoteCircularScrubSession: Equatable, Sendable {
         wasPlaying: Bool
     ) -> Bool {
         guard case .idle = phase,
+              sample.isFinite,
               duration.isFinite, duration > 0,
               originalTime.isFinite else { return false }
         let clampedOriginal = min(max(originalTime, 0), duration)
@@ -102,16 +118,21 @@ struct TVRemoteCircularScrubSession: Equatable, Sendable {
 
     mutating func update(_ sample: TVRemoteScrubSample) -> Double? {
         guard case var .preview(preview) = phase else { return nil }
+        let elapsed = sample.timestamp - preview.previousSample.timestamp
+        guard sample.isFinite, elapsed.isFinite, elapsed > 0 else {
+            return preview.targetTime
+        }
         defer { preview.previousSample = sample; phase = .preview(preview) }
         guard let delta = TVRemoteCircularScrubPolicy.angularDelta(
             previous: preview.previousSample,
             current: sample
         ) else { return preview.targetTime }
-        let elapsed = max(sample.timestamp - preview.previousSample.timestamp, 1.0 / 120.0)
         let multiplier = TVRemoteCircularScrubPolicy.velocityMultiplier(
-            radiansPerSecond: delta / elapsed
+            radiansPerSecond: delta / max(elapsed, 1.0 / 120.0)
         )
-        preview.weightedRadians += delta * multiplier
+        let weightedRadians = preview.weightedRadians + delta * multiplier
+        guard weightedRadians.isFinite else { return preview.targetTime }
+        preview.weightedRadians = weightedRadians
         preview.targetTime = TVRemoteCircularScrubPolicy.target(
             original: preview.originalTime,
             weightedRadians: preview.weightedRadians,

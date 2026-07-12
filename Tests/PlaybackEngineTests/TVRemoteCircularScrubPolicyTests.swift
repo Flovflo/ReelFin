@@ -12,6 +12,15 @@ final class TVRemoteCircularScrubPolicyTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(delta), 0.2, accuracy: 0.000_001)
     }
 
+    func testAngleUnwrapAcrossNegativePiMovesBackwardWithoutJump() throws {
+        let previous = sample(angle: -.pi + 0.1, timestamp: 0)
+        let current = sample(angle: .pi - 0.1, timestamp: 1)
+
+        let delta = TVRemoteCircularScrubPolicy.angularDelta(previous: previous, current: current)
+
+        XCTAssertEqual(try XCTUnwrap(delta), -0.2, accuracy: 0.000_001)
+    }
+
     func testClockwiseAndCounterClockwiseHaveOppositeSigns() throws {
         let origin = sample(angle: 0, timestamp: 0)
         let clockwise = sample(angle: .pi / 2, timestamp: 1)
@@ -37,8 +46,19 @@ final class TVRemoteCircularScrubPolicyTests: XCTestCase {
         XCTAssertNil(TVRemoteCircularScrubPolicy.angularDelta(previous: outside, current: inside))
     }
 
+    func testCenterDeadZoneBoundaryAtEighteenIsAccepted() throws {
+        let previous = sample(angle: 0, radius: 18, timestamp: 0)
+        let current = sample(angle: .pi / 2, radius: 18, timestamp: 1)
+
+        let delta = TVRemoteCircularScrubPolicy.angularDelta(previous: previous, current: current)
+
+        XCTAssertEqual(try XCTUnwrap(delta), .pi / 2, accuracy: 0.000_001)
+    }
+
     func testSecondsPerRevolutionScalesAndClamps() {
+        XCTAssertEqual(TVRemoteCircularScrubPolicy.secondsPerRevolution(duration: 900), 30)
         XCTAssertEqual(TVRemoteCircularScrubPolicy.secondsPerRevolution(duration: 1_800), 60)
+        XCTAssertEqual(TVRemoteCircularScrubPolicy.secondsPerRevolution(duration: 9_000), 300)
         XCTAssertEqual(TVRemoteCircularScrubPolicy.secondsPerRevolution(duration: 14_400), 300)
         XCTAssertEqual(TVRemoteCircularScrubPolicy.secondsPerRevolution(duration: 60), 30)
         XCTAssertEqual(TVRemoteCircularScrubPolicy.secondsPerRevolution(duration: 100_000), 300)
@@ -48,7 +68,60 @@ final class TVRemoteCircularScrubPolicyTests: XCTestCase {
         XCTAssertEqual(TVRemoteCircularScrubPolicy.velocityMultiplier(radiansPerSecond: 0.2), 0.5)
         XCTAssertEqual(TVRemoteCircularScrubPolicy.velocityMultiplier(radiansPerSecond: 0.6), 1)
         XCTAssertEqual(TVRemoteCircularScrubPolicy.velocityMultiplier(radiansPerSecond: -2.2), 2)
+        XCTAssertEqual(TVRemoteCircularScrubPolicy.velocityMultiplier(radiansPerSecond: 4.0), 4)
         XCTAssertEqual(TVRemoteCircularScrubPolicy.velocityMultiplier(radiansPerSecond: 8), 4)
+    }
+
+    func testPolicyHelpersNeutralizeNonFiniteInputs() {
+        let nonFiniteValues: [Double] = [.nan, .infinity, -.infinity]
+
+        for value in nonFiniteValues {
+            XCTAssertEqual(TVRemoteCircularScrubPolicy.secondsPerRevolution(duration: value), 30)
+            XCTAssertEqual(TVRemoteCircularScrubPolicy.velocityMultiplier(radiansPerSecond: value), 1)
+
+            let ignoredDeltaTarget = TVRemoteCircularScrubPolicy.target(
+                original: 50,
+                weightedRadians: value,
+                duration: 100
+            )
+            XCTAssertEqual(ignoredDeltaTarget, 50)
+            XCTAssertTrue(ignoredDeltaTarget.isFinite)
+
+            let invalidOriginalTarget = TVRemoteCircularScrubPolicy.target(
+                original: value,
+                weightedRadians: 0,
+                duration: 100
+            )
+            XCTAssertEqual(invalidOriginalTarget, 0)
+            XCTAssertTrue(invalidOriginalTarget.isFinite)
+
+            let invalidDurationTarget = TVRemoteCircularScrubPolicy.target(
+                original: 50,
+                weightedRadians: 0,
+                duration: value
+            )
+            XCTAssertEqual(invalidDurationTarget, 0)
+            XCTAssertTrue(invalidDurationTarget.isFinite)
+        }
+
+        XCTAssertEqual(
+            TVRemoteCircularScrubPolicy.target(
+                original: 50,
+                weightedRadians: .greatestFiniteMagnitude,
+                duration: 100
+            ),
+            100
+        )
+
+        let valid = sample(angle: 0, timestamp: 0)
+        let invalidGeometry = TVRemoteScrubSample(
+            location: CGPoint(x: CGFloat.nan, y: 100),
+            center: CGPoint(x: 100, y: 100),
+            timestamp: 1
+        )
+        let invalidTimestamp = sample(angle: .pi / 2, timestamp: .infinity)
+        XCTAssertNil(TVRemoteCircularScrubPolicy.angularDelta(previous: valid, current: invalidGeometry))
+        XCTAssertNil(TVRemoteCircularScrubPolicy.angularDelta(previous: valid, current: invalidTimestamp))
     }
 
     func testTargetClampsAtZeroAndDuration() {
@@ -128,6 +201,77 @@ final class TVRemoteCircularScrubPolicyTests: XCTestCase {
             duration: 100,
             wasPlaying: true
         ))
+    }
+
+    func testCircularSessionRejectsNonFiniteInitialSample() {
+        let invalidSamples = [
+            TVRemoteScrubSample(
+                location: CGPoint(x: CGFloat.nan, y: 100),
+                center: CGPoint(x: 100, y: 100),
+                timestamp: 0
+            ),
+            TVRemoteScrubSample(
+                location: CGPoint(x: CGFloat.infinity, y: 100),
+                center: CGPoint(x: 100, y: 100),
+                timestamp: 0
+            ),
+            sample(angle: 0, timestamp: .nan),
+            sample(angle: 0, timestamp: .infinity),
+            sample(angle: 0, timestamp: -.infinity)
+        ]
+
+        for invalidSample in invalidSamples {
+            var session = TVRemoteCircularScrubSession()
+            XCTAssertFalse(session.begin(
+                sample: invalidSample,
+                originalTime: 50,
+                duration: 100,
+                wasPlaying: true
+            ))
+            XCTAssertNil(session.commit())
+        }
+    }
+
+    func testCircularSessionIgnoresNonFiniteAndNonMonotonicUpdates() throws {
+        var session = TVRemoteCircularScrubSession()
+        XCTAssertTrue(session.begin(
+            sample: sample(angle: 0, timestamp: 10),
+            originalTime: 300,
+            duration: 1_800,
+            wasPlaying: true
+        ))
+
+        let invalidUpdates = [
+            sample(angle: .pi / 2, timestamp: .nan),
+            sample(angle: .pi / 2, timestamp: .infinity),
+            sample(angle: .pi / 2, timestamp: -.infinity),
+            TVRemoteScrubSample(
+                location: CGPoint(x: CGFloat.nan, y: 100),
+                center: CGPoint(x: 100, y: 100),
+                timestamp: 11
+            ),
+            TVRemoteScrubSample(
+                location: CGPoint(x: CGFloat.infinity, y: 100),
+                center: CGPoint(x: 100, y: 100),
+                timestamp: 11
+            ),
+            sample(angle: .pi / 2, timestamp: 10),
+            sample(angle: .pi / 2, timestamp: 9)
+        ]
+
+        for invalidUpdate in invalidUpdates {
+            let target = try XCTUnwrap(session.update(invalidUpdate))
+            XCTAssertEqual(target, 300)
+            XCTAssertTrue(target.isFinite)
+        }
+
+        let validTarget = try XCTUnwrap(session.update(sample(angle: .pi / 2, timestamp: 11)))
+        XCTAssertEqual(validTarget, 315, accuracy: 0.000_001)
+        XCTAssertTrue(validTarget.isFinite)
+
+        let resolution = try XCTUnwrap(session.commit())
+        XCTAssertEqual(resolution.targetSeconds, validTarget, accuracy: 0.000_001)
+        XCTAssertTrue(resolution.targetSeconds.isFinite)
     }
 
     func testCircularSessionUpdateIsLatestValueNotQueuedHistory() throws {
