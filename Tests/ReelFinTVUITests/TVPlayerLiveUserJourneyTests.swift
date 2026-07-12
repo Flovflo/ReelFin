@@ -270,12 +270,13 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         }
         XCUIRemote.shared.press(.select)
         if shouldCaptureCompactLaunchStates {
+            let preparationScreenshot = app.screenshot()
             let preparationPanel = app.otherElements["custom_player_launch_preparation"]
             XCTAssertTrue(
-                preparationPanel.waitForExistence(timeout: 8),
+                preparationPanel.exists || preparationPanel.waitForExistence(timeout: 8),
                 "The compact player preparation panel must appear before the first rendered frame."
             )
-            attachScreenshot(app, name: "compact-player-preparation")
+            attachScreenshot(preparationScreenshot, name: "compact-player-preparation")
             didCaptureCompactLaunchStates = true
         }
         XCTAssertTrue(app.otherElements["native_player_screen"].waitForExistence(timeout: 12))
@@ -680,7 +681,11 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     }
 
     private func attachScreenshot(_ app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachScreenshot(app.screenshot(), name: name)
+    }
+
+    private func attachScreenshot(_ screenshot: XCUIScreenshot, name: String) {
+        let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

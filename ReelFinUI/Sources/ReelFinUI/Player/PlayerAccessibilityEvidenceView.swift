@@ -161,6 +161,8 @@ struct PlayerAccessibilityEvidenceView: UIViewRepresentable {
     let didCompleteSeekToZero: Bool
     let readerGeneration: Int?
     let errorMessage: String?
+    var showsLaunchPreparation = false
+    var showsBuffering = false
 
     func makeUIView(context: Context) -> PlayerAccessibilityEvidenceContainerView {
         PlayerAccessibilityEvidenceContainerView()
@@ -177,7 +179,9 @@ struct PlayerAccessibilityEvidenceView: UIViewRepresentable {
             completedSeekTarget: completedSeekTarget,
             didCompleteSeekToZero: didCompleteSeekToZero,
             readerGeneration: readerGeneration,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            showsLaunchPreparation: showsLaunchPreparation,
+            showsBuffering: showsBuffering
         )
     }
 }
@@ -204,7 +208,9 @@ final class PlayerAccessibilityEvidenceContainerView: UIView {
         completedSeekTarget: Double?,
         didCompleteSeekToZero: Bool,
         readerGeneration: Int?,
-        errorMessage: String?
+        errorMessage: String?,
+        showsLaunchPreparation: Bool,
+        showsBuffering: Bool
     ) {
         setMarker("player_playback_time", value: String(format: "%.3f", max(0, playbackTime)))
         setMarker("player_transport_state", value: transportState.rawValue)
@@ -227,6 +233,8 @@ final class PlayerAccessibilityEvidenceContainerView: UIView {
             enabled: readerGeneration != nil
         )
         setMarker("player_error", value: errorMessage, enabled: errorMessage != nil)
+        setMarker("custom_player_launch_preparation", enabled: showsLaunchPreparation)
+        setMarker("custom_player_buffering", enabled: showsBuffering)
     }
 
     private func setMarker(

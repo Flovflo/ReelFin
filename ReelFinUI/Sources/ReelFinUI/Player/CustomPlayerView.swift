@@ -199,7 +199,13 @@ struct CustomPlayerView: View {
                     completedSeekTarget: accessibilityEvidence.completedSeekTarget,
                     didCompleteSeekToZero: accessibilityEvidence.didCompleteSeekToZero,
                     readerGeneration: engine.loadGeneration,
-                    errorMessage: customAccessibilityError
+                    errorMessage: customAccessibilityError,
+                    showsLaunchPreparation: isLaunching,
+                    showsBuffering: engine.bufferingState.isLoadingBarVisible
+                        && CustomPlayerLaunchPresentationPolicy.showsInterruptionOverlay(
+                            phase: engine.bufferingState.phase,
+                            reservoirSeconds: engine.bufferingState.reservoirSeconds
+                        )
                 )
                 .frame(width: 1, height: 1)
             }
@@ -489,7 +495,6 @@ struct CustomPlayerView: View {
                 .regular.tint(.black.opacity(0.18)),
                 in: .rect(cornerRadius: layout.cornerRadius)
             )
-            .accessibilityIdentifier("custom_player_launch_preparation")
 #else
         let panel = HStack(alignment: .center, spacing: 18) {
             ProgressView()
@@ -600,7 +605,6 @@ struct CustomPlayerView: View {
                 .regular.tint(.black.opacity(0.18)),
                 in: .rect(cornerRadius: layout.cornerRadius)
             )
-            .accessibilityIdentifier("custom_player_buffering")
 #else
         let panel = HStack(spacing: 14) {
             ProgressView()
