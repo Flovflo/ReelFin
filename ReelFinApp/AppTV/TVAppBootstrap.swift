@@ -98,7 +98,8 @@ final class TVAppContainer {
         let controller = PlaybackSessionController(
             apiClient: apiClient,
             repository: repository,
-            warmupManager: playbackWarmupManager
+            warmupManager: playbackWarmupManager,
+            progressPersistenceEnabled: !TVLiveUIAutomationPolicy.isEnabledForCurrentProcess
         )
         sharedPlaybackSessionController = controller
         return controller

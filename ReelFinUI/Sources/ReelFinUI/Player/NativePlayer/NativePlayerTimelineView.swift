@@ -4,14 +4,23 @@ struct NativePlayerTimelineView: View {
     let presentation: NativePlayerChromePresentation
     let playbackTime: Double
     let durationSeconds: Double?
+    let onSeekRelative: (Double) -> Void
     let onSeekAbsolute: (Double) -> Void
+    let onSelect: () -> Void
+#if os(tvOS)
+    let focus: FocusState<NativePlayerTVChromeFocus?>.Binding
+    let availableActions: [NativePlayerTVChromeAction]
+    let onCommand: (NativePlayerTVTransportCommand) -> Void
+#endif
     @State private var scrubValue: Double?
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 5) {
             scrubberControl
             timeLabels
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("native_player_timeline")
     }
 
     @ViewBuilder
@@ -19,7 +28,10 @@ struct NativePlayerTimelineView: View {
 #if os(tvOS)
         NativePlayerTVProgressScrubberView(
             playbackTime: scrubValue ?? playbackTime,
-            durationSeconds: durationSeconds
+            durationSeconds: durationSeconds,
+            focus: focus,
+            availableActions: availableActions,
+            onCommand: onCommand
         )
 #else
         Slider(
@@ -31,22 +43,36 @@ struct NativePlayerTimelineView: View {
     }
 
     private var timeLabels: some View {
+#if os(tvOS)
         GeometryReader { proxy in
-            ZStack(alignment: .topLeading) {
+            ZStack {
                 Text(presentation.currentTimeText)
-                    .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
-                    .offset(x: currentLabelX(width: proxy.size.width), y: 0)
-
+                    .position(
+                        x: NativePlayerTVTimelineLabelLayout.currentCenterX(
+                            progress: presentation.progress,
+                            width: proxy.size.width
+                        ),
+                        y: 13
+                    )
                 Text(presentation.remainingTimeText)
-                    .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
             }
         }
-        .frame(height: 30)
+        .frame(height: 26)
+        .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.82))
+        .shadow(color: .black.opacity(0.32), radius: 4, y: 1)
+#else
+        HStack(spacing: 20) {
+            Text(presentation.currentTimeText)
+            Spacer(minLength: 0)
+            Text(presentation.remainingTimeText)
+        }
+        .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.82))
+        .shadow(color: .black.opacity(0.32), radius: 4, y: 1)
+        .frame(height: 26)
+#endif
     }
 
     private var scrubBinding: Binding<Double> {
@@ -62,10 +88,4 @@ struct NativePlayerTimelineView: View {
         self.scrubValue = nil
     }
 
-    private func currentLabelX(width: CGFloat) -> CGFloat {
-        let labelWidth: CGFloat = 92
-        let progress = CGFloat(presentation.progress)
-        let centered = (width * progress) - (labelWidth / 2)
-        return min(max(0, centered), max(0, width - labelWidth))
-    }
 }

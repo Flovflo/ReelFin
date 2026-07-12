@@ -67,7 +67,8 @@ actor LocalMediaGatewayPrefetcher {
         self.store = store
         self.configuration = configuration
         sessionConfiguration.networkServiceType = .background
-        self.sessionConfiguration = sessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral
+        self.sessionConfiguration = sessionConfiguration.copy() as? URLSessionConfiguration
+            ?? MediaOriginTransport.makeConfiguration()
         self.session = URLSession(configuration: sessionConfiguration)
     }
 
@@ -231,7 +232,8 @@ actor LocalMediaGatewayPrefetcher {
         // prefetch window so an open-ended upstream response stops at range.length.
         let (payload, http) = try await HTTPChunkedRangeReader.collect(
             request: request,
-            configuration: sessionConfiguration.copy() as? URLSessionConfiguration ?? .ephemeral,
+            configuration: sessionConfiguration.copy() as? URLSessionConfiguration
+                ?? MediaOriginTransport.makeConfiguration(),
             maxLength: range.length
         )
         guard http.statusCode == 206 || (http.statusCode == 200 && range.offset == 0) else {

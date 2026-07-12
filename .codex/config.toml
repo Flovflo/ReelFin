@@ -1,0 +1,11 @@
+[mcp_servers.XcodeBuildMCP]
+command = "npx"
+args = [
+    "-y",
+    "xcodebuildmcp@latest",
+]
+
+[mcp_servers.XcodeBuildMCP.env]
+INCREMENTAL_BUILDS_ENABLED = "true"
+XCODEBUILDMCP_DYNAMIC_TOOLS = "true"
+XCODEBUILDMCP_ENABLED_WORKFLOWS = "simulator,device,project-discovery,swift-package"

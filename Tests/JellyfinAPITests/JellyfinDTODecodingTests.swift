@@ -4,6 +4,26 @@ import XCTest
 final class JellyfinDTODecodingTests: XCTestCase {
     private let decoder = JSONDecoder()
 
+    func testTVOSOptimizedProfileOffersHEVCVideoCopyBeforeH264Fallback() throws {
+        let profile = DeviceProfileRequestDTO.tvOSOptimized(
+            maxStreamingBitrate: 80_000_000,
+            maxAudioChannels: 8
+        )
+        let data = try JSONEncoder().encode(profile)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let transcodingProfiles = try XCTUnwrap(json["TranscodingProfiles"] as? [[String: Any]])
+        XCTAssertEqual(transcodingProfiles.count, 2)
+        let videoProfile = try XCTUnwrap(transcodingProfiles.first)
+        let fallbackProfile = try XCTUnwrap(transcodingProfiles.last)
+
+        XCTAssertEqual(videoProfile["Container"] as? String, "fmp4")
+        XCTAssertEqual(videoProfile["VideoCodec"] as? String, "hevc")
+        XCTAssertEqual(videoProfile["AudioCodec"] as? String, "eac3,ac3,aac")
+        XCTAssertEqual(fallbackProfile["VideoCodec"] as? String, "h264")
+        XCTAssertEqual(fallbackProfile["Container"] as? String, "ts")
+        XCTAssertEqual(fallbackProfile["AudioCodec"] as? String, "eac3,ac3,aac")
+    }
+
     // MARK: - ItemsResponseDTO
 
     func testItemsResponseDecodes_normalPayload() throws {
@@ -149,6 +169,30 @@ final class JellyfinDTODecodingTests: XCTestCase {
 
         let item = try decoder.decode(ItemDTO.self, from: json)
         XCTAssertEqual(item.id, "item-1")
+    }
+
+    func testEpisodeDomainParentUsesSeriesIDInsteadOfSeasonParentID() throws {
+        let json = """
+        {
+            "Id": "episode-1",
+            "Name": "Episode 1",
+            "Type": "Episode",
+            "ParentId": "season-1",
+            "SeriesId": "series-1",
+            "SeriesName": "Star City",
+            "ParentIndexNumber": 1,
+            "IndexNumber": 1
+        }
+        """.data(using: .utf8)!
+
+        let dto = try decoder.decode(ItemDTO.self, from: json)
+        let item = dto.toDomain()
+
+        XCTAssertEqual(
+            item.parentID,
+            "series-1",
+            "MediaItem.parentID is the series relationship throughout ReelFin; Jellyfin ParentId is only the season for episodes"
+        )
     }
 
     // MARK: - Full realistic Jellyfin response

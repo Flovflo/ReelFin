@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Shared
 import XCTest
@@ -6,6 +7,267 @@ import XCTest
 /// Pure support logic of the custom player: MIME resolution (the tvOS no-first-frame root cause),
 /// external subtitle track building, and the subtitle cue pipeline.
 final class CustomPlayerSupportTests: XCTestCase {
+    func testMKVHEVCAndH264RequireNativeDemuxInsteadOfJellyfinFMP4() {
+        XCTAssertTrue(
+            JellyfinOriginalSourceResolver.requiresNativeOriginalPlayback(
+                for: makeSource(container: "mkv", filePath: "/media/episode.mkv", videoCodec: "hevc")
+            )
+        )
+        XCTAssertTrue(
+            JellyfinOriginalSourceResolver.requiresNativeOriginalPlayback(
+                for: makeSource(container: "matroska", filePath: nil, videoCodec: "h264")
+            )
+        )
+    }
+
+    func testAppleNativeMP4AndUnsupportedMKVCodecStayOutOfNativeDemuxHandoff() {
+        XCTAssertFalse(
+            JellyfinOriginalSourceResolver.requiresNativeOriginalPlayback(
+                for: makeSource(container: "mp4", filePath: "/media/movie.mp4", videoCodec: "hevc")
+            )
+        )
+        XCTAssertFalse(
+            JellyfinOriginalSourceResolver.requiresNativeOriginalPlayback(
+                for: makeSource(container: "mkv", filePath: "/media/movie.mkv", videoCodec: "av1")
+            )
+        )
+    }
+
+    func testAdaptiveVideoCopyUsesOriginalQualityPhase() {
+        XCTAssertEqual(
+            CustomAdaptivePlaybackPolicy.phase(isStarving: false, preservesOriginalVideo: true),
+            .playing
+        )
+        XCTAssertEqual(
+            CustomAdaptivePlaybackPolicy.phase(isStarving: false, preservesOriginalVideo: false),
+            .degradedSDR
+        )
+        XCTAssertEqual(
+            CustomAdaptivePlaybackPolicy.phase(isStarving: true, preservesOriginalVideo: true),
+            .buffering
+        )
+    }
+
+    // MARK: - Local-cache steady-state transport
+
+    @MainActor
+    func testLocalCacheTransportDoesNotForceHugeCoreMediaReadAhead() {
+        let player = AVPlayer()
+        player.automaticallyWaitsToMinimizeStalling = true
+        let item = AVPlayerItem(asset: AVMutableComposition())
+        item.preferredForwardBufferDuration = 30
+
+        CustomLocalCachePlaybackPolicy.configure(player: player, item: item)
+
+        XCTAssertEqual(item.preferredForwardBufferDuration, 0,
+            "the disk reservoir owns read-ahead; forcing 30s makes CoreMedia request ~130MB 4K ranges and exhaust CRABS")
+        XCTAssertFalse(player.automaticallyWaitsToMinimizeStalling,
+            "localhost cache misses must surface immediately instead of parking forever in AVPlayerWaitingToMinimizeStallsReason")
+    }
+
+    func testDeepCachedStallEscalatesFromImmediatePlayToWarmItemRebuild() {
+        XCTAssertEqual(
+            CustomLocalCachePlaybackPolicy.recoveryAction(
+                isWaiting: true,
+                observedPlaybackStall: false,
+                reservoirSeconds: 120,
+                stagnantSeconds: 2.1,
+                alreadyForcedImmediatePlayback: false
+            ),
+            .forceImmediatePlayback
+        )
+        XCTAssertEqual(
+            CustomLocalCachePlaybackPolicy.recoveryAction(
+                isWaiting: true,
+                observedPlaybackStall: false,
+                reservoirSeconds: 120,
+                stagnantSeconds: 6.1,
+                alreadyForcedImmediatePlayback: true
+            ),
+            .rebuildWarmItem
+        )
+        XCTAssertEqual(
+            CustomLocalCachePlaybackPolicy.recoveryAction(
+                isWaiting: true,
+                observedPlaybackStall: false,
+                reservoirSeconds: 0,
+                stagnantSeconds: 30,
+                alreadyForcedImmediatePlayback: true
+            ),
+            .waitForBytes,
+            "an actual empty cache is a network/data stall, not a poisoned local AVPlayer item"
+        )
+    }
+
+    func testExplicitDeepCachedStallForcesImmediatePlaybackWithoutVisibleDelay() {
+        XCTAssertEqual(
+            CustomLocalCachePlaybackPolicy.recoveryAction(
+                isWaiting: false,
+                observedPlaybackStall: true,
+                reservoirSeconds: 503,
+                stagnantSeconds: 0,
+                alreadyForcedImmediatePlayback: false
+            ),
+            .forceImmediatePlayback,
+            "PlaybackStalled with a deep localhost reservoir is not a network wait; resume it on the notification tick"
+        )
+    }
+
+    func testResidualClockCoastCannotClearPausedPlaybackStall() {
+        XCTAssertFalse(
+            CustomLocalCachePlaybackPolicy.hasRecoveredFromObservedStall(
+                positionAdvanced: true,
+                playbackRate: 0
+            ),
+            "the device advanced a fraction after PlaybackStalled, then stayed permanently at rate 0"
+        )
+        XCTAssertTrue(
+            CustomLocalCachePlaybackPolicy.hasRecoveredFromObservedStall(
+                positionAdvanced: true,
+                playbackRate: 1
+            )
+        )
+    }
+
+    func testNoStallWaitPausedStateIsRecoverableOnlyAfterObservedPlaybackStall() {
+        XCTAssertTrue(
+            CustomLocalCachePlaybackPolicy.transportNeedsRecovery(
+                isWaiting: false,
+                observedPlaybackStall: true
+            ),
+            "CoreMedia NoStallWait changes to .paused after PlaybackStalled; that paused stall must enter recovery"
+        )
+        XCTAssertFalse(
+            CustomLocalCachePlaybackPolicy.transportNeedsRecovery(
+                isWaiting: false,
+                observedPlaybackStall: false
+            ),
+            "a normal user pause must never be auto-resumed"
+        )
+    }
+
+    // MARK: - Audio output recovery
+
+    func testPhysicalIOSPlaybackAudioConfigurationNeverUsesPlayAndRecordOnlyAirPlayOption() {
+        let configuration = PlaybackAudioSessionPolicy.configuration(isSimulator: false)
+
+        XCTAssertEqual(configuration.category, .playback)
+        XCTAssertEqual(configuration.mode, .moviePlayback)
+        XCTAssertFalse(
+            configuration.options.contains(.allowAirPlay),
+            "the iOS SDK only permits allowAirPlay with playAndRecord; using it with playback returns OSStatus -50"
+        )
+    }
+
+    func testNewAudioDeviceRouteDoesNotReenterSessionActivation() {
+        XCTAssertFalse(
+            CustomPlayerAudioRecoveryPolicy.shouldRecoverRouteChange(.newDeviceAvailable),
+            "activating the playback session can publish this route event; reacting would activate a second time while playback starts"
+        )
+    }
+
+    func testAudioRouteLossReactivatesSessionAndPreservesPlayingIntent() {
+        XCTAssertTrue(
+            CustomPlayerAudioRecoveryPolicy.shouldRecoverRouteChange(.oldDeviceUnavailable),
+            "a genuine output removal still needs session recovery"
+        )
+        XCTAssertEqual(
+            CustomPlayerAudioRecoveryPolicy.decision(
+                for: .routeChanged,
+                wasPlaying: true
+            ),
+            .init(reactivateSession: true, resumePlayback: true)
+        )
+    }
+
+    func testAudioRouteChangeWhilePausedNeverStartsPlayback() {
+        XCTAssertEqual(
+            CustomPlayerAudioRecoveryPolicy.decision(
+                for: .routeChanged,
+                wasPlaying: false
+            ),
+            .init(reactivateSession: true, resumePlayback: false)
+        )
+    }
+
+    func testInterruptionEndOnlyResumesWhenSystemAndUserIntentAllowIt() {
+        XCTAssertEqual(
+            CustomPlayerAudioRecoveryPolicy.decision(
+                for: .interruptionEnded(systemShouldResume: true),
+                wasPlaying: true
+            ),
+            .init(reactivateSession: true, resumePlayback: true)
+        )
+        XCTAssertEqual(
+            CustomPlayerAudioRecoveryPolicy.decision(
+                for: .interruptionEnded(systemShouldResume: false),
+                wasPlaying: true
+            ),
+            .init(reactivateSession: true, resumePlayback: false)
+        )
+        XCTAssertEqual(
+            CustomPlayerAudioRecoveryPolicy.decision(
+                for: .interruptionEnded(systemShouldResume: true),
+                wasPlaying: false
+            ),
+            .init(reactivateSession: true, resumePlayback: false)
+        )
+    }
+
+    // MARK: - First-frame proof
+
+    func testIOSRejectsTimelineOnlyAsVisibleFirstFrameProof() {
+        XCTAssertFalse(
+            CustomPlayerFirstFrameProofPolicy.acceptsTimelineProgress(
+                isTVOS: false,
+                isExternalPlaybackActive: false,
+                itemReady: true,
+                previousSeconds: 12,
+                currentSeconds: 13
+            ),
+            "audio/timeline can advance while the iOS AVKit surface is still black or detached"
+        )
+    }
+
+    func testTVOSLocalPlaybackKeepsLaunchCoverUntilAVKitSurfaceIsVisible() {
+        XCTAssertFalse(
+            CustomPlayerFirstFrameProofPolicy.acceptsTimelineProgress(
+                isTVOS: true,
+                isExternalPlaybackActive: false,
+                itemReady: true,
+                previousSeconds: 12,
+                currentSeconds: 13
+            )
+        )
+        XCTAssertFalse(
+            CustomPlayerFirstFrameProofPolicy.acceptsLocalPixelProbe(
+                isTVOS: true,
+                videoFramesObserved: true
+            ),
+            "a decoded probe frame can arrive before AVPlayerViewController presents it; only isReadyForDisplay may remove the cover"
+        )
+    }
+
+    func testTVOSAirPlayAcceptsReadyAdvancingTimeline() {
+        XCTAssertTrue(
+            CustomPlayerFirstFrameProofPolicy.acceptsTimelineProgress(
+                isTVOS: true,
+                isExternalPlaybackActive: true,
+                itemReady: true,
+                previousSeconds: 12,
+                currentSeconds: 12.25
+            )
+        )
+        XCTAssertFalse(
+            CustomPlayerFirstFrameProofPolicy.acceptsTimelineProgress(
+                isTVOS: true,
+                isExternalPlaybackActive: true,
+                itemReady: false,
+                previousSeconds: 12,
+                currentSeconds: 13
+            )
+        )
+    }
 
     // MARK: - MIME (tvOS device regression 2026-07-02)
 
@@ -63,6 +325,41 @@ final class CustomPlayerSupportTests: XCTestCase {
         XCTAssertEqual(tracks[1].label, "en", "untitled tracks fall back to their language")
     }
 
+    func testPreferredStableTwinKeepsSiblingSubtitleDeliverySource() throws {
+        var subtitleOwner = makeSource(container: "mkv", filePath: "/media/episode.mkv")
+        subtitleOwner.id = "subtitle-owner"
+        subtitleOwner.subtitleTracks = [
+            MediaTrack(
+                id: "s1",
+                title: "Français",
+                language: "fr",
+                codec: "subrip",
+                isDefault: false,
+                index: 7
+            )
+        ]
+        var stable = makeSource(container: "mp4", filePath: "/media/episode.mp4")
+        stable.id = "stable-video"
+
+        let enriched = try XCTUnwrap(
+            PlaybackCoordinator.preferringContainers(
+                [subtitleOwner, stable],
+                ["mp4"],
+                itemID: stable.itemID
+            ).first
+        )
+        let tracks = JellyfinOriginalSourceResolver.externalSubtitleTracks(
+            for: enriched,
+            assetURL: URL(string: "https://server.example/Videos/item/stream?api_key=redacted")!
+        )
+
+        XCTAssertEqual(tracks.count, 1)
+        XCTAssertEqual(
+            tracks.first?.url.path,
+            "/Videos/\(stable.itemID)/subtitle-owner/Subtitles/7/0/Stream.srt"
+        )
+    }
+
     // MARK: - Subtitle cue pipeline
 
     @MainActor
@@ -98,6 +395,64 @@ final class CustomPlayerSupportTests: XCTestCase {
         XCTAssertNil(SubtitleOverlayModel.seconds(fromVTTTimestamp: "garbage"))
     }
 
+    @MainActor
+    func testSidecarSelectionBecomesActiveOnlyAfterSuccessfulLoadAndParse() async throws {
+        let parsed = try XCTUnwrap(SubtitleOverlayModel.parse(text: Self.validSRT))
+        let model = SubtitleOverlayModel(loadCues: { _ in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            return parsed
+        })
+        let track = ExternalSubtitleTrack(
+            id: "sidecar-success",
+            label: "French",
+            url: URL(string: "https://example.com/subtitle.srt")!
+        )
+        model.configure(tracks: [track])
+
+        model.select(trackID: track.id)
+
+        XCTAssertEqual(model.pendingTrackID, track.id)
+        XCTAssertNil(model.activeTrackID)
+        let confirmed = await waitUntil(timeout: 2) { model.activeTrackID == track.id }
+        XCTAssertTrue(confirmed)
+        XCTAssertNil(model.pendingTrackID)
+        XCTAssertNil(model.loadErrorMessage)
+    }
+
+    @MainActor
+    func testFailedSidecarIsNeverShownSelectedAndSurfacesPlayerError() async throws {
+        let model = SubtitleOverlayModel(loadCues: { _ in nil })
+        let track = ExternalSubtitleTrack(
+            id: "sidecar-failure",
+            label: "French",
+            url: URL(string: "https://example.com/broken.srt")!
+        )
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SubtitleFailure.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(maxBytes: 1_000_000)
+        )
+        let engine = CustomPlaybackEngine(
+            resolver: UnusedCustomSourceResolver(),
+            store: store,
+            subtitles: model
+        )
+        defer { engine.stop() }
+        model.configure(tracks: [track])
+
+        model.select(trackID: track.id)
+
+        let failed = await waitUntil(timeout: 2) { engine.bufferingState.phase == .failed }
+        XCTAssertTrue(failed)
+        XCTAssertNil(model.activeTrackID)
+        XCTAssertNil(model.pendingTrackID)
+        XCTAssertNotNil(model.loadErrorMessage)
+        XCTAssertNotNil(engine.errorMessage)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -107,15 +462,45 @@ final class CustomPlayerSupportTests: XCTestCase {
         return model
     }
 
-    private func makeSource(container: String?, filePath: String?) -> MediaSource {
+    @MainActor
+    private func waitUntil(
+        timeout: TimeInterval,
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+
+    private static let validSRT = """
+    1
+    00:00:01,000 --> 00:00:03,000
+    Bonjour
+    """
+
+    private func makeSource(
+        container: String?,
+        filePath: String?,
+        videoCodec: String? = nil
+    ) -> MediaSource {
         MediaSource(
             id: "source-1",
             itemID: "item-1",
             name: "Fixture",
             filePath: filePath,
             container: container,
+            videoCodec: videoCodec,
             supportsDirectPlay: true,
             supportsDirectStream: true
         )
+    }
+}
+
+private struct UnusedCustomSourceResolver: CustomPlaybackSourceResolving {
+    func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
+        throw AppError.network("unused")
     }
 }

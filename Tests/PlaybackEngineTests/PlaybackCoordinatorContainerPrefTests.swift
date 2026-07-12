@@ -8,7 +8,12 @@ import XCTest
 /// that the right source is chosen (and that MKV-only titles are never made unplayable).
 final class PlaybackCoordinatorContainerPrefTests: XCTestCase {
 
-    private func source(id: String, path: String?, container: String?) -> MediaSource {
+    private func source(
+        id: String,
+        path: String?,
+        container: String?,
+        subtitles: [MediaTrack] = []
+    ) -> MediaSource {
         MediaSource(
             id: id,
             itemID: "item",
@@ -21,7 +26,8 @@ final class PlaybackCoordinatorContainerPrefTests: XCTestCase {
             supportsDirectStream: true,
             directStreamURL: nil,
             directPlayURL: nil,
-            transcodeURL: nil
+            transcodeURL: nil,
+            subtitleTracks: subtitles
         )
     }
 
@@ -48,7 +54,20 @@ final class PlaybackCoordinatorContainerPrefTests: XCTestCase {
 
     func testNoPreferenceIsANoOp() {
         let mkv = source(id: "mkv", path: "/media/x.mkv", container: "mkv")
-        let mp4 = source(id: "mp4", path: "/media/x.mp4", container: "mp4")
+        let placeholder = MediaTrack(
+            id: "subtitle-1",
+            title: "Français",
+            language: "fr",
+            codec: nil,
+            isDefault: false,
+            index: 4
+        )
+        let mp4 = source(
+            id: "mp4",
+            path: "/media/x.mp4",
+            container: "mp4",
+            subtitles: [placeholder]
+        )
         XCTAssertEqual(PlaybackCoordinator.preferringContainers([mkv, mp4], nil, itemID: "item").map(\.id), ["mkv", "mp4"])
         XCTAssertEqual(PlaybackCoordinator.preferringContainers([mkv, mp4], [], itemID: "item").map(\.id), ["mkv", "mp4"])
     }
@@ -65,5 +84,33 @@ final class PlaybackCoordinatorContainerPrefTests: XCTestCase {
         let mp4 = source(id: "mp4", path: nil, container: "mp4")
         let kept = PlaybackCoordinator.preferringContainers([mkv, mp4], ["mp4"], itemID: "item")
         XCTAssertEqual(kept.map(\.id), ["mp4"], "With no Path, fall back to the Container field.")
+    }
+
+    func testDoesNotDiscardTextSubtitleTracksWhenPreferredTwinHasNone() {
+        let srt = MediaTrack(
+            id: "subtitle-1",
+            title: "Français",
+            language: "fr",
+            codec: "subrip",
+            isDefault: false,
+            index: 4
+        )
+        let mkv = source(id: "mkv", path: "/media/x.mkv", container: "mkv", subtitles: [srt])
+        let mp4 = source(id: "mp4", path: "/media/x.mp4", container: "mp4")
+
+        let kept = PlaybackCoordinator.preferringContainers([mkv, mp4], ["mp4"], itemID: "item")
+
+        XCTAssertEqual(kept.map(\.id), ["mp4"], "The stable preferred container must remain selected.")
+        XCTAssertEqual(kept.first?.subtitleTracks.map(\.id), ["subtitle-1"], "Text subtitle metadata from a sibling source must remain selectable.")
+        XCTAssertEqual(
+            kept.first?.subtitleTracks.first?.deliverySourceID,
+            "mkv",
+            "Sidecar delivery must retain the sibling source that owns the subtitle stream."
+        )
+        XCTAssertEqual(
+            kept.first?.subtitleTracks.first?.codec,
+            "subrip",
+            "Incomplete same-ID placeholders must be upgraded with the sibling's text codec."
+        )
     }
 }

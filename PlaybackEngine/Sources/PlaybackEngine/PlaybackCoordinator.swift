@@ -85,6 +85,27 @@ public actor PlaybackCoordinator {
         self.ttffTuning = decisionEngine.ttffTuning
     }
 
+    /// Opaque authenticated scope used only by in-memory playback memoization. The fields are
+    /// deliberately never formatted or logged: a changed server, user, or token starts a distinct
+    /// cache generation so signed URLs and authorization headers cannot cross sessions.
+    struct AuthenticatedSessionScope: Hashable, Sendable {
+        let server: String
+        let userID: String
+        let token: String
+    }
+
+    func authenticatedSessionScope() async throws -> AuthenticatedSessionScope {
+        guard let configuration = await apiClient.currentConfiguration(),
+              let session = await apiClient.currentSession() else {
+            throw AppError.unauthenticated
+        }
+        return AuthenticatedSessionScope(
+            server: configuration.serverURL.absoluteString,
+            userID: session.userID,
+            token: session.token
+        )
+    }
+
     /// Restrict the candidate sources to a preferred CONTAINER when one exists (opt-in; `nil`/empty
     /// preference is a no-op). The custom player uses this to play a title's `.mp4` version over its
     /// `.mkv` twin: an MKV is read by AVKit's demuxer with index/Cues SEEKS that miss the contiguous
@@ -94,12 +115,57 @@ public actor PlaybackCoordinator {
     static func preferringContainers(_ sources: [MediaSource], _ preferred: [String]?, itemID: String) -> [MediaSource] {
         guard let preferred, !preferred.isEmpty, sources.count > 1 else { return sources }
         let wanted = Set(preferred.map { $0.lowercased() })
-        let matching = sources.filter { sourceContainerTokens($0).contains(where: wanted.contains) }
+        var matching = sources.filter { sourceContainerTokens($0).contains(where: wanted.contains) }
         guard !matching.isEmpty, matching.count < sources.count else { return sources }
+        let textSubtitleCodecs: Set<String> = ["srt", "subrip", "vtt", "webvtt"]
+        let hasTextSubtitles: (MediaSource) -> Bool = { source in
+            source.subtitleTracks.contains { track in
+                guard let codec = track.codec?.lowercased() else { return false }
+                return textSubtitleCodecs.contains(codec)
+            }
+        }
+        if !matching.contains(where: hasTextSubtitles) {
+            let textTracks = sources
+                .filter(hasTextSubtitles)
+                .flatMap { source in
+                    source.subtitleTracks.compactMap { track -> MediaTrack? in
+                        guard let codec = track.codec?.lowercased(), textSubtitleCodecs.contains(codec) else {
+                            return nil
+                        }
+                        var deliveredTrack = track
+                        deliveredTrack.deliverySourceID = source.id
+                        return deliveredTrack
+                    }
+                }
+            if !textTracks.isEmpty {
+                for index in matching.indices {
+                    for textTrack in textTracks {
+                        if let existingIndex = matching[index].subtitleTracks.firstIndex(where: { $0.id == textTrack.id }) {
+                            // Jellyfin can expose placeholder entries on the MP4 twin with the same
+                            // stream IDs but no codec. Upgrade those entries instead of treating the
+                            // richer sibling metadata as a duplicate.
+                            if !hasTextSubtitleCodec(matching[index].subtitleTracks[existingIndex]) {
+                                matching[index].subtitleTracks[existingIndex] = textTrack
+                            }
+                        } else {
+                            matching[index].subtitleTracks.append(textTrack)
+                        }
+                    }
+                }
+                AppLog.playback.notice(
+                    "playback.source.container_pref_preserves_subtitles — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) tracks=\(textTracks.count, privacy: .public)"
+                )
+            }
+        }
         AppLog.playback.notice(
             "playback.source.container_pref — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) kept=\(matching.count, privacy: .public)/\(sources.count, privacy: .public) preferred=\(preferred.joined(separator: ","), privacy: .public)"
         )
         return matching
+    }
+
+    private static func hasTextSubtitleCodec(_ track: MediaTrack) -> Bool {
+        guard let codec = track.codec?.lowercased() else { return false }
+        return ["srt", "subrip", "vtt", "webvtt"].contains(codec)
     }
 
     /// The real container(s) of a source: the file-path extension is authoritative (`…/x.mkv`),

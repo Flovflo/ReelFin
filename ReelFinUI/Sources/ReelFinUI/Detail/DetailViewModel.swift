@@ -47,6 +47,13 @@ final class DetailViewModel {
 #endif
     }
 
+    /// With the custom engine on, playback preparation belongs to `CustomPlayerPrewarmer` (armed by
+    /// the view) — the legacy warm pipeline (PlaybackInfo + preheat range probe + server baseline)
+    /// would duplicate every network step of it without feeding the engine anything.
+    private var usesCustomPlayerEngine: Bool {
+        dependencies.settingsStore.useCustomPlayerEngine
+    }
+
     init(item: MediaItem, preferredEpisode: MediaItem? = nil, dependencies: ReelFinDependencies) {
         self.detail = MediaDetail(item: item)
         self.preferredEpisode = preferredEpisode
@@ -109,9 +116,21 @@ final class DetailViewModel {
     }
 
     func prepareEpisodePlayback(_ episode: MediaItem) {
+        selectEpisodeForPendingPlayback(episode)
+        prepareSelectedEpisodePlayback(episode)
+    }
+
+    func selectEpisodeForPendingPlayback(_ episode: MediaItem) {
         preferredEpisode = episode
         nextUpEpisode = episode
         syncDerivedFlags()
+    }
+
+    func prepareSelectedEpisodePlayback(_ episode: MediaItem) {
+        // Custom engine: the press itself resolves the source. The legacy warm pipeline here only
+        // fired a SECOND PlaybackInfo (different body — never coalesced) plus a 4 MiB range probe,
+        // competing with the real resolve for the origin at the exact moment it matters most.
+        guard !usesCustomPlayerEngine else { return }
 
         let loadToken = activeLoadToken
         let requestToken = beginPlaybackWarmupRequest(itemID: episode.id)
@@ -300,7 +319,9 @@ final class DetailViewModel {
             await self?.refreshHeroItem(itemID: itemID, loadToken: loadToken)
         })
 
-        tasks.append(Task(priority: .utility) { [weak self] in
+        // The editorial fetch gates `metadata_ready` — at .utility it was starved for seconds by
+        // the userInitiated/network-heavy work sharing the connection pool (tvOS: 5.8s to metadata).
+        tasks.append(Task(priority: .userInitiated) { [weak self] in
             await self?.refreshEditorialContent(itemID: itemID, loadToken: loadToken)
         })
 
@@ -308,7 +329,7 @@ final class DetailViewModel {
             tasks.append(Task(priority: .userInitiated) { [weak self] in
                 await self?.loadSeriesContext(seriesID: itemID, loadToken: loadToken)
             })
-        } else {
+        } else if !usesCustomPlayerEngine {
             let playbackItem = detail.item
             let playbackRequestToken = beginPlaybackWarmupRequest(itemID: playbackItem.id)
             startPlaybackWarmup(
@@ -407,13 +428,15 @@ final class DetailViewModel {
                 guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
                 guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
 
-                let requestToken = beginPlaybackWarmupRequest(itemID: nextUpEpisode.id)
-                startPlaybackWarmup(
-                    for: nextUpEpisode,
-                    loadToken: loadToken,
-                    requestToken: requestToken,
-                    priority: .utility
-                )
+                if !usesCustomPlayerEngine {
+                    let requestToken = beginPlaybackWarmupRequest(itemID: nextUpEpisode.id)
+                    startPlaybackWarmup(
+                        for: nextUpEpisode,
+                        loadToken: loadToken,
+                        requestToken: requestToken,
+                        priority: .utility
+                    )
+                }
             }
             syncDerivedFlags()
         } catch {

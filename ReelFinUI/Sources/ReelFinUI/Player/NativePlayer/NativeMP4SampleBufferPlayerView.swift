@@ -357,6 +357,7 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
         updateMetrics {
             $0.audioPacketCount += 1
+            $0.audioRenderedSampleCount += CMSampleBufferGetNumSamples(sample)
             $0.audioPTS = pts.safeSeconds
         }
     }
@@ -410,6 +411,7 @@ private struct NativeMP4SampleBufferMetrics {
     var state = "idle"
     var videoPacketCount = 0
     var audioPacketCount = 0
+    var audioRenderedSampleCount = 0
     var droppedFrames = 0
     var renderLatencyMs: Double = 0
     var currentPTS: Double = 0
@@ -426,6 +428,7 @@ private struct NativeMP4SampleBufferMetrics {
         var lines = base.filter { !$0.hasPrefix("state=") && !$0.hasPrefix("packets ") }
         lines.insert("state=\(state)", at: 0)
         lines.append("packets video=\(videoPacketCount) audio=\(audioPacketCount)")
+        lines.append("audioSamples rendered=\(audioRenderedSampleCount)")
         lines.append("videoDecoderBackend=\(videoDecoderBackend)")
         lines.append("audioDecoderBackend=\(audioDecoderBackend)")
         lines.append("rendererBackend=AVSampleBufferDisplayLayer")

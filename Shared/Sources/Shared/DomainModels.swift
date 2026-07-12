@@ -390,6 +390,9 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
     public var isDefault: Bool
     public var isForced: Bool
     public var index: Int
+    /// Source that owns this stream when its metadata is surfaced on a stable sibling media file.
+    /// Nil means the containing `MediaSource` owns delivery, which remains the normal API shape.
+    public var deliverySourceID: String?
 
     public init(
         id: String,
@@ -398,7 +401,8 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         codec: String? = nil,
         isDefault: Bool,
         isForced: Bool = false,
-        index: Int
+        index: Int,
+        deliverySourceID: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -407,6 +411,7 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         self.isDefault = isDefault
         self.isForced = isForced
         self.index = index
+        self.deliverySourceID = deliverySourceID
     }
 }
 
@@ -703,18 +708,10 @@ public struct PlaybackInfoOptions: Codable, Hashable, Sendable {
     }
 
     public static func tvOSSimulatorCompatibility(maxStreamingBitrate: Int?) -> PlaybackInfoOptions {
-        let bitrate = min(maxStreamingBitrate ?? 12_000_000, 12_000_000)
-        return PlaybackInfoOptions(
-            mode: .balanced,
-            enableDirectPlay: true,
-            enableDirectStream: false,
-            allowTranscoding: true,
-            maxStreamingBitrate: bitrate,
-            allowVideoStreamCopy: false,
-            allowAudioStreamCopy: false,
-            maxAudioChannels: 2,
-            deviceProfile: .tvOSSimulatorCompatibilityH264
-        )
+        // The simulator validates ReelFin's route selection and must exercise the same
+        // original-quality contract as Apple TV hardware. Forcing H.264 here hid remux bugs and
+        // made every MKV look like a destructive quality fallback during real Jellyfin tests.
+        return .tvOSOptimized(maxStreamingBitrate: maxStreamingBitrate)
     }
 }
 

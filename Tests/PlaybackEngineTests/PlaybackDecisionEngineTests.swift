@@ -861,6 +861,92 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertTrue(selection.routeGuarantees.preservesOriginalVideo)
     }
 
+    func testOriginalResolverHandsMKVHEVCToNativeDemuxWithoutDestructiveRefetch() async throws {
+        let source = MediaSource(
+            id: "source-resolver-mkv-hevc",
+            itemID: "item-resolver-mkv-hevc",
+            name: "MKV HEVC source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            supportsDirectPlay: false,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/Videos/item-resolver-mkv-hevc/master.m3u8?MediaSourceId=source-resolver-mkv-hevc&VideoCodec=hevc&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true&Container=fmp4&SegmentContainer=fmp4"),
+            directPlayURL: nil,
+            transcodeURL: nil
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: ["item-resolver-mkv-hevc": [source]])
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+
+        let resolved = try await resolver.resolveOriginal(itemID: "item-resolver-mkv-hevc", startTimeTicks: nil)
+
+        XCTAssertFalse(resolved.isAdaptiveStream)
+        XCTAssertTrue(resolved.requiresNativePlayback)
+        XCTAssertTrue(resolved.preservesOriginalVideo)
+        XCTAssertEqual(
+            client.playbackSourceRequestCount,
+            1,
+            "MKV native handoff must reuse the first source resolution, not request a destructive H.264 fallback"
+        )
+    }
+
+    func testOriginalResolverCoalescesConcurrentCallersIntoOnePlaybackInfoResolve() async throws {
+        let itemID = "resolver-single-flight-\(UUID().uuidString)"
+        let source = MediaSource(
+            id: "source-\(itemID)",
+            itemID: itemID,
+            name: "Single flight fixture",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directPlayURL: URL(string: "https://example.com/Videos/\(itemID)/stream.mp4")
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: [itemID: [source]])
+        client.playbackSourceDelayNanoseconds = 200_000_000
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+
+        let resolved = try await withThrowingTaskGroup(of: ResolvedOriginalSource.self) { group in
+            for _ in 0..<12 {
+                group.addTask {
+                    try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: 420_000_000)
+                }
+            }
+            var values: [ResolvedOriginalSource] = []
+            for try await value in group { values.append(value) }
+            return values
+        }
+
+        XCTAssertEqual(resolved.count, 12)
+        XCTAssertEqual(client.playbackSourceRequestCount, 1)
+    }
+
+    func testOriginalResolverDoesNotReuseResolutionAfterAuthenticatedSessionChanges() async throws {
+        let itemID = "resolver-session-scope-\(UUID().uuidString)"
+        let source = MediaSource(
+            id: "source-\(itemID)",
+            itemID: itemID,
+            name: "Session fixture",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true,
+            directPlayURL: URL(string: "https://example.com/Videos/\(itemID)/stream.mp4")
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: [itemID: [source]])
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+
+        let first = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: nil)
+        client.setSession(UserSession(userID: "user-2", username: "Other", token: "token-2"))
+        let second = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: nil)
+
+        XCTAssertEqual(client.playbackSourceRequestCount, 2)
+        XCTAssertFalse(first.originURL.isFileURL)
+        XCTAssertFalse(second.originURL.isFileURL)
+    }
+
     func testCoordinatorForceH264ProfileDisablesVideoCopy() async throws {
         // Use preferAudioTranscodeOnly: false so this test exercises the audio-copy path.
         let configWithAudioCopy = ServerConfiguration(
@@ -1231,8 +1317,14 @@ private struct PassthroughMediaProbe: MediaProbeProtocol {
 
 private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
     private let configuration: ServerConfiguration
-    private let session: UserSession
+    private let lock = NSLock()
+    private var session: UserSession
     private let sources: [String: [MediaSource]]
+    private var requestCount = 0
+    var playbackSourceDelayNanoseconds: UInt64 = 0
+    var playbackSourceRequestCount: Int {
+        lock.withLock { requestCount }
+    }
 
     init(configuration: ServerConfiguration, sources: [String: [MediaSource]]) {
         self.configuration = configuration
@@ -1245,7 +1337,11 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
     }
 
     func currentSession() async -> UserSession? {
-        session
+        lock.withLock { session }
+    }
+
+    func setSession(_ session: UserSession) {
+        lock.withLock { self.session = session }
     }
 
     func configure(server: ServerConfiguration) async throws {
@@ -1290,6 +1386,10 @@ private final class MockPlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked
 
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
         _ = options
+        lock.withLock { requestCount += 1 }
+        if playbackSourceDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: playbackSourceDelayNanoseconds)
+        }
         return try await fetchPlaybackSources(itemID: itemID)
     }
 

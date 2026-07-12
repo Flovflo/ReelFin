@@ -15,8 +15,7 @@ public actor HTTPRangeByteSource: MediaByteSource {
 
     public nonisolated let url: URL
     private let headers: [String: String]
-    private let session: URLSession
-    private let rangeConfiguration: URLSessionConfiguration
+    private let rangeStreamer: StreamingRangeWriter
     private let configuration: Configuration
     private var cachedSize: Int64?
     private var cache: [ByteRange: Data] = [:]
@@ -35,8 +34,7 @@ public actor HTTPRangeByteSource: MediaByteSource {
         self.cacheWindow = MediaCacheWindow(maximumBytes: configuration.cacheWindowBytes)
         sessionConfiguration.timeoutIntervalForRequest = configuration.timeout
         sessionConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        self.session = URLSession(configuration: sessionConfiguration)
-        self.rangeConfiguration = (sessionConfiguration.copy() as? URLSessionConfiguration) ?? sessionConfiguration
+        self.rangeStreamer = StreamingRangeWriter(configuration: sessionConfiguration)
     }
 
     public func read(range: ByteRange) async throws -> Data {
@@ -64,19 +62,25 @@ public actor HTTPRangeByteSource: MediaByteSource {
             return size
         }
         var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
+        request.httpMethod = "GET"
+        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         applyHeaders(to: &request)
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw MediaAccessError.nonHTTPResponse }
-        if let length = http.value(forHTTPHeaderField: "Content-Length"), let value = Int64(length) {
-            cachedSize = value
-            return value
+        let stream = rangeStreamer.stream(
+            request: request,
+            startOffset: 0,
+            minSubBlock: 1,
+            maximumResponseBytes: 1
+        )
+        for try await _ in stream {}
+        if let size = rangeStreamer.resourceSize() {
+            cachedSize = size
+            return size
         }
         return nil
     }
 
     public func cancel() async {
-        session.invalidateAndCancel()
+        rangeStreamer.invalidate()
     }
 
     public func metrics() async -> MediaAccessMetrics {
@@ -92,24 +96,28 @@ public actor HTTPRangeByteSource: MediaByteSource {
         request.setValue("bytes=\(range.offset)-\(range.offset + Int64(range.length) - 1)", forHTTPHeaderField: "Range")
         applyHeaders(to: &request)
         snapshot.rangeRequestCount += 1
-        // Bulk chunked read (not byte-by-byte): bounded to range.length so an unexpected
-        // 200 cannot pull the whole file. See HTTPChunkedRangeReader for why.
-        let (data, response) = try await HTTPChunkedRangeReader.collect(
+        // The reusable streamer keeps one URLSession for the whole native playback. Closed 206
+        // ranges complete normally and return their connection to the pool; an ignored range
+        // (200 at offset zero) is still hard-capped so a multi-GB original can never be buffered.
+        let stream = rangeStreamer.stream(
             request: request,
-            configuration: rangeConfiguration,
-            maxLength: range.length
+            startOffset: range.offset,
+            minSubBlock: min(range.length, 256 * 1_024),
+            maximumResponseBytes: range.length
         )
-        if let total = totalSize(from: response.value(forHTTPHeaderField: "Content-Range")) {
-            cachedSize = total
+        var data = Data()
+        data.reserveCapacity(min(range.length, 8 * 1_024 * 1_024))
+        for try await block in stream {
+            let remaining = range.length - data.count
+            guard remaining > 0 else { continue }
+            if block.data.count <= remaining {
+                data.append(block.data)
+            } else {
+                data.append(block.data.prefix(remaining))
+            }
         }
-        if response.statusCode == 200, let length = response.value(forHTTPHeaderField: "Content-Length"), let value = Int64(length) {
-            cachedSize = value
-        }
-        guard response.statusCode == 206 || response.statusCode == 200 else {
-            throw MediaAccessError.httpStatus(response.statusCode)
-        }
-        guard response.statusCode != 200 || range.offset == 0 else {
-            throw MediaAccessError.httpStatus(response.statusCode)
+        if let size = rangeStreamer.resourceSize() {
+            cachedSize = size
         }
         return data
     }
@@ -136,11 +144,6 @@ public actor HTTPRangeByteSource: MediaByteSource {
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
-    }
-
-    private func totalSize(from contentRange: String?) -> Int64? {
-        guard let contentRange, let slash = contentRange.lastIndex(of: "/") else { return nil }
-        return Int64(contentRange[contentRange.index(after: slash)...])
     }
 
     private func readFile(range: ByteRange) throws -> Data {

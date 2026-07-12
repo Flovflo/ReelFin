@@ -28,12 +28,17 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     // downloader → 17.5s startup on a deep resume.
     private let remoteURL: URL
     private let headers: [String: String]
-    private let onDemandSession: URLSession
+    /// Shared, process-lived (see `MediaOriginTransport.onDemand`): reusing the connection and the
+    /// H3-broken learning across plays is what makes the FIRST on-demand fetch of a play fast.
+    private let onDemandSession = MediaOriginTransport.onDemand
 
     private let queue = DispatchQueue(label: "reelfin.local-cache-http", attributes: .concurrent)
     private var listener: NWListener?
 
     private let serveChunk = 4 * 1_024 * 1_024
+    /// Socket sends are sliced to this size so a connection AVPlayer already abandoned wastes at
+    /// most one slice (a whole 4 MiB serve chunk used to be buffered into the dead socket).
+    private let sendSliceBytes = 1_024 * 1_024
     private let pollInterval: UInt64 = 40_000_000      // 40 ms
     private let livenessDeadline: TimeInterval = 20
     /// Close a keep-alive connection that has been IDLE this long (AVPlayer finished with the socket
@@ -63,8 +68,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         key: MediaGatewayCacheKey,
         remoteURL: URL,
         headers: [String: String],
-        overrideMIMEType: String?,
-        onDemandTimeout: TimeInterval = 15
+        overrideMIMEType: String?
     ) {
         self.store = store
         self.downloader = downloader
@@ -72,11 +76,6 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         self.remoteURL = remoteURL
         self.headers = headers
         self.overrideMIMEType = overrideMIMEType
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = onDemandTimeout
-        config.timeoutIntervalForResource = onDemandTimeout * 2
-        config.httpMaximumConnectionsPerHost = 4
-        self.onDemandSession = URLSession(configuration: config)
         // Opaque, stable path so the URL is extensionless (the asset's overrideMIMEType supplies the
         // type, exactly like the extensionless direct-play origin URL).
         self.pathToken = "media/\(key.itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "item")"
@@ -120,10 +119,9 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         // Cancelling the connection unblocks its parked `receive` → the handle Task exits its loop.
         for connection in conns { connection.cancel() }
         for task in tasks { task.cancel() }
-        // An un-invalidated URLSession outlives its owner (Foundation keeps it alive until process
-        // exit) — the exact per-playback-session leak family that produced the cross-replay memory
-        // warnings → jetsam. Invalidate it with the rest of the transport.
-        onDemandSession.invalidateAndCancel()
+        // The on-demand session is the process-shared MediaOriginTransport.onDemand — deliberately
+        // NOT invalidated here (its whole point is to outlive plays); its in-flight requests for
+        // this serve just complete or time out into a closed socket.
         // Capture the downloader value (NOT self) so this escaping Task is safe to spawn from deinit.
         let downloader = self.downloader
         Task { await downloader.stop() }
@@ -141,7 +139,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         lock.unlock()
         for connection in conns { connection.cancel() }
         for task in tasks { task.cancel() }
-        onDemandSession.invalidateAndCancel()
+        // onDemandSession is the process-shared transport — never invalidated (see stop()).
         let downloader = self.downloader
         Task { await downloader.stop() }
     }
@@ -225,7 +223,33 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     /// (keep-alive): `true` only when the full response was delivered, `false` when AVPlayer closed
     /// mid-stream or an error response ended the connection.
     private func serve(_ request: LocalMediaGatewayHTTPRequest, over connection: NWConnection) async -> Bool {
-        let (total, resolvedType) = await downloader.contentInfo()
+        // NEVER park a serve behind the origin probe's retry ladder (~2 min worst case): known info
+        // first (memory / persisted), then ONE bounded on-demand fetch whose 206 Content-Range
+        // answers both "how big" and the first bytes (written to the store → the body loop hits
+        // cache), then a BOUNDED wait on the background probe. AVPlayer's very first byte request
+        // rode the full ladder before — the black-screen minutes when the origin was flaky.
+        var (total, resolvedType) = await downloader.knownContentInfo()
+        if total == nil, let probeStart = initialOffset(for: request.range) {
+            if let primed = await fetchRangeOnDemandDetailed(from: probeStart, length: serveChunk) {
+                if let discovered = primed.total {
+                    await downloader.adoptContentInfo(total: discovered, contentType: primed.contentType)
+                    total = discovered
+                    if resolvedType == nil { resolvedType = primed.contentType }
+                }
+            }
+        }
+        if total == nil {
+            let deadline = Date().addingTimeInterval(livenessDeadline)
+            while Date() < deadline, !Task.isCancelled {
+                let known = await downloader.knownContentInfo()
+                if let length = known.length {
+                    total = length
+                    if resolvedType == nil { resolvedType = known.contentType }
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
         guard let total, total > 0 else {
             await trySend(LocalMediaGatewayHTTPResponse.serverError(), over: connection)
             return false
@@ -287,7 +311,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                let data = try? await store.readAvailablePrefix(from: offset, maxLength: want, key: key),
                !data.isEmpty {
                 await publish(id: id, offset: offset, waiting: false)
-                guard await trySend(data, over: connection) else { logEnd("client_closed", ok: false); return false }
+                guard await sendSliced(data, over: connection) else { logEnd("client_closed", ok: false); return false }
                 offset += Int64(data.count)
                 hitBytes += Int64(data.count)
                 lastProgress = Date()
@@ -301,7 +325,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
             // (a timeout), STOP re-hammering it on every 40 ms poll — just wait for the background
             // downloader/cache, so an origin outage doesn't block this serve for 15 s per iteration.
             if want > 0, !originDown, let data = await fetchRangeOnDemand(from: offset, length: want), !data.isEmpty {
-                guard await trySend(data, over: connection) else { logEnd("client_closed", ok: false); return false }
+                guard await sendSliced(data, over: connection) else { logEnd("client_closed", ok: false); return false }
                 offset += Int64(data.count)
                 onDemandBytes += Int64(data.count)
                 lastProgress = Date()
@@ -333,6 +357,13 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     /// the store, and returns it. Used to serve a cache miss at direct-play latency. Returns nil on
     /// any failure (a dropout) so the caller falls back to waiting for the background downloader.
     private func fetchRangeOnDemand(from: Int64, length: Int) async -> Data? {
+        await fetchRangeOnDemandDetailed(from: from, length: length)?.data
+    }
+
+    /// Same fetch, exposing what the response HEADERS reveal: a 206's `Content-Range` carries the
+    /// file's TOTAL length — so the very first serve can adopt content info from the same request
+    /// that fetched its first bytes, instead of waiting on the dedicated probe.
+    private func fetchRangeOnDemandDetailed(from: Int64, length: Int) async -> (data: Data, total: Int64?, contentType: String?)? {
         guard length > 0 else { return nil }
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
         request.httpMethod = "GET"
@@ -344,16 +375,31 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                 return nil
             }
             try? await store.write(range: ByteRange(offset: from, length: data.count), data: data, key: key)
-            return data
+            // A 200 means the server ignored the range and its Content-Length IS the file size;
+            // a 206's Content-Length is only the window, so total must come from Content-Range.
+            let total = http.mediaGatewayContentRangeTotal
+                ?? (http.statusCode == 200 ? http.mediaGatewayContentLength : nil)
+            return (data, total, http.value(forHTTPHeaderField: "Content-Type"))
         } catch {
             return nil
         }
     }
 
+    /// First byte offset a request needs, when it is knowable WITHOUT the file's total length
+    /// (a suffix range needs the total first — rare from AVPlayer, handled by the probe path).
+    private func initialOffset(for range: LocalMediaGatewayRequestedRange?) -> Int64? {
+        switch range {
+        case .bounded(let r): return r.offset
+        case .openEnded(let offset): return offset
+        case .suffix: return nil
+        case nil: return 0
+        }
+    }
+
     private func byteRange(for range: LocalMediaGatewayRequestedRange?, total: Int64) -> (Int64, Int64) {
         switch range {
-        case .bounded(let r):
-            return (r.offset, min(total, r.offset + Int64(r.length)))
+        case .bounded(let requested):
+            return (requested.offset, min(total, requested.offset + Int64(requested.length)))
         case .openEnded(let offset):
             return (offset, total)
         case .suffix(let length):
@@ -400,5 +446,18 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                 continuation.resume(returning: error == nil)
             })
         }
+    }
+
+    /// Sends in `sendSliceBytes` pieces, aborting on the first failed slice — a closed socket is
+    /// detected within one slice instead of after buffering a whole serve chunk into it.
+    private func sendSliced(_ data: Data, over connection: NWConnection) async -> Bool {
+        if data.count <= sendSliceBytes { return await trySend(data, over: connection) }
+        var index = data.startIndex
+        while index < data.endIndex {
+            let end = data.index(index, offsetBy: sendSliceBytes, limitedBy: data.endIndex) ?? data.endIndex
+            guard await trySend(data.subdata(in: index ..< end), over: connection) else { return false }
+            index = end
+        }
+        return true
     }
 }

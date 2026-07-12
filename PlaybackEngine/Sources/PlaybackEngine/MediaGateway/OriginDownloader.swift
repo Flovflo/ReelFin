@@ -2,6 +2,47 @@ import Foundation
 import NativeMediaCore
 import Shared
 
+/// ONE transport policy for every request that touches the media ORIGIN (probes, on-demand range
+/// serves, background fill windows). Two rules, both learned on device:
+///
+/// 1. DEFAULT-based configurations, never `.ephemeral`. The origin's reverse proxy advertises
+///    HTTP/3, and the Apple TV's QUIC path to it can be broken: CFNetwork only learns
+///    "H3 broken here → go straight to H2" in the shared protocol/Alt-Svc storage, and an
+///    ephemeral session throws that learning away — so every fresh session re-paid a ~8-12s
+///    first-request timeout (tvOS device 2026-07-08: `contentinfo attempt=1` -1001 then
+///    `attempt=2` instant, on every single play — while iOS looked "instant").
+/// 2. One SHARED long-lived session for one-shot range fetches, so the TLS/H2 connection itself
+///    is reused across plays instead of re-handshaken per play (and per component).
+///
+/// Media BYTES are cached by the `MediaGatewayStore`, never by URLCache — every configuration
+/// here disables HTTP caching.
+enum MediaOriginTransport {
+    /// Base configuration for streaming media traffic (fill windows, content-info probes). The
+    /// caller may copy/tune timeouts; keeping it default-based is what preserves the process-wide
+    /// protocol learning.
+    static func makeConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpMaximumConnectionsPerHost = 2
+        return configuration
+    }
+
+    /// Shared session for one-shot on-demand range fetches (the serve path's cache misses and the
+    /// prewarm origin warm-up). Never invalidated: it lives for the whole process so connections
+    /// and protocol learning are reused by every play. In-flight requests for an abandoned serve
+    /// just complete or time out harmlessly.
+    static let onDemand: URLSession = {
+        let configuration = makeConfiguration()
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 60
+        configuration.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: configuration)
+    }()
+}
+
 /// The single component that touches the origin server during a cache-loader playback session.
 ///
 /// Design (the four non-negotiables for never-cut):
@@ -79,7 +120,8 @@ actor OriginDownloader {
         self.maxParallelWindows = max(1, maxParallelWindows)
         self.headLength = max(1, headLength)
         self.tailLength = max(1, tailLength)
-        let probeConfig = (sessionConfiguration.copy() as? URLSessionConfiguration) ?? .ephemeral
+        let probeConfig = (sessionConfiguration.copy() as? URLSessionConfiguration)
+            ?? MediaOriginTransport.makeConfiguration()
         // The FIRST range request to an idle origin item can cold-start for ~15s (server/CF warm
         // up the file). Give the probe room to ride that out instead of timing out and failing.
         probeConfig.timeoutIntervalForRequest = 25
@@ -89,6 +131,37 @@ actor OriginDownloader {
     }
 
     // MARK: - Public API (called by the cache resource loader)
+
+    /// Content info WITHOUT ever touching the origin: memory, then the length persisted from a
+    /// prior play. Lets the serve path answer instantly instead of parking AVPlayer's very first
+    /// request behind the probe's retry ladder (~2 minutes worst case on a flaky origin).
+    func knownContentInfo() async -> (length: Int64?, contentType: String?) {
+        if let totalLength {
+            return (totalLength, resolvedContentType)
+        }
+        if let persisted = await store.persistedContentLength(key: key) {
+            totalLength = persisted
+            if resolvedContentType == nil { resolvedContentType = overrideContentType }
+            return (persisted, resolvedContentType)
+        }
+        return (nil, overrideContentType)
+    }
+
+    /// Adopt content info discovered OUTSIDE the probe (the serve path reads it off its first
+    /// on-demand 206's Content-Range) — one request then answers both "how big" and "first bytes".
+    func adoptContentInfo(total: Int64, contentType: String?) async {
+        guard totalLength == nil, total > 0 else { return }
+        totalLength = total
+        if resolvedContentType == nil {
+            resolvedContentType = overrideContentType ?? contentType
+        }
+        contentInfoTask?.cancel()
+        contentInfoTask = nil
+        await store.persistContentLength(total, key: key)
+        AppLog.playback.notice(
+            "playback.cacheloader.contentinfo.adopted — item=\(self.key.itemID.prefix(8), privacy: .public) total=\(total, privacy: .public) type=\(self.resolvedContentType ?? "-", privacy: .public)"
+        )
+    }
 
     /// One-shot probe for total length + content type. Cached after the first call. The content
     /// type honours the extensionless-direct-play override decision so a DV original doesn't
@@ -133,9 +206,15 @@ actor OriginDownloader {
             request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
             for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
             do {
+                // Staged budget: a short first attempt catches the common wedged-connection case
+                // fast (URLSession rebuilds the transport on retry); only the later attempts wait
+                // out the ~15s cold-start window. Flat 25s×5 held first byte back ~130s worst case.
+                let config = (probeConfiguration.copy() as? URLSessionConfiguration)
+                    ?? MediaOriginTransport.makeConfiguration()
+                if attempt == 1 { config.timeoutIntervalForRequest = 8 }
                 let (_, http) = try await HTTPChunkedRangeReader.collect(
                     request: request,
-                    configuration: (probeConfiguration.copy() as? URLSessionConfiguration) ?? .ephemeral,
+                    configuration: config,
                     maxLength: 2
                 )
                 if let total = http.mediaGatewayContentRangeTotal ?? http.mediaGatewayContentLength {
@@ -172,12 +251,25 @@ actor OriginDownloader {
         guard !didPrime else { return }
         didPrime = true
         _ = await contentInfo()
+        // HEAD first: a faststart file (moov up front — the library's HDR10 .movs are) gets
+        // everything AVPlayer needs for the first frame before the big tail transfer starts.
+        // Non-faststart files still get their tail right after (and the serve path fetches any
+        // urgently-needed tail range on demand regardless).
+        let headEnd = totalLength.map { min(headLength, $0) } ?? headLength
+        let headCached = (try? await store.contiguousEnd(from: 0, key: key)) ?? 0
+        if headCached < headEnd {
+            try? await downloadWindow(from: headCached, to: headEnd)
+        }
         if let total = totalLength, total > tailLength {
             let scaledTail = min(max(tailLength, total / 200), 64 * 1_024 * 1_024)
-            try? await downloadWindow(from: max(0, total - scaledTail), to: total)
+            let tailStart = max(0, total - scaledTail)
+            // Skip spans a prior play already cached — re-streaming a warm ~59MB tail stole the
+            // startup bandwidth from the on-demand moov/head reads for nothing.
+            let tailCached = (try? await store.contiguousEnd(from: tailStart, key: key)) ?? tailStart
+            if tailCached < total {
+                try? await downloadWindow(from: max(tailStart, tailCached), to: total)
+            }
         }
-        let headEnd = totalLength.map { min(headLength, $0) } ?? headLength
-        try? await downloadWindow(from: 0, to: headEnd)
         ensureFill()
     }
 
@@ -208,13 +300,28 @@ actor OriginDownloader {
     }
 
     private func runFill() async {
+        // Circuit breaker for a dead origin: the old 500ms loop re-ran the FULL probe retry ladder
+        // back-to-back for the whole session (an unbounded retry storm). Back off exponentially,
+        // and after enough consecutive failures park the fill — `ensureFill()` re-arms it on the
+        // next playhead move, so a recovered origin picks the fill back up on demand.
+        var contentInfoFailures = 0
         while !Task.isCancelled {
             if totalLength == nil {
                 _ = await contentInfo()
                 if totalLength == nil {
-                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    contentInfoFailures += 1
+                    if contentInfoFailures >= 6 {
+                        AppLog.playback.warning(
+                            "playback.cacheloader.fill.parked — item=\(self.key.itemID.prefix(8), privacy: .public) reason=contentinfo_unreachable"
+                        )
+                        fillTask = nil
+                        return
+                    }
+                    let backoff = min(30.0, 0.5 * pow(2.0, Double(contentInfoFailures)))
+                    try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
                     continue
                 }
+                contentInfoFailures = 0
             }
             guard let total = totalLength else { break }
 

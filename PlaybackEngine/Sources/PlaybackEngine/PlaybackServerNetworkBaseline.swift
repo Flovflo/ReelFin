@@ -58,8 +58,11 @@ public enum PlaybackServerNetworkBaseline {
         now: Date = Date()
     ) async -> Result? {
         guard isEligible(selection: selection) else { return nil }
-        let plannedBytes = isTVOS ? 8 * mebibyte : 4 * mebibyte
-        let timeout: TimeInterval = isTVOS ? 2.5 : 2
+        // The target must be reachable on a MODEST link or the baseline never succeeds: the old
+        // 8 MiB / 2.5s tvOS budget demanded ~27 Mbps sustained — physically impossible on most
+        // home uplinks, so every attempt burned the bytes AND the timeout for a guaranteed nil.
+        let plannedBytes = isTVOS ? 2 * mebibyte : mebibyte
+        let timeout: TimeInterval = isTVOS ? 3 : 2.5
         let startedAt = Date()
 
         do {
@@ -100,7 +103,10 @@ public enum PlaybackServerNetworkBaseline {
         timeout: TimeInterval,
         urlProtocolClasses: [AnyClass]?
     ) async throws -> Data {
-        let configuration = URLSessionConfiguration.ephemeral
+        // Default-based so CFNetwork retains its process-wide HTTP/3 failure/HTTP/2 fallback
+        // knowledge for this origin. An ephemeral probe can otherwise pay the broken-QUIC timeout
+        // again immediately before playback opens the same server.
+        let configuration = MediaOriginTransport.makeConfiguration()
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData

@@ -317,6 +317,7 @@ public final class PlaybackSessionController {
     private let coordinator: PlaybackCoordinator
     private let nativePlayerController: NativePlayerPlaybackController
     private let warmupManager: (any PlaybackWarmupManaging)?
+    private let progressPersistenceEnabled: Bool
     private let playbackDiagnostics = PlaybackDiagnostics()
     private let fallbackPlanner = FallbackPlanner()
 
@@ -543,7 +544,8 @@ public final class PlaybackSessionController {
         repository: MetadataRepositoryProtocol,
         episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)? = nil,
         warmupManager: (any PlaybackWarmupManaging)? = nil,
-        decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine()
+        decisionEngine: PlaybackDecisionEngine = PlaybackDecisionEngine(),
+        progressPersistenceEnabled: Bool = true
     ) {
         self.apiClient = apiClient
         self.repository = repository
@@ -556,6 +558,7 @@ public final class PlaybackSessionController {
             mediaGatewayStore: mediaGatewayStore
         )
         self.warmupManager = warmupManager
+        self.progressPersistenceEnabled = progressPersistenceEnabled
         self.preferredProfilesByItemID = Self.loadStoredPreferredProfiles()
         configurePlayerBase()
         setupLifecycleObservers()
@@ -627,7 +630,8 @@ public final class PlaybackSessionController {
         item: MediaItem,
         autoPlay: Bool = true,
         upNextEpisodes: [MediaItem] = [],
-        startPosition: PlaybackStartPosition = .resumeIfAvailable
+        startPosition: PlaybackStartPosition = .resumeIfAvailable,
+        forceNativeOriginalPlayback: Bool = false
     ) async throws {
         currentItemID = item.id
         playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
@@ -711,7 +715,17 @@ public final class PlaybackSessionController {
         lastFailureReason = nil
         lastRecoverySuggestion = nil
         localHLSStartupSummary = nil
-        let playbackConfig = await currentPlaybackConfiguration()
+        var playbackConfig = await currentPlaybackConfiguration()
+        if forceNativeOriginalPlayback {
+            playbackConfig.nativePlayerConfig.enabled = true
+            playbackConfig.nativePlayerConfig.alwaysRequestOriginalFile = true
+            playbackConfig.nativePlayerConfig.allowCustomDemuxers = true
+            playbackConfig.nativePlayerConfig.enableExperimentalMKV = true
+            playbackConfig.nativePlayerConfig.allowServerTranscodeFallback = false
+            AppLog.playback.notice(
+                "nativeplayer.route.forced_original — \(self.playbackLogScope(), privacy: .public) reason=custom_mkv_handoff"
+            )
+        }
         playbackPolicy = playbackConfig.playbackPolicy
         allowSDRFallback = playbackConfig.allowSDRFallback
         preferAudioTranscodeOnly = playbackConfig.preferAudioTranscodeOnly
@@ -2640,7 +2654,7 @@ public final class PlaybackSessionController {
                     key: key,
                     store: store,
                     overrideContentType: overrideMIME,
-                    sessionConfiguration: .ephemeral
+                    sessionConfiguration: MediaOriginTransport.makeConfiguration()
                 )
                 let server = LocalCacheHTTPServer(
                     store: store,
@@ -2686,7 +2700,7 @@ public final class PlaybackSessionController {
                     key: key,
                     store: store,
                     overrideContentType: overrideMIME,
-                    sessionConfiguration: .ephemeral
+                    sessionConfiguration: MediaOriginTransport.makeConfiguration()
                 )
                 let loader = CacheResourceLoaderDelegate(
                     store: store,
@@ -3046,7 +3060,7 @@ public final class PlaybackSessionController {
         localHLSServer?.stop(reason: "session_stopped")
         localHLSServer = nil
 
-        if let progressSnapshot {
+        if progressPersistenceEnabled, let progressSnapshot {
             Task {
                 await Self.persistProgress(
                     snapshot: progressSnapshot,
@@ -3150,7 +3164,7 @@ public final class PlaybackSessionController {
     private func selectAudioTrack(_ track: MediaTrack) async {
         if isNativePlayerActive && nativePlayerPlaybackSurface == .sampleBuffer {
             selectedAudioTrackID = track.id
-            AppLog.playback.info("nativeplayer.audio.selection_changed — track='\(track.title, privacy: .public)' id=\(track.id, privacy: .public)")
+            AppLog.playback.info("nativeplayer.audio.selection_changed — status=requested")
             return
         }
 
@@ -3243,7 +3257,9 @@ public final class PlaybackSessionController {
     private func selectSubtitleTrackAsync(id: String?) async {
         if isNativePlayerActive && nativePlayerPlaybackSurface == .sampleBuffer {
             selectedSubtitleTrackID = id
-            AppLog.playback.info("nativeplayer.subtitle.selection_changed — id=\(id ?? "none", privacy: .public)")
+            AppLog.playback.info(
+                "nativeplayer.subtitle.selection_changed — status=\(id == nil ? "disabled" : "requested", privacy: .public)"
+            )
             return
         }
 
@@ -3580,23 +3596,9 @@ public final class PlaybackSessionController {
         // category/activation calls on a background queue. AVPlayer activates the session
         // implicitly on play(), so a few ms of activation latency here is harmless.
         DispatchQueue.global(qos: .userInitiated).async {
-            let session = AVAudioSession.sharedInstance()
-            do {
-#if targetEnvironment(simulator)
-                // Simulator haptic/audio stack can reject moviePlayback options (OSStatus -50).
-                try session.setCategory(.playback)
-#else
-                try session.setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
-#endif
-                try session.setActive(true)
-            } catch {
-                // Fallback profile for devices/simulators that reject advanced movie session options.
-                do {
-                    try session.setCategory(.playback)
-                    try session.setActive(true)
-                } catch {
-                    AppLog.playback.warning("Audio session setup failed: \(error.localizedDescription, privacy: .public)")
-                }
+            let activated = PlaybackAudioSessionPolicy.activate()
+            if !activated {
+                AppLog.playback.warning("Audio session setup failed")
             }
         }
 #endif
@@ -4357,7 +4359,8 @@ public final class PlaybackSessionController {
                 headers: selection.headers,
                 key: key,
                 store: store,
-                prefetchConfiguration: localGatewayPrefetchConfiguration(selection: selection, configuration: configuration)
+                prefetchConfiguration: localGatewayPrefetchConfiguration(selection: selection, configuration: configuration),
+                sessionConfiguration: MediaOriginTransport.makeConfiguration()
             )
             let gatewayLogScope = playbackLogScope()
             let server = LocalMediaGatewayServer(session: gatewaySession) { method, range in
@@ -7495,6 +7498,7 @@ public final class PlaybackSessionController {
     }
 
     private func persistProgress(isPaused: Bool, didFinish: Bool) async {
+        guard progressPersistenceEnabled else { return }
         guard let snapshot = makeProgressSnapshot(isPaused: isPaused, didFinish: didFinish) else { return }
         await persistProgress(snapshot: snapshot)
     }
@@ -7680,6 +7684,7 @@ public final class PlaybackSessionController {
 
     func finishCurrentPlayback() async {
         pause()
+        guard progressPersistenceEnabled else { return }
         if let snapshot = makeProgressSnapshot(isPaused: true, didFinish: true) {
             await Self.persistProgress(
                 snapshot: snapshot,

@@ -154,6 +154,301 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.primaryPlaybackStartPosition, .beginning)
     }
 
+    func testMeaningfulMovieProgressRequiresExplicitResumeChoice() {
+        let resumeTicks = Int64(25 * 60 * 10_000_000)
+        let item = MediaItem(
+            id: "movie-resume-choice",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: resumeTicks
+        )
+
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.resumePositionTicks(for: item),
+            resumeTicks
+        )
+        XCTAssertTrue(PlaybackLaunchChoicePolicy.shouldPresentChoice(for: item))
+    }
+
+    func testExplicitResumeAndRestartChoicesMapToStartPositions() {
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.startPosition(for: .resume),
+            .resumeIfAvailable
+        )
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.startPosition(for: .restart),
+            .beginning
+        )
+    }
+
+    func testMovieEpisodeContinueWatchingAndNextUpShareOneLaunchCoordinator() {
+        let runtimeTicks = Int64(90 * 60 * 10_000_000)
+        let resumeTicks = Int64(8 * 60 * 10_000_000)
+        let entryItems = [
+            MediaItem(
+                id: "movie-detail",
+                name: "Movie",
+                mediaType: .movie,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            ),
+            MediaItem(
+                id: "episode-card",
+                name: "Episode",
+                mediaType: .episode,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            ),
+            MediaItem(
+                id: "home-continue-watching",
+                name: "Continue Watching",
+                mediaType: .movie,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            ),
+            MediaItem(
+                id: "home-next-up",
+                name: "Next Up",
+                mediaType: .episode,
+                runtimeTicks: runtimeTicks,
+                playbackPositionTicks: resumeTicks
+            )
+        ]
+
+        for item in entryItems {
+            var coordinator = PlaybackLaunchCoordinator()
+
+            XCTAssertNil(
+                coordinator.begin(
+                    item: item,
+                    progress: nil,
+                    presentsExplicitChoice: true
+                ),
+                "\(item.name) must not start playback before the user chooses"
+            )
+            XCTAssertEqual(coordinator.presentationIntent?.item.id, item.id)
+            XCTAssertEqual(coordinator.presentationIntent?.resumePositionTicks, resumeTicks)
+        }
+    }
+
+    func testLaunchCoordinatorPassesSelectedStartPositionUnchangedToEveryPlayerRoute() throws {
+        let item = MediaItem(
+            id: "movie-route-choice",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+
+        for choice in PlaybackLaunchChoicePolicy.orderedChoices {
+            var coordinator = PlaybackLaunchCoordinator()
+            XCTAssertNil(
+                coordinator.begin(
+                    item: item,
+                    progress: nil,
+                    presentsExplicitChoice: true
+                )
+            )
+
+            let request = try XCTUnwrap(coordinator.resolve(choice: choice))
+            let expectedPosition = PlaybackLaunchChoicePolicy.startPosition(for: choice)
+
+            XCTAssertEqual(request.startPosition, expectedPosition)
+            for route in PlaybackLaunchPlayerRoute.allCases {
+                XCTAssertEqual(request.startPosition(for: route), expectedPosition)
+            }
+        }
+    }
+
+    func testCancellingPendingLaunchProducesNoPlaybackRequest() {
+        let item = MediaItem(
+            id: "episode-cancel-choice",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        var coordinator = PlaybackLaunchCoordinator()
+        var emittedRequests: [PlaybackLaunchRequest] = []
+
+        if let request = coordinator.begin(
+            item: item,
+            progress: nil,
+            presentsExplicitChoice: true
+        ) {
+            emittedRequests.append(request)
+        }
+        coordinator.cancel()
+        if let request = coordinator.resolve(choice: .resume) {
+            emittedRequests.append(request)
+        }
+
+        XCTAssertNil(coordinator.presentationIntent)
+        XCTAssertTrue(emittedRequests.isEmpty)
+    }
+
+    func testEpisodeEntryAndHomeNextUpDeferPlaybackEffectsUntilChoice() {
+        let entries = [
+            MediaItem(
+                id: "detail-episode-entry",
+                name: "Episode",
+                mediaType: .episode,
+                runtimeTicks: Int64(45 * 60 * 10_000_000),
+                playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+            ),
+            MediaItem(
+                id: "home-next-up-entry",
+                name: "Next Up",
+                mediaType: .episode,
+                runtimeTicks: Int64(45 * 60 * 10_000_000),
+                playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+            )
+        ]
+
+        for item in entries {
+            var router = PlaybackLaunchEntryRouter()
+            let spy = PlaybackLaunchEntryEffectSpy()
+
+            router.begin(
+                item: item,
+                progress: nil,
+                presentsExplicitChoice: true,
+                effects: spy.effects
+            )
+
+            XCTAssertEqual(spy.selectedItemIDs, [])
+            XCTAssertEqual(spy.selectionTriggeredCustomPrewarmItemIDs, [])
+            XCTAssertEqual(spy.prepareItemIDs, [])
+            XCTAssertEqual(spy.sessionStartCount, 0)
+            XCTAssertTrue(spy.loadRequests.isEmpty)
+            XCTAssertEqual(spy.progressReportCount, 0)
+            XCTAssertEqual(router.presentationIntent?.item.id, item.id)
+        }
+    }
+
+    func testMenuCancellationLeavesEpisodeEntryPlaybackEffectsAtZero() {
+        let item = MediaItem(
+            id: "episode-menu-cancel",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        var router = PlaybackLaunchEntryRouter()
+        let spy = PlaybackLaunchEntryEffectSpy()
+
+        router.begin(
+            item: item,
+            progress: nil,
+            presentsExplicitChoice: true,
+            effects: spy.effects
+        )
+        router.cancel()
+        router.resolve(choice: .resume, effects: spy.effects)
+
+        XCTAssertNil(router.presentationIntent)
+        XCTAssertEqual(spy.selectedItemIDs, [])
+        XCTAssertEqual(spy.selectionTriggeredCustomPrewarmItemIDs, [])
+        XCTAssertEqual(spy.prepareItemIDs, [])
+        XCTAssertEqual(spy.sessionStartCount, 0)
+        XCTAssertTrue(spy.loadRequests.isEmpty)
+        XCTAssertEqual(spy.progressReportCount, 0)
+    }
+
+    func testEpisodeChoiceRunsEachPlaybackEffectOnceWithUnchangedStartPosition() throws {
+        let item = MediaItem(
+            id: "episode-resolved-choice",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        var router = PlaybackLaunchEntryRouter()
+        let spy = PlaybackLaunchEntryEffectSpy()
+
+        router.begin(
+            item: item,
+            progress: nil,
+            presentsExplicitChoice: true,
+            effects: spy.effects
+        )
+        router.resolve(choice: .restart, effects: spy.effects)
+
+        let request = try XCTUnwrap(spy.loadRequests.first)
+        XCTAssertEqual(spy.selectedItemIDs, [item.id])
+        XCTAssertEqual(spy.selectionTriggeredCustomPrewarmItemIDs, [item.id])
+        XCTAssertEqual(spy.prepareItemIDs, [item.id])
+        XCTAssertEqual(spy.sessionStartCount, 1)
+        XCTAssertEqual(spy.loadRequests.count, 1)
+        XCTAssertEqual(spy.progressReportCount, 1)
+        XCTAssertEqual(request.startPosition, .beginning)
+        XCTAssertEqual(request.startPosition(for: .custom), .beginning)
+        XCTAssertEqual(request.startPosition(for: .legacy), .beginning)
+    }
+
+    func testNearlyCompletedLaunchSkipsChoiceAndStartsFromBeginning() throws {
+        let item = MediaItem(
+            id: "episode-completed",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(50 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(49 * 60 * 10_000_000)
+        )
+        var coordinator = PlaybackLaunchCoordinator()
+
+        let request = try XCTUnwrap(
+            coordinator.begin(
+                item: item,
+                progress: nil,
+                presentsExplicitChoice: true
+            )
+        )
+
+        XCTAssertNil(coordinator.presentationIntent)
+        XCTAssertEqual(request.startPosition, .beginning)
+    }
+
+    func testAbsentOrNearlyFinishedProgressSkipsResumeChoice() {
+        let untouched = MediaItem(
+            id: "movie-not-started",
+            name: "Movie",
+            mediaType: .movie,
+            runtimeTicks: Int64(90 * 60 * 10_000_000)
+        )
+        let nearlyFinished = MediaItem(
+            id: "episode-nearly-finished",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(50 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(49 * 60 * 10_000_000)
+        )
+
+        XCTAssertFalse(PlaybackLaunchChoicePolicy.shouldPresentChoice(for: untouched))
+        XCTAssertFalse(PlaybackLaunchChoicePolicy.shouldPresentChoice(for: nearlyFinished))
+    }
+
+    func testResolvedProgressOverridesStaleEpisodeCardPosition() {
+        let item = MediaItem(
+            id: "episode-resolved-progress",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(50 * 60 * 10_000_000),
+            playbackPositionTicks: Int64(5 * 60 * 10_000_000)
+        )
+        let progress = PlaybackProgress(
+            itemID: item.id,
+            positionTicks: Int64(17 * 60 * 10_000_000),
+            totalTicks: Int64(50 * 60 * 10_000_000),
+            updatedAt: Date()
+        )
+
+        XCTAssertEqual(
+            PlaybackLaunchChoicePolicy.resumePositionTicks(for: item, progress: progress),
+            progress.positionTicks
+        )
+    }
+
     func testLoadUsesLocalStoppedProgressForPlayedItem() async {
         let localPositionTicks = Int64(17 * 60 * 10_000_000)
         let apiClient = DetailActionSpyAPIClient()
@@ -461,6 +756,40 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(viewModel.preferredPlaybackSource?.id, "source-2")
     }
 
+    func testSelectingEpisodeForPendingChoiceDoesNotStartPlaybackWarmup() async {
+        let warmupManager = EpisodeWarmupManager(
+            delayByItemID: [:],
+            selectionByItemID: [:]
+        )
+        let episode = MediaItem(
+            id: "episode-pending-choice",
+            name: "Episode",
+            mediaType: .episode,
+            runtimeTicks: Int64(45 * 60 * 10_000_000),
+            parentID: "series-pending-choice",
+            playbackPositionTicks: Int64(8 * 60 * 10_000_000)
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(
+                id: "series-pending-choice",
+                name: "Series",
+                mediaType: .series
+            ),
+            dependencies: makeDependencies(
+                apiClient: DetailActionSpyAPIClient(),
+                repository: MockMetadataRepository(),
+                warmupManager: warmupManager
+            )
+        )
+
+        viewModel.selectEpisodeForPendingPlayback(episode)
+        await Task.yield()
+        let warmupRequests = await warmupManager.startupWarmupRequests()
+
+        XCTAssertEqual(viewModel.itemToPlay.id, episode.id)
+        XCTAssertEqual(warmupRequests, [])
+    }
+
     func testLoadWarmsServerNextUpEpisodeFromMatchingSeason() async {
         let season1 = MediaItem(id: "season-1", name: "Season 1", mediaType: .season, indexNumber: 1)
         let season5 = MediaItem(id: "season-5", name: "Season 5", mediaType: .season, indexNumber: 5)
@@ -744,6 +1073,34 @@ final class DetailViewModelActionTests: XCTestCase {
 
         let progress = try? await repository.fetchPlaybackProgress(itemID: itemID)
         return progress?.positionTicks == expectedPositionTicks
+    }
+}
+
+@MainActor
+private final class PlaybackLaunchEntryEffectSpy {
+    private(set) var selectedItemIDs: [String] = []
+    private(set) var selectionTriggeredCustomPrewarmItemIDs: [String] = []
+    private(set) var prepareItemIDs: [String] = []
+    private(set) var sessionStartCount = 0
+    private(set) var loadRequests: [PlaybackLaunchRequest] = []
+    private(set) var progressReportCount = 0
+
+    var effects: PlaybackLaunchEntryEffects {
+        PlaybackLaunchEntryEffects(
+            select: { [weak self] item in
+                self?.selectedItemIDs.append(item.id)
+                self?.selectionTriggeredCustomPrewarmItemIDs.append(item.id)
+            },
+            prepare: { [weak self] item in
+                self?.prepareItemIDs.append(item.id)
+            },
+            launch: { [weak self] request in
+                guard let self else { return }
+                sessionStartCount += 1
+                loadRequests.append(request)
+                progressReportCount += 1
+            }
+        )
     }
 }
 

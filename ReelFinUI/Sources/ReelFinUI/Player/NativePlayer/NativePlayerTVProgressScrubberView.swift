@@ -4,10 +4,14 @@ import SwiftUI
 struct NativePlayerTVProgressScrubberView: View {
     let playbackTime: Double
     let durationSeconds: Double?
-    @FocusState private var isFocused: Bool
+    let focus: FocusState<NativePlayerTVChromeFocus?>.Binding
+    let availableActions: [NativePlayerTVChromeAction]
+    let onCommand: (NativePlayerTVTransportCommand) -> Void
 
     var body: some View {
-        Button(action: {}) {
+        Button {
+            onCommand(.select)
+        } label: {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     ZStack(alignment: .leading) {
@@ -37,16 +41,41 @@ struct NativePlayerTVProgressScrubberView: View {
             .animation(.easeOut(duration: 0.14), value: isFocused)
         }
         .buttonStyle(.plain)
-        .focused($isFocused)
-        .focusable(true)
+        .focused(focus, equals: .timeline)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
-        .onAppear {
-            DispatchQueue.main.async {
-                isFocused = true
+        .onMoveCommand { direction in
+            switch direction {
+            case .left:
+                onCommand(.move(.left))
+            case .right:
+                onCommand(.move(.right))
+            case .up:
+                onCommand(.move(.up))
+                focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
+                    from: .timeline,
+                    direction: .up,
+                    availableActions: availableActions
+                )
+            case .down:
+                onCommand(.move(.down))
+                focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
+                    from: .timeline,
+                    direction: .down,
+                    availableActions: availableActions
+                )
+            @unknown default:
+                break
             }
         }
         .accessibilityLabel("Playback position")
+        .accessibilityValue(
+            NativePlayerTVTimelineAccessibility.value(
+                playbackTime: playbackTime,
+                durationSeconds: durationSeconds
+            )
+        )
+        .accessibilityIdentifier("native_player_timeline_scrubber")
     }
 
     private func filledWidth(for width: CGFloat) -> CGFloat {
@@ -58,5 +87,7 @@ struct NativePlayerTVProgressScrubberView: View {
     private func playheadOffset(for width: CGFloat) -> CGFloat {
         min(max(0, filledWidth(for: width) - 1.5), max(0, width - 3))
     }
+
+    private var isFocused: Bool { focus.wrappedValue == .timeline }
 }
 #endif
