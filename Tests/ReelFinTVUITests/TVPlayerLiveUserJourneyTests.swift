@@ -7,6 +7,8 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     private enum ResumeChoice: Equatable { case continueDefault, restart }
 
     private var requestedLoopCount = 10
+    private var didCaptureCompactLaunchStates = false
+    private var didCaptureCompactBuffering = false
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -249,6 +251,7 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     }
 
     private func startPlayback(in app: XCUIApplication, choice: ResumeChoice) throws {
+        let shouldCaptureCompactLaunchStates = !didCaptureCompactLaunchStates
         let episodeOne = app.buttons["detail_episode_1_1"]
         XCTAssertTrue(episodeOne.waitForExistence(timeout: 20))
         for _ in 0..<4 where !episodeOne.hasFocus { XCUIRemote.shared.press(.down) }
@@ -262,17 +265,39 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             XCUIRemote.shared.press(.right)
             XCTAssertTrue(waitForValue("restart_focused", on: choiceMarker, timeout: 5))
         }
+        if shouldCaptureCompactLaunchStates {
+            attachScreenshot(app, name: "compact-resume-choice")
+        }
         XCUIRemote.shared.press(.select)
+        if shouldCaptureCompactLaunchStates {
+            let preparationPanel = app.otherElements["custom_player_launch_preparation"]
+            XCTAssertTrue(
+                preparationPanel.waitForExistence(timeout: 8),
+                "The compact player preparation panel must appear before the first rendered frame."
+            )
+            attachScreenshot(app, name: "compact-player-preparation")
+            didCaptureCompactLaunchStates = true
+        }
         XCTAssertTrue(app.otherElements["native_player_screen"].waitForExistence(timeout: 12))
     }
 
     private func requireHealthyPlayback(in app: XCUIApplication) throws {
+        captureCompactBufferingIfVisible(in: app)
         XCTAssertTrue(app.otherElements["player_video_rendering_ready"].waitForExistence(timeout: 35))
+        captureCompactBufferingIfVisible(in: app)
         XCTAssertTrue(app.otherElements["player_audio_rendering_ready"].waitForExistence(timeout: 35))
         XCTAssertTrue(app.otherElements["player_playback_advancing"].waitForExistence(timeout: 35))
         XCTAssertFalse(app.otherElements["player_error"].exists)
         let generation = app.otherElements["native_player_reader_generation"].firstMatch
         if generation.exists { XCTAssertNotNil(Int(generation.value as? String ?? "")) }
+    }
+
+    private func captureCompactBufferingIfVisible(in app: XCUIApplication) {
+        guard !didCaptureCompactBuffering else { return }
+        let bufferingPanel = app.otherElements["custom_player_buffering"]
+        guard bufferingPanel.exists else { return }
+        attachScreenshot(app, name: "compact-player-buffering")
+        didCaptureCompactBuffering = true
     }
 
     private func assertInitialPosition(_ choice: ResumeChoice, in app: XCUIApplication) throws {

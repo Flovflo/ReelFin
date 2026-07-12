@@ -308,6 +308,9 @@ struct CustomPlayerView: View {
         let state = engine.bufferingState
         if state.phase == .failed {
             // Honest, retryable error — the recovery ladder's last rung. Never a silent frozen frame.
+#if os(tvOS)
+            playerFailureGlassPanel
+#else
             VStack(spacing: 14) {
                 Image(systemName: "wifi.exclamationmark")
                     .font(.title2)
@@ -328,6 +331,7 @@ struct CustomPlayerView: View {
             .padding(24)
             .frame(maxWidth: 420)
             .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
+#endif
         } else if state.isLoadingBarVisible,
                   CustomPlayerLaunchPresentationPolicy.showsInterruptionOverlay(
                     phase: state.phase,
@@ -395,8 +399,13 @@ struct CustomPlayerView: View {
                             launchGlassPanel(state: state)
                             Spacer(minLength: 0)
                         }
+#if os(tvOS)
+                        .padding(.leading, TVPlayerLaunchLayout.standard.screenInset)
+                        .padding(.bottom, TVPlayerLaunchLayout.standard.screenInset)
+#else
                         .padding(.horizontal, launchHorizontalPadding)
                         .padding(.bottom, launchBottomPadding)
+#endif
                     }
                 }
             }
@@ -415,6 +424,73 @@ struct CustomPlayerView: View {
 
     @ViewBuilder
     private func launchGlassPanel(state: PlaybackBufferingState) -> some View {
+#if os(tvOS)
+        let layout = TVPlayerLaunchLayout.standard
+        let panel = HStack(alignment: .center, spacing: 14) {
+            ProgressView()
+                .controlSize(.regular)
+                .tint(.white)
+                .frame(width: layout.spinnerSize, height: layout.spinnerSize)
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    if let title = launchContext?.item.name, !title.isEmpty {
+                        Text(title)
+                            .font(.headline.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                    if let badge = qualityBadge {
+                        Text(badge.text)
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(badge.tint.opacity(0.9), in: Capsule())
+                            .foregroundStyle(.black)
+                    }
+                }
+
+                Text(
+                    CustomPlayerLaunchPresentationPolicy.statusText(
+                        phase: state.phase,
+                        progress: state.progress
+                    )
+                )
+                .font(.callout)
+                .foregroundStyle(.white.opacity(0.72))
+                .lineLimit(1)
+
+                if state.phase == .prebuffering, state.targetSeconds > 0 {
+                    ProgressView(value: state.progress)
+                        .progressViewStyle(.linear)
+                        .frame(width: layout.progressWidth)
+                        .tint(.white)
+                }
+
+                if launchIsSlow {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Le serveur met plus de temps que prévu.")
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.82))
+                        slowLaunchActions
+                    }
+                    .padding(.top, 3)
+                    .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: layout.maxWidth - layout.spinnerSize - 54, alignment: .leading)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: layout.maxWidth, alignment: .leading)
+
+        panel
+            .glassEffect(
+                .regular.tint(.black.opacity(0.18)),
+                in: .rect(cornerRadius: layout.cornerRadius)
+            )
+            .accessibilityIdentifier("custom_player_launch_preparation")
+#else
         let panel = HStack(alignment: .center, spacing: 18) {
             ProgressView()
                 .controlSize(.large)
@@ -483,6 +559,7 @@ struct CustomPlayerView: View {
             panel
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28))
         }
+#endif
     }
 
     @ViewBuilder
@@ -504,6 +581,27 @@ struct CustomPlayerView: View {
 
     @ViewBuilder
     private func bufferingGlassPanel(state: PlaybackBufferingState) -> some View {
+#if os(tvOS)
+        let layout = TVPlayerLaunchLayout.standard
+        let panel = HStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.regular)
+                .tint(.white)
+                .frame(width: layout.spinnerSize, height: layout.spinnerSize)
+            Text("Reprise de la lecture")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+
+        panel
+            .glassEffect(
+                .regular.tint(.black.opacity(0.18)),
+                in: .rect(cornerRadius: layout.cornerRadius)
+            )
+            .accessibilityIdentifier("custom_player_buffering")
+#else
         let panel = HStack(spacing: 14) {
             ProgressView()
                 .controlSize(.large)
@@ -523,23 +621,46 @@ struct CustomPlayerView: View {
         } else {
             panel.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
         }
+#endif
     }
 
     private var launchHorizontalPadding: CGFloat {
-#if os(tvOS)
-        72
-#else
         28
-#endif
     }
 
     private var launchBottomPadding: CGFloat {
-#if os(tvOS)
-        64
-#else
         32
-#endif
     }
+
+#if os(tvOS)
+    private var playerFailureGlassPanel: some View {
+        let layout = TVPlayerLaunchLayout.standard
+
+        return VStack(spacing: 12) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.title2)
+                .foregroundStyle(.white.opacity(0.9))
+            Text(engine.errorMessage ?? "La lecture a échoué.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+            Button {
+                engine.retry()
+            } label: {
+                Label("Réessayer", systemImage: "arrow.clockwise")
+                    .font(.callout.weight(.semibold))
+            }
+            .buttonStyle(.glassProminent)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: layout.maxWidth)
+        .glassEffect(
+            .regular.tint(.black.opacity(0.18)),
+            in: .rect(cornerRadius: layout.cornerRadius)
+        )
+    }
+#endif
 
     /// External-subtitle cue rendered by the player itself (sidecar SRT/VTT — AVFoundation can't
     /// inject text tracks into a progressive asset). Bottom-centered, TV-readable.

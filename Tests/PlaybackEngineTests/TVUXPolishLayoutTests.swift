@@ -2,6 +2,25 @@ import XCTest
 @testable import ReelFinUI
 
 final class TVUXPolishLayoutTests: XCTestCase {
+    func testCompactResumeChoiceMetrics() {
+        let layout = TVPlaybackResumeChoiceLayout.standard
+        XCTAssertEqual(layout.maxWidth, 760)
+        XCTAssertEqual(layout.cornerRadius, 34)
+        XCTAssertEqual(layout.horizontalPadding, 44)
+        XCTAssertEqual(layout.verticalPadding, 34)
+        XCTAssertEqual(layout.buttonHeight, 66)
+        XCTAssertEqual(layout.focusOpacity, 0.20)
+    }
+
+    func testCompactPlayerLaunchMetrics() {
+        let layout = TVPlayerLaunchLayout.standard
+        XCTAssertEqual(layout.maxWidth, 420)
+        XCTAssertEqual(layout.cornerRadius, 24)
+        XCTAssertEqual(layout.spinnerSize, 34)
+        XCTAssertEqual(layout.progressWidth, 280)
+        XCTAssertEqual(layout.screenInset, 64)
+    }
+
     func testTVFocusScalesMatchApprovedCouchDistanceGeometry() {
         XCTAssertEqual(TVFocusGeometry.scale(for: .homePosterCard, reduceMotion: false), 1.07)
         XCTAssertEqual(TVFocusGeometry.scale(for: .homeLandscapeCard, reduceMotion: false), 1.06)
