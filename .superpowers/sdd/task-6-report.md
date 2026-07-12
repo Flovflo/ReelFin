@@ -41,8 +41,8 @@ The authenticated player journey verifies the exposed circular state remains idl
 
 ## Performance Probes And Code Audit
 
-- Player UI probe: `.artifacts/player-ui-probe/20260712-200426`; two available checks passed and two credential-dependent live checks skipped.
-- Playback QA loop: `.artifacts/playback-qa/20260712-200748`; 970 PlaybackEngine tests and six ImageCache tests passed, with ten expected live skips and zero failures.
+- Player UI probe: `.artifacts/player-ui-probe/20260712-200426`; zero checks completed successfully because both selected tests were credential-skipped (2/2 skipped in 79.466 seconds). The outer command duration was not captured in the log. Authenticated tvOS journeys below provide the compensating live proof.
+- Playback QA loop: `.artifacts/playback-qa/20260712-200748`; 970 PlaybackEngine tests passed with ten expected skips in 411.725 seconds, and six ImageCache tests passed in 0.922 seconds. The outer command duration was not captured in the log.
 - tvOS profile attempt: `.artifacts/player-e2e/task6/test_tvos_profile.log`; stopped before profiling because the script requires credentials intentionally not exported from the preserved signed-in container.
 - No repeated per-frame glass construction, new display link, timer, detached work, broadened `MainActor` isolation, unbounded task, or uncanceled lifecycle work was introduced.
 - Runtime logs showed no Main Thread Checker, Core Animation background-thread, unexpected stall, or player-error evidence.
@@ -50,11 +50,11 @@ The authenticated player journey verifies the exposed circular state remains idl
 
 ## Final Verification
 
-- Focused iOS suite: `.artifacts/player-e2e/task6/ios-targeted-final.xcresult`; 95/95 passed with zero failures/skips.
-- Local tvOS suite: `.artifacts/player-e2e/task6/tvos-local-final.xcresult`; 2/2 passed with zero failures.
-- Authenticated tvOS suite: `.artifacts/player-e2e/task6/tvos-live-final-green.xcresult`; 8/8 passed with zero failures.
-- iOS build: `.artifacts/player-e2e/task6/ios-build-final.log`; succeeded.
-- tvOS build: `.artifacts/player-e2e/task6/tvos-build-final.log`; succeeded.
+- Focused iOS suite: `.artifacts/player-e2e/task6/ios-targeted-final.xcresult`; 95/95 passed in 0.158 seconds, with a 4.155-second Xcode test operation and zero failures/skips.
+- Local tvOS suite: `.artifacts/player-e2e/task6/tvos-local-final.xcresult`; 2/2 passed in 0.110 seconds, with a 3.270-second Xcode test operation and zero failures.
+- Authenticated tvOS suite: `.artifacts/player-e2e/task6/tvos-live-final-green.xcresult`; 8/8 passed in 384.118 seconds, with a 387.680-second Xcode test operation and zero failures.
+- iOS build: `.artifacts/player-e2e/task6/ios-build-final.log`; succeeded; duration was not captured in the log.
+- tvOS build: `.artifacts/player-e2e/task6/tvos-build-final.log`; succeeded; duration was not captured in the log.
 - `xcodegen generate` succeeded.
 
 ## Review And Remaining Concerns
@@ -62,3 +62,13 @@ The authenticated player journey verifies the exposed circular state remains idl
 The final source/test diff was reviewed against the task contract and repository guardrails. The change is limited to exact Home focus identity/restoration, its regression contract, authenticated journeys, and audit documentation. No credential, server URL, authenticated item ID, or simulator state is tracked.
 
 Simulator validation cannot prove physical clickpad feel, audible speaker/HDMI output, negotiated audio formats, HDR/Dolby Vision display-mode switching, tone mapping, or final panel luminance. Those remain explicit hardware validation items; they do not block the simulator-backed UX and correctness result.
+
+## Review Fix Evidence
+
+- Mandatory authenticated focus helpers now call `XCTFail` and throw when cards exist but focus cannot be acquired. They no longer hide focus regressions behind `XCTSkip`.
+- `tv_home_focus_transition_count` is a reliable 1×1 UIKit accessibility marker enabled only for DEBUG tvOS automation. Its value is a count only; no item ID, title, server value, or other media data is exposed. Counter mutation is also policy-gated, so release builds do not observe focus for this evidence.
+- RED failed because the policy/counter did not exist; GREEN passed the two focused policy/source tests in 0.024 seconds with a 3.931-second Xcode test operation. Durable result: `.artifacts/player-e2e/task6/review-unit-final.xcresult`.
+- Authenticated focus, Home Back, and Library Back passed 3/3 in 63.011 seconds (`.artifacts/player-e2e/task6/tvos-review-focus-back-green.xcresult`); individual durations were 33.840, 13.561, and 15.610 seconds, and the Xcode test operation was 74.034 seconds.
+- Authenticated rapid Back passed 1/1 in 11.225 seconds (`.artifacts/player-e2e/task6/tvos-review-rapid-back-green.xcresult`), with a 14.864-second Xcode test operation.
+- The Home focus journey reads the counter before one Down event, waits for one distinct stable focused card, and asserts the settled delta is exactly one. The compact preparation screenshot is taken only after its marker exists.
+- The post-review tvOS build succeeded. Its duration was not emitted or captured.

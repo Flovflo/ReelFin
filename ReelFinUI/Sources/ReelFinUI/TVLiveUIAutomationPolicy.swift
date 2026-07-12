@@ -24,6 +24,26 @@ public enum TVLiveUIAutomationPolicy {
 #endif
     }
 
+    static func isHomeFocusEvidenceEnabled(
+        isDebug: Bool,
+        isTVOS: Bool,
+        environment: [String: String]
+    ) -> Bool {
+        isDebug && isTVOS && truthy(environment["REELFIN_TV_UI_AUTOMATION"])
+    }
+
+    static var isHomeFocusEvidenceEnabledForCurrentProcess: Bool {
+#if DEBUG && os(tvOS)
+        isHomeFocusEvidenceEnabled(
+            isDebug: true,
+            isTVOS: true,
+            environment: ProcessInfo.processInfo.environment
+        )
+#else
+        false
+#endif
+    }
+
     public static func minimumLoopCount(requested: Int) -> Int {
         max(10, requested)
     }
@@ -39,6 +59,15 @@ public enum TVLiveUIAutomationPolicy {
     private static func truthy(_ value: String?) -> Bool {
         guard let value else { return false }
         return ["1", "true", "yes", "on"].contains(value.lowercased())
+    }
+}
+
+struct TVHomeFocusTransitionCounter: Equatable {
+    private(set) var count = 0
+
+    mutating func recordChange(from oldValue: String?, to newValue: String?) {
+        guard oldValue != newValue else { return }
+        count += 1
     }
 }
 

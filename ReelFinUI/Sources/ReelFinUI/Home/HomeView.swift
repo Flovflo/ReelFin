@@ -2,8 +2,29 @@ import Foundation
 import PlaybackEngine
 import Shared
 import SwiftUI
-#if os(iOS)
+#if canImport(UIKit)
 import UIKit
+#endif
+
+#if os(tvOS)
+private struct TVHomeFocusTransitionAccessibilityMarker: UIViewRepresentable {
+    let identifier: String
+    let value: String
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        view.isAccessibilityElement = true
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        view.accessibilityIdentifier = identifier
+        view.accessibilityLabel = identifier
+        view.accessibilityValue = value
+    }
+}
 #endif
 
 enum HomePlaybackRoute: Equatable {
@@ -1098,6 +1119,7 @@ struct HomeView: View {
     @Namespace private var posterNamespace
 #if os(tvOS)
     @FocusState private var focusedHomeItemID: String?
+    @State private var homeFocusTransitionCounter = TVHomeFocusTransitionCounter()
 #endif
 
     private let dependencies: ReelFinDependencies
@@ -1161,6 +1183,17 @@ struct HomeView: View {
         let visibleRows = viewModel.visibleRows
 
         mainContent(visibleRows: visibleRows)
+#if os(tvOS)
+        .overlay(alignment: .topLeading) {
+            if TVLiveUIAutomationPolicy.isHomeFocusEvidenceEnabledForCurrentProcess {
+                TVHomeFocusTransitionAccessibilityMarker(
+                    identifier: "tv_home_focus_transition_count",
+                    value: String(homeFocusTransitionCounter.count)
+                )
+                .frame(width: 1, height: 1)
+            }
+        }
+#endif
         .onDisappear {
             handleHomeDisappear()
         }
@@ -1217,6 +1250,9 @@ struct HomeView: View {
             triggerTVHomeRefresh()
         }
         .onChange(of: focusedHomeItemID) { oldValue, newValue in
+            if TVLiveUIAutomationPolicy.isHomeFocusEvidenceEnabledForCurrentProcess {
+                homeFocusTransitionCounter.recordChange(from: oldValue, to: newValue)
+            }
             guard oldValue != newValue, homeFocusHandoff.hasPendingRequest else { return }
             // Re-enabling Home temporarily focuses the visible Hero while the saved shelf row
             // scrolls into place. Remote moves still cancel through the explicit handler below.

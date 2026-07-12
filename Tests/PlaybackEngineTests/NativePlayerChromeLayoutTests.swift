@@ -861,6 +861,40 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(TVLiveUIAutomationPolicy.minimumLoopCount(requested: 14), 14)
     }
 
+    func testHomeFocusTransitionEvidenceRequiresDebugTVOSAutomationAndCountsOnlyChanges() {
+        let enabled = ["REELFIN_TV_UI_AUTOMATION": "1"]
+        XCTAssertTrue(TVLiveUIAutomationPolicy.isHomeFocusEvidenceEnabled(
+            isDebug: true,
+            isTVOS: true,
+            environment: enabled
+        ))
+        XCTAssertFalse(TVLiveUIAutomationPolicy.isHomeFocusEvidenceEnabled(
+            isDebug: false,
+            isTVOS: true,
+            environment: enabled
+        ))
+        XCTAssertFalse(TVLiveUIAutomationPolicy.isHomeFocusEvidenceEnabled(
+            isDebug: true,
+            isTVOS: false,
+            environment: enabled
+        ))
+        XCTAssertFalse(TVLiveUIAutomationPolicy.isHomeFocusEvidenceEnabled(
+            isDebug: true,
+            isTVOS: true,
+            environment: ["REELFIN_TV_UI_AUTOMATION": "0"]
+        ))
+
+        var counter = TVHomeFocusTransitionCounter()
+        counter.recordChange(from: nil, to: nil)
+        XCTAssertEqual(counter.count, 0)
+        counter.recordChange(from: nil, to: "first")
+        XCTAssertEqual(counter.count, 1)
+        counter.recordChange(from: "first", to: "first")
+        XCTAssertEqual(counter.count, 1)
+        counter.recordChange(from: "first", to: "second")
+        XCTAssertEqual(counter.count, 2)
+    }
+
     func testTVTrackPopoverUsesCompactRightSideMetrics() {
         let layout = NativePlayerTrackMenuLayout.tvOS
 

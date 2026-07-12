@@ -3,7 +3,7 @@ import XCTest
 /// Opt-in only. The test process receives no Jellyfin URL, credentials, token, user ID or item ID.
 /// The already-authenticated DEBUG tvOS app resolves the redacted alias itself.
 final class TVPlayerLiveUserJourneyTests: XCTestCase {
-    private enum JourneyError: Error { case invalidPlaybackTime }
+    private enum JourneyError: Error { case invalidPlaybackTime, invalidEvidenceValue, missingRequiredFocus }
     private enum ResumeChoice: Equatable { case continueDefault, restart }
 
     private var requestedLoopCount = 10
@@ -159,14 +159,23 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         assertUnclipped(landscape, in: app)
         attachScreenshot(app, name: "home-landscape-focus")
 
+        let focusTransitionMarker = app.otherElements["tv_home_focus_transition_count"]
+        XCTAssertTrue(focusTransitionMarker.waitForExistence(timeout: 5))
+        let transitionCountBeforeMove = try integerValue(of: focusTransitionMarker)
         let poster = try moveToDistinctFocusedCard(
             from: landscape,
             in: homeCards,
             app: app,
             using: .down,
-            maximumMoves: 4,
+            maximumMoves: 1,
             excludingIdentifierFragment: "continueWatching"
         )
+        XCTAssertTrue(
+            waitForIntegerValue(transitionCountBeforeMove + 1, on: focusTransitionMarker, timeout: 5),
+            "One Home remote move must settle after exactly one focus transition."
+        )
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertEqual(try integerValue(of: focusTransitionMarker), transitionCountBeforeMove + 1)
         assertUnclipped(poster, in: app)
         attachScreenshot(app, name: "home-poster-focus")
 
@@ -333,7 +342,7 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
 
     private func launchAuthenticatedRoot() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchEnvironment["REELFIN_TV_UI_AUTOMATION"] = "0"
+        app.launchEnvironment["REELFIN_TV_UI_AUTOMATION"] = "1"
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         return app
@@ -374,7 +383,8 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             XCUIRemote.shared.press(.down)
         }
 
-        throw XCTSkip("The authenticated live library did not expose a focusable media card.")
+        XCTFail("Authenticated Home/Library cards exist but Remote focus could not be acquired.")
+        throw JourneyError.missingRequiredFocus
     }
 
     private func waitForStableFocus(_ expected: XCUIElement, in query: XCUIElementQuery) -> Bool {
@@ -406,7 +416,8 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             if let focused = try uniqueFocusedCard(in: query) { return focused }
             XCUIRemote.shared.press(direction)
         }
-        throw XCTSkip("The authenticated surface did not expose the required focusable card.")
+        XCTFail("Authenticated cards exist but Remote focus could not be acquired.")
+        throw JourneyError.missingRequiredFocus
     }
 
     private func moveToDistinctFocusedCard(
@@ -494,13 +505,12 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         }
         XCUIRemote.shared.press(.select)
         if shouldCaptureCompactLaunchStates {
-            let preparationScreenshot = app.screenshot()
             let preparationPanel = app.otherElements["custom_player_launch_preparation"]
             XCTAssertTrue(
                 preparationPanel.exists || preparationPanel.waitForExistence(timeout: 8),
                 "The compact player preparation panel must appear before the first rendered frame."
             )
-            attachScreenshot(preparationScreenshot, name: "compact-player-preparation")
+            attachScreenshot(app, name: "compact-player-preparation")
             didCaptureCompactLaunchStates = true
         }
         XCTAssertTrue(app.otherElements["native_player_screen"].waitForExistence(timeout: 12))
@@ -873,6 +883,22 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         }
         return element.value as? String == expected
+    }
+
+    private func integerValue(of element: XCUIElement) throws -> Int {
+        guard let string = element.value as? String, let value = Int(string) else {
+            throw JourneyError.invalidEvidenceValue
+        }
+        return value
+    }
+
+    private func waitForIntegerValue(_ expected: Int, on element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if (try? integerValue(of: element)) == expected { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+        return (try? integerValue(of: element)) == expected
     }
 
     private func waitForAnyValue(_ expected: Set<String>, on element: XCUIElement, timeout: TimeInterval) -> Bool {
