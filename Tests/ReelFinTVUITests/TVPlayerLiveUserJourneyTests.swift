@@ -55,18 +55,13 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         try requireHealthyPlayback(in: app)
         revealChrome(in: app)
 
-        try changeAndRevalidateTrack(
-            buttonID: "native_player_subtitles_button",
-            menuID: "native_player_subtitles_menu",
-            in: app,
-            navigation: [.up]
-        )
-        try changeAndRevalidateTrack(
-            buttonID: "native_player_audio_button",
-            menuID: "native_player_audio_menu",
-            in: app,
-            navigation: [.right]
-        )
+        try changeSubtitleLanguageAndStyle(in: app)
+        try changeAudioAndRevalidate(in: app, navigation: [.right])
+
+        focusButton("native_player_video_button", in: app, using: [.right])
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["native_player_video_panel"].waitForExistence(timeout: 8))
+
         XCTAssertTrue(app.otherElements["player_audio_rendering_ready"].waitForExistence(timeout: 20))
         let audioRoute = app.otherElements["player_audio_rendering_ready"].value as? String
         XCTAssertTrue([
@@ -74,9 +69,6 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             "native_sample_buffer_audio_renderer_accepted"
         ].contains(audioRoute ?? ""))
 
-        focusButton("native_player_video_button", in: app, using: [.right])
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(app.otherElements["native_player_video_panel"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Vidéo"].exists)
         XCUIRemote.shared.press(.menu)
         let chromeFocusMarker = app.otherElements["native_player_chrome_focused_control"]
@@ -201,48 +193,184 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         }
     }
 
-    private func changeAndRevalidateTrack(
-        buttonID: String,
-        menuID: String,
+    private func changeSubtitleLanguageAndStyle(in app: XCUIApplication) throws {
+        let buttonID = "native_player_subtitles_button"
+        let menu = app.otherElements["native_player_subtitles_menu"]
+        let focusMarker = app.otherElements["native_player_track_focused_title"]
+        let pageMarker = app.otherElements["native_player_track_menu_page"]
+
+        focusButton(buttonID, in: app, using: [.up])
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(menu.waitForExistence(timeout: 8))
+        XCTAssertTrue(focusMarker.waitForExistence(timeout: 5))
+        XCTAssertTrue(pageMarker.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
+        XCTAssertTrue(waitForAnyValue(["On", "Off"], on: focusMarker, timeout: 5))
+
+        let initialRootFocus = focusMarker.value as? String ?? ""
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(
+            waitForDifferentValue(from: initialRootFocus, on: focusMarker, timeout: 5),
+            "Down must move focus to another Subtitles root row."
+        )
+        XCUIRemote.shared.press(.up)
+        XCTAssertTrue(
+            waitForValue(initialRootFocus, on: focusMarker, timeout: 5),
+            "Up must return to \(initialRootFocus); observed \(String(describing: focusMarker.value))."
+        )
+
+        focusMenuRow("Language", in: app, using: .down, maximumMoves: 3)
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(
+            waitForValue("subtitle_languages", on: pageMarker, timeout: 5),
+            "Right on Language must open the language submenu exactly once; page is \(String(describing: pageMarker.value)), focus is \(String(describing: focusMarker.value))."
+        )
+        XCTAssertGreaterThanOrEqual(menuChoiceButtons(in: app).count, 2)
+        XCTAssertTrue(
+            waitForDifferentValue(from: "Language", on: focusMarker, timeout: 5),
+            "The Language submenu must establish focus before handling Left."
+        )
+
+        XCUIRemote.shared.press(.left)
+        XCTAssertTrue(menu.exists)
+        XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("Language", on: focusMarker, timeout: 5))
+
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(waitForValue("subtitle_languages", on: pageMarker, timeout: 5))
+        let originalLanguage = try changeFocusedChoiceAndSelect(in: app)
+        XCTAssertTrue(menu.exists, "Selecting a subtitle language must return to the Subtitles root.")
+        XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("Language", on: focusMarker, timeout: 5))
+
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(waitForValue("subtitle_languages", on: pageMarker, timeout: 5))
+        let changedLanguage = selectedChoice(in: app)
+        XCTAssertTrue(changedLanguage.exists)
+        XCTAssertNotEqual(changedLanguage.label, originalLanguage)
+        XCUIRemote.shared.press(.left)
+        XCTAssertTrue(waitForValue("Language", on: focusMarker, timeout: 5))
+
+        focusMenuRow("Style", in: app, using: .down, maximumMoves: 1)
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(
+            waitForValue("subtitle_styles", on: pageMarker, timeout: 5),
+            "Right on Style must open the style submenu exactly once; page is \(String(describing: pageMarker.value)), focus is \(String(describing: focusMarker.value))."
+        )
+        XCTAssertTrue(
+            waitForDifferentValue(from: "Style", on: focusMarker, timeout: 5),
+            "The Style submenu must establish focus before handling Menu."
+        )
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(menu.exists, "Menu in the Style submenu must return to Subtitles root.")
+        XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("Style", on: focusMarker, timeout: 5))
+
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(waitForValue("subtitle_styles", on: pageMarker, timeout: 5))
+        _ = try changeFocusedChoiceAndSelect(in: app)
+        XCTAssertTrue(menu.exists, "Selecting a subtitle style must return to the Subtitles root.")
+        XCTAssertTrue(waitForValue("subtitles_root", on: pageMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("Style", on: focusMarker, timeout: 5))
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(waitForDisappearance(menu, timeout: 8))
+        XCTAssertTrue(waitForFocus(app.buttons[buttonID], timeout: 5))
+    }
+
+    private func changeAudioAndRevalidate(
         in app: XCUIApplication,
         navigation: [XCUIRemote.Button]
     ) throws {
-        focusButton(buttonID, in: app, using: navigation)
-        XCUIRemote.shared.press(.select)
-        let menu = app.otherElements[menuID]
-        XCTAssertTrue(menu.waitForExistence(timeout: 8))
-        let options = app.buttons.matching(identifier: "native_player_track_option")
-        XCTAssertGreaterThanOrEqual(
-            options.count,
-            2,
-            "The live menu must expose at least one real alternate track in addition to the current choice."
-        )
-        let selected = options.matching(NSPredicate(format: "value == %@", "selected")).firstMatch
-        XCTAssertTrue(selected.exists)
-        let originalLabel = selected.label
-        let optionElements = options.allElementsBoundByIndex
-        let selectedIndex = optionElements.firstIndex { ($0.value as? String) == "selected" }
-        let moveButton: XCUIRemote.Button = selectedIndex == optionElements.indices.last ? .up : .down
-        let focusMarker = app.otherElements["native_player_track_focused_title"]
-        XCTAssertTrue(focusMarker.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForValue(originalLabel, on: focusMarker, timeout: 5))
-        XCUIRemote.shared.press(moveButton)
-        XCTAssertTrue(
-            waitForDifferentValue(from: originalLabel, on: focusMarker, timeout: 5),
-            "Remote vertical navigation must visibly focus a different real track before Select."
-        )
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(waitForDisappearance(menu, timeout: 8))
+        let buttonID = "native_player_audio_button"
+        let menu = app.otherElements["native_player_audio_menu"]
 
         focusButton(buttonID, in: app, using: navigation)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(menu.waitForExistence(timeout: 8))
-        let changed = app.buttons.matching(identifier: "native_player_track_option")
-            .matching(NSPredicate(format: "value == %@", "selected")).firstMatch
+        let originalLabel = try changeFocusedChoiceAndSelect(in: app)
+        XCTAssertTrue(waitForDisappearance(menu, timeout: 8), "Audio selection may close its root card.")
+
+        focusButton(buttonID, in: app, using: navigation)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(menu.waitForExistence(timeout: 8))
+        let changed = selectedChoice(in: app)
         XCTAssertTrue(changed.exists)
         XCTAssertNotEqual(changed.label, originalLabel)
-        XCTAssertEqual(options.matching(NSPredicate(format: "value == %@", "selected")).count, 1)
-        XCUIRemote.shared.press(.menu)
+        XCTAssertEqual(menuChoiceButtons(in: app).matching(selectedPredicate).count, 1)
+        let focusMarker = app.otherElements["native_player_track_focused_title"]
+        XCTAssertTrue(waitForValue(changed.label, on: focusMarker, timeout: 5))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForDisappearance(menu, timeout: 8))
+        XCTAssertTrue(waitForFocus(app.buttons[buttonID], timeout: 5))
+    }
+
+    private func changeFocusedChoiceAndSelect(in app: XCUIApplication) throws -> String {
+        let options = menuChoiceButtons(in: app)
+        XCTAssertTrue(
+            waitForMinimumCount(2, in: options, timeout: 5),
+            "The live submenu must expose at least two real choices."
+        )
+        let focusMarker = app.otherElements["native_player_track_focused_title"]
+        XCTAssertTrue(focusMarker.waitForExistence(timeout: 5))
+        let optionElements = options.allElementsBoundByIndex
+        XCTAssertTrue(
+            waitForAnyValue(Set(optionElements.map(\.label)), on: focusMarker, timeout: 5),
+            "The submenu must focus one of its real choices."
+        )
+        let originalLabel = focusMarker.value as? String ?? ""
+        let focusedIndex = optionElements.firstIndex { $0.label == originalLabel }
+        let moveButton: XCUIRemote.Button = focusedIndex == optionElements.indices.last ? .up : .down
+        XCUIRemote.shared.press(moveButton)
+        XCTAssertTrue(
+            waitForDifferentValue(from: originalLabel, on: focusMarker, timeout: 5),
+            "Remote vertical navigation must focus a different choice before Select."
+        )
+        XCUIRemote.shared.press(.select)
+        return originalLabel
+    }
+
+    private func waitForMinimumCount(
+        _ minimumCount: Int,
+        in query: XCUIElementQuery,
+        timeout: TimeInterval
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in query.count >= minimumCount },
+            object: nil
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func focusMenuRow(
+        _ title: String,
+        in app: XCUIApplication,
+        using direction: XCUIRemote.Button,
+        maximumMoves: Int
+    ) {
+        let focusMarker = app.otherElements["native_player_track_focused_title"]
+        XCTAssertTrue(focusMarker.waitForExistence(timeout: 5))
+        for _ in 0..<maximumMoves where (focusMarker.value as? String) != title {
+            XCUIRemote.shared.press(direction)
+        }
+        XCTAssertTrue(waitForValue(title, on: focusMarker, timeout: 5))
+    }
+
+    private var selectedPredicate: NSPredicate {
+        NSPredicate(format: "value == %@", "selected")
+    }
+
+    private func menuChoiceButtons(in app: XCUIApplication) -> XCUIElementQuery {
+        app.buttons.matching(
+            NSPredicate(
+                format: "value == %@ OR value == %@",
+                "selected",
+                "not_selected"
+            )
+        )
+    }
+
+    private func selectedChoice(in app: XCUIApplication) -> XCUIElement {
+        menuChoiceButtons(in: app).matching(selectedPredicate).firstMatch
     }
 
     private func revealChrome(in app: XCUIApplication) {
@@ -297,6 +425,16 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         }
         return element.value as? String == expected
+    }
+
+    private func waitForAnyValue(_ expected: Set<String>, on element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let value = element.value as? String, expected.contains(value) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+        guard let value = element.value as? String else { return false }
+        return expected.contains(value)
     }
 
     private func waitForDifferentValue(from original: String, on element: XCUIElement, timeout: TimeInterval) -> Bool {

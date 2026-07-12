@@ -63,6 +63,20 @@ enum NativePlayerAVKitMenuExitResult: Equatable {
     case dismissed
 }
 
+enum NativePlayerAVKitMenuMoveDirection: Equatable {
+    case up
+    case down
+    case left
+    case right
+}
+
+enum NativePlayerAVKitMenuMoveResult: Equatable {
+    case movedFocus(NativePlayerAVKitMenuRowID)
+    case openedSubmenu
+    case returnedToRoot
+    case ignored
+}
+
 struct NativePlayerAVKitMenuState: Equatable {
     var page: NativePlayerAVKitMenuPage
     var focusedRow: NativePlayerAVKitMenuRowID?
@@ -103,6 +117,41 @@ struct NativePlayerAVKitMenuState: Equatable {
         returnToParent()
     }
 
+    mutating func handleMove(
+        _ direction: NativePlayerAVKitMenuMoveDirection,
+        from current: NativePlayerAVKitMenuRowID?,
+        rows: [NativePlayerAVKitMenuRowID]
+    ) -> NativePlayerAVKitMenuMoveResult {
+        switch direction {
+        case .up, .down:
+            guard let anchor = current ?? focusedRow ?? rows.first else {
+                return .ignored
+            }
+            let next = NativePlayerAVKitMenuFocusPolicy.move(
+                from: anchor,
+                delta: direction == .up ? -1 : 1,
+                rows: rows
+            )
+            focusedRow = next
+            return .movedFocus(next)
+
+        case .left:
+            return handleLeft() ? .returnedToRoot : .ignored
+
+        case .right:
+            switch current ?? focusedRow {
+            case .subtitleLanguage:
+                perform(.openLanguages)
+                return .openedSubmenu
+            case .subtitleStyle:
+                perform(.openStyles)
+                return .openedSubmenu
+            default:
+                return .ignored
+            }
+        }
+    }
+
     private mutating func returnToParent() -> Bool {
         let origin: NativePlayerAVKitMenuRowID
         switch page {
@@ -131,6 +180,17 @@ enum NativePlayerAVKitMenuDispatch {
     }
 }
 
+enum NativePlayerAVKitMenuRouteCoordinator {
+    static func selectAndDismiss(
+        _ selection: PlaybackControlSelection,
+        onSelect: (PlaybackControlSelection) -> Void,
+        onDismiss: () -> Void
+    ) {
+        NativePlayerAVKitMenuDispatch.dispatch(selection, to: onSelect)
+        onDismiss()
+    }
+}
+
 struct NativePlayerAVKitMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
@@ -141,11 +201,9 @@ struct NativePlayerAVKitMenuView: View {
 
     @State private var menuState: NativePlayerAVKitMenuState
     @State private var lastEnabledSubtitleID: String?
+    @State private var focusRequestToken: UInt = 0
     @FocusState private var focusedRow: NativePlayerAVKitMenuRowID?
     @Namespace private var focusNamespace
-#if os(tvOS)
-    @Environment(\.resetFocus) private var resetFocus
-#endif
 
     init(
         mode: PlaybackTrackMenuKind,
@@ -200,18 +258,6 @@ struct NativePlayerAVKitMenuView: View {
         }
         .nativePlayerAVKitMenuFocusScope(focusNamespace)
         .defaultFocus($focusedRow, preferredFocusedRow)
-        .task(id: focusRequestID) {
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            focusedRow = preferredFocusedRow
-#if os(tvOS)
-            resetFocus(in: focusNamespace)
-#endif
-        }
-        .onChange(of: focusedRow) { _, row in
-            guard let row, availableRowIDs.contains(row) else { return }
-            menuState.focusedRow = row
-        }
         .background(alignment: .topLeading) {
             if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
                 ZStack {
@@ -220,19 +266,21 @@ struct NativePlayerAVKitMenuView: View {
                         identifier: "native_player_track_focused_title",
                         value: focusedRowTitle
                     )
+                    PlayerAccessibilityMarkerView(
+                        identifier: "native_player_track_menu_page",
+                        value: accessibilityPage
+                    )
                 }
                 .frame(width: 1, height: 1)
             }
         }
 #if os(tvOS)
         .onExitCommand {
-            if menuState.handleMenu() == .dismissed {
+            if menuState.handleMenu() == .returnedToRoot {
+                advanceFocusRequest()
+            } else {
                 onDismiss()
             }
-        }
-        .onMoveCommand { direction in
-            guard direction == .left else { return }
-            _ = menuState.handleLeft()
         }
 #endif
     }
@@ -253,10 +301,16 @@ struct NativePlayerAVKitMenuView: View {
                     perform(.forRow(rowID))
                 }
                 .focused($focusedRow, equals: rowID)
+                .nativePlayerAVKitMenuMoveCommands { direction in
+                    handleMoveCommand(direction, from: rowID)
+                }
                 .nativePlayerAVKitMenuDefaultFocus(
                     rowID == preferredFocusedRow,
                     in: focusNamespace
                 )
+                .task(id: focusRequestID) {
+                    await requestFocus(on: rowID)
+                }
                 .accessibilityLabel(option.accessibilityLabel)
                 .accessibilityValue(option.isSelected ? "selected" : "not_selected")
                 .accessibilityAddTraits(option.isSelected ? .isSelected : [])
@@ -304,10 +358,16 @@ struct NativePlayerAVKitMenuView: View {
                     perform(.forRow(rowID))
                 }
                 .focused($focusedRow, equals: rowID)
+                .nativePlayerAVKitMenuMoveCommands { direction in
+                    handleMoveCommand(direction, from: rowID)
+                }
                 .nativePlayerAVKitMenuDefaultFocus(
                     rowID == preferredFocusedRow,
                     in: focusNamespace
                 )
+                .task(id: focusRequestID) {
+                    await requestFocus(on: rowID)
+                }
                 .accessibilityLabel(option.accessibilityLabel)
                 .accessibilityValue(option.trackID == selectedSubtitleID ? "selected" : "not_selected")
                 .accessibilityAddTraits(option.trackID == selectedSubtitleID ? .isSelected : [])
@@ -326,10 +386,16 @@ struct NativePlayerAVKitMenuView: View {
                     perform(.forRow(rowID))
                 }
                 .focused($focusedRow, equals: rowID)
+                .nativePlayerAVKitMenuMoveCommands { direction in
+                    handleMoveCommand(direction, from: rowID)
+                }
                 .nativePlayerAVKitMenuDefaultFocus(
                     rowID == preferredFocusedRow,
                     in: focusNamespace
                 )
+                .task(id: focusRequestID) {
+                    await requestFocus(on: rowID)
+                }
                 .accessibilityLabel(style.displayName)
                 .accessibilityValue(style == subtitleStyle ? "selected" : "not_selected")
                 .accessibilityAddTraits(style == subtitleStyle ? .isSelected : [])
@@ -352,7 +418,13 @@ struct NativePlayerAVKitMenuView: View {
             perform(.forRow(id))
         }
         .focused($focusedRow, equals: id)
+        .nativePlayerAVKitMenuMoveCommands { direction in
+            handleMoveCommand(direction, from: id)
+        }
         .nativePlayerAVKitMenuDefaultFocus(id == preferredFocusedRow, in: focusNamespace)
+        .task(id: focusRequestID) {
+            await requestFocus(on: id)
+        }
         .accessibilityLabel(title)
         .accessibilityValue(isSelected ? "selected" : "not_selected")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -372,15 +444,24 @@ struct NativePlayerAVKitMenuView: View {
             perform(.forRow(id))
         }
         .focused($focusedRow, equals: id)
+        .nativePlayerAVKitMenuMoveCommands { direction in
+            handleMoveCommand(direction, from: id)
+        }
         .nativePlayerAVKitMenuDefaultFocus(id == preferredFocusedRow, in: focusNamespace)
+        .task(id: focusRequestID) {
+            await requestFocus(on: id)
+        }
         .accessibilityLabel("\(title), \(detail)")
     }
 
     private func perform(_ action: NativePlayerAVKitMenuAction) {
         switch action {
         case let .selectAudio(trackID):
-            NativePlayerAVKitMenuDispatch.dispatch(.audio(trackID), to: onSelect)
-            onDismiss()
+            NativePlayerAVKitMenuRouteCoordinator.selectAndDismiss(
+                .audio(trackID),
+                onSelect: onSelect,
+                onDismiss: onDismiss
+            )
 
         case .enableSubtitles:
             guard let trackID = NativePlayerSubtitleMenuPolicy.enabledTrackID(
@@ -398,18 +479,22 @@ struct NativePlayerAVKitMenuView: View {
 
         case .openLanguages:
             menuState.perform(action)
+            advanceFocusRequest()
 
         case .openStyles:
             menuState.perform(action)
+            advanceFocusRequest()
 
         case let .selectSubtitle(trackID):
             lastEnabledSubtitleID = trackID
             NativePlayerAVKitMenuDispatch.dispatch(.subtitle(trackID), to: onSelect)
             menuState.perform(action)
+            advanceFocusRequest()
 
         case let .selectStyle(style):
             onSelectStyle(style)
             menuState.perform(action)
+            advanceFocusRequest()
         }
     }
 
@@ -508,13 +593,24 @@ struct NativePlayerAVKitMenuView: View {
         }
     }
 
-    private var focusRequestID: String {
+    private var accessibilityPage: String {
         switch menuState.page {
         case .audio: return "audio"
-        case .subtitlesRoot: return "subtitles-root"
-        case .subtitleLanguages: return "subtitle-languages"
-        case .subtitleStyles: return "subtitle-styles"
+        case .subtitlesRoot: return "subtitles_root"
+        case .subtitleLanguages: return "subtitle_languages"
+        case .subtitleStyles: return "subtitle_styles"
         }
+    }
+
+    private var focusRequestID: String {
+        let page: String
+        switch menuState.page {
+        case .audio: page = "audio"
+        case .subtitlesRoot: page = "subtitles-root"
+        case .subtitleLanguages: page = "subtitle-languages"
+        case .subtitleStyles: page = "subtitle-styles"
+        }
+        return "\(page)-\(focusRequestToken)"
     }
 
     private func presentation(
@@ -524,6 +620,40 @@ struct NativePlayerAVKitMenuView: View {
     }
 
     private var layout: NativePlayerAVKitMenuLayout { .standard }
+
+    private func handleMoveCommand(
+        _ direction: NativePlayerAVKitMenuMoveDirection,
+        from sourceRow: NativePlayerAVKitMenuRowID
+    ) {
+        let result = menuState.handleMove(
+            direction,
+            from: sourceRow,
+            rows: availableRowIDs
+        )
+        if case let .movedFocus(row) = result {
+            focusedRow = row
+        } else if result == .openedSubmenu || result == .returnedToRoot {
+            advanceFocusRequest()
+        }
+    }
+
+    private func advanceFocusRequest() {
+        focusRequestToken &+= 1
+    }
+
+    private func requestFocus(on row: NativePlayerAVKitMenuRowID) async {
+        guard row == preferredFocusedRow else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              row == preferredFocusedRow,
+              availableRowIDs.contains(row) else { return }
+        focusedRow = row
+        await Task.yield()
+        guard !Task.isCancelled,
+              row == preferredFocusedRow,
+              availableRowIDs.contains(row) else { return }
+        focusedRow = row
+    }
 }
 
 private struct NativePlayerAVKitChoiceRow: View {
@@ -651,6 +781,30 @@ private extension View {
         self
             .focusEffectDisabled(true)
             .hoverEffectDisabled(true)
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func nativePlayerAVKitMenuMoveCommands(
+        _ action: @escaping (NativePlayerAVKitMenuMoveDirection) -> Void
+    ) -> some View {
+#if os(tvOS)
+        self.onMoveCommand { direction in
+            switch direction {
+            case .up:
+                action(.up)
+            case .down:
+                action(.down)
+            case .left:
+                action(.left)
+            case .right:
+                action(.right)
+            @unknown default:
+                break
+            }
+        }
 #else
         self
 #endif

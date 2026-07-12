@@ -292,6 +292,70 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(rootState.page, .subtitlesRoot)
     }
 
+    func testAVKitMenuVerticalCommandsReachEveryRootRowAndStayBounded() {
+        let rows = NativePlayerAVKitMenuPage.subtitlesRoot.rowIDs
+        var state = NativePlayerAVKitMenuState(
+            page: .subtitlesRoot,
+            focusedRow: .subtitleOn
+        )
+
+        XCTAssertEqual(
+            state.handleMove(.down, from: .subtitleOn, rows: rows),
+            .movedFocus(.subtitleOff)
+        )
+        XCTAssertEqual(
+            state.handleMove(.down, from: .subtitleOff, rows: rows),
+            .movedFocus(.subtitleLanguage)
+        )
+        XCTAssertEqual(
+            state.handleMove(.down, from: .subtitleLanguage, rows: rows),
+            .movedFocus(.subtitleStyle)
+        )
+        XCTAssertEqual(
+            state.handleMove(.down, from: .subtitleStyle, rows: rows),
+            .movedFocus(.subtitleStyle)
+        )
+        XCTAssertEqual(
+            state.handleMove(.up, from: .subtitleStyle, rows: rows),
+            .movedFocus(.subtitleLanguage)
+        )
+        XCTAssertEqual(
+            state.handleMove(.up, from: .subtitleLanguage, rows: rows),
+            .movedFocus(.subtitleOff)
+        )
+        XCTAssertEqual(
+            state.handleMove(.up, from: .subtitleOff, rows: rows),
+            .movedFocus(.subtitleOn)
+        )
+        XCTAssertEqual(
+            state.handleMove(.up, from: .subtitleOn, rows: rows),
+            .movedFocus(.subtitleOn)
+        )
+    }
+
+    func testAVKitMenuRightOpensOnlyFocusedLanguageOrStyleRow() {
+        let rows = NativePlayerAVKitMenuPage.subtitlesRoot.rowIDs
+        var languageState = NativePlayerAVKitMenuState(page: .subtitlesRoot)
+        var styleState = NativePlayerAVKitMenuState(page: .subtitlesRoot)
+        var choiceState = NativePlayerAVKitMenuState(page: .subtitlesRoot)
+
+        XCTAssertEqual(
+            languageState.handleMove(.right, from: .subtitleLanguage, rows: rows),
+            .openedSubmenu
+        )
+        XCTAssertEqual(languageState.page, .subtitleLanguages)
+        XCTAssertEqual(
+            styleState.handleMove(.right, from: .subtitleStyle, rows: rows),
+            .openedSubmenu
+        )
+        XCTAssertEqual(styleState.page, .subtitleStyles)
+        XCTAssertEqual(
+            choiceState.handleMove(.right, from: .subtitleOn, rows: rows),
+            .ignored
+        )
+        XCTAssertEqual(choiceState.page, .subtitlesRoot)
+    }
+
     func testAudioAndSubtitleSelectionDispatchExactlyOnce() {
         var selections: [PlaybackControlSelection] = []
 
@@ -305,6 +369,27 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         }
         XCTAssertEqual(audioID, "fr")
         XCTAssertEqual(subtitleID, "forced-fr")
+    }
+
+    func testAudioRouteSelectsDismissesAndAdvancesFocusTokenExactlyOnce() {
+        var selectionCount = 0
+        var dismissCount = 0
+        var focusRequestToken: UInt = 41
+
+        NativePlayerAVKitMenuRouteCoordinator.selectAndDismiss(
+            .audio("fr"),
+            onSelect: { _ in selectionCount += 1 },
+            onDismiss: {
+                dismissCount += 1
+                focusRequestToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(
+                    after: focusRequestToken
+                )
+            }
+        )
+
+        XCTAssertEqual(selectionCount, 1)
+        XCTAssertEqual(dismissCount, 1)
+        XCTAssertEqual(focusRequestToken, 42)
     }
 
     func testSubtitleBackgroundStylesExposeStablePreferenceValues() {
