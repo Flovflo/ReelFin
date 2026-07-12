@@ -42,14 +42,13 @@ struct LibraryView: View {
 #if os(tvOS)
             libraryContent
                 .disabled(detailPresentation.keepsDetailMounted)
-                .scaleEffect(detailPresentation.keepsDetailMounted ? 0.982 : 1)
-                .opacity(detailPresentation.keepsDetailMounted ? 0.34 : 1)
+                .scaleEffect(detailPresentationVisualState == .presented ? 0.982 : 1)
+                .opacity(detailPresentationVisualState == .presented ? 0.34 : 1)
                 .overlay {
-                    Color.black.opacity(detailPresentation.keepsDetailMounted ? 0.45 : 0)
+                    Color.black.opacity(detailPresentationVisualState == .presented ? 0.45 : 0)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 }
-                .animation(tvDetailOpenAnimation, value: detailPresentation.keepsDetailMounted)
 
             tvInlineDetailPresentation
 #else
@@ -699,7 +698,7 @@ struct LibraryView: View {
         }
 
         withAnimation(tvDetailOpenAnimation, completionCriteria: .logicallyComplete) {
-            viewModel.select(item: item)
+            viewModel.select(item: item, animated: false)
             detailPresentationVisualState = .presented
             tvOpeningArtworkVisible = false
         } completion: {
@@ -724,7 +723,7 @@ struct LibraryView: View {
             detailPresentationVisualState = .closing
             tvOpeningArtworkVisible = true
         } completion: {
-            viewModel.dismissDetail()
+            viewModel.dismissDetail(animated: false)
             detailPresentation.finishClosing()
             tvOpeningArtworkVisible = false
             tvOpeningArtworkItem = nil

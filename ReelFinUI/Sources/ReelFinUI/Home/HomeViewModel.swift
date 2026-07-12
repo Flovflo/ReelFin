@@ -76,7 +76,7 @@ final class HomeViewModel {
         await loadMore(row: row)
     }
 
-    func select(item: MediaItem) {
+    func select(item: MediaItem, animated: Bool = true) {
         if item.mediaType == .episode, let seriesId = item.parentID {
             let immediateSeriesShell = MediaItem(
                 id: seriesId,
@@ -92,7 +92,7 @@ final class HomeViewModel {
                 libraryID: item.libraryID
             )
 
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+            updateSelection(animated: animated, animation: .spring(response: 0.35, dampingFraction: 0.9)) {
                 selectedEpisode = item
                 selectedItem = immediateSeriesShell
             }
@@ -102,7 +102,10 @@ final class HomeViewModel {
                     let series = try await dependencies.seriesCache.getSeries(id: seriesId)
                     await MainActor.run {
                         guard self.selectedItem?.id == seriesId else { return }
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                        self.updateSelection(
+                            animated: animated,
+                            animation: .spring(response: 0.3, dampingFraction: 0.9)
+                        ) {
                             selectedItem = mergedSeriesShell(current: immediateSeriesShell, incoming: series)
                         }
                     }
@@ -111,17 +114,31 @@ final class HomeViewModel {
                 }
             }
         } else {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+            updateSelection(animated: animated, animation: .spring(response: 0.35, dampingFraction: 0.9)) {
                 selectedEpisode = nil
                 selectedItem = item
             }
         }
     }
 
-    func dismissDetail() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+    func dismissDetail(animated: Bool = true) {
+        updateSelection(animated: animated, animation: .spring(response: 0.35, dampingFraction: 0.9)) {
             selectedEpisode = nil
             selectedItem = nil
+        }
+    }
+
+    private func updateSelection(
+        animated: Bool,
+        animation: Animation,
+        update: () -> Void
+    ) {
+        if animated {
+            withAnimation(animation) {
+                update()
+            }
+        } else {
+            update()
         }
     }
 

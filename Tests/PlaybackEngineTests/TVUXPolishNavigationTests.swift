@@ -45,4 +45,82 @@ final class TVUXPolishNavigationTests: XCTestCase {
         XCTAssertEqual(TVDetailTransitionMetrics.closingDuration, 0.30)
         XCTAssertEqual(TVDetailTransitionMetrics.reducedMotionDuration, 0.18)
     }
+
+    func testDetailDismissalUsesExplicitCallbackExactlyOnce() {
+        var explicitCount = 0
+        var fallbackCount = 0
+
+        TVDetailDismissalRouter.request(
+            explicit: { explicitCount += 1 },
+            fallback: { fallbackCount += 1 }
+        )
+
+        XCTAssertEqual(explicitCount, 1)
+        XCTAssertEqual(fallbackCount, 0)
+    }
+
+    func testDetailDismissalFallsBackWhenExplicitCallbackIsNil() {
+        var fallbackCount = 0
+
+        TVDetailDismissalRouter.request(
+            explicit: nil,
+            fallback: { fallbackCount += 1 }
+        )
+
+        XCTAssertEqual(fallbackCount, 1)
+    }
+
+    func testStaleHomeFocusHandoffCannotWin() {
+        var coordinator = TVHomeFocusHandoffCoordinator()
+        let stale = coordinator.begin(targetID: "old-card")
+        let latest = coordinator.begin(targetID: "new-card")
+
+        XCTAssertFalse(coordinator.owns(stale))
+        XCTAssertTrue(coordinator.owns(latest))
+
+        coordinator.cancel()
+
+        XCTAssertFalse(coordinator.owns(latest))
+    }
+
+    func testTVDetailHostsUseCoordinatorTimingsWithoutNestedViewModelAnimations() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let home = try String(
+            contentsOf: root.appendingPathComponent("ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift"),
+            encoding: .utf8
+        )
+        let library = try String(
+            contentsOf: root.appendingPathComponent("ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift"),
+            encoding: .utf8
+        )
+
+        for source in [home, library] {
+            XCTAssertTrue(source.contains("withAnimation(tvDetailOpenAnimation, completionCriteria: .logicallyComplete)"))
+            XCTAssertTrue(source.contains("withAnimation(tvDetailCloseAnimation, completionCriteria: .logicallyComplete)"))
+            XCTAssertTrue(source.contains("viewModel.select(item: item, animated: false)"))
+            XCTAssertTrue(source.contains("viewModel.dismissDetail(animated: false)"))
+            XCTAssertTrue(source.contains("detailPresentationVisualState == .presented"))
+            XCTAssertFalse(source.contains(".animation(tvDetailOpenAnimation, value: detailPresentation.keepsDetailMounted)"))
+        }
+    }
+
+    func testHomeFocusRestoreUsesCancelableOwnedHandoff() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let home = try String(
+            contentsOf: root.appendingPathComponent("ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertFalse(home.contains("Task.sleep(nanoseconds: 220_000_000)"))
+        XCTAssertTrue(home.contains("let request = beginHomeFocusHandoff(targetID: itemID)"))
+        XCTAssertTrue(home.contains("completeHomeFocusHandoff(request)"))
+        XCTAssertTrue(home.contains("guard homeFocusHandoff.owns(request) else { return }"))
+        XCTAssertTrue(home.contains("homeFocusHandoffTask?.cancel()"))
+    }
 }

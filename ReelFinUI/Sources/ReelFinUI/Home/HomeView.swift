@@ -1115,6 +1115,8 @@ struct HomeView: View {
     @State private var tvDetailFocusRequest = 0
     @State private var detailPresentation = TVDetailPresentationCoordinator()
     @State private var detailPresentationVisualState = TVDetailPresentationVisualState.opening
+    @State private var homeFocusHandoff = TVHomeFocusHandoffCoordinator()
+    @State private var homeFocusHandoffTask: Task<Void, Never>?
 #endif
     @State private var playerSession: PlaybackSessionController?
     @State private var customEngine: CustomPlaybackEngine?
@@ -1322,14 +1324,13 @@ struct HomeView: View {
                     // instead of the visible Play button. Removing Home from focus participation
                     // lets DetailView's default focus resolve immediately and deterministically.
                     .disabled(detailPresentation.keepsDetailMounted)
-                    .scaleEffect(detailPresentation.keepsDetailMounted ? 0.982 : 1)
-                    .opacity(detailPresentation.keepsDetailMounted ? 0.34 : 1)
+                    .scaleEffect(detailPresentationVisualState == .presented ? 0.982 : 1)
+                    .opacity(detailPresentationVisualState == .presented ? 0.34 : 1)
                     .overlay {
-                        Color.black.opacity(detailPresentation.keepsDetailMounted ? 0.45 : 0)
+                        Color.black.opacity(detailPresentationVisualState == .presented ? 0.45 : 0)
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
                     }
-                    .animation(tvDetailOpenAnimation, value: detailPresentation.keepsDetailMounted)
 
                 TVHomeRefreshStatusView(isRefreshing: viewModel.isRefreshing && !viewModel.isInitialLoading)
                     .padding(.top, tvRefreshStatusTopPadding)
@@ -1459,6 +1460,9 @@ struct HomeView: View {
                         },
                         onMoveUpFromContinueWatching: continueWatchingHeroFocusAction(for: row.kind),
                         onOpenSection: {
+#if os(tvOS)
+                            cancelHomeFocusHandoff()
+#endif
                             selectedHomeSectionRow = row
                         },
                         onItemAppear: { item in
@@ -1890,7 +1894,7 @@ struct HomeView: View {
             detailPresentationVisualState = .closing
             tvOpeningArtworkVisible = true
         } completion: {
-            viewModel.dismissDetail()
+            viewModel.dismissDetail(animated: false)
             detailPresentation.finishClosing()
             tvOpeningArtworkVisible = false
             tvOpeningArtworkItem = nil
@@ -1905,6 +1909,7 @@ struct HomeView: View {
 
     private func presentDetail(_ item: MediaItem) {
 #if os(tvOS)
+        cancelHomeFocusHandoff()
         let presentedItemID = presentedDetailItemID(for: item)
         detailPresentation.beginOpening(
             itemID: presentedItemID,
@@ -1916,7 +1921,7 @@ struct HomeView: View {
         tvOpeningArtworkVisible = true
 
         withAnimation(tvDetailOpenAnimation, completionCriteria: .logicallyComplete) {
-            viewModel.select(item: item)
+            viewModel.select(item: item, animated: false)
             detailPresentationVisualState = .presented
             tvOpeningArtworkVisible = false
         } completion: {
@@ -2406,6 +2411,7 @@ struct HomeView: View {
             customPrewarmer?.discardIfUnused()
         }
 #if os(tvOS)
+        cancelHomeFocusHandoff()
         tvScreenState.cancel()
         if let coordinator = dependencies.tvFocusWarmupCoordinator {
             Task {
@@ -2434,6 +2440,7 @@ struct HomeView: View {
             playerPresentation = presentation
         }
 #else
+        cancelHomeFocusHandoff()
         playerPresentation = presentation
 #endif
     }
@@ -2458,6 +2465,7 @@ struct HomeView: View {
 
     private func restoreHomeSelection(using proxy: ScrollViewProxy) {
         guard let homeReturnTarget else { return }
+        cancelHomeFocusHandoff()
 
         switch homeReturnTarget {
         case let .featured(itemID):
@@ -2466,13 +2474,11 @@ struct HomeView: View {
                 proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
             }
         case let .row(rowID, itemID):
-            withAnimation(.easeInOut(duration: 0.34)) {
+            let request = beginHomeFocusHandoff(targetID: itemID)
+            withAnimation(.easeInOut(duration: 0.34), completionCriteria: .logicallyComplete) {
                 proxy.scrollTo(rowID, anchor: .top)
-            }
-
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 220_000_000)
-                focusedHomeItemID = itemID
+            } completion: {
+                completeHomeFocusHandoff(request)
             }
         }
     }
@@ -2480,15 +2486,38 @@ struct HomeView: View {
     private func focusFeaturedAction(using proxy: ScrollViewProxy) {
         guard !featuredItems.isEmpty else { return }
 
-        focusedHomeItemID = nil
-        withAnimation(.easeInOut(duration: 0.28)) {
+        cancelHomeFocusHandoff()
+        let request = beginHomeFocusHandoff(targetID: featuredPrimaryActionFocusID)
+        withAnimation(.easeInOut(duration: 0.28), completionCriteria: .logicallyComplete) {
             proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
+        } completion: {
+            completeHomeFocusHandoff(request)
         }
+    }
 
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 160_000_000)
-            focusedHomeItemID = featuredPrimaryActionFocusID
+    private func beginHomeFocusHandoff(targetID: String) -> TVHomeFocusHandoffRequest {
+        homeFocusHandoffTask?.cancel()
+        homeFocusHandoffTask = nil
+        return homeFocusHandoff.begin(targetID: targetID)
+    }
+
+    private func completeHomeFocusHandoff(_ request: TVHomeFocusHandoffRequest) {
+        guard homeFocusHandoff.owns(request) else { return }
+        homeFocusHandoffTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled, homeFocusHandoff.owns(request) else { return }
+            focusedHomeItemID = nil
+            await Task.yield()
+            guard !Task.isCancelled, homeFocusHandoff.owns(request) else { return }
+            focusedHomeItemID = request.targetID
+            homeFocusHandoffTask = nil
         }
+    }
+
+    private func cancelHomeFocusHandoff() {
+        homeFocusHandoffTask?.cancel()
+        homeFocusHandoffTask = nil
+        homeFocusHandoff.cancel()
     }
 #endif
 

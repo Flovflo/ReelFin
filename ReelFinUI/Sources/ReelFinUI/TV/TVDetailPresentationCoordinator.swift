@@ -96,3 +96,38 @@ enum TVBackNavigationDebugMarker: String, Equatable, Sendable {
     case closing
     case root
 }
+
+enum TVDetailDismissalRouter {
+    static func request(
+        explicit: (() -> Void)?,
+        fallback: () -> Void
+    ) {
+        if let explicit {
+            explicit()
+        } else {
+            fallback()
+        }
+    }
+}
+
+struct TVHomeFocusHandoffRequest: Equatable, Sendable {
+    let generation: UInt
+    let targetID: String
+}
+
+struct TVHomeFocusHandoffCoordinator: Equatable, Sendable {
+    private var generation: UInt = 0
+
+    mutating func begin(targetID: String) -> TVHomeFocusHandoffRequest {
+        generation &+= 1
+        return TVHomeFocusHandoffRequest(generation: generation, targetID: targetID)
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+    }
+
+    func owns(_ request: TVHomeFocusHandoffRequest) -> Bool {
+        generation == request.generation
+    }
+}

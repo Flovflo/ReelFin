@@ -62,15 +62,25 @@ final class LibraryViewModel {
         await fetchRemote(reset: false)
     }
 
-    func select(item: MediaItem) {
-        withAnimation(.easeInOut(duration: 0.18)) {
+    func select(item: MediaItem, animated: Bool = true) {
+        updateSelection(animated: animated) {
             selectedItem = item
         }
     }
 
-    func dismissDetail() {
-        withAnimation(.easeInOut(duration: 0.18)) {
+    func dismissDetail(animated: Bool = true) {
+        updateSelection(animated: animated) {
             selectedItem = nil
+        }
+    }
+
+    private func updateSelection(animated: Bool, update: () -> Void) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                update()
+            }
+        } else {
+            update()
         }
     }
 

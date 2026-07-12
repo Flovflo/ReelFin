@@ -926,7 +926,10 @@ struct DetailView: View {
             "tv.back.owner value=\(TVBackNavigationDebugMarker.detail.rawValue, privacy: .public)"
         )
 #endif
-        onDismissRequest?()
+        TVDetailDismissalRouter.request(
+            explicit: onDismissRequest,
+            fallback: { dismiss() }
+        )
     }
 #endif
 
