@@ -41,6 +41,8 @@ struct NativePlayerView: View {
     @State private var accessibilityEvidenceExpiryTask: Task<Void, Never>?
 #if os(tvOS)
     @State private var continueWatchingTransition = NativePlayerTVContinueWatchingTransition()
+    @AppStorage(SubtitleBackgroundStyle.defaultsKey)
+    private var subtitleBackgroundStyle: SubtitleBackgroundStyle = .transparent
     @FocusState private var remoteInputFocused: Bool
     @Namespace private var remoteFocusNamespace
     @State private var preferredChromeFocus: NativePlayerTVChromeFocus = .timeline
@@ -126,12 +128,25 @@ struct NativePlayerView: View {
                 .transition(.opacity)
             }
             if shouldShowChrome, let activeTrackMenu {
-                NativePlayerTrackSelectionMenuView(
-                    mode: activeTrackMenu,
-                    controls: playbackControls,
-                    onSelect: handleTrackMenuSelection
-                )
-                .id(activeTrackMenu)
+                Group {
+#if os(tvOS)
+                    NativePlayerAVKitMenuView(
+                        mode: activeTrackMenu,
+                        controls: playbackControls,
+                        subtitleStyle: subtitleBackgroundStyle,
+                        onSelect: handleAVKitMenuSelection,
+                        onSelectStyle: { subtitleBackgroundStyle = $0 },
+                        onDismiss: dismissActivePanel
+                    )
+#else
+                    NativePlayerTrackSelectionMenuView(
+                        mode: activeTrackMenu,
+                        controls: playbackControls,
+                        onSelect: handleTrackMenuSelection
+                    )
+                    .id(activeTrackMenu)
+#endif
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(trackMenuPadding)
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
@@ -551,6 +566,12 @@ struct NativePlayerView: View {
         onSelectTrack(selection)
         revealChrome()
     }
+
+#if os(tvOS)
+    private func handleAVKitMenuSelection(_ selection: PlaybackControlSelection) {
+        onSelectTrack(selection)
+    }
+#endif
 
     private func dismissActivePanel() {
         activeTrackMenu = nil

@@ -58,6 +58,79 @@ enum NativePlayerAVKitMenuAction: Equatable {
     }
 }
 
+enum NativePlayerAVKitMenuExitResult: Equatable {
+    case returnedToRoot
+    case dismissed
+}
+
+struct NativePlayerAVKitMenuState: Equatable {
+    var page: NativePlayerAVKitMenuPage
+    var focusedRow: NativePlayerAVKitMenuRowID?
+
+    init(
+        page: NativePlayerAVKitMenuPage,
+        focusedRow: NativePlayerAVKitMenuRowID? = nil
+    ) {
+        self.page = page
+        self.focusedRow = focusedRow
+    }
+
+    mutating func perform(_ action: NativePlayerAVKitMenuAction) {
+        switch action {
+        case .openLanguages:
+            page = .subtitleLanguages
+            focusedRow = nil
+        case .openStyles:
+            page = .subtitleStyles
+            focusedRow = nil
+        case .selectSubtitle:
+            page = .subtitlesRoot
+            focusedRow = .subtitleLanguage
+        case .selectStyle:
+            page = .subtitlesRoot
+            focusedRow = .subtitleStyle
+        case .selectAudio, .enableSubtitles, .disableSubtitles:
+            break
+        }
+    }
+
+    mutating func handleMenu() -> NativePlayerAVKitMenuExitResult {
+        guard returnToParent() else { return .dismissed }
+        return .returnedToRoot
+    }
+
+    mutating func handleLeft() -> Bool {
+        returnToParent()
+    }
+
+    private mutating func returnToParent() -> Bool {
+        let origin: NativePlayerAVKitMenuRowID
+        switch page {
+        case .subtitleLanguages:
+            origin = .subtitleLanguage
+        case .subtitleStyles:
+            origin = .subtitleStyle
+        case .audio, .subtitlesRoot:
+            return false
+        }
+        guard let parent = NativePlayerAVKitMenuFocusPolicy.parent(of: page) else {
+            return false
+        }
+        page = parent
+        focusedRow = origin
+        return true
+    }
+}
+
+enum NativePlayerAVKitMenuDispatch {
+    static func dispatch(
+        _ selection: PlaybackControlSelection,
+        to handler: (PlaybackControlSelection) -> Void
+    ) {
+        handler(selection)
+    }
+}
+
 struct NativePlayerAVKitMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
@@ -66,7 +139,7 @@ struct NativePlayerAVKitMenuView: View {
     let onSelectStyle: (SubtitleBackgroundStyle) -> Void
     let onDismiss: () -> Void
 
-    @State private var page: NativePlayerAVKitMenuPage
+    @State private var menuState: NativePlayerAVKitMenuState
     @State private var lastEnabledSubtitleID: String?
     @FocusState private var focusedRow: NativePlayerAVKitMenuRowID?
     @Namespace private var focusNamespace
@@ -88,7 +161,11 @@ struct NativePlayerAVKitMenuView: View {
         self.onSelect = onSelect
         self.onSelectStyle = onSelectStyle
         self.onDismiss = onDismiss
-        _page = State(initialValue: mode == .audio ? .audio : .subtitlesRoot)
+        _menuState = State(
+            initialValue: NativePlayerAVKitMenuState(
+                page: mode == .audio ? .audio : .subtitlesRoot
+            )
+        )
         _lastEnabledSubtitleID = State(
             initialValue: controls.subtitleOptions.first(where: {
                 $0.trackID != nil && $0.isSelected
@@ -131,6 +208,10 @@ struct NativePlayerAVKitMenuView: View {
             resetFocus(in: focusNamespace)
 #endif
         }
+        .onChange(of: focusedRow) { _, row in
+            guard let row, availableRowIDs.contains(row) else { return }
+            menuState.focusedRow = row
+        }
         .background(alignment: .topLeading) {
             if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
                 ZStack {
@@ -143,11 +224,22 @@ struct NativePlayerAVKitMenuView: View {
                 .frame(width: 1, height: 1)
             }
         }
+#if os(tvOS)
+        .onExitCommand {
+            if menuState.handleMenu() == .dismissed {
+                onDismiss()
+            }
+        }
+        .onMoveCommand { direction in
+            guard direction == .left else { return }
+            _ = menuState.handleLeft()
+        }
+#endif
     }
 
     @ViewBuilder
     private var rows: some View {
-        switch page {
+        switch menuState.page {
         case .audio:
             ForEach(realAudioOptions) { option in
                 let rowID = NativePlayerAVKitMenuRowID.audio(option.id)
@@ -287,7 +379,7 @@ struct NativePlayerAVKitMenuView: View {
     private func perform(_ action: NativePlayerAVKitMenuAction) {
         switch action {
         case let .selectAudio(trackID):
-            onSelect(.audio(trackID))
+            NativePlayerAVKitMenuDispatch.dispatch(.audio(trackID), to: onSelect)
             onDismiss()
 
         case .enableSubtitles:
@@ -296,28 +388,28 @@ struct NativePlayerAVKitMenuView: View {
                 lastEnabledID: lastEnabledSubtitleID
             ) else { return }
             lastEnabledSubtitleID = trackID
-            onSelect(.subtitle(trackID))
+            NativePlayerAVKitMenuDispatch.dispatch(.subtitle(trackID), to: onSelect)
 
         case .disableSubtitles:
             if let selectedSubtitleID {
                 lastEnabledSubtitleID = selectedSubtitleID
             }
-            onSelect(.subtitle(nil))
+            NativePlayerAVKitMenuDispatch.dispatch(.subtitle(nil), to: onSelect)
 
         case .openLanguages:
-            page = .subtitleLanguages
+            menuState.perform(action)
 
         case .openStyles:
-            page = .subtitleStyles
+            menuState.perform(action)
 
         case let .selectSubtitle(trackID):
             lastEnabledSubtitleID = trackID
-            onSelect(.subtitle(trackID))
-            page = .subtitlesRoot
+            NativePlayerAVKitMenuDispatch.dispatch(.subtitle(trackID), to: onSelect)
+            menuState.perform(action)
 
         case let .selectStyle(style):
             onSelectStyle(style)
-            page = .subtitlesRoot
+            menuState.perform(action)
         }
     }
 
@@ -341,7 +433,11 @@ struct NativePlayerAVKitMenuView: View {
     }
 
     private var preferredFocusedRow: NativePlayerAVKitMenuRowID {
-        switch page {
+        if let focusedRow = menuState.focusedRow,
+           availableRowIDs.contains(focusedRow) {
+            return focusedRow
+        }
+        switch menuState.page {
         case .audio:
             let option = realAudioOptions.first(where: \.isSelected) ?? realAudioOptions.first
             return .audio(option?.id ?? "__empty_audio__")
@@ -354,6 +450,19 @@ struct NativePlayerAVKitMenuView: View {
             return .subtitleTrack(option?.id ?? "__empty_subtitle__")
         case .subtitleStyles:
             return .style(subtitleStyle)
+        }
+    }
+
+    private var availableRowIDs: [NativePlayerAVKitMenuRowID] {
+        switch menuState.page {
+        case .audio:
+            return realAudioOptions.map { .audio($0.id) }
+        case .subtitlesRoot:
+            return menuState.page.rowIDs
+        case .subtitleLanguages:
+            return realSubtitleOptions.map { .subtitleTrack($0.id) }
+        case .subtitleStyles:
+            return SubtitleBackgroundStyle.allCases.map { .style($0) }
         }
     }
 
@@ -378,7 +487,7 @@ struct NativePlayerAVKitMenuView: View {
     }
 
     private var title: String {
-        switch page {
+        switch menuState.page {
         case .audio:
             return "Audio Track"
         case .subtitlesRoot:
@@ -400,7 +509,7 @@ struct NativePlayerAVKitMenuView: View {
     }
 
     private var focusRequestID: String {
-        switch page {
+        switch menuState.page {
         case .audio: return "audio"
         case .subtitlesRoot: return "subtitles-root"
         case .subtitleLanguages: return "subtitle-languages"

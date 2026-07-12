@@ -695,12 +695,14 @@ struct CustomPlayerView: View {
             Group {
                 switch activeTVPanel {
                 case let .tracks(mode):
-                    NativePlayerTrackSelectionMenuView(
+                    NativePlayerAVKitMenuView(
                         mode: mode,
                         controls: customPlaybackControls,
-                        onSelect: handleTVTrackSelection
+                        subtitleStyle: subtitleBackgroundStyle,
+                        onSelect: handleTVAVKitMenuSelection,
+                        onSelectStyle: { subtitleBackgroundStyle = $0 },
+                        onDismiss: dismissTVPanel
                     )
-                    .id(mode)
                 case .video:
                     NativePlayerVideoInformationView(
                         qualityLabel: engine.sourceQualityLabel ?? "Originale",
@@ -857,14 +859,13 @@ struct CustomPlayerView: View {
         hideTVChrome()
     }
 
-    private func handleTVTrackSelection(_ selection: PlaybackControlSelection) {
+    private func handleTVAVKitMenuSelection(_ selection: PlaybackControlSelection) {
         switch selection {
         case let .audio(trackID):
             engine.selectAudioTrack(id: trackID)
         case let .subtitle(trackID):
             engine.subtitles.select(trackID: trackID)
         }
-        dismissTVPanel()
     }
 
     private func handleTVMenu() {

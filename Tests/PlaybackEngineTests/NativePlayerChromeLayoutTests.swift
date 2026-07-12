@@ -265,6 +265,48 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertTrue(NativePlayerAVKitMenuPresentationPolicy.usesReplica(on: .tvOS))
     }
 
+    func testAVKitMenuNavigationReturnsSubmenuThenDismissesRoot() {
+        var state = NativePlayerAVKitMenuState(page: .subtitlesRoot)
+
+        state.perform(.openLanguages)
+
+        XCTAssertEqual(state.page, .subtitleLanguages)
+        XCTAssertEqual(state.handleMenu(), .returnedToRoot)
+        XCTAssertEqual(state.page, .subtitlesRoot)
+        XCTAssertEqual(state.focusedRow, .subtitleLanguage)
+        XCTAssertEqual(state.handleMenu(), .dismissed)
+    }
+
+    func testAVKitMenuLeftReturnsEachSubmenuWithoutDismissingRoot() {
+        var languageState = NativePlayerAVKitMenuState(page: .subtitleLanguages)
+        var styleState = NativePlayerAVKitMenuState(page: .subtitleStyles)
+        var rootState = NativePlayerAVKitMenuState(page: .subtitlesRoot)
+
+        XCTAssertTrue(languageState.handleLeft())
+        XCTAssertEqual(languageState.page, .subtitlesRoot)
+        XCTAssertEqual(languageState.focusedRow, .subtitleLanguage)
+        XCTAssertTrue(styleState.handleLeft())
+        XCTAssertEqual(styleState.page, .subtitlesRoot)
+        XCTAssertEqual(styleState.focusedRow, .subtitleStyle)
+        XCTAssertFalse(rootState.handleLeft())
+        XCTAssertEqual(rootState.page, .subtitlesRoot)
+    }
+
+    func testAudioAndSubtitleSelectionDispatchExactlyOnce() {
+        var selections: [PlaybackControlSelection] = []
+
+        NativePlayerAVKitMenuDispatch.dispatch(.audio("fr"), to: { selections.append($0) })
+        NativePlayerAVKitMenuDispatch.dispatch(.subtitle("forced-fr"), to: { selections.append($0) })
+
+        XCTAssertEqual(selections.count, 2)
+        guard case let .audio(audioID) = selections[0],
+              case let .subtitle(subtitleID) = selections[1] else {
+            return XCTFail("Expected one audio selection followed by one subtitle selection")
+        }
+        XCTAssertEqual(audioID, "fr")
+        XCTAssertEqual(subtitleID, "forced-fr")
+    }
+
     func testSubtitleBackgroundStylesExposeStablePreferenceValues() {
         XCTAssertEqual(SubtitleBackgroundStyle.allCases, [.transparent, .subtle])
         XCTAssertEqual(SubtitleBackgroundStyle.transparent.rawValue, "transparent")
@@ -293,12 +335,23 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
             ),
             0
         )
-        XCTAssertGreaterThan(
+        XCTAssertEqual(
             CustomPlayerSubtitlePresentationPolicy.backgroundOpacity(
                 for: .subtle,
                 platform: .tvOS
             ),
-            0
+            0.45
+        )
+        XCTAssertEqual(
+            CustomPlayerSubtitlePresentationPolicy.backgroundOpacity(
+                for: .subtle,
+                platform: .iOS
+            ),
+            0.30
+        )
+        XCTAssertEqual(
+            SubtitleBackgroundStyle(rawValue: "unsupported") ?? .transparent,
+            .transparent
         )
     }
 
