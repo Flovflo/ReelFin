@@ -24,6 +24,7 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         try startPlayback(in: app, choice: .continueDefault)
         try requireHealthyPlayback(in: app)
         try assertInitialPosition(.continueDefault, in: app)
+        assertCircularInputUnavailable(in: app)
 
         let beforePause = try playbackTime(in: app)
         XCUIRemote.shared.press(.playPause)
@@ -144,16 +145,144 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         }
     }
 
+    func testHomeAndLibraryFocusSurfacesRemainStableAcrossRemoteMoves() throws {
+        let app = launchAuthenticatedRoot()
+        let homeCards = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        )
+        let landscapeCards = homeCards.matching(
+            NSPredicate(format: "identifier CONTAINS[c] %@", "continueWatching")
+        )
+        XCTAssertTrue(landscapeCards.firstMatch.waitForExistence(timeout: 20))
+
+        let landscape = try focusFirstCard(in: landscapeCards, app: app, using: .down, maximumMoves: 12)
+        assertUnclipped(landscape, in: app)
+        attachScreenshot(app, name: "home-landscape-focus")
+
+        let poster = try moveToDistinctFocusedCard(
+            from: landscape,
+            in: homeCards,
+            app: app,
+            using: .down,
+            maximumMoves: 4,
+            excludingIdentifierFragment: "continueWatching"
+        )
+        assertUnclipped(poster, in: app)
+        attachScreenshot(app, name: "home-poster-focus")
+
+        try openLibrary(in: app)
+        let libraryCards = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        )
+        var left = try focusFirstCard(in: libraryCards, app: app, using: .down, maximumMoves: 12)
+        for _ in 0..<8 where left.frame.midX > 400 {
+            left = try moveToDistinctFocusedCard(
+                from: left,
+                in: libraryCards,
+                app: app,
+                using: .left,
+                maximumMoves: 1
+            )
+        }
+        XCTAssertLessThanOrEqual(left.frame.midX, 400)
+        assertUnclipped(left, in: app)
+        attachScreenshot(app, name: "library-first-row-left")
+
+        var middle = left
+        for _ in 0..<8 where middle.frame.midX < 850 {
+            middle = try moveToDistinctFocusedCard(
+                from: middle,
+                in: libraryCards,
+                app: app,
+                using: .right,
+                maximumMoves: 1
+            )
+        }
+        XCTAssertTrue((850...1_300).contains(middle.frame.midX))
+        assertSameRow(left, middle)
+        assertUnclipped(middle, in: app)
+        attachScreenshot(app, name: "library-first-row-middle")
+
+        var right = middle
+        for _ in 0..<8 where right.frame.midX < 1_600 {
+            right = try moveToDistinctFocusedCard(
+                from: right,
+                in: libraryCards,
+                app: app,
+                using: .right,
+                maximumMoves: 1
+            )
+        }
+        XCTAssertGreaterThanOrEqual(right.frame.midX, 1_600)
+        assertSameRow(middle, right)
+        assertUnclipped(right, in: app)
+        attachScreenshot(app, name: "library-first-row-right")
+    }
+
+    func testCompactResumeChoiceMetricsFocusAndCancelRemainPlayerFree() throws {
+        let app = try launchStarCityDetail()
+        let episodeOne = app.buttons["detail_episode_1_1"]
+        XCTAssertTrue(episodeOne.waitForExistence(timeout: 20))
+        for _ in 0..<4 where !episodeOne.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(episodeOne.hasFocus)
+        XCUIRemote.shared.press(.select)
+
+        let choiceMarker = app.otherElements["playback_resume_choice"]
+        let continueMarker = app.otherElements["playback_resume_choice_continue"]
+        let restartMarker = app.otherElements["playback_resume_choice_restart"]
+        XCTAssertTrue(choiceMarker.waitForExistence(timeout: 8))
+        XCTAssertTrue(continueMarker.waitForExistence(timeout: 5))
+        XCTAssertTrue(restartMarker.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue("resume_focused", on: choiceMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("focused", on: continueMarker, timeout: 5))
+
+        let continueButton = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Continuer à")
+        ).firstMatch
+        let restartButton = app.buttons["Recommencer"]
+        XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(restartButton.waitForExistence(timeout: 5))
+        let focusedContinueFrame = continueButton.frame
+        let restingRestartFrame = restartButton.frame
+        XCTAssertEqual(focusedContinueFrame.height / restingRestartFrame.height, 1.025, accuracy: 0.01)
+        XCTAssertEqual(focusedContinueFrame.width / restingRestartFrame.width, 1.025, accuracy: 0.01)
+        XCTAssertLessThanOrEqual(continueButton.frame.union(restartButton.frame).width, 760)
+        attachScreenshot(app, name: "compact-resume-choice-cancel")
+
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(waitForValue("restart_focused", on: choiceMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("focused", on: restartMarker, timeout: 5))
+        XCTAssertTrue(waitForValue("not_focused", on: continueMarker, timeout: 5))
+        let restingContinueFrame = continueButton.frame
+        let focusedRestartFrame = restartButton.frame
+        XCTAssertEqual(restingContinueFrame.size.width, restingRestartFrame.size.width, accuracy: 2)
+        XCTAssertEqual(restingContinueFrame.size.height, restingRestartFrame.size.height, accuracy: 2)
+        XCTAssertEqual(focusedRestartFrame.size.width, focusedContinueFrame.size.width, accuracy: 2)
+        XCTAssertEqual(focusedRestartFrame.size.height, focusedContinueFrame.size.height, accuracy: 2)
+        XCUIRemote.shared.press(.left)
+        XCTAssertTrue(waitForValue("resume_focused", on: choiceMarker, timeout: 5))
+
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(waitForDisappearance(choiceMarker, timeout: 5))
+        XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.otherElements["native_player_screen"].exists)
+        XCTAssertFalse(app.otherElements["custom_player_launch_preparation"].exists)
+    }
+
     func testHomeCardBackRestoresExactFocusAndKeepsAppForeground() throws {
         let app = launchAuthenticatedRoot()
         let sourceCard = try focusFirstMediaCard(in: app)
         let sourceIdentifier = sourceCard.identifier
 
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 15))
+        attachScreenshot(app, name: "home-detail-opening")
+        let primaryPlay = app.buttons["detail_primary_play_button"]
+        XCTAssertTrue(primaryPlay.waitForExistence(timeout: 15))
+        attachScreenshot(app, name: "home-detail-presented")
         XCUIRemote.shared.press(.menu)
+        attachScreenshot(app, name: "home-detail-closing")
 
-        XCTAssertTrue(waitForDisappearance(app.otherElements["detail_screen"], timeout: 8))
+        XCTAssertTrue(waitForDisappearance(primaryPlay, timeout: 8))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         XCTAssertTrue(
             waitForFocus(app.buttons[sourceIdentifier], timeout: 8),
@@ -168,10 +297,14 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         let sourceIdentifier = sourcePoster.identifier
 
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 15))
+        attachScreenshot(app, name: "library-detail-opening")
+        let primaryPlay = app.buttons["detail_primary_play_button"]
+        XCTAssertTrue(primaryPlay.waitForExistence(timeout: 15))
+        attachScreenshot(app, name: "library-detail-presented")
         XCUIRemote.shared.press(.menu)
+        attachScreenshot(app, name: "library-detail-closing")
 
-        XCTAssertTrue(waitForDisappearance(app.otherElements["detail_screen"], timeout: 8))
+        XCTAssertTrue(waitForDisappearance(primaryPlay, timeout: 8))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         XCTAssertTrue(
             waitForFocus(app.buttons[sourceIdentifier], timeout: 8),
@@ -185,11 +318,12 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         let sourceIdentifier = sourceCard.identifier
 
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 15))
+        let primaryPlay = app.buttons["detail_primary_play_button"]
+        XCTAssertTrue(primaryPlay.waitForExistence(timeout: 15))
         XCUIRemote.shared.press(.menu)
         XCUIRemote.shared.press(.menu)
 
-        XCTAssertTrue(waitForDisappearance(app.otherElements["detail_screen"], timeout: 8))
+        XCTAssertTrue(waitForDisappearance(primaryPlay, timeout: 8))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         XCTAssertTrue(
             waitForFocus(app.buttons[sourceIdentifier], timeout: 8),
@@ -207,11 +341,17 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
 
     private func openLibrary(in app: XCUIApplication) throws {
         let library = app.buttons["Library"]
+        let watchNow = app.buttons["Watch Now"]
+        let search = app.buttons["Search"]
         XCTAssertTrue(library.waitForExistence(timeout: 15))
 
-        for _ in 0..<4 where !library.hasFocus {
+        for _ in 0..<16 where !watchNow.hasFocus && !search.hasFocus && !library.hasFocus {
             XCUIRemote.shared.press(.up)
         }
+        XCTAssertTrue(
+            watchNow.hasFocus || search.hasFocus || library.hasFocus,
+            "Up navigation must reach the top navigation before selecting Library."
+        )
         for _ in 0..<3 where !library.hasFocus {
             XCUIRemote.shared.press(.right)
         }
@@ -227,13 +367,97 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCTAssertTrue(mediaCards.firstMatch.waitForExistence(timeout: 20))
 
         for _ in 0..<12 {
-            if let focused = mediaCards.allElementsBoundByIndex.first(where: \.hasFocus) {
+            if let focused = mediaCards.allElementsBoundByIndex.first(where: \.hasFocus),
+               waitForStableFocus(focused, in: mediaCards) {
                 return focused
             }
             XCUIRemote.shared.press(.down)
         }
 
         throw XCTSkip("The authenticated live library did not expose a focusable media card.")
+    }
+
+    private func waitForStableFocus(_ expected: XCUIElement, in query: XCUIElementQuery) -> Bool {
+        var matchingObservations = 0
+        let deadline = Date().addingTimeInterval(3)
+
+        while Date() < deadline {
+            let focused = query.allElementsBoundByIndex.filter(\.hasFocus)
+            XCTAssertLessThanOrEqual(focused.count, 1, "Focus must never be ambiguous across media cards.")
+            if focused.first?.identifier == expected.identifier {
+                matchingObservations += 1
+                if matchingObservations == 3 { return true }
+            } else {
+                matchingObservations = 0
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+        }
+
+        return false
+    }
+
+    private func focusFirstCard(
+        in query: XCUIElementQuery,
+        app: XCUIApplication,
+        using direction: XCUIRemote.Button,
+        maximumMoves: Int
+    ) throws -> XCUIElement {
+        for _ in 0...maximumMoves {
+            if let focused = try uniqueFocusedCard(in: query) { return focused }
+            XCUIRemote.shared.press(direction)
+        }
+        throw XCTSkip("The authenticated surface did not expose the required focusable card.")
+    }
+
+    private func moveToDistinctFocusedCard(
+        from source: XCUIElement,
+        in query: XCUIElementQuery,
+        app: XCUIApplication,
+        using direction: XCUIRemote.Button,
+        maximumMoves: Int,
+        excludingIdentifierFragment: String? = nil
+    ) throws -> XCUIElement {
+        let sourceIdentifier = source.identifier
+        for _ in 0..<maximumMoves {
+            XCUIRemote.shared.press(direction)
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                if let focused = try uniqueFocusedCard(in: query),
+                   focused.identifier != sourceIdentifier,
+                   excludingIdentifierFragment.map({ !focused.identifier.localizedCaseInsensitiveContains($0) }) ?? true {
+                    assertFocusRemainsStable(focused, in: query)
+                    return focused
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        XCTFail("One remote \(direction) move must yield exactly one distinct, stable focused card.")
+        throw JourneyError.invalidPlaybackTime
+    }
+
+    private func uniqueFocusedCard(in query: XCUIElementQuery) throws -> XCUIElement? {
+        let focused = query.allElementsBoundByIndex.filter(\.hasFocus)
+        XCTAssertLessThanOrEqual(focused.count, 1, "Focus must never be ambiguous across media cards.")
+        return focused.first
+    }
+
+    private func assertFocusRemainsStable(_ expected: XCUIElement, in query: XCUIElementQuery) {
+        for _ in 0..<3 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            let focused = query.allElementsBoundByIndex.filter(\.hasFocus)
+            XCTAssertEqual(focused.count, 1, "A remote move must produce one focused accessibility value.")
+            XCTAssertEqual(focused.first?.identifier, expected.identifier, "Focus changed more than once for one remote move.")
+        }
+    }
+
+    private func assertSameRow(_ leading: XCUIElement, _ trailing: XCUIElement) {
+        XCTAssertEqual(trailing.frame.midY, leading.frame.midY, accuracy: 8)
+    }
+
+    private func assertUnclipped(_ element: XCUIElement, in app: XCUIApplication) {
+        let viewport = app.windows.firstMatch.frame
+        XCTAssertFalse(element.frame.isEmpty)
+        XCTAssertTrue(viewport.contains(element.frame), "Focused card \(element.identifier) must remain inside the visible viewport.")
     }
 
     private func launchStarCityDetail() throws -> XCUIApplication {
@@ -291,6 +515,22 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCTAssertFalse(app.otherElements["player_error"].exists)
         let generation = app.otherElements["native_player_reader_generation"].firstMatch
         if generation.exists { XCTAssertNotNil(Int(generation.value as? String ?? "")) }
+    }
+
+    private func assertCircularInputUnavailable(in app: XCUIApplication) {
+        revealChrome(in: app)
+        let circularAvailability = app.otherElements["native_player_circular_scrub_available"]
+        XCTAssertTrue(circularAvailability.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForValue("false", on: circularAvailability, timeout: 5),
+            "Device Hub exposes cardinal Remote controls but no indirect clickpad coordinates; availability must stay false."
+        )
+        XCTAssertTrue(waitForValue("idle", on: app.otherElements["native_player_circular_scrub_state"], timeout: 5))
+        XCTAssertTrue(waitForValue("none", on: app.otherElements["native_player_circular_scrub_preview_bucket"], timeout: 5))
+
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(waitForDisappearance(app.otherElements["native_player_chrome"], timeout: 5))
+        XCTAssertTrue(app.otherElements["native_player_screen"].exists)
     }
 
     private func captureCompactBufferingIfVisible(in app: XCUIApplication) {

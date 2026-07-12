@@ -87,7 +87,7 @@ private struct TVCardButton: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .focused($isFocused)
-        .modifier(TVHomeItemFocusModifier(itemID: item.id, focusedItemID: focusedItemID))
+        .modifier(TVHomeItemFocusModifier(itemID: transitionSourceID, focusedItemID: focusedItemID))
         .id(item.id)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -492,6 +492,13 @@ private enum TVHomeWarmupScope {
 private enum TVHomeReturnTarget: Equatable {
     case featured(itemID: String)
     case row(rowID: String, itemID: String)
+
+    var itemID: String {
+        switch self {
+        case let .featured(itemID), let .row(_, itemID):
+            return itemID
+        }
+    }
 }
 
 private struct TVHomeItemFocusModifier: ViewModifier {
@@ -1211,6 +1218,9 @@ struct HomeView: View {
         }
         .onChange(of: focusedHomeItemID) { oldValue, newValue in
             guard oldValue != newValue, homeFocusHandoff.hasPendingRequest else { return }
+            // Re-enabling Home temporarily focuses the visible Hero while the saved shelf row
+            // scrolls into place. Remote moves still cancel through the explicit handler below.
+            guard newValue != featuredPrimaryActionFocusID else { return }
             cancelHomeFocusHandoffForUserIntent()
         }
         .onMoveCommand { _ in
@@ -2482,7 +2492,9 @@ struct HomeView: View {
                 proxy.scrollTo(featuredScrollAnchorID, anchor: .top)
             }
         case let .row(rowID, itemID):
-            let request = beginHomeFocusHandoff(targetID: itemID)
+            let request = beginHomeFocusHandoff(
+                targetID: HomeCardTransitionSource.id(rowID: rowID, itemID: itemID)
+            )
             withAnimation(.easeInOut(duration: 0.34), completionCriteria: .logicallyComplete) {
                 proxy.scrollTo(rowID, anchor: .top)
             } completion: {
@@ -2562,6 +2574,9 @@ struct HomeView: View {
 
     private func handleDisplayedDetailSourceItemChange(_ item: MediaItem) {
 #if os(tvOS)
+        // Detail reports its initially displayed source as well as real carousel changes. Keep the
+        // exact shelf/hero origin when the item did not change, even if that item appears in both.
+        guard homeReturnTarget?.itemID != item.id else { return }
         if featuredItems.contains(where: { $0.id == item.id }) {
             selectedDetailNamespace = posterNamespace
             selectedDetailTransitionSourceID = HomeFeaturedTransitionSource.id(itemID: item.id)
