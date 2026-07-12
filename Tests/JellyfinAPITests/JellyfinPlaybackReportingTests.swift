@@ -127,6 +127,136 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         XCTAssertNil(settings.lastSession)
         XCTAssertNil(tokenStore.storedToken)
     }
+
+    func testStaleUnauthorizedResponseDoesNotInvalidateNewSession() async throws {
+        let gate = StaleUnauthorizedGate()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        URLProtocolStub.requestHandler = { request in
+            if request.url?.path == "/Users/AuthenticateByName" {
+                return (
+                    HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: nil,
+                        headerFields: ["Content-Type": "application/json"]
+                    )!,
+                    Data(#"{"User":{"Id":"user-2","Name":"Flo 2"},"AccessToken":"token-2"}"#.utf8)
+                )
+            }
+
+            await gate.blockUntilReleased()
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 401,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!,
+                Data(#"{"error":"expired token"}"#.utf8)
+            )
+        }
+
+        let session = URLSession(configuration: configuration)
+        let settings = PlaybackReportingSettingsStore(
+            serverConfiguration: ServerConfiguration(serverURL: URL(string: "https://example.com")!),
+            lastSession: UserSession(userID: "user-1", username: "Flo", token: "token-1")
+        )
+        let tokenStore = PlaybackReportingTokenStore(storedToken: "token-1")
+        let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
+
+        let staleRequest = Task {
+            try await client.fetchPlaybackSources(itemID: "movie-1")
+        }
+        await gate.waitUntilBlocked()
+
+        let replacement = try await client.authenticate(
+            credentials: UserCredentials(username: "Flo 2", password: "password")
+        )
+        await gate.release()
+
+        do {
+            _ = try await staleRequest.value
+            XCTFail("Expected the stale request to remain unauthorized")
+        } catch AppError.unauthenticated {
+            // Expected.
+        }
+
+        let currentSession = await client.currentSession()
+        XCTAssertEqual(currentSession, replacement)
+        XCTAssertEqual(settings.lastSession, replacement)
+        XCTAssertEqual(tokenStore.storedToken, "token-2")
+    }
+
+    func testPublicUnauthorizedResponseDoesNotInvalidateExistingSession() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        URLProtocolStub.requestHandler = { request in
+            (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 401,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!,
+                Data(#"{"error":"invalid credentials"}"#.utf8)
+            )
+        }
+
+        let original = UserSession(userID: "user-1", username: "Flo", token: "token-1")
+        let session = URLSession(configuration: configuration)
+        let settings = PlaybackReportingSettingsStore(
+            serverConfiguration: ServerConfiguration(serverURL: URL(string: "https://example.com")!),
+            lastSession: original
+        )
+        let tokenStore = PlaybackReportingTokenStore(storedToken: original.token)
+        let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
+
+        do {
+            _ = try await client.authenticate(
+                credentials: UserCredentials(username: "Flo", password: "wrong")
+            )
+            XCTFail("Expected authentication to fail")
+        } catch AppError.unauthenticated {
+            // Expected.
+        }
+
+        let currentSession = await client.currentSession()
+        XCTAssertEqual(currentSession, original)
+        XCTAssertEqual(settings.lastSession, original)
+        XCTAssertEqual(tokenStore.storedToken, original.token)
+    }
+}
+
+private actor StaleUnauthorizedGate {
+    private var isBlocked = false
+    private var isReleased = false
+    private var blockedContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func blockUntilReleased() async {
+        isBlocked = true
+        blockedContinuation?.resume()
+        blockedContinuation = nil
+
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilBlocked() async {
+        guard !isBlocked else { return }
+        await withCheckedContinuation { continuation in
+            blockedContinuation = continuation
+        }
+    }
+
+    func release() {
+        isReleased = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
 }
 
 private actor RequestRecorder {

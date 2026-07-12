@@ -895,8 +895,17 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             requiresAuth: requiresAuth,
             timeout: timeout
         )
+        let requestToken = request.value(forHTTPHeaderField: "X-Emby-Token")
 
-        let data = try await send(request, dedupe: dedupe, retryPolicy: retryPolicy)
+        let data: Data
+        do {
+            data = try await send(request, dedupe: dedupe, retryPolicy: retryPolicy)
+        } catch AppError.unauthenticated {
+            if requiresAuth, activeSession?.token == requestToken {
+                await signOut()
+            }
+            throw AppError.unauthenticated
+        }
 
         if T.self == EmptyResponse.self || data.isEmpty {
             if T.self == EmptyResponse.self {
