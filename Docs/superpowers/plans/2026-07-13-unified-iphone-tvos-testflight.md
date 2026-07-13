@@ -184,9 +184,9 @@ Expected: preflight passes and only known generated scheme churn may appear.
 - [ ] **Step 1: Confirm App Store Connect numbering and signing resources**
 
 ```bash
-asc builds next-build-number --app 6762079357 --version 0.1.1 --platform IOS
+asc builds next-build-number --app 6762079357 --version 0.1.1 --platform IOS --initial-build-number 12 --output json --pretty
 security find-identity -v -p codesigning
-asc profiles list --bundle-id com.reelfin.app --profile-type IOS_APP_STORE --output json --pretty
+asc profiles view --id ZRPA5W6G6F --include bundleId,certificates --output json | jq '{id:.data.id,name:.data.attributes.name,platform:.data.attributes.platform,type:.data.attributes.profileType,state:.data.attributes.profileState,expires:.data.attributes.expirationDate,bundleId:(.included[]|select(.type=="bundleIds")|.attributes.identifier),certificateIds:[.included[]|select(.type=="certificates")|.id]}'
 ```
 
 Expected: the next iOS build is `12`, a valid distribution identity exists, and a non-expired iOS App Store profile is available. Create a new profile through `asc` only if no valid matching profile exists; do not revoke an existing certificate.
@@ -219,7 +219,7 @@ No second `UIDeviceFamily` entry may exist.
 Resolve the active profile name from the Step 1 response, then create `.artifacts/TestFlight/ExportOptions-iOS-12.plist`:
 
 ```bash
-PROFILE_NAME="$(asc profiles list --bundle-id com.reelfin.app --profile-type IOS_APP_STORE --output json | jq -r '[.data[] | select(.attributes.profileState == "ACTIVE")] | sort_by(.attributes.expirationDate) | last | .attributes.name')"
+PROFILE_NAME="$(asc profiles view --id ZRPA5W6G6F --output json | jq -r '.data.attributes.name')"
 test -n "$PROFILE_NAME"
 EXPORT_OPTIONS=.artifacts/TestFlight/ExportOptions-iOS-12.plist
 plutil -create xml1 "$EXPORT_OPTIONS"
