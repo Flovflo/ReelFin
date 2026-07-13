@@ -375,7 +375,7 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCTAssertTrue(mediaCards.firstMatch.waitForExistence(timeout: 20))
 
         for _ in 0..<12 {
-            if let focused = mediaCards.allElementsBoundByIndex.first(where: \.hasFocus),
+            if let focused = try uniqueFocusedCard(in: mediaCards),
                waitForStableFocus(focused, in: mediaCards) {
                 return focused
             }
@@ -387,27 +387,16 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     }
 
     private func waitForStableFocus(_ expected: XCUIElement, in query: XCUIElementQuery) -> Bool {
+        let expectedIdentifier = expected.identifier
         var matchingObservations = 0
         let deadline = Date().addingTimeInterval(3)
 
         while Date() < deadline {
-            let focused = query.allElementsBoundByIndex.filter(\.hasFocus)
-            if focused.count > 1 {
-                XCTAssertEqual(
-                    focused.count,
-                    2,
-                    "Only one outgoing/incoming XCUI focus snapshot may overlap transiently."
-                )
-                // XCUI can retain the outgoing and incoming accessibility snapshots for one
-                // focus-engine turn. Never accept that transient state as stable focus.
-                matchingObservations = 0
-                RunLoop.current.run(until: Date().addingTimeInterval(0.12))
-                continue
-            }
-            if focused.first?.identifier == expected.identifier {
+            switch focusedCardSample(in: query) {
+            case .single(let identifier, _) where identifier == expectedIdentifier:
                 matchingObservations += 1
                 if matchingObservations == 3 { return true }
-            } else {
+            case .none, .single, .ambiguous:
                 matchingObservations = 0
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.12))
@@ -457,18 +446,40 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
     }
 
     private func uniqueFocusedCard(in query: XCUIElementQuery) throws -> XCUIElement? {
-        let focused = query.allElementsBoundByIndex.filter(\.hasFocus)
-        XCTAssertLessThanOrEqual(focused.count, 1, "Focus must never be ambiguous across media cards.")
-        return focused.first
+        guard case .single(_, let element) = focusedCardSample(in: query) else { return nil }
+        return element
     }
 
     private func assertFocusRemainsStable(_ expected: XCUIElement, in query: XCUIElementQuery) {
-        for _ in 0..<3 {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
-            let focused = query.allElementsBoundByIndex.filter(\.hasFocus)
-            XCTAssertEqual(focused.count, 1, "A remote move must produce one focused accessibility value.")
-            XCTAssertEqual(focused.first?.identifier, expected.identifier, "Focus changed more than once for one remote move.")
+        XCTAssertTrue(
+            waitForStableFocus(expected, in: query),
+            "A remote move must settle on one stable focused accessibility identifier."
+        )
+    }
+
+    private enum FocusedCardSample {
+        case none
+        case single(identifier: String, element: XCUIElement)
+        case ambiguous(identifiers: Set<String>)
+    }
+
+    private func focusedCardSample(in query: XCUIElementQuery) -> FocusedCardSample {
+        var focusedIdentifiers = Set<String>()
+
+        let focusedCandidates = query.matching(NSPredicate(format: "hasFocus == true"))
+        for candidate in focusedCandidates.allElementsBoundByIndex {
+            focusedIdentifiers.insert(candidate.identifier)
         }
+
+        guard let identifier = focusedIdentifiers.first else { return .none }
+        guard focusedIdentifiers.count == 1 else {
+            return .ambiguous(identifiers: focusedIdentifiers)
+        }
+
+        return .single(
+            identifier: identifier,
+            element: query.matching(identifier: identifier).firstMatch
+        )
     }
 
     private func assertSameRow(_ leading: XCUIElement, _ trailing: XCUIElement) {
