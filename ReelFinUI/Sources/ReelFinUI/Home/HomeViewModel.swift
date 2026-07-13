@@ -276,7 +276,7 @@ final class HomeViewModel {
             let visibleProcessed = await HomeFeedProcessor.process(visibleFeed, seriesCache: seriesCache)
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            await self.applyEnrichedFeed(visibleProcessed)
+            await self.applyEnrichedFeed(visibleProcessed, source: visibleFeed)
 
             guard feed.rows.count > visibleRowLimit else { return }
 
@@ -290,12 +290,16 @@ final class HomeViewModel {
 
             let processed = await HomeFeedProcessor.process(feed, seriesCache: seriesCache)
             guard !Task.isCancelled else { return }
-            await self.applyEnrichedFeed(processed)
+            await self.applyEnrichedFeed(processed, source: feed)
         }
     }
 
-    private func applyEnrichedFeed(_ processed: HomeFeed) async {
-        let merged = normalizedFeed(mergeEnrichedFeed(current: feed, processed: processed))
+    private func applyEnrichedFeed(_ processed: HomeFeed, source: HomeFeed) async {
+        let merged = HomeFeedEnrichmentMergePolicy.merge(
+            current: feed,
+            source: source,
+            processed: processed
+        )
         guard feed != merged else { return }
         ensureKnownSectionKinds(from: merged.rows)
         feed = merged
@@ -413,31 +417,6 @@ final class HomeViewModel {
         views
             .filter { $0.supports(mediaType: mediaType) }
             .map(\.id)
-    }
-
-    private func mergeEnrichedFeed(current: HomeFeed, processed: HomeFeed) -> HomeFeed {
-        let currentRowIDs = Set(current.rows.map(\.id))
-        let processedRowIDs = Set(processed.rows.map(\.id))
-
-        guard
-            !current.rows.isEmpty,
-            processed.rows.count < current.rows.count,
-            processedRowIDs.isSubset(of: currentRowIDs)
-        else {
-            return processed
-        }
-
-        let processedRowsByID = Dictionary(uniqueKeysWithValues: processed.rows.map { ($0.id, $0) })
-        let mergedRows = current.rows.map { processedRowsByID[$0.id] ?? $0 }
-
-        let mergedFeatured: [MediaItem]
-        if current.featured.isEmpty, !processed.featured.isEmpty {
-            mergedFeatured = processed.featured
-        } else {
-            mergedFeatured = current.featured
-        }
-
-        return HomeFeed(featured: mergedFeatured, rows: mergedRows)
     }
 
     private func ensureKnownSectionKinds(from rows: [HomeRow]) {
@@ -727,6 +706,104 @@ final class HomeViewModel {
         }
 
         return (orderedRows, rowIDByItemID)
+    }
+}
+
+enum HomeFeedEnrichmentMergePolicy {
+    private struct ItemEnrichment {
+        var seriesName: String?
+        var seriesPosterTag: String?
+
+        var isEmpty: Bool {
+            seriesName == nil && seriesPosterTag == nil
+        }
+    }
+
+    static func merge(current: HomeFeed, source: HomeFeed, processed: HomeFeed) -> HomeFeed {
+        var sourceRowsByID: [String: HomeRow] = [:]
+        for row in source.rows where sourceRowsByID[row.id] == nil {
+            sourceRowsByID[row.id] = row
+        }
+        var enrichmentByID: [String: ItemEnrichment] = [:]
+
+        for processedRow in processed.rows {
+            guard let sourceRow = sourceRowsByID[processedRow.id] else { continue }
+
+            for (itemIndex, processedItem) in processedRow.items.enumerated() {
+                let sourceItem: MediaItem?
+                if
+                    sourceRow.items.indices.contains(itemIndex),
+                    sourceRow.items[itemIndex].id == processedItem.id
+                {
+                    sourceItem = sourceRow.items[itemIndex]
+                } else {
+                    sourceItem = sourceRow.items.first(where: { $0.id == processedItem.id })
+                }
+                guard let sourceItem else { continue }
+
+                var enrichment = enrichmentByID[processedItem.id] ?? ItemEnrichment()
+                if
+                    sourceItem.seriesName != processedItem.seriesName,
+                    let seriesName = processedItem.seriesName
+                {
+                    enrichment.seriesName = enrichment.seriesName ?? seriesName
+                }
+                if
+                    sourceItem.seriesPosterTag != processedItem.seriesPosterTag,
+                    let seriesPosterTag = processedItem.seriesPosterTag
+                {
+                    enrichment.seriesPosterTag = enrichment.seriesPosterTag ?? seriesPosterTag
+                }
+                if !enrichment.isEmpty {
+                    enrichmentByID[processedItem.id] = enrichment
+                }
+            }
+        }
+
+        let applyingEnrichment: (MediaItem) -> MediaItem = { currentItem in
+            guard let enrichment = enrichmentByID[currentItem.id] else {
+                return currentItem
+            }
+
+            var mergedItem = currentItem
+            if mergedItem.seriesName == nil {
+                mergedItem.seriesName = enrichment.seriesName
+            }
+            if mergedItem.seriesPosterTag == nil {
+                mergedItem.seriesPosterTag = enrichment.seriesPosterTag
+            }
+            return mergedItem
+        }
+
+        let mergedRows = current.rows.map { currentRow -> HomeRow in
+            var mergedRow = currentRow
+            mergedRow.items = currentRow.items.map(applyingEnrichment)
+            return mergedRow
+        }
+
+        let mergedFeatured: [MediaItem]
+        if current.featured.isEmpty {
+            guard source.featured.isEmpty else {
+                return HomeFeed(featured: [], rows: mergedRows)
+            }
+
+            let currentItemsByID = firstItemsByID(in: current.rows)
+            mergedFeatured = processed.featured.compactMap { processedItem in
+                currentItemsByID[processedItem.id].map(applyingEnrichment)
+            }
+        } else {
+            mergedFeatured = current.featured.map(applyingEnrichment)
+        }
+
+        return HomeFeed(featured: mergedFeatured, rows: mergedRows)
+    }
+
+    private static func firstItemsByID(in rows: [HomeRow]) -> [String: MediaItem] {
+        var itemsByID: [String: MediaItem] = [:]
+        for item in rows.flatMap(\.items) where itemsByID[item.id] == nil {
+            itemsByID[item.id] = item
+        }
+        return itemsByID
     }
 }
 

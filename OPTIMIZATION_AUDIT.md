@@ -78,6 +78,7 @@
 - Launch bootstrap now uses a synchronous `LaunchSnapshot` so persisted auth/onboarding state is available before `ReelFinRootView` starts async bootstrap.
 - UI-test auth reset now runs before API session capture, and foreground sync is skipped when there is no active session.
 - `HomeViewModel` now publishes cached/stale Home content before app-launch sync finishes and only treats launch as blocking when there is nothing renderable.
+- Home feed enrichment now merges only processor-produced series metadata into current items by ID; it cannot replace current rows, paginated items, featured membership, or favorite/playback state with its captured snapshot.
 - `LibraryViewModel` now owns one generation-based latest-wins pipeline for reloads and pagination, with explicit task cancellation instead of overlapping ad hoc loads.
 - `DetailViewModel` now uses season and episode freshness tokens plus owned warmup/progress tasks so stale async work cannot overwrite the current selection.
 - Non-selected iOS detail carousel cards now use a lighter preview artwork path instead of paying the full hero-background cost for every card.
@@ -134,6 +135,9 @@
 
 ## Validation Results
 
+- Home enrichment pagination race: the uncontrolled baseline failed `45/100`; the deterministic continuation-gated RED reproduced the same 20-vs-23 item loss plus stale favorite state, and the corrected test passed `100/100` without retry.
+- `HomeViewModelActionTests` and `HomeViewModelFeedEnrichmentTests`: passed, 16 tests with no failures.
+- XcodeGen generated successfully into an isolated output directory to preserve existing scheme edits; the iOS `ReelFin` simulator build succeeded.
 - Dynamic media cache validation: targeted cache/gateway/settings tests passed, including red/green coverage for gateway ahead-prefetch; `xcodegen generate`, iOS `ReelFin` simulator build, tvOS `ReelFinTV` simulator build, and `git diff --check` passed; fast live Jellyfin E2E passed with artifacts `.artifacts/player-e2e/20260505-122924` (`4/4` explicit probes, resume reporting, `4/4` original-stream benchmarks, `4/4` live playback probes, `76/76` deterministic tests, clean fatal-log scan; UI and tvOS runner steps intentionally skipped).
 - `xcodegen generate`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinAppleTransmuxDD -only-testing:PlaybackEngineTests/NativeApplePlaybackRoutePlannerTests -only-testing:PlaybackEngineTests/NativePlayerRouteGuardTests -only-testing:PlaybackEngineTests/NativePlayerSessionRoutingTests -only-testing:PlaybackEngineTests/NativePlayerPlaybackControllerEndToEndTests`: passed, 19 tests
@@ -416,3 +420,10 @@
 - The unified release retains one App Store record by keeping `PRODUCT_BUNDLE_IDENTIFIER = com.reelfin.app` for both application schemes, while the binaries are now explicitly limited to iPhone and Apple TV. iOS uses `iphoneos iphonesimulator`, device family `1`, and `NO` for Mac Catalyst, Designed for iPhone/iPad on Mac, and Designed for iPhone/iPad on visionOS; tvOS uses `appletvos appletvsimulator` and device family `3`.
 - The release preflight gained regression checks for all of those boundaries. Its RED run exited 1 with the five expected missing/re-enabled-platform failures while the existing device-family checks stayed green; after the XcodeGen restrictions, generation and every preflight assertion passed.
 - Effective Release settings independently confirmed version `0.1.1`, build `12`, the shared application bundle identifier, and the expected platform/device-family values for `ReelFin` and `ReelFinTV`. This configuration-only change adds no launch, focus, playback, cache, asynchronous, or `MainActor` work.
+
+## Home Enrichment Pagination Race - 2026-07-13
+
+- The full iOS gate exposed a logical lost-update race: a fire-and-forget Home enrichment task could apply a captured 20-item row after page 2 had appended items 20–22, returning the rail to items 0–19. The uncontrolled targeted baseline reproduced this exact suffix failure in 45 of 100 runs.
+- The merge now receives the source snapshot as well as its processed result. It computes deltas only for `seriesName` and `seriesPosterTag`, applies missing values to matching current item IDs, and retains current row IDs, titles, ordering, membership, pagination results, and user state.
+- Existing featured content remains authoritative. A processed featured collection is accepted only as a derived fallback when the source featured collection was empty and the current featured collection is still empty; fallback candidates are reconciled against current row items so removed or stale items are not resurrected.
+- The regression is deterministic rather than timing-based: the test blocks series lookup with a continuation, performs pagination and a favorite mutation, then releases enrichment and asserts both current state and computed series metadata. The pre-fix RED failed six assertions; the corrected regression passed 100/100 iterations without retry, the two Home view-model classes passed 16/16, isolated XcodeGen generation passed, and the iOS build succeeded.

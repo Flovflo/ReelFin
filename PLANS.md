@@ -370,6 +370,17 @@
   - Settings exposes `Media Cache` as Automatic, Reduced, or Off plus a clear-cache action
 - Validation: targeted cache/gateway/settings tests passed, including the red/green gateway prefetch test; `xcodegen generate`, iOS `ReelFin` build, tvOS `ReelFinTV` build, and `git diff --check` passed; fast live Jellyfin E2E passed with artifacts `.artifacts/player-e2e/20260505-122924` (`4/4` explicit probes, resume reporting, `4/4` original-stream benchmarks, `4/4` live playback probes, `76/76` deterministic tests, clean fatal-log scan; UI and tvOS runner steps skipped by the fast variant).
 
+### M34
+- Status: completed
+- Objective: prevent stale Home enrichment snapshots from overwriting newer pagination and user state.
+- Scope: `HomeViewModel`, Home action/enrichment tests
+- Acceptance:
+  - the current feed remains authoritative for row structure, item membership/order, pagination results, and user-controlled state
+  - enrichment applies only `seriesName` and `seriesPosterTag` values that actually changed during processing for the same item ID
+  - processed featured items fill a fallback only when both the source and current featured collections are empty
+  - the regression test controls enrichment completion with a continuation and contains no timing sleep or retry
+- Validation: the deterministic RED lost 3 paginated items and current favorite state; after the fix the regression passed `100/100` iterations without retry, both Home view-model test classes passed `16/16`, isolated XcodeGen generation succeeded, and the iOS `ReelFin` simulator build passed.
+
 ## Validation Commands
 
 ```bash
@@ -387,6 +398,9 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 
 ## Latest Validation
 
+- Home stale-enrichment regression: passed `100/100` controlled iterations without retry; pre-fix RED reproduced 20 items instead of 23 and lost current favorite state.
+- `HomeViewModelActionTests` plus `HomeViewModelFeedEnrichmentTests`: passed, 16 tests.
+- isolated `xcodegen generate` and iOS `ReelFin` simulator build: passed without modifying the worktree's existing scheme changes.
 - `xcodegen generate`: passed
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinAppleTransmuxDD -only-testing:PlaybackEngineTests/NativeApplePlaybackRoutePlannerTests -only-testing:PlaybackEngineTests/NativePlayerRouteGuardTests -only-testing:PlaybackEngineTests/NativePlayerSessionRoutingTests -only-testing:PlaybackEngineTests/NativePlayerPlaybackControllerEndToEndTests`: passed, 19 tests
 - `xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' -derivedDataPath /tmp/ReelFinAppleTransmuxDD -only-testing:PlaybackEngineTests`: passed, 442 tests, 4 expected skips

@@ -91,6 +91,132 @@ final class HomeViewModelFeedEnrichmentTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleRows.map(\.kind), HomeViewModel.defaultSectionOrder)
     }
 
+    func testFeedEnrichmentFillsFeaturedFallbackWhenCurrentFeaturedIsEmpty() async throws {
+        let repository = MockMetadataRepository()
+        let apiClient = MockJellyfinAPIClient()
+        let fallbackItem = MediaItem(
+            id: "fallback-movie",
+            name: "Fallback Movie",
+            mediaType: .movie
+        )
+        try await repository.saveHomeFeed(
+            HomeFeed(
+                featured: [],
+                rows: [
+                    HomeRow(
+                        kind: .recentlyReleasedMovies,
+                        title: "Recently Released Movies",
+                        items: [fallbackItem]
+                    )
+                ]
+            )
+        )
+
+        let viewModel = HomeViewModel(
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: repository,
+                warmupManager: HomeFeedWarmupManagerStub()
+            )
+        )
+        await viewModel.load()
+
+        let fallbackApplied = await waitUntil(timeout: .seconds(1)) {
+            viewModel.feed.featured.map(\.id) == [fallbackItem.id]
+        }
+
+        XCTAssertTrue(fallbackApplied)
+    }
+
+    func testEnrichmentMergeIgnoresSeriesMetadataMerelyCarriedByStaleSnapshot() {
+        let staleItem = MediaItem(
+            id: "episode-1",
+            name: "Stale Episode",
+            mediaType: .episode,
+            seriesName: "Carried Series",
+            seriesPosterTag: "carried-poster"
+        )
+        let currentItem = MediaItem(
+            id: staleItem.id,
+            name: "Current Episode",
+            mediaType: .episode,
+            isFavorite: true
+        )
+        let current = HomeFeed(
+            featured: [],
+            rows: [HomeRow(kind: .continueWatching, title: "Current Row", items: [currentItem])]
+        )
+        let source = HomeFeed(
+            featured: [staleItem],
+            rows: [HomeRow(kind: .continueWatching, title: "Stale Row", items: [staleItem])]
+        )
+        let processed = source
+
+        let merged = HomeFeedEnrichmentMergePolicy.merge(
+            current: current,
+            source: source,
+            processed: processed
+        )
+
+        XCTAssertEqual(merged.rows.map(\.title), ["Current Row"])
+        XCTAssertEqual(merged.rows.first?.items.first?.name, currentItem.name)
+        XCTAssertEqual(merged.rows.first?.items.first?.isFavorite, true)
+        XCTAssertNil(merged.rows.first?.items.first?.seriesName)
+        XCTAssertNil(merged.rows.first?.items.first?.seriesPosterTag)
+        XCTAssertEqual(merged.featured, [])
+    }
+
+    func testEnrichmentMergeMatchesDuplicateItemsWithinTheirSourceRows() {
+        let alreadyEnriched = MediaItem(
+            id: "shared-episode",
+            name: "Already Enriched",
+            mediaType: .episode,
+            seriesName: "Shared Series",
+            seriesPosterTag: "shared-poster"
+        )
+        let missingMetadata = MediaItem(
+            id: alreadyEnriched.id,
+            name: "Missing Metadata",
+            mediaType: .episode
+        )
+        let processedMissingMetadata = MediaItem(
+            id: missingMetadata.id,
+            name: missingMetadata.name,
+            mediaType: .episode,
+            seriesName: alreadyEnriched.seriesName,
+            seriesPosterTag: alreadyEnriched.seriesPosterTag
+        )
+        let source = HomeFeed(
+            featured: [],
+            rows: [
+                HomeRow(id: "row.enriched", kind: .continueWatching, title: "Enriched", items: [alreadyEnriched]),
+                HomeRow(id: "row.missing", kind: .recentlyAddedSeries, title: "Missing", items: [missingMetadata])
+            ]
+        )
+        let processed = HomeFeed(
+            featured: [],
+            rows: [
+                source.rows[0],
+                HomeRow(
+                    id: source.rows[1].id,
+                    kind: source.rows[1].kind,
+                    title: source.rows[1].title,
+                    items: [processedMissingMetadata]
+                )
+            ]
+        )
+        let current = HomeFeed(featured: [], rows: [source.rows[1]])
+
+        let merged = HomeFeedEnrichmentMergePolicy.merge(
+            current: current,
+            source: source,
+            processed: processed
+        )
+
+        XCTAssertEqual(merged.rows.first?.items.first?.seriesName, alreadyEnriched.seriesName)
+        XCTAssertEqual(merged.rows.first?.items.first?.seriesPosterTag, alreadyEnriched.seriesPosterTag)
+    }
+
     func testLoadDeduplicatesRepeatedItemsWithinFeaturedAndRows() async throws {
         let dependencies = ReelFinPreviewFactory.dependencies()
         let repeated = MediaItem(id: "jurassic-world", name: "Jurassic World", mediaType: .movie, libraryID: "movies")
@@ -202,6 +328,23 @@ final class HomeViewModelFeedEnrichmentTests: XCTestCase {
                 )
             }
         )
+    }
+
+    private func waitUntil(
+        timeout: Duration,
+        condition: () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while clock.now < deadline {
+            if condition() {
+                return true
+            }
+            await Task.yield()
+        }
+
+        return condition()
     }
 
 }
