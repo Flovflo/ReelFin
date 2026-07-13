@@ -136,7 +136,11 @@ final class HTTPRangeByteSourceTests: XCTestCase {
 
     func testCancelStopsAnInFlightRangeExactlyOnce() async {
         let started = expectation(description: "range request started")
+        let stopped = expectation(description: "range request stopped")
+        stopped.expectedFulfillmentCount = 1
+        stopped.assertForOverFulfill = true
         SuspendingRangeProtocol.onStart = { started.fulfill() }
+        SuspendingRangeProtocol.onStop = { stopped.fulfill() }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SuspendingRangeProtocol.self]
         let source = HTTPRangeByteSource(
@@ -150,6 +154,7 @@ final class HTTPRangeByteSourceTests: XCTestCase {
 
         await source.cancel()
         _ = await readTask.result
+        await fulfillment(of: [stopped], timeout: 1)
 
         XCTAssertEqual(SuspendingRangeProtocol.stopLoadingCount, 1)
     }
@@ -197,6 +202,12 @@ private final class SuspendingRangeProtocol: URLProtocol {
     static var onStart: (() -> Void)?
     private static let stopLock = NSLock()
     private static var _stopLoadingCount = 0
+    private static var _onStop: (() -> Void)?
+
+    static var onStop: (() -> Void)? {
+        get { stopLock.withLock { _onStop } }
+        set { stopLock.withLock { _onStop = newValue } }
+    }
 
     static var stopLoadingCount: Int {
         stopLock.withLock { _stopLoadingCount }
@@ -205,6 +216,7 @@ private final class SuspendingRangeProtocol: URLProtocol {
     static func reset() {
         stopLock.withLock {
             _stopLoadingCount = 0
+            _onStop = nil
             onStart = nil
         }
     }
@@ -217,7 +229,11 @@ private final class SuspendingRangeProtocol: URLProtocol {
     }
 
     override func stopLoading() {
-        Self.stopLock.withLock { Self._stopLoadingCount += 1 }
+        let onStop = Self.stopLock.withLock {
+            Self._stopLoadingCount += 1
+            return Self._onStop
+        }
+        onStop?()
         client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
     }
 }
