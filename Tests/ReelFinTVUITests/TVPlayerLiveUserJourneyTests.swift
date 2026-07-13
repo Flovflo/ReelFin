@@ -39,8 +39,7 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCTAssertTrue(waitForPlaybackTime(greaterThan: max(beforePause, paused) + 0.5, in: app, timeout: 15))
 
         let current = try playbackTime(in: app)
-        for _ in 0..<max(1, Int(ceil(current / 10))) { XCUIRemote.shared.press(.left) }
-        XCTAssertTrue(app.otherElements["player_seek_target_zero"].waitForExistence(timeout: 20))
+        try seekToZero(from: current, in: app)
         XCTAssertLessThanOrEqual(try playbackTime(in: app), 15)
         XCTAssertTrue(app.otherElements["player_playback_advancing"].waitForExistence(timeout: 20))
 
@@ -864,6 +863,93 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
 
     private func dismissPlayerToDetail(in app: XCUIApplication) {
         for _ in 0..<3 where !app.otherElements["detail_screen"].exists { XCUIRemote.shared.press(.menu) }
+    }
+
+    private func seekToZero(from initialPlaybackTime: Double, in app: XCUIApplication) throws {
+        let zeroMarker = app.otherElements["player_seek_target_zero"].firstMatch
+        // Stop one command short so every run exercises acknowledged convergence.
+        let initialPressCount = max(1, Int(ceil(initialPlaybackTime / 10)) - 1)
+        for _ in 0..<initialPressCount { XCUIRemote.shared.press(.left) }
+
+        guard var lastCompletedTarget = waitForCompletedSeekTarget(
+            lessThan: initialPlaybackTime,
+            in: app,
+            timeout: 20
+        ) else {
+            XCTFail(seekToZeroFailureMessage(lastCompletedTarget: nil, in: app))
+            return
+        }
+
+        if lastCompletedTarget <= 0.5 {
+            XCTAssertTrue(
+                zeroMarker.exists || zeroMarker.waitForExistence(timeout: 2),
+                seekToZeroFailureMessage(lastCompletedTarget: lastCompletedTarget, in: app)
+            )
+            return
+        }
+
+        for _ in 0..<3 {
+            XCUIRemote.shared.press(.left)
+            guard let nextCompletedTarget = waitForCompletedSeekTarget(
+                lessThan: lastCompletedTarget,
+                in: app,
+                timeout: 8
+            ) else {
+                continue
+            }
+            XCTAssertLessThan(
+                nextCompletedTarget,
+                lastCompletedTarget,
+                "Every acknowledged compensating seek must make strict progress toward zero."
+            )
+            lastCompletedTarget = nextCompletedTarget
+            if lastCompletedTarget <= 0.5 {
+                XCTAssertTrue(
+                    zeroMarker.exists || zeroMarker.waitForExistence(timeout: 2),
+                    seekToZeroFailureMessage(lastCompletedTarget: lastCompletedTarget, in: app)
+                )
+                return
+            }
+        }
+
+        XCTFail(seekToZeroFailureMessage(lastCompletedTarget: lastCompletedTarget, in: app))
+    }
+
+    private func waitForCompletedSeekTarget(
+        lessThan previousTarget: Double,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Double? {
+        let completedMarker = app.otherElements["player_seek_completed"].firstMatch
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                guard completedMarker.exists,
+                      let rawValue = completedMarker.value as? String,
+                      let completedTarget = Double(rawValue),
+                      completedTarget.isFinite else {
+                    return false
+                }
+                return completedTarget + 0.001 < previousTarget
+            },
+            object: completedMarker
+        )
+        guard XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed,
+              let rawValue = completedMarker.value as? String,
+              let completedTarget = Double(rawValue),
+              completedTarget.isFinite,
+              completedTarget + 0.001 < previousTarget else {
+            return nil
+        }
+        return completedTarget
+    }
+
+    private func seekToZeroFailureMessage(lastCompletedTarget: Double?, in app: XCUIApplication) -> String {
+        let playback = (try? playbackTime(in: app)).map { String(format: "%.3f", $0) } ?? "unavailable"
+        let focusMarker = app.otherElements["native_player_chrome_focused_control"].firstMatch
+        let focus = focusMarker.exists ? (focusMarker.value as? String ?? "invalid") : "missing"
+        let completed = lastCompletedTarget.map { String(format: "%.3f", $0) } ?? "unavailable"
+        return "Seek-to-zero did not converge with strict progress after three bounded compensating presses; "
+            + "last completed target=\(completed), playback time=\(playback), chrome focus=\(focus)."
     }
 
     private func playbackTime(in app: XCUIApplication) throws -> Double {
