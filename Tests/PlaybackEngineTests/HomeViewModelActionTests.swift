@@ -196,6 +196,64 @@ final class HomeViewModelActionTests: XCTestCase {
         XCTAssertEqual(query?.resolvedViewIDs, ["movies"])
     }
 
+    func testStartupEnrichmentSerializesSeriesLookups() async throws {
+        let firstSeries = MediaItem(
+            id: "series-startup-1",
+            name: "Startup Series One",
+            mediaType: .series,
+            posterTag: "poster-1"
+        )
+        let secondSeries = MediaItem(
+            id: "series-startup-2",
+            name: "Startup Series Two",
+            mediaType: .series,
+            posterTag: "poster-2"
+        )
+        let apiClient = HomeActionSpyAPIClient(
+            seriesItemsByID: [
+                firstSeries.id: firstSeries,
+                secondSeries.id: secondSeries
+            ],
+            seriesFetchDelayNanoseconds: 80_000_000
+        )
+        let repository = MockMetadataRepository()
+        try await repository.saveHomeFeed(
+            HomeFeed(
+                featured: [],
+                rows: [
+                    HomeRow(
+                        kind: .continueWatching,
+                        title: "Continue Watching",
+                        items: [
+                            MediaItem(
+                                id: "episode-startup-1",
+                                name: "Episode One",
+                                mediaType: .episode,
+                                parentID: firstSeries.id
+                            ),
+                            MediaItem(
+                                id: "episode-startup-2",
+                                name: "Episode Two",
+                                mediaType: .episode,
+                                parentID: secondSeries.id
+                            )
+                        ]
+                    )
+                ]
+            )
+        )
+
+        let viewModel = HomeViewModel(dependencies: makeDependencies(apiClient: apiClient, repository: repository))
+        await viewModel.load()
+
+        let enrichmentCompleted = await waitUntilAsync(timeout: .seconds(2)) {
+            await apiClient.completedSeriesFetchCount() == 2
+        }
+        XCTAssertTrue(enrichmentCompleted)
+        let maximumConcurrentFetchCount = await apiClient.maximumConcurrentSeriesFetchCount()
+        XCTAssertEqual(maximumConcurrentFetchCount, 1)
+    }
+
     func testContinueWatchingDoesNotPaginateFromHomeRail() async throws {
         let item = MediaItem(id: "resume-1", name: "Resume", mediaType: .movie)
         let apiClient = HomeActionSpyAPIClient(libraryItems: [MediaItem(id: "movie-2", name: "Movie 2")])
@@ -286,6 +344,23 @@ final class HomeViewModelActionTests: XCTestCase {
 
         return condition()
     }
+
+    private func waitUntilAsync(
+        timeout: Duration,
+        condition: () async -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while clock.now < deadline {
+            if await condition() {
+                return true
+            }
+            await Task.yield()
+        }
+
+        return await condition()
+    }
 }
 
 private actor HomeRecordingSyncEngine: SyncEngineProtocol {
@@ -313,21 +388,30 @@ private actor HomeActionSpyAPIClient: JellyfinAPIClientProtocol {
     private let libraryItems: [MediaItem]
     private let blockedSeriesItem: MediaItem?
     private let seriesFetchStartedExpectation: XCTestExpectation?
+    private let seriesItemsByID: [String: MediaItem]
+    private let seriesFetchDelayNanoseconds: UInt64
     private var recordedFavoriteCalls: [(itemID: String, isFavorite: Bool)] = []
     private var recordedQueries: [LibraryQuery] = []
     private var blockedSeriesFetchContinuations: [CheckedContinuation<MediaItem, Never>] = []
     private var isBlockedSeriesFetchReleased = false
+    private var activeSeriesFetchCount = 0
+    private var maximumActiveSeriesFetchCount = 0
+    private var completedSeriesFetches = 0
 
     init(
         userViews: [Shared.LibraryView] = [],
         libraryItems: [MediaItem] = [],
         blockedSeriesItem: MediaItem? = nil,
-        seriesFetchStartedExpectation: XCTestExpectation? = nil
+        seriesFetchStartedExpectation: XCTestExpectation? = nil,
+        seriesItemsByID: [String: MediaItem] = [:],
+        seriesFetchDelayNanoseconds: UInt64 = 0
     ) {
         self.userViews = userViews
         self.libraryItems = libraryItems
         self.blockedSeriesItem = blockedSeriesItem
         self.seriesFetchStartedExpectation = seriesFetchStartedExpectation
+        self.seriesItemsByID = seriesItemsByID
+        self.seriesFetchDelayNanoseconds = seriesFetchDelayNanoseconds
     }
 
     func currentConfiguration() async -> ServerConfiguration? { nil }
@@ -344,6 +428,19 @@ private actor HomeActionSpyAPIClient: JellyfinAPIClientProtocol {
         return .empty
     }
     func fetchItem(id: String) async throws -> MediaItem {
+        if let seriesItem = seriesItemsByID[id] {
+            activeSeriesFetchCount += 1
+            maximumActiveSeriesFetchCount = max(maximumActiveSeriesFetchCount, activeSeriesFetchCount)
+            defer {
+                activeSeriesFetchCount -= 1
+                completedSeriesFetches += 1
+            }
+            if seriesFetchDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: seriesFetchDelayNanoseconds)
+            }
+            return seriesItem
+        }
+
         guard let blockedSeriesItem, blockedSeriesItem.id == id else {
             return MediaItem(id: id, name: id)
         }
@@ -396,6 +493,14 @@ private actor HomeActionSpyAPIClient: JellyfinAPIClientProtocol {
 
     func recordedLibraryQueries() -> [LibraryQuery] {
         recordedQueries
+    }
+
+    func maximumConcurrentSeriesFetchCount() -> Int {
+        maximumActiveSeriesFetchCount
+    }
+
+    func completedSeriesFetchCount() -> Int {
+        completedSeriesFetches
     }
 
     func releaseBlockedSeriesFetch() {

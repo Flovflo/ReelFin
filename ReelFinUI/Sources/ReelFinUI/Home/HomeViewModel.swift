@@ -854,21 +854,18 @@ private enum HomeFeedProcessor {
         if !seriesIDs.isEmpty {
             var seriesByID: [String: MediaItem] = [:]
 
-            await withTaskGroup(of: (String, MediaItem?).self) { group in
-                for seriesID in seriesIDs {
-                    group.addTask {
-                        do {
-                            return (seriesID, try await seriesCache.getSeries(id: seriesID))
-                        } catch {
-                            return (seriesID, nil)
-                        }
-                    }
-                }
+            // Keep this work sequential. Home can cancel and replace an enrichment task during
+            // startup; completing child tasks from the cancelled generation caused a Release-only
+            // Swift concurrency abort while Jellyfin was decoding the series response.
+            for seriesID in seriesIDs.sorted() {
+                guard !Task.isCancelled else { break }
 
-                for await (seriesID, series) in group {
-                    if let series {
-                        seriesByID[seriesID] = series
-                    }
+                do {
+                    let series = try await seriesCache.getSeries(id: seriesID)
+                    guard !Task.isCancelled else { break }
+                    seriesByID[seriesID] = series
+                } catch {
+                    // A missing series must not prevent the remaining Home feed from rendering.
                 }
             }
 
