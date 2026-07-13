@@ -84,14 +84,13 @@ targets:
         CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: Sign to Run Locally
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: WZ4CHJH7TA
-        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.app
-        PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]: com.reelfin.mac
         PRODUCT_NAME: ReelFin
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1"
-        TARGETED_DEVICE_FAMILY[sdk=macosx*]: "6"
         INFOPLIST_KEY_CFBundleDisplayName: ReelFin
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
@@ -115,7 +114,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.shared
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   JellyfinAPI:
     type: framework
     platform: iOS
@@ -126,7 +125,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.jellyfinapi
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   DataStore:
     type: framework
     platform: iOS
@@ -140,7 +139,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.datastore
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   ImageCache:
     type: framework
     platform: iOS
@@ -151,7 +150,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.imagecache
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   SyncEngine:
     type: framework
     platform: iOS
@@ -166,7 +165,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.sync
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   PlaybackEngine:
     type: framework
     platform: iOS
@@ -182,7 +181,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   NativeMediaCore:
     type: framework
     platform: iOS
@@ -193,7 +192,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.nativemediacore
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   ReelFinUI:
     type: framework
     platform: iOS
@@ -212,7 +211,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.ui
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
 
   # ──────────────────────────────────────────────
   # tvOS Application
@@ -247,6 +246,7 @@ targets:
         # Share the app bundle ID with iOS for a single App Store Connect record.
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.app
         PRODUCT_NAME: ReelFin
+        SUPPORTED_PLATFORMS: "appletvos appletvsimulator"
         TARGETED_DEVICE_FAMILY: "3"
         TVOS_DEPLOYMENT_TARGET: 26.0
         GENERATE_INFOPLIST_FILE: YES
@@ -392,7 +392,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: WZ4CHJH7TA
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.jellyfinapi.tests
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   PlaybackEngineTests:
     type: bundle.unit-test
     platform: iOS
@@ -409,7 +409,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: WZ4CHJH7TA
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.playback.tests
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   ImageCacheTests:
     type: bundle.unit-test
     platform: iOS
@@ -422,7 +422,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: WZ4CHJH7TA
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.imagecache.tests
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
   ReelFinUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -435,7 +435,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: WZ4CHJH7TA
         PRODUCT_BUNDLE_IDENTIFIER: com.reelfin.ui.tests
-        SUPPORTS_MACCATALYST: YES
+        SUPPORTS_MACCATALYST: NO
         TEST_TARGET_NAME: ReelFinApp
   ReelFinTVTests:
     type: bundle.unit-test
