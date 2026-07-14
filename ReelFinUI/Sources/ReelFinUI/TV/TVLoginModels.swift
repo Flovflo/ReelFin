@@ -1,7 +1,7 @@
 #if os(tvOS)
 import SwiftUI
 
-enum TVLoginPhase {
+enum TVLoginPhase: Equatable {
     case landing
     case server
     case credentials
@@ -11,6 +11,21 @@ enum TVLoginPhase {
 }
 
 enum TVLoginFocus: Hashable {
+    case landingQuickConnect
+    case landingPassword
+    case landingChooseServer
+    case serverAddress
+    case serverBack
+    case serverPrimary
+    case serverAlternate
+    case credentialsUsername
+    case credentialsPassword
+    case credentialsBack
+    case credentialsSubmit
+    case credentialsQuickConnect
+    case quickConnectUsePassword
+
+    // Task 3 migrates existing consumers to route-specific cases and removes these.
     case primary
     case secondary
     case tertiary
