@@ -7,13 +7,24 @@ import UIKit
 final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
     private var config: ServerConfiguration?
     private var session: UserSession?
+    private let testConnectionOverride: (@Sendable (URL) async throws -> Void)?
+    private let initiateQuickConnectOverride: (@Sendable (URL) async throws -> QuickConnectState)?
+    private let pollQuickConnectOverride: (@Sendable (String) async throws -> UserSession?)?
     private(set) var configureCallCount = 0
     private(set) var testConnectionCallCount = 0
     private(set) var authenticateCallCount = 0
 
-    init(authenticated: Bool = true) {
+    init(
+        authenticated: Bool = true,
+        testConnectionOverride: (@Sendable (URL) async throws -> Void)? = nil,
+        initiateQuickConnectOverride: (@Sendable (URL) async throws -> QuickConnectState)? = nil,
+        pollQuickConnectOverride: (@Sendable (String) async throws -> UserSession?)? = nil
+    ) {
         config = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
         session = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
+        self.testConnectionOverride = testConnectionOverride
+        self.initiateQuickConnectOverride = initiateQuickConnectOverride
+        self.pollQuickConnectOverride = pollQuickConnectOverride
     }
 
     func currentConfiguration() async -> ServerConfiguration? {
@@ -31,10 +42,16 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
 
     func testConnection(serverURL: URL) async throws {
         testConnectionCallCount += 1
+        if let testConnectionOverride {
+            try await testConnectionOverride(serverURL)
+        }
     }
 
     func authenticate(credentials: UserCredentials) async throws -> UserSession {
         authenticateCallCount += 1
+        if ProcessInfo.processInfo.arguments.contains("-reelfin-mock-auth-failure") {
+            throw AppError.unauthenticated
+        }
         let newSession = UserSession(userID: "preview-user", username: credentials.username, token: "token")
         session = newSession
         return newSession
@@ -45,11 +62,17 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState {
-        QuickConnectState(code: "1234", secret: "mock-secret")
+        if let initiateQuickConnectOverride {
+            return try await initiateQuickConnectOverride(serverURL)
+        }
+        return QuickConnectState(code: "1234", secret: "mock-secret")
     }
 
     func pollQuickConnect(secret: String) async throws -> UserSession? {
-        nil
+        if let pollQuickConnectOverride {
+            return try await pollQuickConnectOverride(secret)
+        }
+        return nil
     }
 
     func fetchUserViews() async throws -> [Shared.LibraryView] {

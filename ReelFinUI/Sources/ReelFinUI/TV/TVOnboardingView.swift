@@ -5,113 +5,101 @@ struct TVOnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focusedControl: TVOnboardingControl?
 
-    @State private var currentIndex: Int
-    @State private var contentVisible = false
+    @State private var deck: TVOnboardingDeckState
 
     let onComplete: () -> Void
 
     init(initialIndex: Int? = nil, onComplete: @escaping () -> Void) {
-        let lastIndex = max(TVOnboardingContent.items.count - 1, 0)
-        let clampedIndex = min(max(initialIndex ?? 0, 0), lastIndex)
-        _currentIndex = State(initialValue: clampedIndex)
+        _deck = State(
+            initialValue: TVOnboardingDeckState(
+                initialIndex: initialIndex,
+                count: TVOnboardingContent.items.count
+            )
+        )
         self.onComplete = onComplete
     }
 
     var body: some View {
         GeometryReader { proxy in
-            let panelWidth = min(proxy.size.width - 150, 960)
+            let metrics = TVOnboardingLayoutPolicy.metrics(for: proxy.size)
 
-            ZStack(alignment: .bottom) {
-                TVLoginBackgroundView(
-                    accent: currentItem.accent,
-                    secondaryAccent: currentItem.secondaryAccent
+            ZStack {
+                TVOnboardingHeroView(item: currentItem)
+                    .id("onboarding-hero-\(deck.index)")
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .transition(.opacity)
+
+                TVOnboardingForeground(
+                    item: currentItem,
+                    currentIndex: deck.index,
+                    count: deck.count,
+                    metrics: metrics,
+                    focusedControl: $focusedControl,
+                    onBack: retreat,
+                    onContinue: advance
                 )
-
-                TVOnboardingShowcaseView(
-                    items: TVOnboardingContent.items,
-                    currentIndex: currentIndex
-                )
-                .padding(.top, 54)
-                .padding(.horizontal, 28)
-                .padding(.bottom, 226)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-                VStack(spacing: 12) {
-                    TVOnboardingCopyBlock(items: TVOnboardingContent.items, currentIndex: currentIndex)
-                    TVOnboardingIndicator(count: TVOnboardingContent.items.count, currentIndex: currentIndex)
-                    TVOnboardingControls(
-                        isFirstPage: currentIndex == 0,
-                        isLastPage: currentIndex == TVOnboardingContent.items.count - 1,
-                        focusedControl: $focusedControl,
-                        onBack: retreat,
-                        onContinue: advance
-                    )
-                }
-                .frame(width: panelWidth)
-                .padding(.top, 22)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 28)
-                .background {
-                    TVOnboardingBottomPanel()
-                }
-                .padding(.bottom, 42)
-
-                TVLoginBrandHeader()
-                    .padding(.top, 42)
-                    .padding(.leading, 64)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .id("onboarding-content-\(deck.index)")
+                .transition(foregroundTransition)
             }
-            .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 18)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
+        .ignoresSafeArea()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("tv_onboarding_screen")
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
-        .onAppear(perform: handleAppear)
-        .animation(pageAnimation, value: currentIndex)
+        .defaultFocus($focusedControl, .primary, priority: .userInitiated)
+        .onAppear {
+            focusedControl = .primary
+        }
+        .onExitCommand(perform: retreat)
     }
 
     private var currentItem: TVOnboardingItem {
-        TVOnboardingContent.items[currentIndex]
+        TVOnboardingContent.items[deck.index]
+    }
+
+    private var motion: TVOnboardingMotionConfiguration {
+        TVOnboardingMotionPolicy.configuration(reduceMotion: reduceMotion)
     }
 
     private var pageAnimation: Animation {
-        reduceMotion ? .easeOut(duration: 0.16) : .smooth(duration: 0.42, extraBounce: 0.02)
+        reduceMotion
+            ? .easeOut(duration: 0.16)
+            : .smooth(duration: 0.42, extraBounce: motion.allowsBounce ? 0.02 : 0)
     }
 
-    private func handleAppear() {
-        guard !contentVisible else { return }
+    private var foregroundTransition: AnyTransition {
+        guard motion.pageOffset > 0 else { return .opacity }
 
-        withAnimation(pageAnimation) {
-            contentVisible = true
-        }
-
-        Task {
-            if !reduceMotion {
-                try? await Task.sleep(nanoseconds: 120_000_000)
-            }
-            await MainActor.run {
-                focusedControl = .primary
-            }
-        }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: motion.pageOffset)),
+            removal: .opacity.combined(with: .offset(x: -(motion.pageOffset * 0.55)))
+        )
     }
 
     private func advance() {
-        if currentIndex == TVOnboardingContent.items.count - 1 {
+        guard !deck.isLastPage else {
             onComplete()
             return
         }
 
+        focusedControl = nil
         withAnimation(pageAnimation) {
-            currentIndex += 1
+            _ = deck.advance()
         }
         focusedControl = .primary
     }
 
     private func retreat() {
-        guard currentIndex > 0 else { return }
+        guard !deck.isFirstPage else {
+            focusedControl = .primary
+            return
+        }
 
+        focusedControl = nil
         withAnimation(pageAnimation) {
-            currentIndex -= 1
+            _ = deck.retreat()
         }
         focusedControl = .primary
     }
@@ -122,39 +110,77 @@ private enum TVOnboardingControl: Hashable {
     case primary
 }
 
-private struct TVOnboardingCopyBlock: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    let items: [TVOnboardingItem]
+private struct TVOnboardingForeground: View {
+    let item: TVOnboardingItem
     let currentIndex: Int
+    let count: Int
+    let metrics: TVOnboardingLayoutMetrics
+    @FocusState.Binding var focusedControl: TVOnboardingControl?
+    let onBack: () -> Void
+    let onContinue: () -> Void
 
     var body: some View {
-        ZStack {
-            ForEach(items) { item in
-                let isActive = item.id == currentIndex
+        VStack(alignment: .leading, spacing: 0) {
+            Text("ReelFin")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(.white.opacity(0.88))
 
-                VStack(spacing: 8) {
-                    Text(item.title)
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .accessibilityIdentifier("tv_onboarding_title_\(item.id)")
+            Spacer(minLength: 32)
 
-                    Text(item.subtitle)
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .opacity(isActive ? 1 : 0)
-                .blur(radius: isActive ? 0 : (reduceMotion ? 0 : 24))
-                .scaleEffect(isActive ? 1 : (reduceMotion ? 1 : 0.985))
-                .offset(y: isActive ? 0 : (reduceMotion ? 0 : 10))
-                .accessibilityHidden(!isActive)
+            HStack(alignment: .bottom, spacing: 0) {
+                TVOnboardingCopyBlock(
+                    item: item,
+                    currentIndex: currentIndex,
+                    count: count
+                )
+                .frame(width: metrics.copyMaximumWidth, alignment: .leading)
+
+                Spacer(minLength: metrics.copyToActionsSpacing)
+
+                TVOnboardingControls(
+                    isFirstPage: currentIndex == 0,
+                    isLastPage: currentIndex == count - 1,
+                    stacksActions: metrics.stacksActions,
+                    focusedControl: $focusedControl,
+                    onBack: onBack,
+                    onContinue: onContinue
+                )
+                .padding(.trailing, 8)
+                .padding(.bottom, 8)
+                .frame(width: metrics.actionRailWidth, alignment: .trailing)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 126, alignment: .top)
+        .padding(.horizontal, TVOnboardingLayoutPolicy.horizontalInset)
+        .padding(.vertical, TVOnboardingLayoutPolicy.verticalInset)
+    }
+}
+
+private struct TVOnboardingCopyBlock: View {
+    let item: TVOnboardingItem
+    let currentIndex: Int
+    let count: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(item.title)
+                    .font(.system(size: 60, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+
+                Text(item.subtitle)
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.84))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(item.title). \(item.subtitle)")
+            .accessibilityIdentifier("tv_onboarding_title")
+
+            TVOnboardingIndicator(count: count, currentIndex: currentIndex)
+        }
+        .layoutPriority(1)
     }
 }
 
@@ -163,13 +189,16 @@ private struct TVOnboardingIndicator: View {
     let currentIndex: Int
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             ForEach(0..<count, id: \.self) { index in
                 Capsule(style: .continuous)
                     .fill(Color.white.opacity(index == currentIndex ? 1 : 0.34))
-                    .frame(width: index == currentIndex ? 28 : 7, height: 7)
+                    .frame(width: index == currentIndex ? 32 : 8, height: 8)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Onboarding progress")
+        .accessibilityValue("Step \(currentIndex + 1) of \(count)")
         .accessibilityIdentifier("tv_onboarding_progress")
     }
 }
@@ -177,58 +206,63 @@ private struct TVOnboardingIndicator: View {
 private struct TVOnboardingControls: View {
     let isFirstPage: Bool
     let isLastPage: Bool
+    let stacksActions: Bool
     @FocusState.Binding var focusedControl: TVOnboardingControl?
     let onBack: () -> Void
     let onContinue: () -> Void
 
     var body: some View {
-        HStack(spacing: 22) {
-            TVLoginActionButton(
-                title: "Back",
-                icon: "chevron.left",
-                style: .secondary,
-                isEnabled: !isFirstPage,
-                action: onBack
-            )
-            .focused($focusedControl, equals: .back)
-            .opacity(isFirstPage ? 0.001 : 1)
-
-            TVLoginActionButton(
-                title: isLastPage ? "Get Started" : "Continue",
-                icon: isLastPage ? "arrow.right.circle.fill" : "arrow.right",
-                style: .primary,
-                action: onContinue
-            )
-            .focused($focusedControl, equals: .primary)
-            .accessibilityIdentifier("tv_onboarding_primary_cta")
+        GlassEffectContainer(spacing: stacksActions ? 16 : 24) {
+            if stacksActions {
+                VStack(alignment: .trailing, spacing: 16) {
+                    if !isFirstPage {
+                        backButton
+                    }
+                    primaryButton
+                }
+            } else {
+                HStack(spacing: 24) {
+                    if !isFirstPage {
+                        backButton
+                    }
+                    primaryButton
+                }
+            }
         }
     }
-}
 
-private struct TVOnboardingBottomPanel: View {
-    var body: some View {
-        ZStack {
-            Color.clear.reelFinGlassRoundedRect(
-                cornerRadius: 34,
-                tint: Color.white.opacity(0.04),
-                stroke: Color.white.opacity(0.08),
-                shadowOpacity: 0.14,
-                shadowRadius: 24,
-                shadowYOffset: 14
-            )
-
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.30),
-                            Color.black.opacity(0.18)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+    private var backButton: some View {
+        Button(action: onBack) {
+            Label("Back", systemImage: "chevron.left")
+                .font(.system(size: 30, weight: .semibold))
+                .frame(minWidth: 150)
+                .frame(height: 76)
+                .padding(.horizontal, 20)
         }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.roundedRectangle(radius: 28))
+        .focused($focusedControl, equals: .back)
+        .accessibilityIdentifier("tv_onboarding_back")
+    }
+
+    private var primaryButton: some View {
+        Button(action: onContinue) {
+            Label(
+                isLastPage ? "Connect My Server" : "Continue",
+                systemImage: isLastPage ? "server.rack" : "arrow.right"
+            )
+            .font(.system(size: 30, weight: .semibold))
+            .labelStyle(.titleAndIcon)
+            .lineLimit(1)
+            .minimumScaleFactor(0.9)
+            .frame(minWidth: 400)
+            .frame(height: 76)
+            .padding(.horizontal, 24)
+        }
+        .buttonStyle(.glassProminent)
+        .buttonBorderShape(.roundedRectangle(radius: 28))
+        .focused($focusedControl, equals: .primary)
+        .accessibilityIdentifier("tv_onboarding_primary_cta")
     }
 }
 

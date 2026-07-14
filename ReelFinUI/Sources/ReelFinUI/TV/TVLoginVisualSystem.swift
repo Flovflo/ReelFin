@@ -76,7 +76,7 @@ struct TVLoginStageHeading: View {
     let subtitle: String
     let titleSize: CGFloat
 
-    init(title: String, subtitle: String, titleSize: CGFloat = 48) {
+    init(title: String, subtitle: String, titleSize: CGFloat = 54) {
         self.title = title
         self.subtitle = subtitle
         self.titleSize = titleSize
@@ -90,7 +90,7 @@ struct TVLoginStageHeading: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(subtitle)
-                .font(.system(size: 24, weight: .medium))
+                .font(.system(size: 29, weight: .medium))
                 .foregroundStyle(.white.opacity(0.78))
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -144,6 +144,7 @@ struct TVLoginActionButton: View {
     let action: () -> Void
 
     @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         title: String,
@@ -189,11 +190,12 @@ struct TVLoginActionButton: View {
     @available(tvOS 26.0, *)
     @ViewBuilder
     private var styledGlassButton: some View {
-        if isFocused {
+        switch style {
+        case .primary:
             button
                 .buttonStyle(.glassProminent)
                 .opacity(baseOpacity)
-        } else {
+        case .secondary, .tertiary:
             button
                 .buttonStyle(.glass)
                 .opacity(baseOpacity)
@@ -224,14 +226,14 @@ struct TVLoginActionButton: View {
                 isLoading: isLoading
             )
             .frame(maxWidth: .infinity)
-            .frame(height: 74)
+            .frame(height: 82)
             .opacity(isEnabled ? 1 : 0.65)
         }
         .buttonBorderShape(.roundedRectangle(radius: 28))
         .controlSize(.large)
         .disabled(!isEnabled || isLoading)
-        .scaleEffect(isFocused ? 1.02 : 1)
-        .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
+        .scaleEffect(isFocused && !reduceMotion ? ReelFinTheme.tvFocusScale : 1)
+        .animation(reduceMotion ? nil : ReelFinTheme.tvFocusSpring, value: isFocused)
     }
 }
 
@@ -252,14 +254,14 @@ private struct TVLoginActionLabel: View {
                         .scaleEffect(0.9)
                 } else {
                     Image(systemName: icon)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: 22, weight: .semibold))
                         .foregroundStyle(foregroundColor)
                 }
             }
             .frame(width: 26)
 
             Text(title)
-                .font(.system(size: 24, weight: .bold))
+                .font(.system(size: 29, weight: .semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.9)
                 .foregroundStyle(foregroundColor)
@@ -288,7 +290,7 @@ extension View {
             .textFieldStyle(.plain)
             .padding(.horizontal, 22)
             .frame(maxWidth: .infinity)
-            .frame(height: 74)
+            .frame(height: 82)
             .background(Color.clear)
             .shadow(color: .black.opacity(focused ? 0.14 : 0.08), radius: focused ? 10 : 6, x: 0, y: focused ? 6 : 3)
     }

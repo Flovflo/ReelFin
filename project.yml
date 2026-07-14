@@ -444,6 +444,7 @@ targets:
     sources:
       - path: Tests/ReelFinTVTests
     dependencies:
+      - target: ReelFinUITV
       - target: SharedTV
     settings:
       base:
