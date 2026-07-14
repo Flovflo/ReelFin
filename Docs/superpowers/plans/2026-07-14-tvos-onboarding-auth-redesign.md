@@ -147,13 +147,59 @@ struct TVOnboardingDeckState: Equatable {
 }
 
 enum TVLoginNavigationPolicy {
-    static func preferredFocus(for phase: TVLoginPhase) -> TVLoginFocus? { /* exhaustive switch */ }
-    static func backDestination(from phase: TVLoginPhase, quickConnectOrigin: TVLoginPhase) -> TVLoginPhase? { /* exhaustive switch */ }
+    static func preferredFocus(for phase: TVLoginPhase) -> TVLoginFocus? {
+        switch phase {
+        case .landing: .landingQuickConnect
+        case .server: .serverAddress
+        case .credentials: .credentialsUsername
+        case .quickConnect: .quickConnectUsePassword
+        case .submitting, .success: nil
+        }
+    }
+
+    static func backDestination(
+        from phase: TVLoginPhase,
+        quickConnectOrigin: TVLoginPhase
+    ) -> TVLoginPhase? {
+        switch phase {
+        case .landing, .submitting, .success:
+            nil
+        case .server:
+            .landing
+        case .credentials:
+            .server
+        case .quickConnect:
+            switch quickConnectOrigin {
+            case .landing, .server, .credentials:
+                quickConnectOrigin
+            case .quickConnect, .submitting, .success:
+                .landing
+            }
+        }
+    }
 }
 #endif
 ```
 
-Replace generic focus cases with the exact route-specific cases used by the tests plus cases for every visible login action/field.
+Make `TVLoginPhase` conform to `Equatable`. Replace generic focus cases with:
+
+```swift
+enum TVLoginFocus: Hashable {
+    case landingQuickConnect
+    case landingPassword
+    case landingChooseServer
+    case serverAddress
+    case serverBack
+    case serverPrimary
+    case serverAlternate
+    case credentialsUsername
+    case credentialsPassword
+    case credentialsBack
+    case credentialsSubmit
+    case credentialsQuickConnect
+    case quickConnectUsePassword
+}
+```
 
 - [ ] **Step 4: Verify GREEN and the tvOS unit baseline**
 
@@ -456,6 +502,6 @@ Do not add `.artifacts/` screenshots or logs to Git.
 ## Self-Review Results
 
 - **Spec coverage:** Every visual, focus, Menu/back, Quick Connect, Reduce Motion, accessibility, safe-area, simulator-preservation, and cross-platform build requirement maps to a task.
-- **Placeholder scan:** The plan contains no TBD/TODO/future implementation placeholders. Exhaustive policy switches are intentionally specified by their tested behavior and exact interface.
+- **Placeholder scan:** The plan contains no TBD/TODO/future implementation placeholders. Policy switches and focus cases are fully enumerated.
 - **Type consistency:** `TVOnboardingDeckState`, `TVOnboardingAdvanceResult`, `TVLoginNavigationPolicy`, `TVLoginPhase`, and route-specific `TVLoginFocus` names are consistent across tasks.
 - **Scope:** Broader authenticated tvOS audit findings remain outside this atomic redesign, as required by the approved design spec.
