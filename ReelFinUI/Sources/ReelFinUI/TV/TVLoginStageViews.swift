@@ -31,21 +31,32 @@ struct TVLandingStageView: View {
             .frame(maxWidth: 560, alignment: .leading)
             .padding(.vertical, 8)
 
-            VStack(spacing: 16) {
-                TVLoginActionButton(title: "Quick Connect", icon: "qrcode.viewfinder", action: onQuickConnect)
-                    .focused(focus, equals: .primary)
+            GlassEffectContainer(spacing: 16) {
+                VStack(spacing: 16) {
+                    TVLoginActionButton(title: "Quick Connect", icon: "qrcode.viewfinder", action: onQuickConnect)
+                        .focused(focus, equals: .landingQuickConnect)
+                        .accessibilityLabel("Quick Connect")
+                        .accessibilityIdentifier("tv_login_quick_connect")
 
-                TVLoginActionButton(title: "Use Password", icon: "person.fill", style: .secondary, action: onPassword)
-                    .focused(focus, equals: .secondary)
+                    TVLoginActionButton(title: "Use Password", icon: "person.fill", style: .secondary, action: onPassword)
+                        .focused(focus, equals: .landingPassword)
+                        .accessibilityLabel("Use Password")
+                        .accessibilityIdentifier("tv_login_use_password")
 
-                if hasSavedServer {
-                    TVLoginActionButton(title: "Choose Another Server", icon: "server.rack", style: .tertiary, action: onChooseServer)
-                        .focused(focus, equals: .tertiary)
+                    if hasSavedServer {
+                        TVLoginActionButton(title: "Choose Another Server", icon: "server.rack", style: .tertiary, action: onChooseServer)
+                            .focused(focus, equals: .landingChooseServer)
+                            .accessibilityLabel("Choose Another Server")
+                            .accessibilityIdentifier("tv_login_choose_server")
+                    }
                 }
             }
             .frame(width: buttonWidth)
         }
         .frame(maxWidth: .infinity, alignment: .center)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Connect your server")
+        .accessibilityIdentifier("tv_login_stage_landing")
     }
 }
 
@@ -62,7 +73,7 @@ struct TVServerStageView: View {
     let focus: FocusState<TVLoginFocus?>.Binding
 
     var body: some View {
-        let isServerFieldFocused = focus.wrappedValue == .textA
+        let isServerFieldFocused = focus.wrappedValue == .serverAddress
 
         VStack(alignment: .leading, spacing: 24) {
             TVLoginStageHeading(
@@ -78,10 +89,12 @@ struct TVServerStageView: View {
                 prompt: Text("https://jellyfin.example.com")
                     .foregroundStyle(isServerFieldFocused ? Color.black.opacity(0.34) : Color.white.opacity(0.34))
             )
-                .font(.system(size: 28, weight: .semibold, design: .monospaced))
+                .font(.system(size: 29, weight: .semibold, design: .monospaced))
                 .foregroundStyle(isServerFieldFocused ? Color.black.opacity(0.82) : Color.white.opacity(0.96))
-                .focused(focus, equals: .textA)
+                .focused(focus, equals: .serverAddress)
                 .tvLoginFieldSurface(focused: isServerFieldFocused)
+                .accessibilityLabel("Jellyfin server address")
+                .accessibilityIdentifier("tv_login_server_field")
 
             TVServerStatusView(
                 isLoading: isTestingConnection,
@@ -89,28 +102,39 @@ struct TVServerStageView: View {
                 error: serverErrorMessage
             )
 
-            HStack(spacing: 16) {
-                TVLoginActionButton(title: "Back", icon: "chevron.left", style: .tertiary, action: onBack)
-                    .focused(focus, equals: .tertiary)
+            GlassEffectContainer(spacing: 16) {
+                HStack(spacing: 16) {
+                    TVLoginActionButton(title: "Back", icon: "chevron.left", style: .tertiary, action: onBack)
+                        .focused(focus, equals: .serverBack)
+                        .accessibilityLabel("Back")
+                        .accessibilityIdentifier("tv_login_server_back")
 
-                TVLoginActionButton(
-                    title: signInPath.primaryActionTitle,
-                    icon: signInPath.primaryActionSymbol,
-                    isLoading: isTestingConnection,
-                    isEnabled: canContinue,
-                    action: onContinue
-                )
-                .focused(focus, equals: .primary)
+                    TVLoginActionButton(
+                        title: signInPath.primaryActionTitle,
+                        icon: signInPath.primaryActionSymbol,
+                        isLoading: isTestingConnection,
+                        isEnabled: canContinue,
+                        action: onContinue
+                    )
+                    .focused(focus, equals: .serverPrimary)
+                    .accessibilityLabel(signInPath.primaryActionTitle)
+                    .accessibilityIdentifier("tv_login_server_primary")
 
-                TVLoginActionButton(
-                    title: signInPath.alternateActionTitle,
-                    icon: signInPath.alternateActionSymbol,
-                    style: .secondary,
-                    action: onTogglePath
-                )
-                .focused(focus, equals: .secondary)
+                    TVLoginActionButton(
+                        title: signInPath.alternateActionTitle,
+                        icon: signInPath.alternateActionSymbol,
+                        style: .secondary,
+                        action: onTogglePath
+                    )
+                    .focused(focus, equals: .serverAlternate)
+                    .accessibilityLabel(signInPath.alternateActionTitle)
+                    .accessibilityIdentifier("tv_login_server_alternate")
+                }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(signInPath == .quickConnect ? "Enter your server" : "Server address")
+        .accessibilityIdentifier("tv_login_stage_server")
     }
 }
 
@@ -126,8 +150,8 @@ struct TVCredentialsStageView: View {
     let focus: FocusState<TVLoginFocus?>.Binding
 
     var body: some View {
-        let isUsernameFocused = focus.wrappedValue == .textA
-        let isPasswordFocused = focus.wrappedValue == .textB
+        let isUsernameFocused = focus.wrappedValue == .credentialsUsername
+        let isPasswordFocused = focus.wrappedValue == .credentialsPassword
 
         VStack(alignment: .leading, spacing: 24) {
             TVLoginStageHeading(
@@ -142,10 +166,12 @@ struct TVCredentialsStageView: View {
                     prompt: Text("Username")
                         .foregroundStyle(isUsernameFocused ? Color.black.opacity(0.34) : Color.white.opacity(0.34))
                 )
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(.system(size: 29, weight: .semibold))
                     .foregroundStyle(isUsernameFocused ? Color.black.opacity(0.82) : Color.white.opacity(0.96))
-                    .focused(focus, equals: .textA)
+                    .focused(focus, equals: .credentialsUsername)
                     .tvLoginFieldSurface(focused: isUsernameFocused)
+                    .accessibilityLabel("Jellyfin username")
+                    .accessibilityIdentifier("tv_login_username_field")
 
                 SecureField(
                     "",
@@ -153,25 +179,38 @@ struct TVCredentialsStageView: View {
                     prompt: Text("Password")
                         .foregroundStyle(isPasswordFocused ? Color.black.opacity(0.34) : Color.white.opacity(0.34))
                 )
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(.system(size: 29, weight: .semibold))
                     .foregroundStyle(isPasswordFocused ? Color.black.opacity(0.82) : Color.white.opacity(0.96))
-                    .focused(focus, equals: .textB)
+                    .focused(focus, equals: .credentialsPassword)
                     .tvLoginFieldSurface(focused: isPasswordFocused)
+                    .accessibilityLabel("Jellyfin password")
+                    .accessibilityIdentifier("tv_login_password_field")
             }
 
             TVServerStatusView(isLoading: false, message: nil, error: authErrorMessage)
 
-            HStack(spacing: 16) {
-                TVLoginActionButton(title: "Back", icon: "chevron.left", style: .tertiary, action: onBack)
-                    .focused(focus, equals: .tertiary)
+            GlassEffectContainer(spacing: 16) {
+                HStack(spacing: 16) {
+                    TVLoginActionButton(title: "Back", icon: "chevron.left", style: .tertiary, action: onBack)
+                        .focused(focus, equals: .credentialsBack)
+                        .accessibilityLabel("Back")
+                        .accessibilityIdentifier("tv_login_credentials_back")
 
-                TVLoginActionButton(title: "Sign In", icon: "arrow.right", isEnabled: canSubmit, action: onSubmit)
-                    .focused(focus, equals: .primary)
+                    TVLoginActionButton(title: "Sign In", icon: "arrow.right", isEnabled: canSubmit, action: onSubmit)
+                        .focused(focus, equals: .credentialsSubmit)
+                        .accessibilityLabel("Sign In")
+                        .accessibilityIdentifier("tv_login_credentials_submit")
 
-                TVLoginActionButton(title: "Quick Connect", icon: "qrcode", style: .secondary, action: onQuickConnect)
-                    .focused(focus, equals: .secondary)
+                    TVLoginActionButton(title: "Quick Connect", icon: "qrcode", style: .secondary, action: onQuickConnect)
+                        .focused(focus, equals: .credentialsQuickConnect)
+                        .accessibilityLabel("Quick Connect")
+                        .accessibilityIdentifier("tv_login_credentials_quick_connect")
+                }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Sign in")
+        .accessibilityIdentifier("tv_login_stage_credentials")
     }
 }
 
@@ -189,10 +228,17 @@ struct TVQuickConnectStageView: View {
 
             TVQuickConnectCodeView(state: state)
 
-            TVLoginActionButton(title: "Use Password Instead", icon: "keyboard", style: .tertiary, action: onUsePassword)
-                .focused(focus, equals: .tertiary)
-                .frame(width: 360)
+            GlassEffectContainer(spacing: 16) {
+                TVLoginActionButton(title: "Use Password Instead", icon: "keyboard", style: .tertiary, action: onUsePassword)
+                    .focused(focus, equals: .quickConnectUsePassword)
+                    .accessibilityLabel("Use Password Instead")
+                    .accessibilityIdentifier("tv_login_quick_connect_use_password")
+                    .frame(width: 420)
+            }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Approve on another device")
+        .accessibilityIdentifier("tv_login_stage_quick_connect")
     }
 }
 
@@ -209,15 +255,19 @@ struct TVSubmittingStageView: View {
             HStack(spacing: 14) {
                 ProgressView().tint(.white).scaleEffect(1.2)
                 Text("One moment…")
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: 29, weight: .medium))
                     .foregroundStyle(.white.opacity(0.76))
             }
-            .frame(height: 80)
+            .frame(height: 82)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Signing in")
+        .accessibilityIdentifier("tv_login_stage_submitting")
     }
 }
 
 struct TVSuccessStageView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var animateIn: Bool
 
     var body: some View {
@@ -226,18 +276,21 @@ struct TVSuccessStageView: View {
                 .font(.system(size: 72))
                 .foregroundStyle(Color(red: 0.34, green: 0.86, blue: 0.66))
                 .symbolRenderingMode(.hierarchical)
-                .scaleEffect(animateIn ? 1 : 0.70)
+                .scaleEffect(reduceMotion ? 1 : (animateIn ? 1 : 0.70))
                 .opacity(animateIn ? 1 : 0)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Connected")
-                    .font(.system(size: 42, weight: .bold))
+                    .font(.system(size: 54, weight: .bold))
                     .foregroundStyle(.white)
                 Text("Your library is ready on Apple TV.")
-                    .font(.system(size: 22, weight: .medium))
+                    .font(.system(size: 29, weight: .medium))
                     .foregroundStyle(.white.opacity(0.70))
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Connected")
+        .accessibilityIdentifier("tv_login_stage_success")
     }
 }
 
@@ -283,8 +336,9 @@ private struct TVQuickConnectCodeView: View {
             }
             .frame(minHeight: 110, alignment: .leading)
         case let .awaitingApproval(code):
+            let displayCode = formattedCode(code)
             VStack(alignment: .leading, spacing: 18) {
-                Text(formattedCode(code))
+                Text(displayCode)
                     .font(.system(size: 88, weight: .black, design: .monospaced))
                     .foregroundStyle(.white)
                     .tracking(10)
@@ -300,6 +354,8 @@ private struct TVQuickConnectCodeView: View {
                             shadowYOffset: 10
                         )
                     }
+                    .accessibilityLabel(displayCode)
+                    .accessibilityIdentifier("tv_login_quick_connect_code")
 
                 Label("Waiting for approval in Jellyfin…", systemImage: "iphone.and.arrow.forward")
                     .font(.system(size: 21, weight: .semibold))

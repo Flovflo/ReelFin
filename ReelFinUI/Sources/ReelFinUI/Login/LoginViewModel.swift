@@ -14,6 +14,7 @@ final class LoginViewModel: ObservableObject {
     @Published private(set) var validatedServerURL: URL?
 
     private let dependencies: ReelFinDependencies
+    private var connectionGeneration = 0
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
@@ -39,25 +40,49 @@ final class LoginViewModel: ObservableObject {
     }
 
     func testConnection() async -> Bool {
+        guard !Task.isCancelled else { return false }
+
+        connectionGeneration &+= 1
+        let generation = connectionGeneration
+        let requestedServerURLText = serverURLText
         serverErrorMessage = nil
         authErrorMessage = nil
         serverMessage = nil
         isTestingConnection = true
-        defer { isTestingConnection = false }
+        defer {
+            if connectionGeneration == generation {
+                isTestingConnection = false
+            }
+        }
 
         do {
-            let url = try normalizedServerURL(from: serverURLText)
+            let url = try normalizedServerURL(from: requestedServerURLText)
             if ReviewDemoMode.isReviewServer(url) {
+                guard connectionGeneration == generation,
+                      serverURLText == requestedServerURLText,
+                      !Task.isCancelled else {
+                    return false
+                }
                 validatedServerURL = url
                 serverMessage = "Review demo ready"
                 return true
             }
 
             try await dependencies.apiClient.testConnection(serverURL: url)
+            guard connectionGeneration == generation,
+                  serverURLText == requestedServerURLText,
+                  !Task.isCancelled else {
+                return false
+            }
             validatedServerURL = url
             serverMessage = "Server ready"
             return true
         } catch {
+            guard connectionGeneration == generation,
+                  serverURLText == requestedServerURLText,
+                  !Task.isCancelled else {
+                return false
+            }
             validatedServerURL = nil
             serverErrorMessage = error.localizedDescription
             return false
@@ -98,6 +123,9 @@ final class LoginViewModel: ObservableObject {
     }
 
     func serverURLDidChange() {
+        if isTestingConnection {
+            cancelConnectionTest()
+        }
         serverMessage = nil
         serverErrorMessage = nil
 
@@ -109,6 +137,11 @@ final class LoginViewModel: ObservableObject {
         if currentValue != validatedServerURL.absoluteString {
             self.validatedServerURL = nil
         }
+    }
+
+    func cancelConnectionTest() {
+        connectionGeneration &+= 1
+        isTestingConnection = false
     }
 
     func clearAuthError() {

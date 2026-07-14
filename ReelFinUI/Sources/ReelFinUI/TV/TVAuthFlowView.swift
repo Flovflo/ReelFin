@@ -3,6 +3,7 @@ import Shared
 import SwiftUI
 
 struct TVAuthFlowView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var screen: TVAuthScreen
 
     private let dependencies: ReelFinDependencies
@@ -24,22 +25,34 @@ struct TVAuthFlowView: View {
                     initialIndex: TVAuthDebugOptions.onboardingPage,
                     onComplete: completeOnboarding
                 )
-                .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                .transition(onboardingTransition)
             case .login:
                 TVLoginView(dependencies: dependencies, onLogin: onLogin)
-                    .transition(.opacity.combined(with: .scale(scale: 1.015)))
+                    .transition(loginTransition)
             }
         }
-        .animation(.smooth(duration: 0.38, extraBounce: 0.02), value: screen)
+        .animation(authAnimation, value: screen)
     }
 
     private func completeOnboarding() {
         settingsStore.hasCompletedOnboarding = true
         settingsStore.completedOnboardingVersion = ReelFinOnboardingVersion.current
 
-        withAnimation(.smooth(duration: 0.34, extraBounce: 0.02)) {
+        withAnimation(authAnimation) {
             screen = .login
         }
+    }
+
+    private var authAnimation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.16) : .smooth(duration: 0.38, extraBounce: 0.02)
+    }
+
+    private var onboardingTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985))
+    }
+
+    private var loginTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 1.015))
     }
 
     private static func initialScreen(settingsStore: SettingsStoreProtocol) -> TVAuthScreen {

@@ -57,6 +57,8 @@ struct TVLoginBackgroundView: View {
 }
 
 struct TVLoginHeroView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let imagePipeline: any ImagePipelineProtocol
     let accent: Color
     let secondaryAccent: Color
@@ -93,11 +95,14 @@ struct TVLoginHeroView: View {
                 .blur(radius: 28)
                 .offset(y: 42)
         }
-        .scaleEffect(phase == .landing ? 1 : 0.94)
+        .scaleEffect(reduceMotion ? 1 : (phase == .landing ? 1 : 0.94))
         .opacity(phase == .success ? 0.52 : (phase == .landing ? 1 : 0.78))
-        .blur(radius: phase == .landing ? 0 : 1.4)
-        .offset(y: phase == .landing ? 0 : -20)
-        .animation(.smooth(duration: 0.42, extraBounce: 0.02), value: phase)
+        .blur(radius: reduceMotion || phase == .landing ? 0 : 1.4)
+        .offset(y: reduceMotion || phase == .landing ? 0 : -20)
+        .animation(
+            reduceMotion ? .easeInOut(duration: 0.16) : .smooth(duration: 0.42, extraBounce: 0.02),
+            value: phase
+        )
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

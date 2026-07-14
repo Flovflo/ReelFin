@@ -7,8 +7,12 @@ public struct TVLoginView: View {
     @StateObject private var loginVM: LoginViewModel
     @StateObject private var quickConnectVM: QuickConnectViewModel
     @FocusState private var focus: TVLoginFocus?
-    @State private var phase: TVLoginPhase = .landing
-    @State private var signInPath: TVLoginSignInPath = .quickConnect
+    @Namespace private var loginFocusScope
+    @State private var phase: TVLoginPhase
+    @State private var signInPath: TVLoginSignInPath
+    @State private var quickConnectOrigin: TVLoginPhase
+    @State private var navigationGeneration = 0
+    @State private var navigationTask: Task<Void, Never>?
     @State private var contentVisible = false
     @State private var successVisible = false
 
@@ -16,8 +20,22 @@ public struct TVLoginView: View {
     private let onLogin: (UserSession) -> Void
 
     public init(dependencies: ReelFinDependencies, onLogin: @escaping (UserSession) -> Void) {
-        _loginVM = StateObject(wrappedValue: LoginViewModel(dependencies: dependencies))
+        let initialPhase = TVLoginDebugOptions.phase ?? .landing
+        let initialPath = TVLoginDebugOptions.signInPath ?? .quickConnect
+        let loginViewModel = LoginViewModel(dependencies: dependencies)
+
+        if let username = TVLoginDebugOptions.username {
+            loginViewModel.username = username
+        }
+        if let password = TVLoginDebugOptions.password {
+            loginViewModel.password = password
+        }
+
+        _loginVM = StateObject(wrappedValue: loginViewModel)
         _quickConnectVM = StateObject(wrappedValue: QuickConnectViewModel(dependencies: dependencies))
+        _phase = State(initialValue: initialPhase)
+        _signInPath = State(initialValue: initialPath)
+        _quickConnectOrigin = State(initialValue: TVLoginDebugOptions.quickConnectOrigin ?? .landing)
         imagePipeline = dependencies.imagePipeline
         self.onLogin = onLogin
     }
@@ -50,12 +68,15 @@ public struct TVLoginView: View {
                     TVLoginStageSurface(metrics: metrics) {
                         stageContent(metrics: metrics)
                     }
+                    .id(phase)
+                    .focusScope(loginFocusScope)
+                    .tvLoginDefaultFocus($focus, phase: phase)
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, metrics.bottomPadding)
                 }
             }
             .opacity(contentVisible ? 1 : 0)
-            .offset(y: contentVisible ? 0 : 12)
+            .offset(y: reduceMotion ? 0 : (contentVisible ? 0 : 12))
         }
         .preferredColorScheme(.dark)
         .toolbarVisibility(.hidden, for: .navigationBar)
@@ -63,6 +84,8 @@ public struct TVLoginView: View {
         .onChange(of: loginVM.serverURLText) { _, _ in
             loginVM.serverURLDidChange()
         }
+        .onExitCommand(perform: navigateBack)
+        .onDisappear(perform: cancelAsyncNavigation)
     }
 
     private var stageAnimation: Animation {
@@ -87,10 +110,7 @@ public struct TVLoginView: View {
                 savedServerText: loginVM.serverURLText,
                 onQuickConnect: beginQuickConnectFlow,
                 onPassword: beginPasswordFlow,
-                onChooseServer: {
-                    go(.server)
-                    focus = .textA
-                },
+                onChooseServer: { go(.server) },
                 focus: $focus
             )
             .transition(stageTransition)
@@ -102,7 +122,7 @@ public struct TVLoginView: View {
                 canContinue: loginVM.canAdvanceFromServer,
                 serverMessage: loginVM.serverMessage,
                 serverErrorMessage: loginVM.serverErrorMessage,
-                onBack: { go(.landing) },
+                onBack: navigateBack,
                 onContinue: continueFromServer,
                 onTogglePath: toggleSignInPath,
                 focus: $focus
@@ -115,10 +135,7 @@ public struct TVLoginView: View {
                 serverHost: serverHost,
                 authErrorMessage: loginVM.authErrorMessage,
                 canSubmit: loginVM.canSubmitCredentials,
-                onBack: {
-                    loginVM.clearAuthError()
-                    go(.server)
-                },
+                onBack: navigateBack,
                 onSubmit: submitCredentials,
                 onQuickConnect: beginQuickConnectFlow,
                 focus: $focus
@@ -131,7 +148,7 @@ public struct TVLoginView: View {
             TVQuickConnectStageView(
                 state: quickConnectVM.state,
                 onUsePassword: {
-                    quickConnectVM.cancel()
+                    cancelAsyncNavigation()
                     signInPath = .credentials
                     go(.credentials)
                 },
@@ -141,7 +158,7 @@ public struct TVLoginView: View {
         case .success:
             TVSuccessStageView(animateIn: $successVisible)
                 .onAppear {
-                    withAnimation(.spring(duration: 0.55, bounce: 0.28)) {
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.16) : .spring(duration: 0.55, bounce: 0.28)) {
                         successVisible = true
                     }
                 }
@@ -185,10 +202,9 @@ public struct TVLoginView: View {
 
     private func handleAppear() {
         quickConnectVM.onAuthenticated = { session in
+            guard phase == .quickConnect else { return }
             handleSuccess(session)
         }
-
-        applyDebugOverridesIfNeeded()
 
         guard !contentVisible else { return }
 
@@ -196,54 +212,37 @@ public struct TVLoginView: View {
             contentVisible = true
         }
 
-        if focus == nil {
-            focus = .primary
-        }
-    }
-
-    private func applyDebugOverridesIfNeeded() {
-        guard let overridePhase = TVLoginDebugOptions.phase else { return }
-
-        signInPath = TVLoginDebugOptions.signInPath ?? signInPath
-        phase = overridePhase
-
-        switch overridePhase {
-        case .landing:
-            focus = .primary
-        case .server:
-            focus = .textA
-        case .credentials:
-            focus = .textA
-        case .quickConnect:
-            focus = .tertiary
-        case .submitting, .success:
-            focus = nil
-        }
+        focus = TVLoginNavigationPolicy.preferredFocus(for: phase)
     }
 
     private func go(_ newPhase: TVLoginPhase) {
-        withAnimation(stageAnimation) {
-            phase = newPhase
-        }
+        focus = nil
 
         if newPhase != .success {
             successVisible = false
         }
+
+        withAnimation(stageAnimation) {
+            phase = newPhase
+        }
+
+        focus = TVLoginNavigationPolicy.preferredFocus(for: newPhase)
     }
 
     private func beginQuickConnectFlow() {
+        let origin = phase
         signInPath = .quickConnect
 
         guard loginVM.hasSavedServer else {
             go(.server)
-            focus = .textA
             return
         }
 
-        continueToQuickConnect()
+        continueToQuickConnect(origin: origin)
     }
 
     private func beginPasswordFlow() {
+        cancelAsyncNavigation()
         signInPath = .credentials
 
         if loginVM.hasSavedServer {
@@ -251,75 +250,68 @@ public struct TVLoginView: View {
         } else {
             go(.server)
         }
-
-        focus = .textA
     }
 
     private func continueFromServer() {
         switch signInPath {
         case .quickConnect:
-            continueToQuickConnect()
+            continueToQuickConnect(origin: phase)
         case .credentials:
             continueToCredentials()
         }
     }
 
     private func toggleSignInPath() {
+        guard !loginVM.isTestingConnection else { return }
         signInPath = signInPath.alternate
-        focus = .primary
+        focus = .serverPrimary
     }
 
     private func continueToCredentials() {
         guard !loginVM.isTestingConnection else { return }
         focus = nil
+        let generation = beginAsyncNavigation()
 
-        Task {
+        navigationTask = Task { @MainActor in
             let ok = await loginVM.testConnection()
-            guard ok else { return }
-            await MainActor.run {
+            guard navigationGeneration == generation, !Task.isCancelled else { return }
+
+            finishAsyncNavigation(generation: generation)
+            if ok {
                 go(.credentials)
-                focus = .textA
+            } else {
+                go(.server)
             }
         }
     }
 
-    private func continueToQuickConnect() {
+    private func continueToQuickConnect(origin: TVLoginPhase) {
         guard !loginVM.isTestingConnection else { return }
+        quickConnectOrigin = origin
         focus = nil
+        let generation = beginAsyncNavigation()
 
-        Task {
+        navigationTask = Task { @MainActor in
             let ok = await loginVM.testConnection()
-            guard ok else {
-                await MainActor.run {
-                    if phase != .server {
-                        go(.server)
-                        focus = .textA
-                    }
-                }
+            guard navigationGeneration == generation, !Task.isCancelled else { return }
+
+            guard ok, let url = loginVM.validatedServerURL else {
+                finishAsyncNavigation(generation: generation)
+                go(.server)
                 return
             }
 
-            await MainActor.run {
-                launchQuickConnect(url: loginVM.validatedServerURL)
-            }
-        }
-    }
-
-    private func launchQuickConnect(url: URL?) {
-        guard let url else {
-            go(.server)
-            focus = .textA
-            return
-        }
-
-        quickConnectVM.cancel()
-
-        Task {
+            go(.quickConnect)
             await quickConnectVM.initiate(serverURL: url)
-        }
 
-        go(.quickConnect)
-        focus = .tertiary
+            guard navigationGeneration == generation,
+                  !Task.isCancelled,
+                  phase == .quickConnect else {
+                return
+            }
+
+            finishAsyncNavigation(generation: generation)
+        }
     }
 
     private func submitCredentials() {
@@ -334,13 +326,63 @@ public struct TVLoginView: View {
             } else {
                 await MainActor.run {
                     go(.credentials)
-                    focus = .textB
+                    focus = .credentialsPassword
                 }
             }
         }
     }
 
+    private func navigateBack() {
+        let source = phase
+        let destination = TVLoginNavigationPolicy.backDestination(
+            from: source,
+            quickConnectOrigin: quickConnectOrigin
+        )
+
+        if navigationTask != nil || source == .quickConnect {
+            cancelAsyncNavigation()
+        }
+
+        guard let destination else {
+            focus = TVLoginNavigationPolicy.preferredFocus(for: source)
+            return
+        }
+
+        if source == .credentials {
+            loginVM.clearAuthError()
+        }
+
+        if source == .quickConnect, destination == .credentials {
+            signInPath = .credentials
+        }
+
+        go(destination)
+    }
+
+    private func beginAsyncNavigation() -> Int {
+        navigationTask?.cancel()
+        navigationTask = nil
+        loginVM.cancelConnectionTest()
+        quickConnectVM.cancel()
+        navigationGeneration &+= 1
+        return navigationGeneration
+    }
+
+    private func cancelAsyncNavigation() {
+        navigationGeneration &+= 1
+        navigationTask?.cancel()
+        navigationTask = nil
+        loginVM.cancelConnectionTest()
+        quickConnectVM.cancel()
+    }
+
+    private func finishAsyncNavigation(generation: Int) {
+        guard navigationGeneration == generation else { return }
+        navigationTask = nil
+    }
+
     private func handleSuccess(_ session: UserSession) {
+        cancelAsyncNavigation()
         Task { @MainActor in
             go(.success)
             try? await Task.sleep(nanoseconds: 900_000_000)
@@ -350,6 +392,14 @@ public struct TVLoginView: View {
 }
 
 private enum TVLoginDebugOptions {
+    static var username: String? {
+        argumentValue(after: "-reelfin-tv-login-username")
+    }
+
+    static var password: String? {
+        argumentValue(after: "-reelfin-tv-login-password")
+    }
+
     static var phase: TVLoginPhase? {
         let arguments = ProcessInfo.processInfo.arguments
 
@@ -399,6 +449,53 @@ private enum TVLoginDebugOptions {
             return .credentials
         default:
             return nil
+        }
+    }
+
+    static var quickConnectOrigin: TVLoginPhase? {
+        let arguments = ProcessInfo.processInfo.arguments
+
+        guard let flagIndex = arguments.firstIndex(of: "-reelfin-tv-login-quick-connect-origin") else {
+            return nil
+        }
+
+        let valueIndex = arguments.index(after: flagIndex)
+        guard arguments.indices.contains(valueIndex) else {
+            return nil
+        }
+
+        switch arguments[valueIndex] {
+        case "landing":
+            return .landing
+        case "server":
+            return .server
+        case "credentials":
+            return .credentials
+        default:
+            return nil
+        }
+    }
+
+    private static func argumentValue(after flag: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flagIndex = arguments.firstIndex(of: flag) else { return nil }
+
+        let valueIndex = arguments.index(after: flagIndex)
+        guard arguments.indices.contains(valueIndex) else { return nil }
+        return arguments[valueIndex]
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func tvLoginDefaultFocus(
+        _ focus: FocusState<TVLoginFocus?>.Binding,
+        phase: TVLoginPhase
+    ) -> some View {
+        if let preferredFocus = TVLoginNavigationPolicy.preferredFocus(for: phase) {
+            defaultFocus(focus, preferredFocus, priority: .userInitiated)
+        } else {
+            self
         }
     }
 }

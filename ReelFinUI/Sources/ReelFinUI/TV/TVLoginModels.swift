@@ -1,7 +1,7 @@
 #if os(tvOS)
 import SwiftUI
 
-enum TVLoginPhase: Equatable {
+enum TVLoginPhase: Hashable {
     case landing
     case server
     case credentials
@@ -24,13 +24,6 @@ enum TVLoginFocus: Hashable {
     case credentialsSubmit
     case credentialsQuickConnect
     case quickConnectUsePassword
-
-    // Task 3 migrates existing consumers to route-specific cases and removes these.
-    case primary
-    case secondary
-    case tertiary
-    case textA
-    case textB
 }
 
 enum TVLoginSignInPath {
@@ -99,18 +92,18 @@ struct TVLoginLayoutMetrics {
         heroWidth = min(size.width * 0.86, 1_260)
         heroHeight = min(max(size.height * 0.54, 430), 590)
         panelWidth = switch phase {
-        case .landing:
+        case .landing, .server, .credentials:
             min(size.width - 180, 1_040)
         case .success:
             min(size.width - 200, 760)
-        default:
+        case .quickConnect, .submitting:
             min(size.width - 180, 860)
         }
         panelHorizontalPadding = phase == .landing ? 48 : 34
         panelVerticalPadding = phase == .landing ? 38 : 30
-        outerHorizontalPadding = 64
-        topPadding = 42
-        bottomPadding = 54
+        outerHorizontalPadding = 80
+        topPadding = 60
+        bottomPadding = 60
         panelSpacing = phase == .landing ? 40 : 26
         landingButtonWidth = min(max(size.width * 0.25, 320), 390)
     }
