@@ -97,7 +97,7 @@ public enum ReelFinTheme {
     public static let tvRestShadowY: CGFloat = 8
     public static let tvRestShadowOpacity: Double = 0.20
     public static let tvFocusSpecularOpacity: Double = 0.30
-    public static let tvFocusSpring = Animation.spring(response: 0.35, dampingFraction: 0.78)
+    public static let tvFocusSpring = Animation.easeOut(duration: 0.16)
     public static let tvResumeAccent = Color(red: 0.30, green: 0.72, blue: 0.90)
     public static let tvProgressTrack = Color.white.opacity(0.18)
     public static let tvProgressFill = Color.white.opacity(0.88)
@@ -221,10 +221,11 @@ enum TVFocusGeometry {
     static func scale(for role: TVMotion.FocusRole, reduceMotion: Bool) -> CGFloat {
         let normalScale: CGFloat
         switch role {
-        case .homePosterCard: normalScale = 1.07
-        case .homeLandscapeCard, .libraryPoster: normalScale = 1.06
-        case .posterCard: normalScale = 1.04
-        case .heroButton, .chip, .episodeCard: normalScale = 1.03
+        case .homePosterCard, .libraryPoster: normalScale = 1.09
+        case .homeLandscapeCard: normalScale = 1.08
+        case .posterCard: normalScale = 1.06
+        case .episodeCard: normalScale = 1.05
+        case .heroButton, .chip: normalScale = 1.03
         case .navItem: normalScale = 1
         }
         return reduceMotion ? min(normalScale, 1.02) : normalScale
@@ -232,8 +233,8 @@ enum TVFocusGeometry {
 }
 
 enum TVFocusAnimationMetrics {
-    static let normalDuration = 0.28
-    static let normalBounce = 0.80
+    static let normalDuration = 0.16
+    static let normalBounce = 0.0
     static let reducedMotionDuration = 0.18
 }
 
@@ -297,9 +298,8 @@ public enum TVMotion {
         }
     }
 
-    public static let focusAnimation = Animation.spring(
-        duration: TVFocusAnimationMetrics.normalDuration,
-        bounce: TVFocusAnimationMetrics.normalBounce
+    public static let focusAnimation = Animation.easeOut(
+        duration: TVFocusAnimationMetrics.normalDuration
     )
     static let reducedMotionFocusAnimation = Animation.easeOut(
         duration: TVFocusAnimationMetrics.reducedMotionDuration

@@ -8,6 +8,22 @@ import XCTest
 
 @MainActor
 final class NativePlayerConfigurationTests: XCTestCase {
+    func testSampleBufferSkipPolicySeeksLocallyForIntroAndDelegatesNextEpisode() {
+        let intro = PlaybackSkipSuggestion(
+            title: "Skip Intro",
+            systemImageName: "forward.frame.fill",
+            target: .seek(to: 42.5)
+        )
+        let nextEpisode = PlaybackSkipSuggestion(
+            title: "Next Episode",
+            systemImageName: "forward.end.fill",
+            target: .nextEpisode
+        )
+
+        XCTAssertEqual(NativePlayerSampleBufferSkipPolicy.localSeekTarget(for: intro), 42.5)
+        XCTAssertNil(NativePlayerSampleBufferSkipPolicy.localSeekTarget(for: nextEpisode))
+    }
+
     func testMatroskaInvalidatedReadStillCancelsAndClearsSourceExactlyOnce() async throws {
         let factory = InvalidationResumeByteSourceFactory()
         let controller = NativeMatroskaSampleBufferPlayerController {

@@ -70,16 +70,17 @@ final class TVUXPolishLayoutTests: XCTestCase {
     }
 
     func testTVFocusScalesMatchApprovedCouchDistanceGeometry() {
-        XCTAssertEqual(TVFocusGeometry.scale(for: .homePosterCard, reduceMotion: false), 1.07)
-        XCTAssertEqual(TVFocusGeometry.scale(for: .homeLandscapeCard, reduceMotion: false), 1.06)
-        XCTAssertEqual(TVFocusGeometry.scale(for: .libraryPoster, reduceMotion: false), 1.06)
+        XCTAssertEqual(TVFocusGeometry.scale(for: .homePosterCard, reduceMotion: false), 1.09)
+        XCTAssertEqual(TVFocusGeometry.scale(for: .homeLandscapeCard, reduceMotion: false), 1.08)
+        XCTAssertEqual(TVFocusGeometry.scale(for: .libraryPoster, reduceMotion: false), 1.09)
+        XCTAssertEqual(TVFocusGeometry.scale(for: .episodeCard, reduceMotion: false), 1.05)
         XCTAssertEqual(TVFocusGeometry.scale(for: .homePosterCard, reduceMotion: true), 1.02)
         XCTAssertEqual(TVFocusGeometry.libraryActivationScale, 1.025)
     }
 
-    func testTVFocusMotionUsesApprovedNormalAndReducedMotionTimings() {
-        XCTAssertEqual(TVFocusAnimationMetrics.normalDuration, 0.28)
-        XCTAssertEqual(TVFocusAnimationMetrics.normalBounce, 0.80)
+    func testTVFocusMotionHasNoBounceOrWiggle() {
+        XCTAssertEqual(TVFocusAnimationMetrics.normalDuration, 0.16)
+        XCTAssertEqual(TVFocusAnimationMetrics.normalBounce, 0)
         XCTAssertEqual(TVFocusAnimationMetrics.reducedMotionDuration, 0.18)
     }
 
@@ -90,10 +91,15 @@ final class TVUXPolishLayoutTests: XCTestCase {
     func testLibraryFirstRowReserveContainsScaleOverflowAndShadow() {
         let reserve = TVLibraryFocusLayout.firstRowTopReserve(
             cardWidth: 240,
-            scale: 1.06,
+            scale: 1.09,
             minimumReserve: 34
         )
-        XCTAssertGreaterThanOrEqual(reserve, 34 + ((240 * 1.06 - 240) / 2))
+        XCTAssertGreaterThanOrEqual(reserve, 34 + ((240 * 1.09 - 240) / 2))
+    }
+
+    func testTVTopNavigationKeepsSearchInAnIndependentGlassSurface() {
+        XCTAssertEqual(TVTopNavigationLayout.primaryDestinations, [.watchNow, .library])
+        XCTAssertEqual(TVTopNavigationLayout.isolatedDestination, .search)
     }
 
     @MainActor

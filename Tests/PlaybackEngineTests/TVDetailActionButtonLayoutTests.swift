@@ -153,14 +153,12 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
     func testSkipIntroRequestsFocusWhenSuggestionAppears() {
         XCTAssertTrue(
             CustomPlayerSkipFocusPolicy.shouldRequestFocus(
-                hadSuggestion: false,
                 hasSuggestion: true
             )
         )
         XCTAssertFalse(
             CustomPlayerSkipFocusPolicy.shouldRequestFocus(
-                hadSuggestion: true,
-                hasSuggestion: true
+                hasSuggestion: false
             )
         )
     }
@@ -253,6 +251,21 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
                 previousPresentationRequest: 0,
                 newPresentationRequest: 1,
                 hasEstablishedPrimaryFocus: true
+            )
+        )
+    }
+
+    func testChangingDisplayedEpisodeRearmsPrimaryPlayFocus() {
+        XCTAssertTrue(
+            TVDetailInitialFocusPolicy.shouldResetPrimaryFocus(
+                previousItemID: "episode-1",
+                newItemID: "episode-2"
+            )
+        )
+        XCTAssertFalse(
+            TVDetailInitialFocusPolicy.shouldResetPrimaryFocus(
+                previousItemID: "episode-1",
+                newItemID: "episode-1"
             )
         )
     }

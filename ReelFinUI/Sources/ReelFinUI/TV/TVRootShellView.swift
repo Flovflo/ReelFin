@@ -33,9 +33,15 @@ struct TVRootShellView: View {
         .environment(\.tvTopNavigationVisibilityAction) { isVisible in
             guard isTopNavigationVisible != isVisible else { return }
             isTopNavigationVisible = isVisible
+            if !isVisible {
+                focusedDestination = nil
+            }
         }
         .onPreferenceChange(TVTopNavigationVisibilityPreferenceKey.self) { isVisible in
             isTopNavigationVisible = isVisible
+            if !isVisible {
+                focusedDestination = nil
+            }
         }
         .onPreferenceChange(TVTopNavigationAppearancePreferenceKey.self) { appearance in
             if selectedDestination == .watchNow {

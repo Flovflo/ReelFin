@@ -234,11 +234,20 @@ struct DetailView: View {
             prewarmCustomPlayerIfEnabled()
         }
         .onDisappear {
+#if os(tvOS)
+            setTopNavigationVisible?(true)
+#endif
             // Walking away without playing frees the warm session (server + background fill).
             episodeFocusPrewarmTask?.cancel()
             customPrewarmer?.discardIfUnused()
         }
         .onAppear {
+#if os(tvOS)
+            // The direct live-item route can mount Detail before the visibility preference has
+            // propagated through Home. Hide the global rail explicitly so its retained FocusState
+            // cannot win the first focus transaction over the Play button.
+            setTopNavigationVisible?(false)
+#endif
             Task {
                 await DetailPresentationTelemetry.shared.markDetailVisible(for: viewModel.detail.item.id)
             }
@@ -256,8 +265,19 @@ struct DetailView: View {
             }
 #endif
         }
-        .onChange(of: viewModel.detail.item.id) { _, newValue in
+        .onChange(of: viewModel.detail.item.id) { previousValue, newValue in
             iosSelectedCarouselItemID = newValue
+#if os(tvOS)
+            guard TVDetailInitialFocusPolicy.shouldResetPrimaryFocus(
+                previousItemID: previousValue,
+                newItemID: newValue
+            ) else { return }
+            hasEstablishedPrimaryTVFocus = false
+            primaryTVFocusAttempts = 0
+            Task { @MainActor in
+                await requestPrimaryTVFocus()
+            }
+#endif
         }
         .onChange(of: currentReturnSourceItem.id) { _, _ in
             onDisplayedSourceItemChange?(currentReturnSourceItem)
@@ -3227,7 +3247,7 @@ private struct TVDetailContextPreviewCard: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .focused($isFocused)
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isFocused)
+        .animation(TVMotion.focusAnimation, value: isFocused)
         .animation(.smooth(duration: 0.30, extraBounce: 0.02), value: visibility)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("Open \(previewTitle)")
@@ -3695,7 +3715,7 @@ private struct HeroPrimaryButton: View {
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: 24, x: 0, y: 14)
-        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityIdentifier("detail_primary_play_button")
         .accessibilityValue(isFocused ? "focused" : "not_focused")
         .accessibilityAddTraits(.isButton)
@@ -3721,7 +3741,7 @@ private struct HeroPrimaryButton: View {
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
         .shadow(color: .black.opacity(isFocused ? 0.30 : 0.16), radius: 24, x: 0, y: 14)
-        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityIdentifier("detail_primary_play_button")
         .accessibilityValue(isFocused ? "focused" : "not_focused")
         .accessibilityAddTraits(.isButton)
@@ -3905,7 +3925,7 @@ private struct HeroSecondaryButton: View {
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
         .scaleEffect(isFocused ? TVDetailActionButtonLayout.focusedScale : 1)
-        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isFocused)
+        .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityAddTraits(.isButton)
     }
 
@@ -3947,7 +3967,7 @@ private struct HeroSecondaryButton: View {
         .shadow(color: .black.opacity(isFocused ? 0.24 : 0.12), radius: 18, x: 0, y: 10)
         .focusEffectDisabled(true)
         .hoverEffectDisabled(true)
-        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityAddTraits(.isButton)
     }
 
@@ -4303,6 +4323,10 @@ private struct SeasonPickerView: View {
 }
 
 struct TVDetailInitialFocusPolicy {
+    static func shouldResetPrimaryFocus(previousItemID: String, newItemID: String) -> Bool {
+        previousItemID != newItemID
+    }
+
     static func seasonDefaultFocusID(
         selectedSeasonID: String?,
         firstSeasonID: String?,
@@ -4452,7 +4476,7 @@ private struct TVCastRowItem: View {
             guard direction == .up else { return }
             onMoveUp?()
         }
-        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isFocused)
+        .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityElement(children: .combine)
     }
 }
@@ -4637,7 +4661,7 @@ private struct TVRelatedRowItem: View {
             guard direction == .up else { return }
             onMoveUp?()
         }
-        .animation(.spring(response: 0.30, dampingFraction: 0.82), value: isFocused)
+        .animation(TVMotion.focusAnimation, value: isFocused)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }

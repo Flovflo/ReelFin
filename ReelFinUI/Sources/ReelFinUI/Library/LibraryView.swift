@@ -159,7 +159,10 @@ struct LibraryView: View {
         }
         .contentMargins(
             .top,
-            TVLibraryFocusLayout.firstRowTopReserve(cardWidth: 240, scale: 1.06),
+            TVLibraryFocusLayout.firstRowTopReserve(
+                cardWidth: 240,
+                scale: TVFocusGeometry.scale(for: .libraryPoster, reduceMotion: accessibilityReduceMotion)
+            ),
             for: .scrollContent
         )
     }
@@ -690,6 +693,9 @@ struct LibraryView: View {
         detailPresentation.beginOpening(itemID: detailItemID, sourceID: sourceID)
         guard case .opening = detailPresentation.phase else { return }
 
+        // Keep the poster id in savedSelectedPosterID, but release its active FocusState before
+        // mounting DetailView. Otherwise the outgoing grid can win the first focus transaction.
+        focusedLibraryItemID = nil
         detailPresentationVisualState = .opening
         tvOpeningArtworkItem = item
         tvOpeningArtworkVisible = true

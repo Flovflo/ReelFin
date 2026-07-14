@@ -70,7 +70,7 @@ public struct EpisodeCardView: View {
                 tvTextOverlay
             }
             .frame(width: width, height: tvCardHeight, alignment: .leading)
-            .background(Color.white.opacity(0.03), in: tvCardShape)
+            .background { tvFocusSurface }
             .overlay {
                 tvCardShape
                     .stroke(
@@ -97,12 +97,24 @@ public struct EpisodeCardView: View {
         .onChange(of: isFocused) { _, focused in
             onFocusChange?(focused)
         }
-        .animation(.smooth(duration: 0.20, extraBounce: 0.01), value: isFocused)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(tvEpisodeAccessibilityIdentifier)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Play episode")
         .accessibilityValue("\(isFocused ? "focused" : "not_focused")|\(tvEpisodeAccessibilityStatus)")
+    }
+
+    @ViewBuilder
+    private var tvFocusSurface: some View {
+        if #available(tvOS 26.0, *), isFocused {
+            Color.clear
+                .glassEffect(
+                    Glass.regular.tint(Color.white.opacity(0.18)),
+                    in: .rect(cornerRadius: 30)
+                )
+        } else {
+            tvCardShape.fill(Color.white.opacity(0.03))
+        }
     }
 
     private var tvEpisodeLabel: String {

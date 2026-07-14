@@ -14,6 +14,7 @@ struct NativePlayerView: View {
     let transportState: PlaybackTransportState
     let onSelectTrack: (PlaybackControlSelection) -> Void
     let onPlaybackTime: (Double) -> Void
+    let onSkipSuggestion: (PlaybackSkipSuggestion) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var liveDiagnostics: [String] = []
     @State private var isPaused = false
@@ -50,6 +51,7 @@ struct NativePlayerView: View {
     @Namespace private var remoteFocusNamespace
     @State private var preferredChromeFocus: NativePlayerTVChromeFocus = .timeline
     @State private var chromeFocusRequestToken: UInt = 0
+    @FocusState private var isSkipActionFocused: Bool
 #endif
 
     var body: some View {
@@ -180,6 +182,11 @@ struct NativePlayerView: View {
                 .padding(trackMenuPadding)
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
             }
+            if activeTrackMenu == nil,
+               activeInformationPanel == nil,
+               let skipSuggestion = transportState.activeSkipSuggestion {
+                skipOverlay(suggestion: skipSuggestion)
+            }
 #if DEBUG && os(tvOS)
             if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
                 PlayerAccessibilityEvidenceView(
@@ -220,6 +227,30 @@ struct NativePlayerView: View {
         }
         .onChange(of: transportState.selectedSubtitleTrackID) { _, trackID in
             subtitleSelectionMemory.confirm(trackID: trackID)
+        }
+        .task(id: transportState.activeSkipSuggestion) {
+#if os(tvOS)
+            guard transportState.activeSkipSuggestion != nil else {
+                isSkipActionFocused = false
+                updateRemoteInputFocus()
+                return
+            }
+            // The transient Skip action replaces chrome focus while its marker is active. This
+            // also handles the case where markers arrive before this view is mounted.
+            chromeAutoHideTask?.cancel()
+            chromeAutoHideTask = nil
+            activeTrackMenu = nil
+            activeInformationPanel = nil
+            isChromeUserActive = false
+            isChromeExplicitlyHidden = true
+            remoteInputFocused = false
+            await Task.yield()
+            guard !Task.isCancelled,
+                  transportState.activeSkipSuggestion != nil,
+                  activeTrackMenu == nil,
+                  activeInformationPanel == nil else { return }
+            isSkipActionFocused = true
+#endif
         }
         .onChange(of: playbackURL) { _, _ in
             localStartTimeSeconds = startTimeSeconds ?? 0
@@ -506,6 +537,59 @@ struct NativePlayerView: View {
         playbackTime = target
         seekDisplayHoldUntil = Date().addingTimeInterval(3.0)
         scheduleSeekCommit(target)
+    }
+
+    @ViewBuilder
+    private func skipOverlay(suggestion: PlaybackSkipSuggestion) -> some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+#if os(iOS)
+                PlaybackSkipButton(suggestion: suggestion) {
+                    activateSkipSuggestion(suggestion)
+                }
+#else
+                Button {
+                    activateSkipSuggestion(suggestion)
+                } label: {
+                    Label(suggestion.title, systemImage: suggestion.systemImageName)
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.glassProminent)
+                .focused($isSkipActionFocused)
+                .accessibilityIdentifier("native_player_skip_button")
+#endif
+            }
+            .padding(.trailing, skipOverlayTrailingPadding)
+            .padding(.bottom, skipOverlayBottomPadding)
+        }
+        .transition(.move(edge: .trailing).combined(with: .opacity))
+    }
+
+    private var skipOverlayTrailingPadding: CGFloat {
+#if os(tvOS)
+        80
+#else
+        28
+#endif
+    }
+
+    private var skipOverlayBottomPadding: CGFloat {
+#if os(tvOS)
+        shouldShowChrome ? 350 : 76
+#else
+        96
+#endif
+    }
+
+    private func activateSkipSuggestion(_ suggestion: PlaybackSkipSuggestion) {
+        if let target = NativePlayerSampleBufferSkipPolicy.localSeekTarget(for: suggestion) {
+            seekAbsolute(target)
+        }
+        onSkipSuggestion(suggestion)
     }
 
     private func scheduleSeekCommit(_ target: Double) {
@@ -817,7 +901,9 @@ struct NativePlayerView: View {
     }
 
     private func updateRemoteInputFocus() {
-        remoteInputFocused = isViewActive && !shouldShowChrome
+        remoteInputFocused = isViewActive
+            && !shouldShowChrome
+            && transportState.activeSkipSuggestion == nil
     }
 #endif
 }

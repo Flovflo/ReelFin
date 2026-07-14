@@ -25,39 +25,64 @@ struct TVTopNavigationBar: View {
     }
 
     private var barContent: some View {
-        navigationItems
-            .padding(.horizontal, railInset)
-            .padding(.vertical, railInset)
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(height: ReelFinTheme.tvTopNavigationBarHeight)
-            .background(railBackground)
-            .overlay(railStroke)
-            .clipShape(Capsule(style: .continuous))
-            .shadow(color: .black.opacity(0.30), radius: 28, x: 0, y: 12)
+        HStack(spacing: 16) {
+            primaryNavigationItems
+                .padding(.horizontal, railInset)
+                .padding(.vertical, railInset)
+                .frame(height: ReelFinTheme.tvTopNavigationBarHeight)
+                .background(capsuleRailBackground)
+                .overlay(capsuleRailStroke)
+                .clipShape(Capsule(style: .continuous))
+                .shadow(color: .black.opacity(0.30), radius: 28, x: 0, y: 12)
+
+            isolatedSearchItem
+                .padding(railInset)
+                .frame(
+                    width: ReelFinTheme.tvTopNavigationBarHeight,
+                    height: ReelFinTheme.tvTopNavigationBarHeight
+                )
+                .background(circleRailBackground)
+                .overlay(circleRailStroke)
+                .clipShape(Circle())
+                .shadow(color: .black.opacity(0.30), radius: 28, x: 0, y: 12)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
-    private var navigationItems: some View {
+    private var primaryNavigationItems: some View {
         HStack(spacing: 8) {
-            ForEach(TVRootDestination.allCases, id: \.self) { destination in
-                TVTopNavigationItem(
-                    destination: destination,
-                    isHighlighted: renderedHighlightedDestination == destination,
-                    isSelected: selectedDestination == destination,
-                    appearance: appearance,
-                    highlightNamespace: highlightNamespace,
-                    focusedDestination: focusedDestination,
-                    onMoveCommand: onMoveCommand,
-                    action: {
-                        withAnimation(highlightAnimation) {
-                            selectedDestination = destination
-                        }
-                    }
-                )
+            ForEach(TVTopNavigationLayout.primaryDestinations, id: \.self) { destination in
+                navigationItem(destination)
             }
         }
     }
 
-    private var railBackground: some View {
+    private var isolatedSearchItem: some View {
+        navigationItem(TVTopNavigationLayout.isolatedDestination, compact: true)
+    }
+
+    private func navigationItem(
+        _ destination: TVRootDestination,
+        compact: Bool = false
+    ) -> some View {
+        TVTopNavigationItem(
+            destination: destination,
+            isCompact: compact,
+            isHighlighted: renderedHighlightedDestination == destination,
+            isSelected: selectedDestination == destination,
+            appearance: appearance,
+            highlightNamespace: highlightNamespace,
+            focusedDestination: focusedDestination,
+            onMoveCommand: onMoveCommand,
+            action: {
+                withAnimation(highlightAnimation) {
+                    selectedDestination = destination
+                }
+            }
+        )
+    }
+
+    private var capsuleRailBackground: some View {
         Group {
             if #available(tvOS 26.0, *) {
                 Color.clear
@@ -72,8 +97,34 @@ struct TVTopNavigationBar: View {
         }
     }
 
-    private var railStroke: some View {
+    private var capsuleRailStroke: some View {
         Capsule(style: .continuous)
+            .stroke(
+                LinearGradient(
+                    colors: [appearance.railStrokeColor.opacity(0.90), Color.white.opacity(0.06)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
+    }
+
+    private var circleRailBackground: some View {
+        Group {
+            if #available(tvOS 26.0, *) {
+                Color.clear
+                    .glassEffect(
+                        Glass.regular.tint(appearance.railTint.color(opacity: 0.22)),
+                        in: .circle
+                    )
+            } else {
+                Circle().fill(appearance.railTint.color(opacity: 0.18))
+            }
+        }
+    }
+
+    private var circleRailStroke: some View {
+        Circle()
             .stroke(
                 LinearGradient(
                     colors: [appearance.railStrokeColor.opacity(0.90), Color.white.opacity(0.06)],
@@ -89,7 +140,7 @@ struct TVTopNavigationBar: View {
     }
 
     private var highlightAnimation: Animation {
-        .spring(response: 0.42, dampingFraction: 0.82, blendDuration: 0.10)
+        .easeOut(duration: 0.16)
     }
 
     private func syncVisualHighlight(animated: Bool = true) {

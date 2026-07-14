@@ -51,6 +51,44 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         attachScreenshot(app, name: "continue-pause-seek-complete")
     }
 
+    func testSkipIntroAppearsFocusedAndSeeksPastRealStarCityMarker() throws {
+        let app = try launchStarCityDetail()
+        try startPlayback(in: app, choice: .restart)
+        try requireHealthyPlayback(in: app)
+
+        // Star City S1E1's real Jellyfin Intro marker begins shortly after 3:34. Reach it using
+        // only normal Siri Remote transport input so this remains a true user journey.
+        for _ in 0..<7 { XCUIRemote.shared.press(.right) }
+        XCTAssertTrue(
+            waitForPlaybackTime(greaterThan: 212, in: app, timeout: 20),
+            "Remote seeking must reach the real intro window."
+        )
+
+        let nativeSkip = app.buttons["native_player_skip_button"]
+        let customSkip = app.buttons["custom_player_skip_button"]
+        let didShowSkip = nativeSkip.waitForExistence(timeout: 15) || customSkip.waitForExistence(timeout: 3)
+        XCTAssertTrue(didShowSkip, "The real Jellyfin Intro marker must expose a Skip Intro action.")
+        let skipButton = nativeSkip.exists ? nativeSkip : customSkip
+        XCTAssertTrue(
+            waitForFocus(skipButton, timeout: 8),
+            "Skip Intro must become directly actionable from the Siri Remote."
+        )
+        attachScreenshot(app, name: "star-city-skip-intro-ready")
+
+        XCUIRemote.shared.press(.select)
+
+        XCTAssertTrue(
+            waitForPlaybackTime(greaterThan: 279, in: app, timeout: 20),
+            "Skip Intro must seek beyond the server marker end."
+        )
+        XCTAssertTrue(app.otherElements["player_playback_advancing"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.otherElements["player_video_rendering_ready"].exists)
+        XCTAssertTrue(app.otherElements["player_audio_rendering_ready"].exists)
+        XCTAssertFalse(app.otherElements["player_error"].exists)
+        XCTAssertTrue(waitForDisappearance(skipButton, timeout: 8))
+        attachScreenshot(app, name: "star-city-skip-intro-complete")
+    }
+
     func testAudioSubtitlesVideoInfoDetailsAndPausedContinue() throws {
         let app = try launchStarCityDetail()
         try startPlayback(in: app, choice: .continueDefault)
@@ -286,6 +324,10 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         attachScreenshot(app, name: "home-detail-opening")
         let primaryPlay = app.buttons["detail_primary_play_button"]
         XCTAssertTrue(primaryPlay.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            waitForFocus(primaryPlay, timeout: 8),
+            "Play must receive initial focus without a Remote nudge."
+        )
         attachScreenshot(app, name: "home-detail-presented")
         XCUIRemote.shared.press(.menu)
         attachScreenshot(app, name: "home-detail-closing")
@@ -308,6 +350,10 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         attachScreenshot(app, name: "library-detail-opening")
         let primaryPlay = app.buttons["detail_primary_play_button"]
         XCTAssertTrue(primaryPlay.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            waitForFocus(primaryPlay, timeout: 8),
+            "Play must receive initial focus without a Remote nudge."
+        )
         attachScreenshot(app, name: "library-detail-presented")
         XCUIRemote.shared.press(.menu)
         attachScreenshot(app, name: "library-detail-closing")
@@ -501,8 +547,10 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCTAssertTrue(app.otherElements["detail_screen"].waitForExistence(timeout: 45))
         let primaryPlay = app.buttons["detail_primary_play_button"]
         XCTAssertTrue(primaryPlay.waitForExistence(timeout: 12))
-        for _ in 0..<3 where !primaryPlay.hasFocus { XCUIRemote.shared.press(.down) }
-        XCTAssertTrue(primaryPlay.hasFocus)
+        XCTAssertTrue(
+            waitForFocus(primaryPlay, timeout: 8),
+            "Play must receive initial focus without a Remote nudge."
+        )
         return app
     }
 

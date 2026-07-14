@@ -1347,6 +1347,17 @@ public final class CustomPlaybackEngine {
             let segments = await markers.mediaSegments(itemID: itemID)
             guard let self, !Task.isCancelled, self.currentItemID == itemID else { return }
             self.mediaSegments = segments
+                .filter(\.isValid)
+                .sorted { lhs, rhs in
+                    if lhs.startTicks != rhs.startTicks {
+                        return lhs.startTicks < rhs.startTicks
+                    }
+                    return lhs.type.rawValue < rhs.type.rawValue
+                }
+            // Marker delivery normally races the media load. Do not wait for the 1-second
+            // transport monitor (which starts only after AVPlayer is ready) before exposing a
+            // resume-position intro action.
+            self.updateSkipSuggestion()
         }
     }
 

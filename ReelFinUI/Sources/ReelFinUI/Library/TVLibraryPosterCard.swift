@@ -59,8 +59,7 @@ struct TVLibraryPosterCard: View {
             guard focused else { return }
             onFocus(item)
         }
-        .animation(TVMotion.focusAnimation, value: isFocused)
-        .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
+        .animation(.easeOut(duration: 0.12), value: isActivating)
     }
 
     @ViewBuilder
@@ -73,8 +72,7 @@ struct TVLibraryPosterCard: View {
                 Color.clear
                     .glassEffect(
                         Glass.regular
-                            .tint(Color.white.opacity(0.16))
-                            .interactive(),
+                            .tint(Color.white.opacity(0.18)),
                         in: .rect(cornerRadius: surfaceCornerRadius)
                     )
                     .overlay {
@@ -124,7 +122,7 @@ struct TVLibraryPosterCard: View {
 
     private func handleActivation() {
         guard !isActivating else { return }
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
+        withAnimation(.easeOut(duration: 0.10)) {
             isActivating = true
         }
 

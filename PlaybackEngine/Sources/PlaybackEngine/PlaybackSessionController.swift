@@ -3100,6 +3100,9 @@ public final class PlaybackSessionController {
         guard seconds.isFinite else { return }
         currentTime = max(0, seconds)
         recordObservedPlaybackPosition(currentTime)
+        // The SampleBuffer surface does not install the AVPlayer periodic observer that normally
+        // drives marker resolution. Re-evaluate markers from its own authoritative timeline.
+        updateActiveSkipSuggestion()
     }
 
     public func markAVKitReadyForDisplay() {

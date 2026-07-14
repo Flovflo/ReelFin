@@ -202,6 +202,14 @@ struct TVSearchView: View {
                 }
                 .padding(.vertical, 8)
             }
+            .contentMargins(
+                .top,
+                TVLibraryFocusLayout.firstRowTopReserve(
+                    cardWidth: 240,
+                    scale: TVFocusGeometry.scale(for: .libraryPoster, reduceMotion: false)
+                ),
+                for: .scrollContent
+            )
             .focusSection()
         }
     }
@@ -284,7 +292,13 @@ private extension TVSearchView {
 
     var searchFieldBackground: some View {
         RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .fill(Color.white.opacity(isSearchChromeHighlighted ? 0.065 : 0.040))
+            .fill(Color.clear)
+            .glassEffect(
+                Glass.regular.tint(
+                    Color.white.opacity(isSearchChromeHighlighted ? 0.16 : 0.08)
+                ),
+                in: .rect(cornerRadius: 24)
+            )
     }
 
     var searchFieldStroke: some View {

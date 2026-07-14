@@ -2,6 +2,14 @@
 import XCTest
 
 final class RootDesktopLayoutPolicyTests: XCTestCase {
+    func testPhoneTabPresentationKeepsSearchSeparatedFromPrimaryTabs() {
+        XCTAssertEqual(
+            PhoneTabDestination.presentationOrder,
+            [.home, .settings, .search]
+        )
+        XCTAssertEqual(PhoneTabDestination.search.rawValue, 1)
+    }
+
     func testMacCatalystUsesMacRootLayout() {
         XCTAssertTrue(
             RootLayoutPlatformPolicy.shouldUseMacRootLayout(

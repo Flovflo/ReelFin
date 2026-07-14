@@ -27,7 +27,18 @@ struct PlayerView: View {
                     errorMessage: session.playbackErrorMessage,
                     transportState: session.transportState,
                     onSelectTrack: handleNativePlaybackControlSelection,
-                    onPlaybackTime: { session.updateNativePlayerPlaybackTime($0) }
+                    onPlaybackTime: { session.updateNativePlayerPlaybackTime($0) },
+                    onSkipSuggestion: { suggestion in
+                        switch suggestion.target {
+                        case let .seek(to: targetSeconds):
+                            // NativePlayerView commits this seek to the visible SampleBuffer
+                            // renderer; keep the session timeline/marker state in sync without
+                            // seeking its inactive AVPlayer.
+                            session.updateNativePlayerPlaybackTime(targetSeconds)
+                        case .nextEpisode:
+                            session.skipCurrentSegment()
+                        }
+                    }
                 )
             } else {
                 NativePlayerViewController(

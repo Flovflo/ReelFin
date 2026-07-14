@@ -7,6 +7,44 @@ import XCTest
 /// Pure support logic of the custom player: MIME resolution (the tvOS no-first-frame root cause),
 /// external subtitle track building, and the subtitle cue pipeline.
 final class CustomPlayerSupportTests: XCTestCase {
+    @MainActor
+    func testLoadedIntroMarkersImmediatelyPublishSkipSuggestionAtResumePosition() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SkipMarkers.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+
+        let store = try MediaGatewayStore(
+            directoryURL: storeDirectory,
+            configuration: MediaGatewayStore.Configuration(maxBytes: 1_000_000)
+        )
+        let markers = ImmediateCustomPlaybackMarkers(segments: [
+            MediaSegment(
+                id: "intro-1",
+                itemID: "episode-1",
+                type: .intro,
+                startTicks: 0,
+                endTicks: 300_000_000
+            )
+        ])
+        let engine = CustomPlaybackEngine(
+            resolver: UnusedCustomSourceResolver(),
+            store: store,
+            markers: markers
+        )
+        defer { engine.stop() }
+
+        engine.load(itemID: "episode-1", startTimeTicks: 50_000_000)
+
+        let didPublishSuggestion = await waitUntil(timeout: 1) {
+            engine.activeSkipSuggestion?.title == "Skip Intro"
+        }
+        XCTAssertTrue(
+            didPublishSuggestion,
+            "Marker delivery must update the visible skip action without waiting for playback monitoring to start."
+        )
+    }
+
     func testMKVHEVCAndH264RequireNativeDemuxInsteadOfJellyfinFMP4() {
         XCTAssertTrue(
             JellyfinOriginalSourceResolver.requiresNativeOriginalPlayback(
@@ -502,5 +540,13 @@ final class CustomPlayerSupportTests: XCTestCase {
 private struct UnusedCustomSourceResolver: CustomPlaybackSourceResolving {
     func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
         throw AppError.network("unused")
+    }
+}
+
+private struct ImmediateCustomPlaybackMarkers: CustomPlaybackMarkersProviding {
+    let segments: [MediaSegment]
+
+    func mediaSegments(itemID _: String) async -> [MediaSegment] {
+        segments
     }
 }

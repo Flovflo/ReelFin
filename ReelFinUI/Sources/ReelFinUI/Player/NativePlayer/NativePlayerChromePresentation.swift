@@ -1,4 +1,5 @@
 import Foundation
+import PlaybackEngine
 import Shared
 import SwiftUI
 
@@ -80,6 +81,16 @@ struct NativePlayerChromePresentation: Equatable {
             return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
         }
         return String(format: "%d:%02d", minutes, remainingSeconds)
+    }
+}
+
+/// The SampleBuffer player owns its own seek pipeline. Forwarding only to the session's dormant
+/// AVPlayer makes the marker disappear without moving the visible video, so seek suggestions must
+/// be committed locally as well. Episode chaining remains owned by the playback session.
+enum NativePlayerSampleBufferSkipPolicy {
+    static func localSeekTarget(for suggestion: PlaybackSkipSuggestion) -> Double? {
+        guard case let .seek(to: seconds) = suggestion.target else { return nil }
+        return max(0, seconds)
     }
 }
 

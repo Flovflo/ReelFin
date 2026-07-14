@@ -5,6 +5,7 @@ struct TVTopNavigationItem: View {
     @FocusState private var isFocused: Bool
 
     let destination: TVRootDestination
+    let isCompact: Bool
     let isHighlighted: Bool
     let isSelected: Bool
     let appearance: TVTopNavigationAppearance
@@ -15,20 +16,20 @@ struct TVTopNavigationItem: View {
 
     var body: some View {
         Button(action: action) {
-            Label(destination.title, systemImage: destination.systemImage)
-                .labelStyle(.titleAndIcon)
+            label
                 .symbolRenderingMode(.monochrome)
                 .font(.system(size: 22, weight: .semibold, design: .rounded))
                 .foregroundStyle(labelColor)
-                .padding(.horizontal, 24)
-                .frame(height: ReelFinTheme.tvTopNavigationItemHeight)
-                .frame(minWidth: minimumWidth)
+                .frame(
+                    width: isCompact ? ReelFinTheme.tvTopNavigationItemHeight : nil,
+                    height: ReelFinTheme.tvTopNavigationItemHeight
+                )
+                .frame(minWidth: isCompact ? nil : minimumWidth)
                 .background { highlightBackground }
                 .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(TVNoChromeButtonStyle())
         .scaleEffect(isFocused ? 1.02 : (isHighlighted ? 1.01 : 1))
-        .offset(y: isHighlighted ? -1 : 0)
         .tvMotionFocus(.navItem, isFocused: isFocused, isSelected: isSelected)
         .focused(focusedDestination, equals: destination)
         .focused($isFocused)
@@ -40,7 +41,20 @@ struct TVTopNavigationItem: View {
         }
         .animation(ReelFinTheme.tvFocusSpring, value: isHighlighted)
         .animation(ReelFinTheme.tvFocusSpring, value: isFocused)
+        .accessibilityLabel(destination.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        if isCompact {
+            Image(systemName: destination.systemImage)
+                .font(.system(size: 25, weight: .semibold))
+        } else {
+            Label(destination.title, systemImage: destination.systemImage)
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 24)
+        }
     }
 
     private var labelColor: Color {

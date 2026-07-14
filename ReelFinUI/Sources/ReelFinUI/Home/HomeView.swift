@@ -142,7 +142,7 @@ private struct TVCardButton: View {
             return
         }
 
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
+        withAnimation(.easeOut(duration: 0.10)) {
             isActivating = true
         }
 
@@ -205,7 +205,7 @@ private struct TVHomeShelfCard: View {
             defaultOverlay
         }
         .frame(width: cardWidth, height: cardHeight)
-        .background(Color.white.opacity(0.03), in: cardShape)
+        .background { focusSurface }
         .overlay {
             cardShape
                 .stroke(
@@ -217,9 +217,21 @@ private struct TVHomeShelfCard: View {
         .contentShape(cardShape)
         .tvMotionFocus(focusRole, isFocused: isFocused)
         .scaleEffect(activationPhase ? 1.075 : 1, anchor: .center)
-        .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isActivating)
-        .animation(TVMotion.focusAnimation, value: isFocused)
+        .animation(.easeOut(duration: 0.12), value: isActivating)
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var focusSurface: some View {
+        if #available(tvOS 26.0, *), isFocused {
+            Color.clear
+                .glassEffect(
+                    Glass.regular.tint(Color.white.opacity(0.18)),
+                    in: .rect(cornerRadius: layoutStyle == .landscape ? 30 : 26)
+                )
+        } else {
+            cardShape.fill(Color.white.opacity(0.03))
+        }
     }
 
     private var defaultOverlay: some View {
@@ -1964,6 +1976,10 @@ struct HomeView: View {
             sourceID: selectedDetailTransitionSourceID
         )
         guard case .opening = detailPresentation.phase else { return }
+        // The detail is mounted inline. Release the card's focus before inserting the new focus
+        // tree so SwiftUI can honor DetailView's explicit default focus on Play immediately.
+        // The transition coordinator already retained the source id for the exact Back handoff.
+        focusedHomeItemID = nil
         detailPresentationVisualState = .opening
         tvOpeningArtworkItem = item
         tvOpeningArtworkVisible = true

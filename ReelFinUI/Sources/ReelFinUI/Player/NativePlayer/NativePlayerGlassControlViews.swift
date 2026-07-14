@@ -26,7 +26,7 @@ struct NativePlayerGlassCircleButton: View {
         .focused($isFocused)
         .nativePlayerFocusChromeDisabled()
         .scaleEffect(isFocused ? 1.025 : 1)
-        .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isFocused)
+        .animation(.easeOut(duration: TVFocusAnimationMetrics.normalDuration), value: isFocused)
         .accessibilityLabel(accessibilityLabel)
     }
 
@@ -63,7 +63,7 @@ struct NativePlayerGlassPillButton: View {
         .focused($isFocused)
         .nativePlayerFocusChromeDisabled()
         .scaleEffect(isFocused ? 1.025 : 1)
-        .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isFocused)
+        .animation(.easeOut(duration: TVFocusAnimationMetrics.normalDuration), value: isFocused)
         .accessibilityLabel(title)
     }
 

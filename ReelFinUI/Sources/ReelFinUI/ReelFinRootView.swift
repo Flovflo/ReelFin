@@ -90,22 +90,27 @@ public struct ReelFinRootView: View {
     #if os(iOS)
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            Tab("Home", systemImage: "play.tv.fill", value: 0) {
-                NavigationStack {
-                    HomeView(dependencies: dependencies)
-                }
-            }
-
-            Tab("Search", systemImage: "magnifyingglass", value: 1, role: .search) {
-                NavigationStack {
-                    LibraryView(dependencies: dependencies)
-                }
-            }
-
-            Tab("Settings", systemImage: "gearshape.fill", value: 2) {
-                NavigationStack {
-                    ServerSettingsView(dependencies: dependencies) {
-                        signOut()
+            ForEach(PhoneTabDestination.presentationOrder, id: \.self) { destination in
+                switch destination {
+                case .home:
+                    Tab("Home", systemImage: "play.tv.fill", value: destination.rawValue) {
+                        NavigationStack {
+                            HomeView(dependencies: dependencies)
+                        }
+                    }
+                case .settings:
+                    Tab("Settings", systemImage: "gearshape.fill", value: destination.rawValue) {
+                        NavigationStack {
+                            ServerSettingsView(dependencies: dependencies) {
+                                signOut()
+                            }
+                        }
+                    }
+                case .search:
+                    Tab("Search", systemImage: "magnifyingglass", value: destination.rawValue, role: .search) {
+                        NavigationStack {
+                            LibraryView(dependencies: dependencies)
+                        }
                     }
                 }
             }
@@ -197,6 +202,16 @@ public struct ReelFinRootView: View {
 }
 
 #if os(iOS)
+enum PhoneTabDestination: Int, CaseIterable {
+    case home = 0
+    case search = 1
+    case settings = 2
+
+    /// Keep the primary destinations contiguous so SwiftUI presents the
+    /// search role as the separate native Liquid Glass control.
+    static let presentationOrder: [Self] = [.home, .settings, .search]
+}
+
 private enum SidebarDestination: Hashable {
     case home
     case library

@@ -25,3 +25,8 @@ enum TVRootDestination: String, CaseIterable, Hashable {
         self == .watchNow
     }
 }
+
+enum TVTopNavigationLayout {
+    static let primaryDestinations: [TVRootDestination] = [.watchNow, .library]
+    static let isolatedDestination: TVRootDestination = .search
+}

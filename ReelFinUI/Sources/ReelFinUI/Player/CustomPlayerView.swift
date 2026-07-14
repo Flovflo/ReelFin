@@ -123,8 +123,8 @@ enum CustomPlayerTVRemoteRouting {
 }
 
 enum CustomPlayerSkipFocusPolicy {
-    static func shouldRequestFocus(hadSuggestion: Bool, hasSuggestion: Bool) -> Bool {
-        !hadSuggestion && hasSuggestion
+    static func shouldRequestFocus(hasSuggestion: Bool) -> Bool {
+        hasSuggestion
     }
 }
 
@@ -255,18 +255,26 @@ struct CustomPlayerView: View {
                 observedAt: ProcessInfo.processInfo.systemUptime
             )
         }
-        .onChange(of: engine.activeSkipSuggestion != nil) { hadSuggestion, hasSuggestion in
+        .task(id: engine.activeSkipSuggestion) {
             guard CustomPlayerSkipFocusPolicy.shouldRequestFocus(
-                hadSuggestion: hadSuggestion,
-                hasSuggestion: hasSuggestion
+                hasSuggestion: engine.activeSkipSuggestion != nil
             ) else {
-                if !hasSuggestion { isSkipActionFocused = false }
+                isSkipActionFocused = false
+                updateTVRemoteInputFocus()
                 return
             }
-            Task { @MainActor in
-                await Task.yield()
-                isSkipActionFocused = true
-            }
+            // The timeline and the invisible Remote input layer are separate focus owners.
+            // Release both before requesting the transient Skip action, otherwise tvOS keeps
+            // the chrome focused even though the button is visible. This view task is canceled
+            // automatically if the suggestion changes or the player disappears.
+            chromeAutoHideTask?.cancel()
+            chromeAutoHideTask = nil
+            activeTVPanel = nil
+            isChromeVisible = false
+            isRemoteInputFocused = false
+            await Task.yield()
+            guard !Task.isCancelled, engine.activeSkipSuggestion != nil else { return }
+            isSkipActionFocused = true
         }
 #endif
         .onAppear {
@@ -738,7 +746,7 @@ struct CustomPlayerView: View {
                     Button {
                         engine.skipCurrentSegment()
                     } label: {
-                        Label(suggestion.title, systemImage: "forward.frame.fill")
+                        Label(suggestion.title, systemImage: suggestion.systemImageName)
                             .font(.system(size: 26, weight: .semibold, design: .rounded))
                             .padding(.horizontal, 26)
                             .padding(.vertical, 14)
@@ -1061,7 +1069,9 @@ struct CustomPlayerView: View {
     }
 
     private func updateTVRemoteInputFocus() {
-        isRemoteInputFocused = !isChromeVisible && activeTVPanel == nil
+        isRemoteInputFocused = !isChromeVisible
+            && activeTVPanel == nil
+            && engine.activeSkipSuggestion == nil
     }
 
     private var customAccessibilityTransportState: PlayerAccessibilityTransportState {

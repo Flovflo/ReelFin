@@ -5,6 +5,30 @@ import XCTest
 
 @MainActor
 final class PlaybackTransportStateTests: XCTestCase {
+    func testSampleBufferTimelinePublishesAndClearsIntroSuggestion() async throws {
+        let controller = PlaybackSessionController(
+            apiClient: TransportStateAPIClient(),
+            repository: TransportStateRepository()
+        )
+        controller.mediaSegments = [
+            MediaSegment(
+                id: "intro-1",
+                itemID: "episode-1",
+                type: .intro,
+                startTicks: 20_000_000,
+                endTicks: 300_000_000
+            )
+        ]
+
+        controller.updateNativePlayerPlaybackTime(5)
+        try await Task.sleep(nanoseconds: 180_000_000)
+        XCTAssertEqual(controller.transportState.activeSkipSuggestion?.title, "Skip Intro")
+
+        controller.updateNativePlayerPlaybackTime(31)
+        try await Task.sleep(nanoseconds: 180_000_000)
+        XCTAssertNil(controller.transportState.activeSkipSuggestion)
+    }
+
     func testTransportStateCommitterCoalescesPendingUpdates() async {
         let committer = PlaybackTransportStateCommitter(delayNanoseconds: 20_000_000)
         let applied = expectation(description: "latest transport snapshot applied")
