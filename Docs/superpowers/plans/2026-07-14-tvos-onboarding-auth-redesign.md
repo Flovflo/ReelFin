@@ -185,6 +185,13 @@ Make `TVLoginPhase` conform to `Equatable`. Replace generic focus cases with:
 
 ```swift
 enum TVLoginFocus: Hashable {
+    // Transitional compatibility for existing stage bindings. Task 3 removes these
+    // after every consumer has moved to a route-specific case.
+    case primary
+    case secondary
+    case tertiary
+    case textA
+    case textB
     case landingQuickConnect
     case landingPassword
     case landingChooseServer
@@ -200,6 +207,8 @@ enum TVLoginFocus: Hashable {
     case quickConnectUsePassword
 }
 ```
+
+Task 1 must not migrate `TVLoginView` or `TVLoginStageViews`; keeping the five compatibility cases is required so the module compiles between Tasks 1 and 3. Task 3 removes all five after migrating every consumer.
 
 - [ ] **Step 4: Verify GREEN and the tvOS unit baseline**
 
