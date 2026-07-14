@@ -2,6 +2,34 @@ import XCTest
 @testable import ReelFinUI
 
 final class TVAuthNavigationPolicyTests: XCTestCase {
+    func testOnboardingLayoutFitsFullHDAndHDActionSafeAreas() {
+        for canvas in [CGSize(width: 1_920, height: 1_080), CGSize(width: 1_280, height: 720)] {
+            let metrics = TVOnboardingLayoutPolicy.metrics(for: canvas)
+
+            XCTAssertGreaterThanOrEqual(metrics.safeFrame.minX, 80)
+            XCTAssertGreaterThanOrEqual(metrics.safeFrame.minY, 60)
+            XCTAssertLessThanOrEqual(metrics.safeFrame.maxX, canvas.width - 80)
+            XCTAssertLessThanOrEqual(metrics.safeFrame.maxY, canvas.height - 60)
+            XCTAssertLessThanOrEqual(
+                metrics.copyMaximumWidth + metrics.copyToActionsSpacing + metrics.actionRailWidth,
+                metrics.safeFrame.width
+            )
+        }
+
+        XCTAssertFalse(TVOnboardingLayoutPolicy.metrics(for: CGSize(width: 1_920, height: 1_080)).stacksActions)
+        XCTAssertTrue(TVOnboardingLayoutPolicy.metrics(for: CGSize(width: 1_280, height: 720)).stacksActions)
+    }
+
+    func testReducedMotionDisablesDriftScaleBlurBounceAndPageOffset() {
+        let reduced = TVOnboardingMotionPolicy.configuration(reduceMotion: true)
+
+        XCTAssertFalse(reduced.allowsDrift)
+        XCTAssertFalse(reduced.allowsScale)
+        XCTAssertFalse(reduced.allowsBlur)
+        XCTAssertFalse(reduced.allowsBounce)
+        XCTAssertEqual(reduced.pageOffset, 0)
+    }
+
     func testDeckClampsInitialPageAndCompletesOnlyAtLastPage() {
         var deck = TVOnboardingDeckState(initialIndex: 99, count: 4)
         XCTAssertEqual(deck.index, 3)

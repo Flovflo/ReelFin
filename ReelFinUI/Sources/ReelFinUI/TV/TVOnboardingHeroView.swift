@@ -8,12 +8,16 @@ struct TVOnboardingHeroView: View {
 
     let item: TVOnboardingItem
 
+    private var motion: TVOnboardingMotionConfiguration {
+        TVOnboardingMotionPolicy.configuration(reduceMotion: reduceMotion)
+    }
+
     var body: some View {
         ZStack {
             TVOnboardingScreenshotImage(name: item.screenshotName)
                 .aspectRatio(contentMode: .fill)
                 .scaleEffect(
-                    reduceMotion ? item.zoomScale : item.zoomScale * (drifting ? 1.025 : 1.0),
+                    item.zoomScale * (motion.allowsScale && drifting ? 1.025 : 1.0),
                     anchor: item.zoomAnchor
                 )
 
@@ -30,12 +34,12 @@ struct TVOnboardingHeroView: View {
         .clipped()
         .accessibilityHidden(true)
         .onAppear {
-            drifting = true
+            drifting = motion.allowsDrift
         }
         .animation(
-            reduceMotion
-                ? .linear(duration: 0.01)
-                : .easeInOut(duration: 8).repeatForever(autoreverses: true),
+            motion.allowsDrift
+                ? .easeInOut(duration: 8).repeatForever(autoreverses: true)
+                : .linear(duration: 0.01),
             value: drifting
         )
     }
