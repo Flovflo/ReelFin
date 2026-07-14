@@ -127,7 +127,7 @@ private struct TVOnboardingForeground: View {
 
             Spacer(minLength: 32)
 
-            HStack(alignment: .bottom, spacing: metrics.copyToActionsSpacing) {
+            HStack(alignment: .bottom, spacing: 0) {
                 TVOnboardingCopyBlock(
                     item: item,
                     currentIndex: currentIndex,
@@ -135,7 +135,7 @@ private struct TVOnboardingForeground: View {
                 )
                 .frame(width: metrics.copyMaximumWidth, alignment: .leading)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: metrics.copyToActionsSpacing)
 
                 TVOnboardingControls(
                     isFirstPage: currentIndex == 0,
