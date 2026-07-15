@@ -7,6 +7,8 @@ SEARCH_BIN="$(command -v rg || command -v grep || true)"
 CURL_BIN="${CURL_BIN:-$(command -v curl || true)}"
 APP_INFO_PLIST="ReelFinApp/App/Info.plist"
 APP_PRIVACY_MANIFEST="ReelFinApp/Resources/PrivacyInfo.xcprivacy"
+TV_TOP_SHELF_WIDE_CONTENTS="ReelFinApp/Resources/Assets.xcassets/AppIcon.brandassets/Top Shelf Image Wide.imageset/Contents.json"
+TV_TOP_SHELF_WIDE_2X="ReelFinApp/Resources/Assets.xcassets/AppIcon.brandassets/Top Shelf Image Wide.imageset/topshelf-wide@2x.png"
 
 pass() {
   echo "[PASS] $1"
@@ -23,6 +25,29 @@ require_file() {
     pass "Found $path"
   else
     fail "Missing $path"
+  fi
+}
+
+require_image_dimensions() {
+  local asset_path="$1"
+  local expected_width="$2"
+  local expected_height="$3"
+  local label="$4"
+  local actual_width
+  local actual_height
+
+  if [[ ! -f "$ROOT_DIR/$asset_path" ]]; then
+    fail "$label"
+    return
+  fi
+
+  actual_width="$(/usr/bin/sips -g pixelWidth "$ROOT_DIR/$asset_path" 2>/dev/null | awk '/pixelWidth:/ { print $2; exit }')"
+  actual_height="$(/usr/bin/sips -g pixelHeight "$ROOT_DIR/$asset_path" 2>/dev/null | awk '/pixelHeight:/ { print $2; exit }')"
+
+  if [[ "$actual_width" == "$expected_width" && "$actual_height" == "$expected_height" ]]; then
+    pass "$label"
+  else
+    fail "$label (expected ${expected_width}x${expected_height}, found ${actual_width:-unknown}x${actual_height:-unknown})"
   fi
 }
 
@@ -82,6 +107,7 @@ require_file "Docs/privacy-policy.html"
 require_file "Docs/terms-of-service.html"
 require_file "Docs/support.html"
 require_file "Shared/Sources/Shared/ReviewDemoMode.swift"
+require_file "$TV_TOP_SHELF_WIDE_2X"
 
 require_current_project_version_at_least 10
 require_contains "project.yml" "TARGETED_DEVICE_FAMILY: \"1\"" "iOS app is configured for iPhone only"
@@ -114,6 +140,8 @@ require_contains "Docs/AppStore-Submission.md" "iPhone and Apple TV" "Submission
 require_contains "Docs/TestFlight-Launch-Checklist.md" "External TestFlight group" "Checklist includes external TestFlight distribution"
 require_contains "Docs/AppReview-Notes.md" "https://review.reelfin.app" "App review notes include the review demo server URL"
 require_contains "Shared/Sources/Shared/ReviewDemoMode.swift" "review-demo-user" "Review demo mode is compiled into the app"
+require_contains "$TV_TOP_SHELF_WIDE_CONTENTS" '"topshelf-wide@2x.png"' "tvOS Top Shelf Wide catalog declares its 2x image"
+require_image_dimensions "$TV_TOP_SHELF_WIDE_2X" 4640 1440 "tvOS Top Shelf Wide 2x image is 4640x1440"
 require_url "https://flovflo.github.io/reelfin-site/" "Marketing site is reachable over HTTPS"
 require_url "https://flovflo.github.io/reelfin-site/privacy.html" "Privacy Policy page is reachable over HTTPS"
 require_url "https://flovflo.github.io/reelfin-site/terms.html" "Terms page is reachable over HTTPS"
