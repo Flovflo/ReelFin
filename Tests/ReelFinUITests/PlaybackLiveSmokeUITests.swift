@@ -829,9 +829,12 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     private func replaceText(in field: XCUIElement, with value: String) {
         field.tap()
 
+        if let currentValue = field.value as? String, currentValue == value {
+            return
+        }
+
         if let currentValue = field.value as? String,
            !currentValue.isEmpty,
-           currentValue != value,
            currentValue != "https://server.example.com" {
             let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count)
             field.typeText(deletes)

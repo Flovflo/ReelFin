@@ -44,15 +44,15 @@ struct TVAuthFlowView: View {
     }
 
     private var authAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.16) : .smooth(duration: 0.38, extraBounce: 0.02)
+        reduceMotion ? .easeOut(duration: 0.16) : .easeOut(duration: 0.30)
     }
 
     private var onboardingTransition: AnyTransition {
-        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985))
+        .opacity
     }
 
     private var loginTransition: AnyTransition {
-        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 1.015))
+        .opacity
     }
 
     private static func initialScreen(settingsStore: SettingsStoreProtocol) -> TVAuthScreen {

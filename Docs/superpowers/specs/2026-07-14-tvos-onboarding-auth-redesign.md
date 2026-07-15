@@ -38,9 +38,9 @@ The interaction model also has release-blocking issues:
 
 ## Considered Directions
 
-### A. Cinematic full-bleed deck — selected
+### A. Bounded cinematic product deck — selected
 
-Use the existing 16:9 ReelFin screenshots as edge-to-edge scene artwork with a restrained scrim. Place large copy in the lower-left safe area and a compact action rail in the lower-right safe area. Remove the physical TV, pedestal, and all screenshot callouts.
+Use four authentic 16:9 ReelFin screenshots as complete aspect-fit product screens over a quiet static background. Place large copy in the lower-left safe area and a compact action rail in the lower-right safe area. Remove the physical TV, pedestal, crop, zoom, and all screenshot callouts.
 
 This direction has the strongest 10-foot hierarchy, uses the fewest simultaneous effects, and most closely matches tvOS presentation conventions.
 
@@ -56,9 +56,8 @@ Reduce onboarding to one welcome page followed by Quick Connect. This minimizes 
 
 ### Scene
 
-- The current screenshot fills the complete 16:9 canvas with aspect-fill cropping.
-- A subtle scale from 1.00 to at most 1.025 may run while a page is visible. Reduce Motion disables it completely.
-- A single gradient scrim runs from transparent in the upper-right to approximately 78% black in the lower-left and approximately 48% black along the bottom.
+- The product screen is always presented at its complete 16:9 aspect ratio with `.fit`; it never scales, drifts, pans, or crops.
+- A quiet black-to-blue ambient background separates the product screen from the copy without covering the captured interface.
 - Only the active page is rendered. Inactive 1080p scenes are not kept in the view hierarchy with blur and shadow effects.
 - No television bezel, stand, floating badge, mini badge, or marketing callout is displayed.
 
@@ -86,9 +85,9 @@ Reduce onboarding to one welcome page followed by Quick Connect. This minimizes 
 The deck keeps four stable pages and the existing version gate:
 
 1. **Your Jellyfin on Apple TV** — native big-screen browsing and fast resume, using the Home screenshot.
-2. **Find what to watch** — posters, rails, seasons, and remote-first navigation, using a focused crop of Home/Library.
-3. **Know the playback path** — Direct Play clarity through Apple’s native playback path, using Detail.
-4. **Connect in seconds** — Quick Connect from another device, with password login as an alternative, using the connection scene.
+2. **Find what to watch** — posters, rails, seasons, and remote-first navigation, using the full Library screen.
+3. **Pick up exactly where you left off** — resume or restart from the focused Detail screen.
+4. **Playback that stays out of the way** — seeking, tracks, and Skip Intro using the full player screen.
 
 The final button reads **Connect My Server**. Earlier buttons read **Continue**.
 
@@ -131,7 +130,7 @@ A pure policy maps each authentication phase to its preferred focus and handles 
 ### Views
 
 - `TVOnboardingView` remains the orchestration point.
-- `TVOnboardingHeroView` renders only the current full-bleed scene and scrim.
+- `TVOnboardingHeroView` renders only the current authentic 16:9 ReelFin screen inside a bounded frame with a subtle highlight edge.
 - `TVOnboardingContentView` renders copy and accessible progress.
 - `TVOnboardingActionRail` renders only real actions.
 - `TVLoginView` keeps the existing view models and async behavior but delegates focus and back routing to the policy.
@@ -156,6 +155,7 @@ A pure policy maps each authentication phase to its preferred focus and handles 
 - preferred focus for every authentication route;
 - back destination for every route, including Quick Connect origin;
 - layout constants at 1920×1080 and 1280×720 remain inside the required safe area;
+- all four screenshot names are distinct and every hero frame retains an exact 16:9 ratio;
 - Reduce Motion policy disables drift, scale, blur, and bounce.
 
 ### Mock tvOS UI tests

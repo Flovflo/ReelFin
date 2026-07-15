@@ -3,6 +3,22 @@ import Shared
 @testable import ReelFinUI
 
 final class TVAuthNavigationPolicyTests: XCTestCase {
+    func testOnboardingUsesFourDistinctUncroppedProductScreensWithoutMotion() {
+        let items = TVOnboardingContent.items
+
+        XCTAssertEqual(
+            items.map(\.screenshotName),
+            [
+                "reelfin-tv-onboarding-home-live.png",
+                "reelfin-tv-onboarding-library-live.png",
+                "reelfin-tv-onboarding-detail-live.png",
+                "reelfin-tv-onboarding-player-live.png"
+            ]
+        )
+        XCTAssertEqual(Set(items.map(\.screenshotName)).count, items.count)
+        XCTAssertEqual(TVOnboardingMotionPolicy.configuration(reduceMotion: false).pageOffset, 28)
+    }
+
     func testOnboardingLayoutFitsFullHDAndHDActionSafeAreas() {
         for canvas in [CGSize(width: 1_920, height: 1_080), CGSize(width: 1_280, height: 720)] {
             let metrics = TVOnboardingLayoutPolicy.metrics(for: canvas)
@@ -15,19 +31,39 @@ final class TVAuthNavigationPolicyTests: XCTestCase {
                 metrics.copyMaximumWidth + metrics.copyToActionsSpacing + metrics.actionRailWidth,
                 metrics.safeFrame.width
             )
+            XCTAssertTrue(metrics.safeFrame.contains(metrics.heroFrame))
+            XCTAssertEqual(metrics.heroFrame.width / metrics.heroFrame.height, 16.0 / 9.0, accuracy: 0.001)
         }
 
         XCTAssertFalse(TVOnboardingLayoutPolicy.metrics(for: CGSize(width: 1_920, height: 1_080)).stacksActions)
         XCTAssertTrue(TVOnboardingLayoutPolicy.metrics(for: CGSize(width: 1_280, height: 720)).stacksActions)
     }
 
-    func testReducedMotionDisablesDriftScaleBlurBounceAndPageOffset() {
+    func testOnboardingHeroNeverIntersectsCopyOrActionsAtSupportedTVSizes() {
+        let canvases = [
+            CGSize(width: 1_920, height: 1_080),
+            CGSize(width: 1_280, height: 720)
+        ]
+
+        for item in TVOnboardingContent.items {
+            for canvas in canvases {
+                let metrics = TVOnboardingLayoutPolicy.metrics(for: canvas)
+
+                XCTAssertFalse(
+                    metrics.heroFrame.intersects(metrics.copyFrame),
+                    "Page \(item.id + 1) hero \(metrics.heroFrame) intersects copy \(metrics.copyFrame) at \(canvas)."
+                )
+                XCTAssertFalse(
+                    metrics.heroFrame.intersects(metrics.actionsFrame),
+                    "Page \(item.id + 1) hero \(metrics.heroFrame) intersects actions \(metrics.actionsFrame) at \(canvas)."
+                )
+            }
+        }
+    }
+
+    func testReducedMotionDisablesPageOffset() {
         let reduced = TVOnboardingMotionPolicy.configuration(reduceMotion: true)
 
-        XCTAssertFalse(reduced.allowsDrift)
-        XCTAssertFalse(reduced.allowsScale)
-        XCTAssertFalse(reduced.allowsBlur)
-        XCTAssertFalse(reduced.allowsBounce)
         XCTAssertEqual(reduced.pageOffset, 0)
     }
 

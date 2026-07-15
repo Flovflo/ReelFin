@@ -78,15 +78,20 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         XCUIRemote.shared.press(.select)
 
         XCTAssertTrue(
-            waitForPlaybackTime(greaterThan: 279, in: app, timeout: 20),
-            "Skip Intro must seek beyond the server marker end."
+            waitForPlaybackTime(greaterThan: 282, in: app, timeout: 20),
+            "Skip Intro must resume real playback beyond the server marker end, not only publish the requested seek target."
+        )
+        let firstPostSkipPlaybackTime = try playbackTime(in: app)
+        XCTAssertTrue(
+            waitForPlaybackTime(greaterThan: firstPostSkipPlaybackTime + 1, in: app, timeout: 15),
+            "Playback must keep advancing after Skip Intro completes."
         )
         XCTAssertTrue(app.otherElements["player_playback_advancing"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.otherElements["player_video_rendering_ready"].exists)
         XCTAssertTrue(app.otherElements["player_audio_rendering_ready"].exists)
         XCTAssertFalse(app.otherElements["player_error"].exists)
         XCTAssertTrue(waitForDisappearance(skipButton, timeout: 8))
-        attachScreenshot(app, name: "star-city-skip-intro-complete")
+        assertVisibleScreenAfterSkip(name: "star-city-skip-intro-complete")
     }
 
     func testAudioSubtitlesVideoInfoDetailsAndPausedContinue() throws {
@@ -1026,6 +1031,51 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return false
+    }
+
+    private func assertVisibleScreenAfterSkip(name: String) {
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        XCTAssertGreaterThan(
+            nonBlackPixelRatio(in: screenshot.image),
+            0.08,
+            "Skip Intro must return to a visible video frame instead of leaving a black screen."
+        )
+    }
+
+    private func nonBlackPixelRatio(in image: UIImage) -> Double {
+        guard let cgImage = image.cgImage,
+              let data = cgImage.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(data) else {
+            return 0
+        }
+
+        let bytesPerPixel = max(cgImage.bitsPerPixel / 8, 1)
+        let sampleStepX = max(cgImage.width / 120, 1)
+        let sampleStepY = max(cgImage.height / 68, 1)
+        var sampledPixelCount = 0
+        var nonBlackPixelCount = 0
+
+        for y in stride(from: 0, to: cgImage.height, by: sampleStepY) {
+            for x in stride(from: 0, to: cgImage.width, by: sampleStepX) {
+                let offset = y * cgImage.bytesPerRow + x * bytesPerPixel
+                let colorChannelCount = min(bytesPerPixel, 3)
+                let brightestChannel = (0 ..< colorChannelCount)
+                    .map { bytes[offset + $0] }
+                    .max() ?? 0
+                sampledPixelCount += 1
+                if brightestChannel > 18 {
+                    nonBlackPixelCount += 1
+                }
+            }
+        }
+
+        guard sampledPixelCount > 0 else { return 0 }
+        return Double(nonBlackPixelCount) / Double(sampledPixelCount)
     }
 
     private func waitForTransport(_ expected: String, in app: XCUIApplication, timeout: TimeInterval) -> Bool {

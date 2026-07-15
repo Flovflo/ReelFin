@@ -693,3 +693,25 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Added an actionable Liquid Glass Skip control to the SampleBuffer surface on iOS and tvOS. Seek markers are committed to the visible SampleBuffer renderer and synchronized back to the playback session; next-episode actions remain session-owned.
 - Fixed tvOS focus ownership for transient Skip actions. Both player routes release the timeline and invisible Remote-input focus before focusing Skip, including when markers are already loaded at view presentation, then restore normal Remote ownership after the suggestion disappears.
 - Deterministic coverage passes for immediate custom-marker publication, SampleBuffer seek routing, and SampleBuffer marker timeline updates. The authenticated Star City S1E1 journey restarts from the beginning, reaches the real Jellyfin Intro marker using Siri Remote seeks, focuses and activates Skip Intro, lands beyond the marker end, and re-proves advancing playback, video, audio, and no player error.
+
+## tvOS Onboarding Authentic Product Screens - 2026-07-15
+
+- Replace the rejected full-screen cropped artwork with four distinct captures from the current ReelFin tvOS build: Home, Library, Detail, and the Star City player with a real focused Skip Intro action.
+- Keep each screenshot complete at 16:9 inside the action-safe area. Remove all screenshot zoom, pan, drift, and spring bounce; keep Liquid Glass on actionable controls and use a lightweight highlight stroke on the noninteractive screenshot frame.
+- Remove the rejected animated poster carousel and abstract ring/symbol hero from login. The real login stage is the visual focus over a static ambient background, with no continuous motion.
+- Preserve the deterministic onboarding/auth focus reducer, Back/Menu symmetry, latest-wins connection work, and final Quick Connect handoff. Validate every page on the preserved Apple TV simulator before the unified `0.1.2 (14)` upload.
+
+## Unified 0.1.2 Final tvOS Gate - 2026-07-15
+
+- Treat Skip Intro as a release blocker and reject timeline-only evidence. The authenticated Star City S1E1 test must prove a seek beyond the Intro end, at least one additional second of playback, active video/audio renderers, no player error, disappearance of the action, and a non-black post-seek frame.
+- Keep the preserved authenticated Apple TV simulator installed in place. Require the complete `ReelFinTV` scheme, an optimized `0.1.2 (14)` Release build, and ten install-over relaunches without a new ReelFin crash report before archiving.
+- Final tvOS evidence is green on the generation-owned single-flight source: 50/50 tests passed (the added nonintersection regression raises the previous total of 49), including nine authenticated Star City journeys; the strengthened Skip Intro journey advances beyond the real marker and renders a visible post-seek frame; the Release build succeeds; authenticated Home remains visible; and no new crash report is produced.
+- Archive and upload the iPhone and Apple TV binaries to the same App Store Connect record only after the corresponding iPhone gate, generation, preflight, whitespace, signature, and platform-family checks also pass.
+
+## Unified 0.1.2 Final iPhone Gate - 2026-07-15
+
+- Keep deterministic XCTest and authenticated Jellyfin probes as separate gates. The deterministic suite excludes only the four credential-driven UI smokes and the explicit live-server integration probe; those are executed signed against the real server instead of being made dependent on an unsigned test host.
+- Fix the live-login helper so an already-correct server URL is not appended to itself. Restore and preserve the simulator session without erase or uninstall, reinstall the signed `0.1.2 (14)` Release app over it, and require authenticated Home plus ten surviving relaunches with no new crash report.
+- Treat the Media Detail single-flight failure as a release blocker. Publish the completed detail into actor-owned cache before clearing the in-flight task, identify every in-flight generation, and allow a waiter to clear only the generation it observed. Require deterministic failure/retry overlap coverage, 2,000 consecutive reproductions, and the complete JellyfinAPI suite before archive.
+- Keep the real-server probe strict and retry-free. Record the isolated 15-second range timeout as a transient server/network failure only after three clean immediate reruns prove Direct Play selection and first-byte delivery; do not convert the failure into a skip or production fallback.
+- Final iPhone evidence on the exact generation-owned source is green: 1,038 deterministic tests passed with 11 explicit skips, zero failures, and zero runtime warnings; the signed `0.1.2 (14)` Release build succeeds; 10/10 install-over relaunches remain alive with authenticated Jellyfin Home visible; and no new crash report is produced.

@@ -52,6 +52,11 @@ struct TVOnboardingView: View {
         .onAppear {
             focusedControl = .primary
         }
+        .task(id: deck.index) {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            focusedControl = .primary
+        }
         .onExitCommand(perform: retreat)
     }
 
@@ -66,7 +71,7 @@ struct TVOnboardingView: View {
     private var pageAnimation: Animation {
         reduceMotion
             ? .easeOut(duration: 0.16)
-            : .smooth(duration: 0.42, extraBounce: motion.allowsBounce ? 0.02 : 0)
+            : .smooth(duration: 0.42, extraBounce: 0)
     }
 
     private var foregroundTransition: AnyTransition {
@@ -88,7 +93,6 @@ struct TVOnboardingView: View {
         withAnimation(pageAnimation) {
             _ = deck.advance()
         }
-        focusedControl = .primary
     }
 
     private func retreat() {
@@ -101,7 +105,6 @@ struct TVOnboardingView: View {
         withAnimation(pageAnimation) {
             _ = deck.retreat()
         }
-        focusedControl = .primary
     }
 }
 
@@ -120,38 +123,41 @@ private struct TVOnboardingForeground: View {
     let onContinue: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        ZStack(alignment: .topLeading) {
             Text("ReelFin")
                 .font(.system(size: 24, weight: .bold))
                 .foregroundStyle(.white.opacity(0.88))
+                .offset(x: metrics.safeFrame.minX, y: metrics.safeFrame.minY)
 
-            Spacer(minLength: 32)
+            TVOnboardingCopyBlock(
+                item: item,
+                currentIndex: currentIndex,
+                count: count
+            )
+            .frame(
+                width: metrics.copyFrame.width,
+                height: metrics.copyFrame.height,
+                alignment: .bottomLeading
+            )
+            .position(x: metrics.copyFrame.midX, y: metrics.copyFrame.midY)
 
-            HStack(alignment: .bottom, spacing: 0) {
-                TVOnboardingCopyBlock(
-                    item: item,
-                    currentIndex: currentIndex,
-                    count: count
-                )
-                .frame(width: metrics.copyMaximumWidth, alignment: .leading)
-
-                Spacer(minLength: metrics.copyToActionsSpacing)
-
-                TVOnboardingControls(
-                    isFirstPage: currentIndex == 0,
-                    isLastPage: currentIndex == count - 1,
-                    stacksActions: metrics.stacksActions,
-                    focusedControl: $focusedControl,
-                    onBack: onBack,
-                    onContinue: onContinue
-                )
+            TVOnboardingControls(
+                isFirstPage: currentIndex == 0,
+                isLastPage: currentIndex == count - 1,
+                stacksActions: metrics.stacksActions,
+                focusedControl: $focusedControl,
+                onBack: onBack,
+                onContinue: onContinue
+            )
                 .padding(.trailing, 8)
                 .padding(.bottom, 8)
-                .frame(width: metrics.actionRailWidth, alignment: .trailing)
-            }
+                .frame(
+                    width: metrics.actionsFrame.width,
+                    height: metrics.actionsFrame.height,
+                    alignment: .bottomTrailing
+                )
+                .position(x: metrics.actionsFrame.midX, y: metrics.actionsFrame.midY)
         }
-        .padding(.horizontal, TVOnboardingLayoutPolicy.horizontalInset)
-        .padding(.vertical, TVOnboardingLayoutPolicy.verticalInset)
     }
 }
 

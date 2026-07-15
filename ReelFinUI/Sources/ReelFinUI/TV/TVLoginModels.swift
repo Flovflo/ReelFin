@@ -77,8 +77,6 @@ enum TVLoginSignInPath {
 }
 
 struct TVLoginLayoutMetrics {
-    let heroWidth: CGFloat
-    let heroHeight: CGFloat
     let panelWidth: CGFloat
     let panelHorizontalPadding: CGFloat
     let panelVerticalPadding: CGFloat
@@ -89,8 +87,6 @@ struct TVLoginLayoutMetrics {
     let landingButtonWidth: CGFloat
 
     init(size: CGSize, phase: TVLoginPhase) {
-        heroWidth = min(size.width * 0.86, 1_260)
-        heroHeight = min(max(size.height * 0.54, 430), 590)
         panelWidth = switch phase {
         case .landing, .server, .credentials:
             min(size.width - 180, 1_040)

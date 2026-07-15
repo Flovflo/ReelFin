@@ -44,6 +44,8 @@ targets:
       - path: ReelFinApp/App/SystemEpisodeReleaseNotificationManager.swift
       - path: ReelFinApp/Resources
         buildPhase: resources
+        excludes:
+          - Onboarding/TV
     info:
       path: ReelFinApp/App/Info.plist
       properties:
@@ -225,7 +227,7 @@ targets:
       - path: ReelFinApp/App/ErrorTracking.swift
       - path: ReelFinApp/Resources/Assets.xcassets
         buildPhase: resources
-      - path: ReelFinApp/Resources/Onboarding
+      - path: ReelFinApp/Resources/Onboarding/TV
         buildPhase: resources
     dependencies:
       - target: ReelFinUITV

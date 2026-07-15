@@ -6,8 +6,6 @@ struct TVOnboardingItem: Identifiable, Equatable {
     let title: String
     let subtitle: String
     let screenshotName: String
-    let zoomScale: CGFloat
-    let zoomAnchor: UnitPoint
 }
 
 enum TVOnboardingContent {
@@ -16,39 +14,34 @@ enum TVOnboardingContent {
             id: 0,
             title: "Your Jellyfin on Apple TV",
             subtitle: "See your Jellyfin library in a true big-screen app with clean focus and fast resume.",
-            screenshotName: "reelfin-tv-onboarding-home.png",
-            zoomScale: 1.25,
-            zoomAnchor: .init(x: 0.70, y: 1)
+            screenshotName: "reelfin-tv-onboarding-home-live.png"
         ),
         .init(
             id: 1,
             title: "Find what to watch",
-            subtitle: "Move through posters, seasons, and episodes with large artwork and remote-first rails.",
-            screenshotName: "reelfin-tv-onboarding-home.png",
-            zoomScale: 1.40,
-            zoomAnchor: .init(x: 0.50, y: 0.82)
+            subtitle: "Move through movies and shows with clear focus, large artwork, and remote-first rails.",
+            screenshotName: "reelfin-tv-onboarding-library-live.png"
         ),
         .init(
             id: 2,
-            title: "Know the playback path",
-            subtitle: "The lightning badge shows when a video can play unchanged through the native path.",
-            screenshotName: "reelfin-tv-onboarding-detail.png",
-            zoomScale: 1.06,
-            zoomAnchor: .init(x: 0.46, y: 0.34)
+            title: "Pick up exactly where you left off",
+            subtitle: "Resume an episode, start over, or jump straight into playback from a focused detail screen.",
+            screenshotName: "reelfin-tv-onboarding-detail-live.png"
         ),
         .init(
             id: 3,
-            title: "Connect in seconds",
-            subtitle: "Use Quick Connect from your phone or sign in with your Jellyfin password.",
-            screenshotName: "reelfin-tv-onboarding-connect.png",
-            zoomScale: 2.60,
-            zoomAnchor: .init(x: 0.52, y: 0)
+            title: "Playback that stays out of the way",
+            subtitle: "Seek, change tracks, and skip intros with controls built for the Apple TV remote.",
+            screenshotName: "reelfin-tv-onboarding-player-live.png"
         )
     ]
 }
 
 struct TVOnboardingLayoutMetrics: Equatable {
     let safeFrame: CGRect
+    let heroFrame: CGRect
+    let copyFrame: CGRect
+    let actionsFrame: CGRect
     let copyMaximumWidth: CGFloat
     let copyToActionsSpacing: CGFloat
     let actionRailWidth: CGFloat
@@ -69,14 +62,45 @@ enum TVOnboardingLayoutPolicy {
             820,
             max(safeWidth - actionRailWidth - copyToActionsSpacing, 0)
         )
+        let safeFrame = CGRect(
+            x: horizontalInset,
+            y: verticalInset,
+            width: safeWidth,
+            height: safeHeight
+        )
+        let copyHeight = min(safeHeight, stacksActions ? 360 : 340)
+        let actionsHeight = min(safeHeight, stacksActions ? 184 : 100)
+        let copyFrame = CGRect(
+            x: safeFrame.minX,
+            y: safeFrame.maxY - copyHeight,
+            width: copyMaximumWidth,
+            height: copyHeight
+        )
+        let actionsFrame = CGRect(
+            x: safeFrame.maxX - actionRailWidth,
+            y: safeFrame.maxY - actionsHeight,
+            width: actionRailWidth,
+            height: actionsHeight
+        )
+        let heroColumnGap: CGFloat = stacksActions ? 32 : 64
+        let heroColumnMinX = copyFrame.maxX + heroColumnGap
+        let heroColumnWidth = max(safeFrame.maxX - heroColumnMinX, 0)
+        let heroBottomGap: CGFloat = stacksActions ? 32 : 48
+        let heroMaximumHeight = max(actionsFrame.minY - safeFrame.minY - heroBottomGap, 0)
+        let heroWidth = min(heroColumnWidth, heroMaximumHeight * (16.0 / 9.0))
+        let heroHeight = heroWidth * (9.0 / 16.0)
+        let heroFrame = CGRect(
+            x: safeFrame.maxX - heroWidth,
+            y: safeFrame.minY,
+            width: heroWidth,
+            height: heroHeight
+        )
 
         return TVOnboardingLayoutMetrics(
-            safeFrame: CGRect(
-                x: horizontalInset,
-                y: verticalInset,
-                width: safeWidth,
-                height: safeHeight
-            ),
+            safeFrame: safeFrame,
+            heroFrame: heroFrame,
+            copyFrame: copyFrame,
+            actionsFrame: actionsFrame,
             copyMaximumWidth: copyMaximumWidth,
             copyToActionsSpacing: copyToActionsSpacing,
             actionRailWidth: actionRailWidth,
@@ -86,20 +110,12 @@ enum TVOnboardingLayoutPolicy {
 }
 
 struct TVOnboardingMotionConfiguration: Equatable {
-    let allowsDrift: Bool
-    let allowsScale: Bool
-    let allowsBlur: Bool
-    let allowsBounce: Bool
     let pageOffset: CGFloat
 }
 
 enum TVOnboardingMotionPolicy {
     static func configuration(reduceMotion: Bool) -> TVOnboardingMotionConfiguration {
         TVOnboardingMotionConfiguration(
-            allowsDrift: !reduceMotion,
-            allowsScale: !reduceMotion,
-            allowsBlur: !reduceMotion,
-            allowsBounce: !reduceMotion,
             pageOffset: reduceMotion ? 0 : 28
         )
     }

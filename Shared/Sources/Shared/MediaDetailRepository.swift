@@ -1,5 +1,32 @@
 import Foundation
 
+struct InFlightRequestStore<Value: Sendable> {
+    struct Entry: Sendable {
+        let generation: UUID
+        let task: Task<Value, Error>
+    }
+
+    private var entries: [String: Entry] = [:]
+
+    mutating func entry(
+        for key: String,
+        create: () -> Task<Value, Error>
+    ) -> Entry {
+        if let entry = entries[key] {
+            return entry
+        }
+
+        let entry = Entry(generation: UUID(), task: create())
+        entries[key] = entry
+        return entry
+    }
+
+    mutating func clear(_ completedEntry: Entry, for key: String) {
+        guard entries[key]?.generation == completedEntry.generation else { return }
+        entries[key] = nil
+    }
+}
+
 public actor DefaultMediaDetailRepository: MediaDetailRepositoryProtocol {
     private struct TimedValue<Value: Sendable>: Sendable {
         let value: Value
@@ -23,7 +50,7 @@ public actor DefaultMediaDetailRepository: MediaDetailRepositoryProtocol {
     private var nextUpCache: [String: TimedValue<MediaItem?>] = [:]
 
     private var itemTasks: [String: Task<MediaItem, Error>] = [:]
-    private var detailTasks: [String: Task<MediaDetail, Error>] = [:]
+    private var detailTasks = InFlightRequestStore<MediaDetail>()
     private var seasonsTasks: [String: Task<[MediaItem], Error>] = [:]
     private var episodesTasks: [String: Task<[MediaItem], Error>] = [:]
     private var nextUpTasks: [String: Task<MediaItem?, Error>] = [:]
@@ -69,9 +96,18 @@ public actor DefaultMediaDetailRepository: MediaDetailRepositoryProtocol {
             return cached.value
         }
 
-        let task = existingDetailTask(for: id) ?? makeDetailTask(for: id)
-        let detail = try await task.value
-        detailTasks[id] = nil
+        let apiClient = apiClient
+        let repository = repository
+        let request = detailTasks.entry(for: id) {
+            Task<MediaDetail, Error> {
+                let detail = try await apiClient.fetchItemDetail(id: id)
+                try? await repository.upsertItems([detail.item] + detail.similar)
+                return detail
+            }
+        }
+        defer { detailTasks.clear(request, for: id) }
+        let detail = try await request.task.value
+        store(detail: detail, detailTTL: detailTTL, itemTTL: itemTTL)
         return detail
     }
 
@@ -136,29 +172,6 @@ public actor DefaultMediaDetailRepository: MediaDetailRepositoryProtocol {
         Task {
             if let item = try? await task.value {
                 self.store(item: item, ttl: ttl)
-            }
-        }
-
-        return task
-    }
-
-    private func makeDetailTask(for id: String) -> Task<MediaDetail, Error> {
-        let repository = repository
-        let apiClient = apiClient
-        let ttl = detailTTL
-        let itemTTL = itemTTL
-
-        let task = Task<MediaDetail, Error> {
-            let detail = try await apiClient.fetchItemDetail(id: id)
-            try? await repository.upsertItems([detail.item] + detail.similar)
-            return detail
-        }
-
-        detailTasks[id] = task
-
-        Task {
-            if let detail = try? await task.value {
-                self.store(detail: detail, detailTTL: ttl, itemTTL: itemTTL)
             }
         }
 
@@ -235,10 +248,6 @@ public actor DefaultMediaDetailRepository: MediaDetailRepositoryProtocol {
 
     private func existingItemTask(for id: String) -> Task<MediaItem, Error>? {
         itemTasks[id]
-    }
-
-    private func existingDetailTask(for id: String) -> Task<MediaDetail, Error>? {
-        detailTasks[id]
     }
 
     private func existingSeasonsTask(for seriesID: String) -> Task<[MediaItem], Error>? {

@@ -1,8 +1,58 @@
 import Foundation
-import Shared
+@testable import Shared
 import XCTest
 
 final class MediaDetailRepositoryTests: XCTestCase {
+    func test_inFlightRequestStore_delayedFailedWaiterCannotClearConcurrentRetry() async throws {
+        let key = "movie-1"
+        var requestStarts = 0
+        var requests = InFlightRequestStore<MediaDetail>()
+
+        let failedRequest = requests.entry(for: key) {
+            requestStarts += 1
+            return Task { throw DetailRequestTestError.expectedFailure }
+        }
+        let delayedFailedWaiter = requests.entry(for: key) {
+            requestStarts += 1
+            return Task { throw DetailRequestTestError.unexpectedThirdRequest }
+        }
+
+        do {
+            _ = try await failedRequest.task.value
+            XCTFail("The first request should fail")
+        } catch DetailRequestTestError.expectedFailure {
+            // Expected.
+        }
+        requests.clear(failedRequest, for: key)
+
+        let retryGate = DetailRequestGate()
+        let retryRequest = requests.entry(for: key) {
+            requestStarts += 1
+            return Task { await retryGate.value() }
+        }
+        await retryGate.waitUntilStarted()
+
+        requests.clear(delayedFailedWaiter, for: key)
+
+        let joiningRequest = requests.entry(for: key) {
+            requestStarts += 1
+            return Task { throw DetailRequestTestError.unexpectedThirdRequest }
+        }
+
+        XCTAssertEqual(requestStarts, 2)
+        XCTAssertEqual(joiningRequest.generation, retryRequest.generation)
+
+        let expectedDetail = MediaDetail(
+            item: MediaItem(id: key, name: "Retried movie", mediaType: .movie)
+        )
+        await retryGate.succeed(with: expectedDetail)
+
+        let retryDetail = try await retryRequest.task.value
+        let joiningDetail = try await joiningRequest.task.value
+        XCTAssertEqual(retryDetail.item.id, key)
+        XCTAssertEqual(joiningDetail.item.id, key)
+    }
+
     func test_loadDetail_deduplicatesConcurrentRequests() async throws {
         let apiClient = DetailRepositoryAPIClient()
         let repository = DetailRepositoryStore()
@@ -61,6 +111,39 @@ final class MediaDetailRepositoryTests: XCTestCase {
 
         XCTAssertEqual(first.count, second.count)
         XCTAssertEqual(apiClient.fetchEpisodesCallCount, 1)
+    }
+}
+
+private enum DetailRequestTestError: Error {
+    case expectedFailure
+    case unexpectedThirdRequest
+}
+
+private actor DetailRequestGate {
+    private var isStarted = false
+    private var startContinuation: CheckedContinuation<Void, Never>?
+    private var valueContinuation: CheckedContinuation<MediaDetail, Never>?
+
+    func value() async -> MediaDetail {
+        isStarted = true
+        startContinuation?.resume()
+        startContinuation = nil
+
+        return await withCheckedContinuation { continuation in
+            valueContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !isStarted else { return }
+        await withCheckedContinuation { continuation in
+            startContinuation = continuation
+        }
+    }
+
+    func succeed(with detail: MediaDetail) {
+        valueContinuation?.resume(returning: detail)
+        valueContinuation = nil
     }
 }
 

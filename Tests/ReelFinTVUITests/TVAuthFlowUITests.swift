@@ -9,8 +9,8 @@ final class TVAuthFlowUITests: XCTestCase {
         let expectedTitles = [
             "Your Jellyfin on Apple TV",
             "Find what to watch",
-            "Know the playback path",
-            "Connect in seconds"
+            "Pick up exactly where you left off",
+            "Playback that stays out of the way"
         ]
 
         for (page, expectedTitle) in expectedTitles.enumerated() {
@@ -22,6 +22,11 @@ final class TVAuthFlowUITests: XCTestCase {
             XCTAssertTrue(titleAndExplanation.label.hasPrefix(expectedTitle))
             XCTAssertTrue(waitForFocus(app.buttons["tv_onboarding_primary_cta"]))
             XCTAssertEqual(app.buttons["tv_onboarding_back"].exists, page > 0)
+
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "tv-onboarding-product-screen-page-\(page + 1)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
         }
     }
 

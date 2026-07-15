@@ -4,7 +4,7 @@
 
 **Goal:** Replace ReelFin’s crowded tvOS onboarding with a cinematic, remote-first four-page experience and make authentication focus/back navigation deterministic without changing iOS.
 
-**Architecture:** Pure value policies own onboarding page movement and authentication focus/back routing, which makes remote behavior unit-testable. Platform-specific SwiftUI views render one active full-bleed scene, large 10-foot copy, and a compact native Liquid Glass action rail; existing login view models and Jellyfin calls remain unchanged.
+**Architecture:** Pure value policies own onboarding page movement and authentication focus/back routing, which makes remote behavior unit-testable. Platform-specific SwiftUI views render one active authentic ReelFin screen in a bounded 16:9 aspect-fit frame, large 10-foot copy, and a compact native Liquid Glass action rail; existing login view models and Jellyfin calls remain unchanged.
 
 **Tech Stack:** Swift 5, SwiftUI on tvOS 26+, XCTest/XCUITest, XcodeGen, Apple Liquid Glass APIs.
 
@@ -27,9 +27,9 @@
 ## File Structure
 
 - `ReelFinUI/Sources/ReelFinUI/TV/TVAuthNavigationPolicy.swift`: pure onboarding deck and login focus/back policies.
-- `ReelFinUI/Sources/ReelFinUI/TV/TVOnboardingContent.swift`: four-page content descriptors and crop metadata.
+- `ReelFinUI/Sources/ReelFinUI/TV/TVOnboardingContent.swift`: four-page content descriptors and aspect-fit layout policy.
 - `ReelFinUI/Sources/ReelFinUI/TV/TVOnboardingView.swift`: onboarding orchestration, focus, Menu, copy, progress, and action rail.
-- `ReelFinUI/Sources/ReelFinUI/TV/TVOnboardingHeroView.swift`: one active full-bleed image, scrim, and Reduce Motion-aware scene movement.
+- `ReelFinUI/Sources/ReelFinUI/TV/TVOnboardingHeroView.swift`: one complete 16:9 product screen, static ambient backdrop, edge highlight, and no scene movement.
 - `ReelFinUI/Sources/ReelFinUI/TV/TVOnboardingShowcaseView.swift`: delete; its fake television and callout components have no remaining responsibility.
 - `ReelFinUI/Sources/ReelFinUI/TV/TVLoginView.swift`: route transitions, Quick Connect origin, deterministic focus, and Menu/back behavior.
 - `ReelFinUI/Sources/ReelFinUI/TV/TVLoginModels.swift`: route-specific focus cases and safe layout metrics.
@@ -293,31 +293,19 @@ DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild test \
 
 Expected: the first test fails because the current screen has no stable screen identifier/default-focus contract, and later assertions expose the transparent Back control/Menu behavior.
 
-- [ ] **Step 3: Replace the fake television with one full-bleed hero**
+- [x] **Step 3: Replace the fake television with one bounded authentic product screen**
 
 `TVOnboardingHeroView` must:
 
 ```swift
-ZStack {
-    TVOnboardingScreenshotImage(name: item.screenshotName)
-        .aspectRatio(contentMode: .fill)
-        .scaleEffect(reduceMotion ? item.zoomScale : item.zoomScale * (drifting ? 1.025 : 1.0), anchor: item.zoomAnchor)
-
-    LinearGradient(
-        stops: [
-            .init(color: .clear, location: 0.18),
-            .init(color: .black.opacity(0.48), location: 0.68),
-            .init(color: .black.opacity(0.80), location: 1)
-        ],
-        startPoint: .topTrailing,
-        endPoint: .bottomLeading
-    )
-}
-.clipped()
+TVOnboardingScreenshotImage(name: item.screenshotName)
+    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+    .frame(width: metrics.heroFrame.width, height: metrics.heroFrame.height)
+    .clipShape(.rect(cornerRadius: 38))
 .accessibilityHidden(true)
 ```
 
-Render only `items[deck.index]`. Delete the fake bezel, stand, all badges/notes/minis, inactive page stacking, blur, and shadow hierarchy.
+Render only `items[deck.index]`. Delete the fake bezel, stand, all badges/notes/minis, inactive page stacking, zoom, drift, crop, blur, and shadow hierarchy. Use four distinct screenshots captured from the current tvOS build: Home, Library, Detail, and the real Star City Skip Intro player state.
 
 - [ ] **Step 4: Build the safe copy and compact action rail**
 
@@ -332,6 +320,8 @@ Run the UI test command from Step 2. Then launch each page with the existing deb
 Acceptance from the captures:
 
 - no fake television or stand;
+- no crop, zoom, pan, or continuous motion;
+- four distinct real ReelFin product screens remain fully visible at 16:9;
 - no overlap between artwork, copy, and action rail;
 - no text below 29 pt except quiet progress/brand metadata;
 - focused CTA clearly visible from the full 1920×1080 image;
@@ -424,7 +414,7 @@ Visible Back actions and `.onExitCommand` call `navigateBack`. Route changes mus
 - Focus scale: ReelFin’s 1.06 token when Reduce Motion is off; 1.0 with contrast-only feedback when on.
 - Keep native `.glassProminent`/`.glass` styles on tvOS 26.
 - Add identifiers and accessibility labels to every field and action.
-- Make `TVAuthFlowView` and login hero/stage/success transitions use short crossfades under Reduce Motion.
+- Make `TVAuthFlowView` use a short crossfade without scale/bounce, and keep login stage/success transitions non-bouncy.
 
 - [ ] **Step 6: Verify GREEN and inspect every login stage**
 

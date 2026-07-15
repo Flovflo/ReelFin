@@ -16,7 +16,6 @@ public struct TVLoginView: View {
     @State private var contentVisible = false
     @State private var successVisible = false
 
-    private let imagePipeline: any ImagePipelineProtocol
     private let onLogin: (UserSession) -> Void
 
     public init(dependencies: ReelFinDependencies, onLogin: @escaping (UserSession) -> Void) {
@@ -36,7 +35,6 @@ public struct TVLoginView: View {
         _phase = State(initialValue: initialPhase)
         _signInPath = State(initialValue: initialPath)
         _quickConnectOrigin = State(initialValue: TVLoginDebugOptions.quickConnectOrigin ?? .landing)
-        imagePipeline = dependencies.imagePipeline
         self.onLogin = onLogin
     }
 
@@ -46,16 +44,6 @@ public struct TVLoginView: View {
 
             ZStack(alignment: .topLeading) {
                 TVLoginBackgroundView(accent: heroAccent, secondaryAccent: heroGlow)
-
-                TVLoginHeroView(
-                    imagePipeline: imagePipeline,
-                    accent: heroAccent,
-                    secondaryAccent: heroGlow,
-                    phase: phase
-                )
-                .frame(width: metrics.heroWidth, height: metrics.heroHeight)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.top, 78)
 
                 VStack(spacing: 0) {
                     TVLoginBrandHeader()
@@ -89,7 +77,7 @@ public struct TVLoginView: View {
     }
 
     private var stageAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.16) : .smooth(duration: 0.36, extraBounce: 0.02)
+        reduceMotion ? .easeOut(duration: 0.16) : .smooth(duration: 0.30, extraBounce: 0)
     }
 
     private var entranceAnimation: Animation {
@@ -158,7 +146,7 @@ public struct TVLoginView: View {
         case .success:
             TVSuccessStageView(animateIn: $successVisible)
                 .onAppear {
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.16) : .spring(duration: 0.55, bounce: 0.28)) {
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.16) : .easeOut(duration: 0.32)) {
                         successVisible = true
                     }
                 }

@@ -30,7 +30,7 @@ require_contains() {
   local path="$1"
   local pattern="$2"
   local label="$3"
-  if [[ -n "$SEARCH_BIN" ]] && "$SEARCH_BIN" -q --fixed-strings "$pattern" "$ROOT_DIR/$path"; then
+  if [[ -n "$SEARCH_BIN" ]] && "$SEARCH_BIN" -q --fixed-strings -- "$pattern" "$ROOT_DIR/$path"; then
     pass "$label"
   else
     fail "$label"
@@ -41,7 +41,7 @@ reject_contains() {
   local path="$1"
   local pattern="$2"
   local label="$3"
-  if [[ -n "$SEARCH_BIN" ]] && "$SEARCH_BIN" -q --fixed-strings "$pattern" "$ROOT_DIR/$path"; then
+  if [[ -n "$SEARCH_BIN" ]] && "$SEARCH_BIN" -q --fixed-strings -- "$pattern" "$ROOT_DIR/$path"; then
     fail "$label"
   else
     pass "$label"
@@ -93,6 +93,8 @@ require_contains "project.yml" "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO" "Desi
 require_contains "project.yml" "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO" "Designed for iPhone/iPad on visionOS is disabled"
 require_contains "project.yml" 'SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"' "iOS app uses iPhone SDKs only"
 require_contains "project.yml" 'SUPPORTED_PLATFORMS: "appletvos appletvsimulator"' "tvOS app uses Apple TV SDKs only"
+require_contains "project.yml" "- Onboarding/TV" "iOS excludes tvOS-only onboarding screenshots"
+require_contains "project.yml" "- path: ReelFinApp/Resources/Onboarding/TV" "tvOS embeds only tvOS onboarding screenshots"
 require_contains "$APP_INFO_PLIST" "<key>ITSAppUsesNonExemptEncryption</key>" "Export compliance flag is set"
 require_contains "$APP_INFO_PLIST" '<string>$(MARKETING_VERSION)</string>' "App version is sourced from MARKETING_VERSION"
 require_contains "$APP_INFO_PLIST" '<string>$(CURRENT_PROJECT_VERSION)</string>' "App build is sourced from CURRENT_PROJECT_VERSION"
