@@ -1,6 +1,8 @@
 import XCTest
 
 final class PlaybackLiveSmokeUITests: XCTestCase {
+    private var systemInterruptionMonitor: NSObjectProtocol?
+
     private struct LiveCredentials {
         let serverURL: String
         let username: String
@@ -26,6 +28,30 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        systemInterruptionMonitor = addUIInterruptionMonitor(
+            withDescription: "Dismiss credential-save prompts"
+        ) { alert in
+            for title in [
+                "Not Now",
+                "Pas maintenant",
+                "Never for This Website",
+                "Jamais pour ce site"
+            ] {
+                let button = alert.buttons[title].firstMatch
+                if button.exists {
+                    button.tap()
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    override func tearDownWithError() throws {
+        if let systemInterruptionMonitor {
+            removeUIInterruptionMonitor(systemInterruptionMonitor)
+        }
+        systemInterruptionMonitor = nil
     }
 
     func testExistingSessionMoviePlaybackSmoke() throws {
@@ -154,6 +180,7 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         XCTAssertTrue(signInButton.exists)
         logTap("sign_in")
         signInButton.tap()
+        dismissCredentialSavePromptIfNeeded(in: app)
     }
 
     private func runPlaybackScenario(
@@ -163,6 +190,7 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         requiresCustomRenderProof: Bool = true
     ) throws {
         XCTAssertTrue(waitForHome(in: app))
+        dismissCredentialSavePromptIfNeeded(in: app, timeout: 1)
 
         if shouldOpenExplicitTargetDirectly() {
             XCTAssertTrue(
@@ -176,9 +204,14 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         }
 
         let actionButton = try playbackActionButton(in: app)
+        dismissCredentialSavePromptIfNeeded(in: app, timeout: 2)
         captureScreenshot(of: app, name: "\(scenario)-detail-before-play")
         logTap("tap_\(scenario)_\(actionButton.label.lowercased())")
-        tapElement(actionButton)
+        XCTAssertTrue(
+            waitUntilHittable(actionButton, timeout: 8),
+            "Expected the Play or Resume action to become hittable before starting playback."
+        )
+        actionButton.tap()
 
         // The custom engine can advance audio time while AVKit's late-attached video surface is
         // still black. A generic player container is therefore not proof of playback. Require the
@@ -213,7 +246,9 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             timeout: 5,
             logLabel: "pause_playback"
         ) {
-            resumePlayback(in: app, playerScreen: playerScreen)
+            if !resumePlayback(in: app, playerScreen: playerScreen), requireCustomControls {
+                throw PlaybackLiveSmokeError.requiredControlMissing("resume_playback")
+            }
         } else if requireCustomControls {
             throw PlaybackLiveSmokeError.requiredControlMissing("pause_playback")
         }
@@ -362,7 +397,8 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         return fallback
     }
 
-    private func resumePlayback(in app: XCUIApplication, playerScreen: XCUIElement) {
+    @discardableResult
+    private func resumePlayback(in app: XCUIApplication, playerScreen: XCUIElement) -> Bool {
         revealPlayerChrome(playerScreen)
         if tapPlaybackButton(
             in: app,
@@ -371,10 +407,10 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             timeout: 5,
             logLabel: "resume_playback"
         ) {
-            return
+            return true
         }
 
-        XCTFail("Expected a player resume control after pausing playback.")
+        return false
     }
 
     @discardableResult
@@ -389,17 +425,17 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         while Date() < deadline {
             for identifier in identifiers {
                 let element = firstExistingElement(in: app, identifier: identifier)
-                if element.exists {
+                if element.exists, element.isHittable {
                     logTap(logLabel)
-                    tapElement(element)
+                    element.tap()
                     return true
                 }
             }
             for label in labels {
                 let element = firstExistingElement(in: app, label: label)
-                if element.exists {
+                if element.exists, element.isHittable {
                     logTap(logLabel)
-                    tapElement(element)
+                    element.tap()
                     return true
                 }
             }
@@ -509,17 +545,22 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
 
         for kind in preferredKinds {
             let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_\(kind)_")
-            let candidate = app.buttons.matching(predicate).firstMatch
-            if candidate.waitForExistence(timeout: 4) {
-                return candidate
+            let candidates = app.buttons.matching(predicate)
+            if candidates.firstMatch.waitForExistence(timeout: 4) {
+                if let visibleCandidate = candidates.allElementsBoundByIndex.first(where: \.isHittable) {
+                    return visibleCandidate
+                }
             }
         }
 
-        let fallback = app.buttons.matching(
+        let fallbackCandidates = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
-        ).firstMatch
-        if fallback.waitForExistence(timeout: 10) {
-            return fallback
+        )
+        if fallbackCandidates.firstMatch.waitForExistence(timeout: 10) {
+            if let visibleFallback = fallbackCandidates.allElementsBoundByIndex.first(where: \.isHittable) {
+                return visibleFallback
+            }
+            return fallbackCandidates.firstMatch
         }
 
         throw XCTSkip("No playable media card found for \(scenario).")
@@ -629,6 +670,54 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         }
 
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    private func dismissCredentialSavePromptIfNeeded(
+        in app: XCUIApplication,
+        timeout: TimeInterval = 4
+    ) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let roots = [app, springboard]
+        let titles = [
+            "Not Now",
+            "Pas maintenant",
+            "Never for This Website",
+            "Jamais pour ce site"
+        ]
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            for root in roots {
+                for title in titles {
+                    let button = root.sheets.buttons[title].firstMatch
+                    if button.exists, button.isHittable {
+                        button.tap()
+                        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                        return
+                    }
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+
+        // Keep the interruption monitor as a fallback for system-owned variants that XCTest
+        // exposes as an alert instead of a sheet.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.01)).tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+    }
+
+    private func waitUntilHittable(
+        _ element: XCUIElement,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists, element.isHittable {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return element.exists && element.isHittable
     }
 
     private func playbackActionButton(in app: XCUIApplication) throws -> XCUIElement {

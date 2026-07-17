@@ -880,7 +880,6 @@ struct CustomPlayerView: View {
     private var tvRemoteInputLayer: some View {
         NativePlayerRemoteInputLayer(
             isEnabled: !isChromeVisible,
-            focusNamespace: playerFocusNamespace,
             onCommand: tvCommandDispatcher.dispatch
         )
         .focused($isRemoteInputFocused)

@@ -24,6 +24,7 @@ public final class CustomPlayerPrewarmer {
     private var task: Task<Void, Never>?
     private var prepared: PrewarmedPlayback?
     private var preparedItemID: String?
+    private var preparedStartTimeTicks: Int64?
 
     // Focus-dwell resolutions (tvOS): the SOURCE RESOLUTION alone (the PlaybackInfo round trip —
     // the expensive press-time step on a slow link), no cache session per focused card. Bounded
@@ -39,16 +40,26 @@ public final class CustomPlayerPrewarmer {
         self.store = store
     }
 
-    /// Starts (or keeps) warming `itemID`. Idempotent per item; switching items discards the
-    /// previous warm session first so two downloaders never fill the same title concurrently.
+    /// Starts (or keeps) warming an exact item-and-start request. Switching either part discards
+    /// the previous warm session first so two downloaders never fill the same title concurrently.
     public func prewarm(itemID: String, startTimeTicks: Int64? = nil) {
-        guard preparedItemID != itemID else { return }
+        let normalizedStartTimeTicks = Self.normalizedStartTimeTicks(startTimeTicks)
+        guard preparedItemID != itemID || preparedStartTimeTicks != normalizedStartTimeTicks else {
+            return
+        }
         discardIfUnused()
         preparedItemID = itemID
+        preparedStartTimeTicks = normalizedStartTimeTicks
         task = Task { [weak self] in
             guard let self else { return }
-            guard let resolved = try? await self.resolver.resolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks) else { return }
-            guard !Task.isCancelled, self.preparedItemID == itemID else { return }
+            guard let resolved = try? await self.resolver.resolveOriginal(
+                itemID: itemID,
+                startTimeTicks: normalizedStartTimeTicks
+            ) else { return }
+            guard !Task.isCancelled,
+                  self.preparedItemID == itemID,
+                  self.preparedStartTimeTicks == normalizedStartTimeTicks
+            else { return }
             if resolved.requiresNativePlayback {
                 // The native surface owns demux/decode, so there is no progressive cache server to
                 // start. Retain the resolution itself so Play can hand off without another request.
@@ -72,11 +83,15 @@ public final class CustomPlayerPrewarmer {
                 store: self.store, sourceBitrate: resolved.sourceBitrate, overrideMIMEType: resolved.overrideMIMEType)
             guard let localURL = try? await Task.detached(priority: .utility, operation: { try session.start() }).value else { return }
             // Re-check on the MainActor: a consume()/discard() may have raced the detached start.
-            guard !Task.isCancelled, self.preparedItemID == itemID, self.prepared == nil else {
+            guard !Task.isCancelled,
+                  self.preparedItemID == itemID,
+                  self.preparedStartTimeTicks == normalizedStartTimeTicks,
+                  self.prepared == nil
+            else {
                 session.stop()
                 return
             }
-            if let startSeconds = startTimeTicks.map({ Double($0) / 10_000_000 }), startSeconds > 0 {
+            if let startSeconds = normalizedStartTimeTicks.map({ Double($0) / 10_000_000 }) {
                 session.setPlayheadOffset(session.byteOffset(forSeconds: startSeconds))
             }
             self.prepared = PrewarmedPlayback(resolved: resolved, session: session, localURL: localURL)
@@ -92,8 +107,11 @@ public final class CustomPlayerPrewarmer {
     /// session for a DIFFERENT item is stopped on the spot: leaving it running kept a second
     /// OriginDownloader filling up to the whole ahead-budget for the wrong title while the pressed
     /// episode fought it for bandwidth.
-    func consume(itemID: String) async -> PrewarmedPlayback? {
-        guard preparedItemID == itemID else {
+    func consume(itemID: String, startTimeTicks: Int64? = nil) async -> PrewarmedPlayback? {
+        let normalizedStartTimeTicks = Self.normalizedStartTimeTicks(startTimeTicks)
+        guard preparedItemID == itemID,
+              preparedStartTimeTicks == normalizedStartTimeTicks
+        else {
             discardIfUnused()
             return nil
         }
@@ -101,10 +119,13 @@ public final class CustomPlayerPrewarmer {
             await inFlight.value
         }
         task = nil
-        guard preparedItemID == itemID else { return nil }
+        guard preparedItemID == itemID,
+              preparedStartTimeTicks == normalizedStartTimeTicks
+        else { return nil }
         let result = prepared
         prepared = nil
         preparedItemID = nil
+        preparedStartTimeTicks = nil
         return result
     }
 
@@ -192,9 +213,15 @@ public final class CustomPlayerPrewarmer {
         prepared?.session?.stop()
         prepared = nil
         preparedItemID = nil
+        preparedStartTimeTicks = nil
         resolveOnlyTask?.cancel()
         resolveOnlyTask = nil
         resolveOnlyItemID = nil
+    }
+
+    private static func normalizedStartTimeTicks(_ ticks: Int64?) -> Int64? {
+        guard let ticks, ticks > 0 else { return nil }
+        return ticks
     }
 
 #if DEBUG

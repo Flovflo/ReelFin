@@ -660,7 +660,7 @@ public final class CustomPlaybackEngine {
         let session: CacheProxySession
         let localURL: URL
 
-        if let warm = await prewarmer?.consume(itemID: itemID) {
+        if let warm = await prewarmer?.consume(itemID: itemID, startTimeTicks: startTimeTicks) {
             // Perceived-instant start: the detail view already resolved the source, started the
             // localhost session, and built (part of) the cushion — adopt the ready pipeline.
             AppLog.playback.notice("customplayer.load.adopts_prewarm — item=\(itemID.prefix(8), privacy: .public)")

@@ -48,7 +48,6 @@ struct NativePlayerView: View {
     @AppStorage(SubtitleBackgroundStyle.defaultsKey)
     private var subtitleBackgroundStyle: SubtitleBackgroundStyle = .transparent
     @FocusState private var remoteInputFocused: Bool
-    @Namespace private var remoteFocusNamespace
     @State private var preferredChromeFocus: NativePlayerTVChromeFocus = .timeline
     @State private var chromeFocusRequestToken: UInt = 0
     @FocusState private var isSkipActionFocused: Bool
@@ -92,7 +91,6 @@ struct NativePlayerView: View {
 #if os(tvOS)
             NativePlayerRemoteInputLayer(
                 isEnabled: !shouldShowChrome,
-                focusNamespace: remoteFocusNamespace,
                 onCommand: tvCommandDispatcher.dispatch
             )
             .focused($remoteInputFocused)

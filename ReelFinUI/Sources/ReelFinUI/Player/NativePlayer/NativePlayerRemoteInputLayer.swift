@@ -3,7 +3,6 @@ import SwiftUI
 #if os(tvOS)
 struct NativePlayerRemoteInputLayer: View {
     let isEnabled: Bool
-    let focusNamespace: Namespace.ID
     let onCommand: (NativePlayerTVTransportCommand) -> Void
 
     var body: some View {
@@ -21,7 +20,6 @@ struct NativePlayerRemoteInputLayer: View {
                 guard let direction = remoteDirection(from: direction) else { return }
                 onCommand(.move(direction))
             }
-            .prefersDefaultFocus(isEnabled, in: focusNamespace)
             .allowsHitTesting(isEnabled)
             .accessibilityHidden(true)
     }

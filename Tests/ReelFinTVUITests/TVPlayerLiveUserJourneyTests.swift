@@ -187,6 +187,34 @@ final class TVPlayerLiveUserJourneyTests: XCTestCase {
         }
     }
 
+    func testRestartAutoHideDoesNotReplayResumeChoiceDirection() throws {
+        let app = try launchStarCityDetail()
+        try startPlayback(in: app, choice: .restart)
+        try requireHealthyPlayback(in: app)
+        try assertInitialPosition(.restart, in: app)
+
+        let chrome = app.otherElements["native_player_chrome"]
+        if chrome.exists {
+            XCTAssertTrue(
+                waitForDisappearance(chrome, timeout: 8),
+                "The player chrome must auto-hide before the invisible Remote input layer takes focus."
+            )
+        }
+
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        XCTAssertFalse(
+            app.otherElements["player_seek_completed"].exists,
+            "The Right command used to select Recommencer must not be replayed when player focus changes."
+        )
+        XCTAssertLessThanOrEqual(
+            try playbackTime(in: app),
+            15,
+            "Restart must remain near the beginning when no player seek command was sent."
+        )
+        XCTAssertTrue(app.otherElements["player_playback_advancing"].exists)
+        XCTAssertFalse(app.otherElements["player_error"].exists)
+    }
+
     func testHomeAndLibraryFocusSurfacesRemainStableAcrossRemoteMoves() throws {
         let app = launchAuthenticatedRoot()
         let homeCards = app.buttons.matching(

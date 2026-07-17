@@ -580,6 +580,59 @@ final class PlaybackDropResilienceTests: XCTestCase {
         XCTAssertEqual(requests.values, [nil, resumeTicks])
     }
 
+    /// The detail page warms the saved resume position before the user chooses how to start.
+    /// Selecting Restart must not adopt that resume-scoped warm result: doing so starts at the
+    /// saved timestamp and can jump past the real Intro marker before Skip Intro is offered.
+    @MainActor
+    func testRestartRejectsResumeScopedPrewarmAndResolvesFromBeginning() async throws {
+        let origin = URL(string: "https://example.com/Videos/prewarm-mismatch/stream")!
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PrewarmStartMismatch.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: MediaGatewayStore.Configuration(
+                chunkSize: 1_024 * 1_024,
+                maxBytes: 2_000_000_000,
+                ttlSeconds: nil
+            )
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "native-handoff",
+            userID: "u",
+            serverID: "s",
+            itemID: "prewarm-mismatch",
+            sourceID: "src",
+            routeURL: origin
+        )
+        let requests = ResolveRequestRecorder()
+        var resolver = MockCustomSourceResolver(
+            originURL: origin,
+            sourceBitrate: 8_000_000,
+            cacheKey: key
+        )
+        resolver.requiresNativePlayback = true
+        resolver.resolveRequests = requests
+        let prewarmer = CustomPlayerPrewarmer(resolver: resolver, store: store)
+        let engine = CustomPlaybackEngine(resolver: resolver, store: store, prewarmer: prewarmer)
+        defer { engine.stop() }
+
+        let resumeTicks: Int64 = 246 * 10_000_000
+        prewarmer.prewarm(itemID: "prewarm-mismatch", startTimeTicks: resumeTicks)
+        let didPrepareResume = await waitUntil(timeout: 2) { requests.values.count == 1 }
+        XCTAssertTrue(didPrepareResume)
+
+        engine.load(itemID: "prewarm-mismatch", startTimeTicks: nil, autoPlay: false)
+
+        let didResolveFromBeginning = await waitUntil(timeout: 2) { requests.values.count == 2 }
+        XCTAssertTrue(
+            didResolveFromBeginning,
+            "Restart must discard a resume-scoped prewarm and resolve an exact from-start route."
+        )
+        XCTAssertEqual(requests.values, [resumeTicks, nil])
+    }
+
     /// A compatible MKV is not an AVPlayer progressive asset and Jellyfin's HEVC fMP4 remux can
     /// expose audio while reporting no video tracks. The custom engine must hand the item to the
     /// packet-demuxed native surface before creating any AVPlayer item.
