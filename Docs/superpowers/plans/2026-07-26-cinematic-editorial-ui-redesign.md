@@ -456,7 +456,7 @@ Run `xcodegen generate` before the builds, execute the two platform builds seque
 - Modify: `ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift`
 - Modify: `Tests/PlaybackEngineTests/LibraryViewModelTests.swift`
 
-- [ ] **Step 1: Add deterministic failing overlap tests**
+- [x] **Step 1: Add deterministic failing overlap tests**
 
 Convert the API and repository doubles to actor-backed, continuation-controlled gates that can deliberately ignore cancellation. Record complete query snapshots and expose count waiters/resume methods so the tests never sleep. Add these exact overlap cases:
 
@@ -467,7 +467,7 @@ Convert the API and repository doubles to actor-backed, continuation-controlled 
 
 Drive the model through a synchronous, model-owned submission API that returns its owned `Task` so tests can await exact completion. Preserve immediate test-double behavior when no gate is configured and keep the existing aggregation/playback-quality tests.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
@@ -476,7 +476,7 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
   -only-testing:PlaybackEngineTests/LibraryViewModelTests
 ```
 
-- [ ] **Step 3: Implement owned generation/task semantics**
+- [x] **Step 3: Implement owned generation/task semantics**
 
 Add immutable `LibraryCriteria: Equatable, Sendable` containing the trimmed search query, filter, and sort mode. Make `SortMode` sendable. Add separate owned state for criteria and pagination: a criteria generation, pagination request ID, active criteria, `criteriaTask`, `paginationTask`, and a loading owner token. A synchronous criteria submission must:
 
@@ -492,11 +492,11 @@ Pass captured criteria/tokens through cache, query, view-resolution, remote, mer
 
 Preserve cached-first painting and all existing semantics: local search then remote merge for nonempty search; cached library query then remote replacement for empty search; 120/48 page sizes, view-ID scoping, pagination numbering, deduplication, playback-quality preference, and disabled pagination during search. Keep `LibraryViewModel` on `MainActor`; do not add detached tasks or broaden actor isolation.
 
-- [ ] **Step 4: Remove unowned view Tasks**
+- [x] **Step 4: Remove unowned view Tasks**
 
 Add a dedicated `@State` search-debounce task; do not reuse artwork/playback `warmupTask`. Initial load submits one owned criteria intent. Search changes cancel the prior debounce, sleep 250 ms in `do/catch`, then submit the latest full criteria synchronously. Filter or sort changes cancel any pending debounce and submit immediately so delayed search cannot undo the newer choice. Pagination visibility submits through the model-owned pagination API instead of creating an anonymous view task. On disappearance, cancel/nil the debounce and call the model cancellation API while preserving existing warmup/focus cancellation. Returning to Library resubmits current criteria while already committed items can paint immediately.
 
-- [ ] **Step 5: Make Library tests GREEN and verify both platform branches**
+- [x] **Step 5: Make Library tests GREEN and verify both platform branches**
 
 Run Step 2, then regenerate and build iOS/tvOS sequentially:
 
@@ -521,46 +521,100 @@ Record the latest-wins ownership/cancellation work in `PLANS.md` and `OPTIMIZATI
 
 - Modify: `ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Library/TVLibraryPosterCard.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Library/TVLibraryControlBar.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Library/TVLibraryPillButton.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Components/StickyBlurHeader.swift`
 - Create: `Tests/PlaybackEngineTests/LibraryEditorialLayoutTests.swift`
 - Modify: `Tests/PlaybackEngineTests/TVUXPolishNavigationTests.swift`
+- Modify: `Tests/PlaybackEngineTests/TVUXPolishLayoutTests.swift`
+- Modify: `PLANS.md`
+- Modify: `OPTIMIZATION_AUDIT.md`
 
 - [ ] **Step 1: Add failing pure layout/activation tests**
 
-Add a `LibraryHeaderPresentation` pure policy whose compact state changes only after a quantized threshold, and a `TVLibraryActivationPolicy` that reports zero selection delay. Preserve existing top-row routing and focus source IDs in navigation tests.
+Add these small testable seams outside tvOS-only compilation where the iOS `PlaybackEngineTests` target can see them:
+
+```swift
+struct StickyBlurHeaderScrollPresentation: Equatable {
+    static func resolve(
+        offset: CGFloat,
+        revealDistance: CGFloat,
+        bucketCount: Int = 24
+    ) -> Self
+    let step: Int
+    let bucketCount: Int
+    var progress: CGFloat { get }
+}
+
+extension StickyBlurHeaderVisibility {
+    var requiresScrollTracking: Bool { get }
+}
+
+enum LibraryHeaderPresentation: Equatable {
+    case expanded
+    case compact
+    static let revealDistance: CGFloat = 160
+    static let compactRevealThreshold: CGFloat = 18.0 / 24.0
+    static func resolve(quantizedRevealProgress: CGFloat) -> Self
+}
+
+enum TVLibraryActivationPolicy {
+    static func activate(_ action: () -> Void)
+}
+```
+
+Test that raw offsets inside one bucket produce equal presentations; the 24-bucket threshold changes only at step 18 (120 points of a 160-point reveal); `.always` never requests tracking; and activation invokes its closure synchronously. Add a source-wiring assertion that `TVLibraryPosterCard` contains no `Task.sleep` and calls selection directly. Preserve the exact first-row Up route, focus binding, saved/returned poster IDs, and `LibraryCardTransitionSource` wiring in navigation tests. Add a 1920-point adaptive-grid regression proving six columns and indices 0...5 as the first row.
 
 - [ ] **Step 2: Confirm RED**
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
   -only-testing:PlaybackEngineTests/LibraryEditorialLayoutTests \
-  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests
+  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests \
+  -only-testing:PlaybackEngineTests/LibraryCardTransitionSourceTests
 ```
 
 - [ ] **Step 3: Stop per-pixel header invalidation where unnecessary**
 
-In `StickyBlurHeader`, do not install scroll tracking for `.always`. For reveal/collapse behavior, map raw offset to a small quantized presentation value before state assignment and skip identical values.
+In `StickyBlurHeader`, build the unobserved base `ScrollView` once and return it directly for `.always`. Only `.revealOnScroll` installs `onScrollGeometryChange`. Quantize inside the transform closure—before any state assignment—to `StickyBlurHeaderScrollPresentation`, then ignore equal values in the action. Keep header content mounted and derive opacity/hit-testing/accessibility from the quantized progress; conditional insertion would change measured inset and can oscillate around the threshold. Under Reduce Transparency, skip live transparent/variable blur sampling and use the opaque control surfaces.
 
 - [ ] **Step 4: Build expanded plus compact iOS header**
 
-Move the full title/result context/filter/search composition into scroll content. Let the pinned header reveal only a compact grouped Liquid Glass row after meaningful scroll. Keep the native search-role tab, lazy grid, stable item IDs, poster geometry, and selection transition source.
+Retain `StickyBlurHeader` as the sole iOS `ScrollView`. Its stable content becomes expanded header followed by the existing grid; the pinned header contains the compact filter/sort cluster. The expanded header supplies editorial kicker/title, a truthful loaded/visible result context, the **only** bound search field, then Movies/Shows/Sort. The compact header remains mounted at fixed geometry but is hidden, non-hittable, and accessibility-hidden until the quantized phase becomes compact. Account for the safe-area inset explicitly when using zero content inset. Do not branch/remount the grid: preserve `LazyVGrid`, media domain IDs, poster metrics, namespace, transitions, and Task 5's model-owned debounce/intent lifecycle exactly.
+
+Place each adjacent control group in one stable `GlassEffectContainer` while applying one effect to each laid-out interactive control, never the container/HStack. Resolve `EditorialGlassRole.compactControl`: native interactive glass normally, `ReelFinTheme.editorialOpaqueFallback` plus a high-contrast stroke under Reduce Transparency. Title, result text, search field artwork, and resting cards are not glass.
 
 - [ ] **Step 5: Update tvOS controls and activation**
 
-Place adjacent filter/sort controls in one stable native glass container. Keep resting posters artwork-only and focused poster glass/rim geometry fixed. Remove the 105 ms sleep in `TVLibraryPosterCard.handleActivation()`; start press feedback and invoke `onSelect()` in the same event turn.
+Remove the tvOS control-bar rail backdrop so it cannot create glass-on-glass. Put the existing Movies/Shows/Sort native buttons in one stable `GlassEffectContainer`; each `TVLibraryPillButton` owns its single interactive glass/opaque fallback. Preserve labels, identifiers, current selection, focus bindings, and directional movement.
 
-- [ ] **Step 6: Validate Library suites and tvOS build**
+For `TVLibraryPosterCard`, keep artwork outside the glass container and all geometry fixed. Resting cards have no live glass/rim. Only the focused card receives passive `focusedMedia` glass or an opaque Reduce Transparency surface, plus the existing fixed scale/shadow/rim policy. Remove `isActivating`, the 105 ms sleep, and any delayed manual scale; invoke `onSelect(item)` synchronously through `TVLibraryActivationPolicy`. Provide press feedback with a private `ButtonStyle` based on `configuration.isPressed`: opacity always, activation scale only when Reduce Motion is off, and `EditorialMotion.buttonPressAnimation`. Preserve the top-row Up callback, transition source, focus ID, card dimensions, and exact Detail/back focus restoration. Remember that this card is also used by tvOS Search.
+
+- [ ] **Step 6: Document and validate Library UI on both platforms**
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodegen generate
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
   -only-testing:PlaybackEngineTests/LibraryViewModelTests \
   -only-testing:PlaybackEngineTests/LibraryEditorialLayoutTests \
-  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests
+  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests \
+  -only-testing:PlaybackEngineTests/LibraryCardTransitionSourceTests
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
-  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.5'
+git diff --check
 ```
+
+Run the platform builds sequentially (or with distinct DerivedData paths). Record quantized header work, focused-only tvOS glass, and immediate activation in `PLANS.md` and `OPTIMIZATION_AUDIT.md`. Manual simulator evidence must cover iOS expanded → compact → expanded, portrait/landscape, Large Text, Reduce Motion, Reduce Transparency, plus tvOS first-row Up routing, immediate Select, and exact poster focus restoration after Back. If live Jellyfin credentials are absent, report the live journey as not run rather than passing.
 
 ---
 
