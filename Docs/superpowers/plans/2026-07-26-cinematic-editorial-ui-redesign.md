@@ -1,0 +1,557 @@
+# ReelFin Cinematic Editorial UI Redesign Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Deliver the approved Cinematic Editorial Glass+ redesign across ReelFin Home, Library/Search, and Detail on iOS and tvOS while improving artwork scheduling, preserving navigation/focus/playback behavior, and proving fluidity in the configured simulators.
+
+**Architecture:** Add small pure policies for editorial visuals, motion, artwork roles, and Detail rendering cost; keep the existing screen roots and navigation topology; move Library intent ownership into its view model; route speculative artwork through the authenticated image pipeline with bounded concurrency; and use native SwiftUI Liquid Glass only for interactive chrome and the currently focused tvOS surface.
+
+**Tech Stack:** Swift 5.9, SwiftUI on iOS/tvOS 26, Observation, async/await, ImageIO, XCTest, XcodeGen, xcodebuild, iOS/tvOS Simulator.
+
+## Global constraints
+
+- Preserve the current dirty worktree and edit `project.yml` only if target membership actually changes. New Swift files under existing source/test folders are picked up by XcodeGen.
+- Preserve native `TabView`, `NavigationStack`, iOS zoom transitions, tvOS inline Detail, native `Button` activation, exact focus provenance, and Apple-native playback.
+- Preserve cache-first Home/Library painting and authenticated image headers.
+- No full-screen live glass, per-resting-card glass, animated large blur radius, full-screen drawing-group animation, fixed-sleep focus handoff, or third-party rendering framework.
+- Every behavior change starts with a focused failing test. Run the exact RED command, make the smallest GREEN change, rerun, then refactor.
+- After each task, run `git diff --check` and inspect only the task's diff before proceeding.
+
+---
+
+## Task 1: Establish the editorial visual, motion, and accessibility policies
+
+**Files:**
+
+- Create: `ReelFinUI/Sources/ReelFinUI/Theme/EditorialBrowseVisualSystem.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Theme/ReelFinTheme.swift`
+- Create: `Tests/PlaybackEngineTests/EditorialBrowseVisualSystemTests.swift`
+
+- [ ] **Step 1: Write failing policy tests**
+
+Add tests for automatic hero eligibility, deterministic next index, motion durations, Reduce Motion, Reduce Transparency, glass roles, and Detail artwork cost:
+
+```swift
+@testable import ReelFinUI
+import XCTest
+
+final class EditorialBrowseVisualSystemTests: XCTestCase {
+    func testHeroRotationRequiresActiveUnassistedIdleMotion() {
+        XCTAssertTrue(HeroRotationPolicy.allowsAutomaticAdvance(
+            sceneIsActive: true,
+            isUserInteracting: false,
+            reduceMotion: false,
+            voiceOverEnabled: false,
+            itemCount: 2
+        ))
+        XCTAssertFalse(HeroRotationPolicy.allowsAutomaticAdvance(
+            sceneIsActive: false,
+            isUserInteracting: false,
+            reduceMotion: false,
+            voiceOverEnabled: false,
+            itemCount: 2
+        ))
+        XCTAssertFalse(HeroRotationPolicy.allowsAutomaticAdvance(
+            sceneIsActive: true,
+            isUserInteracting: true,
+            reduceMotion: false,
+            voiceOverEnabled: false,
+            itemCount: 2
+        ))
+        XCTAssertFalse(HeroRotationPolicy.allowsAutomaticAdvance(
+            sceneIsActive: true,
+            isUserInteracting: false,
+            reduceMotion: true,
+            voiceOverEnabled: false,
+            itemCount: 2
+        ))
+        XCTAssertFalse(HeroRotationPolicy.allowsAutomaticAdvance(
+            sceneIsActive: true,
+            isUserInteracting: false,
+            reduceMotion: false,
+            voiceOverEnabled: true,
+            itemCount: 2
+        ))
+    }
+
+    func testEditorialMotionAndGlassFallbacksAreAccessible() {
+        XCTAssertEqual(EditorialMotion.heroPageDuration(reduceMotion: false), 0.21)
+        XCTAssertEqual(EditorialMotion.heroPageDuration(reduceMotion: true), 0.18)
+        XCTAssertEqual(EditorialMotion.focusScale(role: .libraryPoster, reduceMotion: true), 1.02)
+        XCTAssertEqual(EditorialGlassRole.focusedMedia.presentation(reduceTransparency: true), .opaque)
+        XCTAssertEqual(EditorialGlassRole.actionCluster.presentation(reduceTransparency: false), .interactiveGlass)
+    }
+
+    func testDetailArtworkPolicyUsesOneHeroAndCheapNeighbors() {
+        XCTAssertEqual(DetailArtworkCostPolicy.role(isSelected: true), .hero)
+        XCTAssertEqual(DetailArtworkCostPolicy.role(isSelected: false), .preview)
+        XCTAssertEqual(DetailArtworkCostPolicy.heroLayerBudget(isSelected: true), 1)
+        XCTAssertEqual(DetailArtworkCostPolicy.heroLayerBudget(isSelected: false), 0)
+    }
+}
+```
+
+- [ ] **Step 2: Run the focused test and confirm RED**
+
+```bash
+xcodegen generate
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/EditorialBrowseVisualSystemTests
+```
+
+Expected: compile failure because the policies do not exist.
+
+- [ ] **Step 3: Implement the pure system**
+
+In `EditorialBrowseVisualSystem.swift`, add internal testable types with these stable interfaces:
+
+```swift
+enum EditorialGlassPresentation: Equatable { case interactiveGlass, passiveGlass, opaque }
+enum EditorialGlassRole { case navigation, actionCluster, compactControl, focusedMedia }
+enum DetailArtworkRole: Equatable { case hero, preview }
+
+enum HeroRotationPolicy {
+    static func allowsAutomaticAdvance(
+        sceneIsActive: Bool,
+        isUserInteracting: Bool,
+        reduceMotion: Bool,
+        voiceOverEnabled: Bool,
+        itemCount: Int
+    ) -> Bool
+    static func nextIndex(currentIndex: Int, itemCount: Int) -> Int?
+}
+
+enum EditorialMotion {
+    static func heroPageDuration(reduceMotion: Bool) -> TimeInterval
+    static func focusScale(role: TVMotion.FocusRole, reduceMotion: Bool) -> CGFloat
+    static func buttonPressAnimation(reduceMotion: Bool) -> Animation
+}
+
+enum DetailArtworkCostPolicy {
+    static func role(isSelected: Bool) -> DetailArtworkRole
+    static func heroLayerBudget(isSelected: Bool) -> Int
+}
+```
+
+Extend `ReelFinTheme` with `editorialAccent`, primary/secondary text, glass tint, focused rim, and opaque fallback. Keep global `accent` white.
+
+- [ ] **Step 4: Make the focused suite GREEN**
+
+Run the command from Step 2. Expected: all new tests pass.
+
+- [ ] **Step 5: Refactor and validate diff**
+
+Centralize only repeated literals; do not create a generic design-system abstraction beyond the approved roles.
+
+---
+
+## Task 2: Canonicalize artwork roles and route prefetch through the authenticated pipeline
+
+**Files:**
+
+- Modify: `Shared/Sources/Shared/ArtworkRequestProfile.swift`
+- Create: `ReelFinUI/Sources/ReelFinUI/Components/ArtworkVariantResolver.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Detail/DetailViewModel.swift`
+- Create: `Tests/PlaybackEngineTests/ArtworkVariantResolverTests.swift`
+
+- [ ] **Step 1: Write failing canonicalization tests**
+
+Test that each visible role produces the same type, normalized width, and quality for display and prefetch, including poster, landscape, logo, preview, low hero, and high hero. Include the episode-to-series hero identity rule.
+
+```swift
+func testVisibleAndPrefetchDescriptorsMatchForEveryArtworkRole() {
+    for role in ArtworkVariantRole.allCases {
+        let visible = ArtworkVariantResolver.descriptor(item: item, role: role, purpose: .visible)
+        let speculative = ArtworkVariantResolver.descriptor(item: item, role: role, purpose: .prefetch)
+        XCTAssertEqual(visible, speculative)
+    }
+}
+```
+
+- [ ] **Step 2: Confirm RED**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/ArtworkVariantResolverTests
+```
+
+- [ ] **Step 3: Implement descriptors and resolver**
+
+Add a `detailPreview` profile (width 720, quality 76) and a Sendable descriptor:
+
+```swift
+struct ArtworkVariantDescriptor: Hashable, Sendable {
+    let itemID: String
+    let imageType: JellyfinImageType
+    let profile: ArtworkRequestProfile
+}
+
+enum ArtworkVariantRole: CaseIterable, Sendable {
+    case posterGrid, posterRow, landscapeRail, detailPreview, heroLow, heroHigh, logo
+}
+```
+
+The resolver decides item identity and image type once; a helper asynchronously turns descriptors into URLs with `apiClient.imageURL(...)`.
+
+- [ ] **Step 4: Replace direct API byte prefetch at UI call sites**
+
+In Home, Library, and Detail warmups, resolve canonical descriptors, then call `dependencies.imagePipeline.prefetch(urls:)`. Own each prefetch with the screen's existing cancelable warmup task. Keep `JellyfinAPIClientProtocol.prefetchImages` for compatibility in this iteration, but remove ReelFinUI call sites so separate `URLSession` fetch-and-discard work is no longer on browse paths.
+
+- [ ] **Step 5: Verify GREEN and no UI call sites remain**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/ArtworkVariantResolverTests
+rg -n 'apiClient\.prefetchImages' ReelFinUI/Sources/ReelFinUI
+```
+
+Expected: test passes and `rg` has no matches.
+
+---
+
+## Task 3: Bound image prefetch/decode work and prevent stale publication
+
+**Files:**
+
+- Modify: `ImageCache/Sources/ImageCache/DefaultImagePipeline.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Components/CachedRemoteImage.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Components/ShimmerView.swift`
+- Modify: `Tests/ImageCacheTests/DefaultImagePipelineTests.swift`
+- Create: `Tests/PlaybackEngineTests/CachedRemoteImagePolicyTests.swift`
+
+- [ ] **Step 1: Add a failing bounded-concurrency pipeline test**
+
+Extend the test URL protocol so it records active and maximum-active requests. Construct the pipeline with an injectable `maxPrefetchConcurrency: 4`, prefetch twelve unique URLs, wait until four are pending, and assert that the fifth does not start until one request completes.
+
+```swift
+func testPrefetchNeverExceedsConfiguredConcurrency() async throws {
+    let pipeline = DefaultImagePipeline(
+        diskCache: cache,
+        urlSession: session,
+        maxPrefetchConcurrency: 4
+    )
+    let task = Task { await pipeline.prefetch(urls: urls) }
+    try await waitUntil(timeout: 2) { BlockingImageURLProtocol.requestCount == 4 }
+    XCTAssertEqual(BlockingImageURLProtocol.maximumActiveRequestCount, 4)
+    BlockingImageURLProtocol.resumeOneRequest(with: Self.samplePNGData)
+    try await waitUntil(timeout: 2) { BlockingImageURLProtocol.requestCount == 5 }
+    BlockingImageURLProtocol.resumePendingRequests(with: Self.samplePNGData)
+    await task.value
+}
+```
+
+- [ ] **Step 2: Confirm ImageCache RED**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:ImageCacheTests/DefaultImagePipelineTests/testPrefetchNeverExceedsConfiguredConcurrency
+```
+
+- [ ] **Step 3: Implement worker-bounded prefetch and decode permits**
+
+Replace one-child-per-URL fan-out with at most `maxPrefetchConcurrency` workers consuming a deduplicated prefix. Add a private actor-backed permit pool for ImageIO decode with a separate default limit of 2. Visible image calls retain normal task priority and registry deduplication; speculative calls must not change cache keys, token headers, memory accounting, or cancellation semantics.
+
+- [ ] **Step 4: Add failing publication-policy and shimmer tests**
+
+Extract a pure `CachedRemoteImagePublicationPolicy` that accepts captured/current identity plus cancellation and returns whether publication is allowed. Add `ShimmerAnimationPolicy` that disables movement for Reduce Motion. Test mismatched generations, cancellation, and static reduced-motion behavior.
+
+- [ ] **Step 5: Confirm policy RED**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/CachedRemoteImagePolicyTests
+```
+
+- [ ] **Step 6: Guard every suspension point**
+
+In `CachedRemoteImage.load()`, capture `requestIdentity` and consumer ID, call `Task.checkCancellation()` after URL resolution, cache lookup, network load, fallback URL resolution, and fallback load, then guard the publication policy immediately before setting `image` or calling `onImageLoaded`. Reset `requestURL` only if it still belongs to the captured generation.
+
+Use a static tonal placeholder when Reduce Motion is enabled; otherwise keep one lightweight opacity/translation shimmer whose geometry exactly matches the final image.
+
+- [ ] **Step 7: Run ImageCache and policy suites**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:ImageCacheTests \
+  -only-testing:PlaybackEngineTests/CachedRemoteImagePolicyTests
+```
+
+---
+
+## Task 4: Recompose Home with logo-first identity, accessible carousel motion, and Glass+ actions
+
+**Files:**
+
+- Modify: `ReelFinUI/Sources/ReelFinUI/Components/HeroCarouselView.swift`
+- Create: `ReelFinUI/Sources/ReelFinUI/Components/EditorialMediaIdentityView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Components/CinematicBackdropView.swift`
+- Modify: `Tests/PlaybackEngineTests/TVPerformanceStateTests.swift`
+- Modify: `Tests/PlaybackEngineTests/TVUXPolishLayoutTests.swift`
+
+- [ ] **Step 1: Extend failing Home policy/layout tests**
+
+Cover `HeroRotationPolicy.nextIndex`, no advance for a single item, fixed hero transition duration, champagne active-page indicator role, focus scale/fixed shadow values, and that auto-advance has no haptic policy while direct paging may.
+
+- [ ] **Step 2: Confirm targeted RED**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/EditorialBrowseVisualSystemTests \
+  -only-testing:PlaybackEngineTests/TVPerformanceStateTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests
+```
+
+- [ ] **Step 3: Make hero rotation owned and accessible**
+
+Replace unconditional timer behavior with scene-phase, interaction, Reduce Motion, and VoiceOver eligibility. Pause while drag/press interaction is active. Remove `.sensoryFeedback(trigger: currentIndex)` from the Play button; attach haptic only to direct user paging/activation if appropriate. Use a local animation on page identity, never an ancestor animation.
+
+- [ ] **Step 4: Add shared logo-first identity**
+
+Extract the existing tvOS logo-first behavior into `EditorialMediaIdentityView`, supporting logo URL, title fallback, kicker, metadata, and platform-specific max sizes. Failed logos reveal title without delaying actions.
+
+- [ ] **Step 5: Apply editorial Home composition**
+
+On iOS: kicker → logo/title → one metadata line → grouped Play/Favorite/More actions inside one stable `GlassEffectContainer`; active indicator uses champagne; section-forward buttons use compact glass. On tvOS: preserve exact focus IDs and native Buttons; grouped navigation/actions use native glass; only focused media gets tonal fill/rim/fixed shadow. Resting cards and background remain non-glass.
+
+- [ ] **Step 6: Reduce backdrop variants**
+
+Refactor `CinematicBackdropView` to one low-resolution blurred base plus one selected sharp layer, with fallback replacing rather than doubling the layer tree. Remove `.drawingGroup()` unless a measured comparison proves it faster.
+
+- [ ] **Step 7: Validate Home tests and both builds**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/TVPerformanceStateTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+```
+
+---
+
+## Task 5: Make Library intents genuinely latest-wins
+
+**Files:**
+
+- Modify: `ReelFinUI/Sources/ReelFinUI/Library/LibraryViewModel.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift`
+- Modify: `Tests/PlaybackEngineTests/LibraryViewModelTests.swift`
+
+- [ ] **Step 1: Add deterministic failing overlap tests**
+
+Enhance the API/repository stubs with continuations. Add tests proving:
+
+1. a slow query A cannot overwrite completed query B;
+2. a filter/sort change is accepted while old pagination is blocked;
+3. canceling/debouncing search does not clear valid cached results;
+4. `isLoadingPage` describes only the current generation.
+
+Drive the view model through a single `submitIntent(_:)` or `reload(criteria:)` API rather than sleeping in tests.
+
+- [ ] **Step 2: Confirm RED**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/LibraryViewModelTests
+```
+
+- [ ] **Step 3: Implement owned generation/task semantics**
+
+Snapshot search/filter/sort into an immutable `LibraryCriteria`. Increment a generation for each new criteria intent, cancel the previous owned task, and validate generation after every repository/API suspension before publishing. Pagination is separately owned but invalidated by a new criteria generation. Build queries exclusively from the captured criteria, never mutable properties after an await.
+
+- [ ] **Step 4: Remove unowned view Tasks**
+
+Replace the three `.onChange` closures that launch anonymous Tasks with one cancelable `@State` search debounce task plus synchronous view-model intent submission. Cancel it on disappearance. Filter and sort submit immediately.
+
+- [ ] **Step 5: Make Library tests GREEN**
+
+Run Step 2. Preserve existing deduplication and playback-quality preference assertions.
+
+---
+
+## Task 6: Apply the editorial expanded/compact Library composition and immediate tvOS activation
+
+**Files:**
+
+- Modify: `ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Library/TVLibraryPosterCard.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Components/StickyBlurHeader.swift`
+- Create: `Tests/PlaybackEngineTests/LibraryEditorialLayoutTests.swift`
+- Modify: `Tests/PlaybackEngineTests/TVUXPolishNavigationTests.swift`
+
+- [ ] **Step 1: Add failing pure layout/activation tests**
+
+Add a `LibraryHeaderPresentation` pure policy whose compact state changes only after a quantized threshold, and a `TVLibraryActivationPolicy` that reports zero selection delay. Preserve existing top-row routing and focus source IDs in navigation tests.
+
+- [ ] **Step 2: Confirm RED**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/LibraryEditorialLayoutTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests
+```
+
+- [ ] **Step 3: Stop per-pixel header invalidation where unnecessary**
+
+In `StickyBlurHeader`, do not install scroll tracking for `.always`. For reveal/collapse behavior, map raw offset to a small quantized presentation value before state assignment and skip identical values.
+
+- [ ] **Step 4: Build expanded plus compact iOS header**
+
+Move the full title/result context/filter/search composition into scroll content. Let the pinned header reveal only a compact grouped Liquid Glass row after meaningful scroll. Keep the native search-role tab, lazy grid, stable item IDs, poster geometry, and selection transition source.
+
+- [ ] **Step 5: Update tvOS controls and activation**
+
+Place adjacent filter/sort controls in one stable native glass container. Keep resting posters artwork-only and focused poster glass/rim geometry fixed. Remove the 105 ms sleep in `TVLibraryPosterCard.handleActivation()`; start press feedback and invoke `onSelect()` in the same event turn.
+
+- [ ] **Step 6: Validate Library suites and tvOS build**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/LibraryViewModelTests \
+  -only-testing:PlaybackEngineTests/LibraryEditorialLayoutTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+```
+
+---
+
+## Task 7: Reduce Detail render cost, then apply Glass+ hierarchy
+
+**Files:**
+
+- Modify: `ReelFinUI/Sources/ReelFinUI/Detail/DetailView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Detail/TVDetailHeroChromeLayout.swift`
+- Modify: `Tests/PlaybackEngineTests/IOSDetailCarouselLayoutTests.swift`
+- Modify: `Tests/PlaybackEngineTests/TVDetailViewModelTests.swift`
+- Modify: `Tests/PlaybackEngineTests/TVUXPolishLayoutTests.swift`
+
+- [ ] **Step 1: Add failing Detail cost and geometry tests**
+
+Assert selected entries budget exactly one hero stack, neighbor entries use the preview profile, scroll presentation buckets are stable across small raw-offset changes, shadow radius is constant inside each state, Play remains tvOS initial focus, and transition-source identity is unchanged.
+
+- [ ] **Step 2: Confirm RED**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/IOSDetailCarouselLayoutTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests
+```
+
+- [ ] **Step 3: Eliminate duplicate selected hero work**
+
+In `IOSDetailTopCarouselCard`, render `selectedContent()` as the sole selected hero-grade composition. Render non-selected entries with one `CachedRemoteImage` using `.detailPreview`, a static gradient, and no `HeroBackgroundView`. Keep the existing card frames, occurrence-qualified IDs, scroll target behavior, and native zoom continuity.
+
+- [ ] **Step 4: Quantize scroll presentation**
+
+Convert raw `IOSDetailScrollSnapshot` into a small Equatable presentation snapshot before storing it. Keep only visually necessary continuous transforms isolated to the top stage. Use fixed shadow radii and animate opacity/small transforms only.
+
+- [ ] **Step 5: Apply editorial action hierarchy**
+
+Use shared logo-first identity and grouped native glass for Back/Share/More and Play/Favorite/completion actions. Maintain neutral-white primary action contrast, champagne kickers/progress, readable synopsis, and lazy supporting rows. On tvOS preserve inline hosting, event-driven dismissal, exact source return, and Play-first focus; remove non-actionable cast nodes from focus participation unless they execute a real action.
+
+- [ ] **Step 6: Validate Detail/navigation/playback entry tests**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/IOSDetailCarouselLayoutTests \
+  -only-testing:PlaybackEngineTests/TVDetailViewModelTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests \
+  -only-testing:PlaybackEngineTests/PlaybackTransportStateTests
+```
+
+---
+
+## Task 8: Regenerate, test both platforms, and run simulator journeys
+
+**Files:**
+
+- Modify only if evidence requires: affected source/test files from Tasks 1–7
+- Create artifacts under ignored `.artifacts/` or `.superpowers/`; do not commit simulator state or logs
+
+- [ ] **Step 1: Regenerate and build exact configured destinations**
+
+```bash
+xcodegen generate
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+```
+
+- [ ] **Step 2: Run complete unit/UI schemes**
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+```
+
+If an existing environment-dependent UI test cannot run, capture the exact failure and still run all unit targets plus the relevant manual journey. Do not describe a skipped test as passing.
+
+- [ ] **Step 3: Exercise iOS in Simulator**
+
+Run authenticated cold/warm Home, manual/automatic carousel, background/foreground, fast rails, rapid Library typing/filter/sort/pagination overlap, expanded-to-compact header, Home/Library Detail entry and exact return, Detail carousel/supporting rows, bright/dark art, image fallback, Reduce Motion, Reduce Transparency, and VoiceOver labels. Capture Home, compact Library, and Detail screenshots.
+
+- [ ] **Step 4: Exercise tvOS in Simulator**
+
+Traverse Home and Library quickly, verify one focus transition per input, immediate poster activation, every first-row route, inline Detail Play-first focus, exact source return, playback launch/dismissal, Reduce Motion, Reduce Transparency, and focused/resting pairs over bright/dark artwork. Capture screenshots.
+
+- [ ] **Step 5: Run performance probes**
+
+```bash
+scripts/run_player_ui_probe.sh
+scripts/run_playback_qa_loop.sh
+python3 scripts/test_tvos_profile.py
+```
+
+Also capture comparative SwiftUI body updates, Animation Hitches, Time Profiler samples around ImageIO/layout/material work, peak decoded-image memory, and image request/dedupe/cancellation signposts for the same journeys where local tooling permits.
+
+---
+
+## Task 9: Record evidence and perform completion audit
+
+**Files:**
+
+- Modify: `PLANS.md`
+- Modify: `OPTIMIZATION_AUDIT.md`
+- Modify: `Docs/superpowers/specs/2026-07-26-cinematic-editorial-ui-redesign-design.md`
+- Modify: this plan file to mark completed checkboxes
+
+- [ ] **Step 1: Record actual results, not intentions**
+
+Add exact commands, destinations, pass/fail counts, simulator journeys, screenshots/artifact paths, before/after performance observations, and any known limitations. Record artwork/focus/playback findings required by AGENTS.md.
+
+- [ ] **Step 2: Inspect the final diff and tree**
+
+```bash
+git status --short
+git diff --stat
+git diff --check
+git diff -- ReelFinUI ImageCache Shared Tests PLANS.md OPTIMIZATION_AUDIT.md Docs/superpowers
+```
+
+- [ ] **Step 3: Run the final verification commands fresh**
+
+Do not rely on earlier output. Re-run generation, both builds, the complete viable tests, and the highest-risk Home/Library/Detail/focus/image suites immediately before claiming completion.
+
+- [ ] **Step 4: Self-review against acceptance criteria**
+
+Confirm all of the following with evidence: consistent editorial identity, clean native Glass+ without card-wall overuse, no auto haptic, latest-wins Library, canonical/bounded/authenticated artwork, stale-publication guard, one selected Detail hero stack, cheap previews, immediate tvOS activation, exact focus return, accessible fallbacks, and no launch/playback regressions.
