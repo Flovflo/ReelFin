@@ -174,6 +174,43 @@ final class CachedRemoteImageLoaderTests: XCTestCase {
         XCTAssertEqual(callbackCount, 0)
     }
 
+    func testPreCancelledLoadCannotEvictSuspendedActiveGeneration() async {
+        let harness = ControlledImageLoadHarness()
+        let loader = CachedRemoteImageLoader(
+            resolveURL: { descriptor in
+                descriptor == Self.descriptorA ? Self.urlA : Self.urlB
+            },
+            cachedImage: { url in
+                guard url == Self.urlB else { return nil }
+                return await harness.cachedImage(for: url)
+            },
+            fetchImage: { _, _ in
+                throw TestImageError.failed
+            },
+            cancel: { url, consumerID in
+                harness.recordCancellation(url: url, consumerID: consumerID)
+            }
+        )
+        let imageB = makeImage(color: .blue)
+        let active = Task { @MainActor in
+            await loader.load(descriptor: Self.descriptorB)
+        }
+        await harness.waitUntilCacheLookupIsSuspended(for: Self.urlB)
+
+        let preCancelled = Task { @MainActor in
+            withUnsafeCurrentTask { currentTask in
+                currentTask?.cancel()
+            }
+            await loader.load(descriptor: Self.descriptorA)
+        }
+        await preCancelled.value
+
+        XCTAssertEqual(harness.cancelledRequests, [])
+        await harness.resumeCacheLookup(for: Self.urlB, with: imageB)
+        await active.value
+        XCTAssertTrue(loader.image === imageB)
+    }
+
     func testOldGenerationFinishingCannotClearNewerURL() {
         var state = CachedRemoteImageRequestState()
 

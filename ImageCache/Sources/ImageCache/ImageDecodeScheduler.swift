@@ -12,7 +12,9 @@ final class ImageDecodeScheduler: @unchecked Sendable {
         queue.operationCount
     }
 
-    init(decodeBody: @escaping DecodeBody = ImageDecodeScheduler.decodeImage) {
+    init(decodeBody: @escaping DecodeBody = { data, maxPixelSize in
+        ImageDecodeScheduler.decodeImage(data: data, maxPixelSize: maxPixelSize)
+    }) {
         let queue = OperationQueue()
         queue.name = "com.reelfin.image-decode"
         queue.qualityOfService = .utility

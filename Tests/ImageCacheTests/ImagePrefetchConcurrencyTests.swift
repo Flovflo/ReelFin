@@ -24,17 +24,19 @@ final class ImagePrefetchConcurrencyTests: XCTestCase {
 
         await BlockingPrefetchURLProtocol.waitUntilStarted(count: 4)
         XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs.count, 4)
+        XCTAssertEqual(BlockingPrefetchURLProtocol.startEvents.map(\.completionEpoch), [0, 0, 0, 0])
 
         BlockingPrefetchURLProtocol.complete(url: urls[0], with: Self.samplePNGData)
         await BlockingPrefetchURLProtocol.waitUntilStarted(count: 5)
         XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs.count, 5)
+        XCTAssertEqual(BlockingPrefetchURLProtocol.startEvents[4].completionEpoch, 1)
 
         task.cancel()
-        session.invalidateAndCancel()
         await task.value
+        session.finishTasksAndInvalidate()
     }
 
-    func testCancellingParentNeverAdmitsWaitingURLs() async throws {
+    func testCancellingParentCompletesWithoutTransportCompletionOrSessionInvalidation() async throws {
         let (pipeline, session) = try makePipeline()
         let urls = makeURLs(count: 8)
         let task = Task {
@@ -45,10 +47,35 @@ final class ImagePrefetchConcurrencyTests: XCTestCase {
         XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs.count, 4)
 
         task.cancel()
-        session.invalidateAndCancel()
         await task.value
 
         XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs.count, 4)
+        session.finishTasksAndInvalidate()
+    }
+
+    func testPreCancelledConsumerNeverStartsTransport() async throws {
+        let (pipeline, session) = try makePipeline()
+        BlockingPrefetchURLProtocol.respondImmediately(with: Self.samplePNGData)
+        let url = makeURLs(count: 1)[0]
+
+        let task = Task {
+            withUnsafeCurrentTask { currentTask in
+                currentTask?.cancel()
+            }
+            do {
+                _ = try await pipeline.image(for: url, consumer: ImageRequestConsumerID())
+                return false
+            } catch is CancellationError {
+                return true
+            } catch {
+                return false
+            }
+        }
+
+        let wasCancelled = await task.value
+        XCTAssertTrue(wasCancelled)
+        XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs, [])
+        session.finishTasksAndInvalidate()
     }
 
     func testDuplicateURLsConsumeOneSlotAndPreserveFirstSeenOrder() async throws {
@@ -72,25 +99,38 @@ final class ImagePrefetchConcurrencyTests: XCTestCase {
         await task.value
     }
 
-    func testPrefetchCandidatesRemainCappedAtTwentyFour() async throws {
+    func testPrefetchCandidatesPreserveStableOrderAcrossDuplicatesAndRemainCappedAtTwentyFour() async throws {
         let (pipeline, _) = try makePipeline()
-        let urls = makeURLs(count: 30)
+        let urls = makeURLs(count: 26)
+        var candidates = [urls[0], urls[0], urls[1], urls[2], urls[1], urls[3]]
+        for index in 4 ..< 26 {
+            candidates.append(urls[index])
+            if index.isMultiple(of: 3) {
+                candidates.append(urls[2])
+            }
+        }
         let task = Task {
-            await pipeline.prefetch(urls: urls)
+            await pipeline.prefetch(urls: candidates)
         }
 
         await BlockingPrefetchURLProtocol.waitUntilStarted(count: 4)
-        for admittedCount in 5 ... 24 {
-            BlockingPrefetchURLProtocol.completeOldestPending(with: Self.samplePNGData)
-            await BlockingPrefetchURLProtocol.waitUntilStarted(count: admittedCount)
-            XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs.count, admittedCount)
+        XCTAssertEqual(Set(BlockingPrefetchURLProtocol.startedURLs), Set(urls.prefix(4)))
+
+        BlockingPrefetchURLProtocol.complete(url: urls[0], with: Self.samplePNGData)
+        await BlockingPrefetchURLProtocol.waitUntilStarted(count: 5)
+        for admittedIndex in 4 ..< 23 {
+            BlockingPrefetchURLProtocol.complete(url: urls[admittedIndex], with: Self.samplePNGData)
+            await BlockingPrefetchURLProtocol.waitUntilStarted(count: admittedIndex + 2)
         }
 
         BlockingPrefetchURLProtocol.completeAll(with: Self.samplePNGData)
         await task.value
 
         XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs.count, 24)
-        XCTAssertEqual(Set(BlockingPrefetchURLProtocol.startedURLs), Set(urls.prefix(24)))
+        XCTAssertEqual(
+            Array(BlockingPrefetchURLProtocol.startedURLs.dropFirst(4)),
+            Array(urls[4 ..< 24])
+        )
     }
 
     private func makePipeline() throws -> (DefaultImagePipeline, URLSession) {
@@ -125,6 +165,11 @@ final class ImagePrefetchConcurrencyTests: XCTestCase {
 }
 
 private final class BlockingPrefetchURLProtocol: URLProtocol {
+    struct StartEvent: Equatable {
+        let url: URL
+        let completionEpoch: Int
+    }
+
     private struct StartWaiter {
         let count: Int
         let continuation: CheckedContinuation<Void, Never>
@@ -133,7 +178,10 @@ private final class BlockingPrefetchURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var pendingRequests = [URL: BlockingPrefetchURLProtocol]()
     private static var startedURLStorage = [URL]()
+    private static var startEventStorage = [StartEvent]()
     private static var startWaiters = [StartWaiter]()
+    private static var completionEpoch = 0
+    private static var immediateResponseData: Data?
 
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host()?.hasSuffix(".prefetch.test") == true
@@ -145,14 +193,20 @@ private final class BlockingPrefetchURLProtocol: URLProtocol {
 
     override func startLoading() {
         guard let url = request.url else { return }
-        let resumptions = Self.lock.withLock {
+        let (resumptions, immediateResponseData) = Self.lock.withLock {
             Self.pendingRequests[url] = self
             Self.startedURLStorage.append(url)
+            Self.startEventStorage.append(
+                StartEvent(url: url, completionEpoch: Self.completionEpoch)
+            )
             let ready = Self.startWaiters.filter { $0.count <= Self.startedURLStorage.count }
             Self.startWaiters.removeAll { $0.count <= Self.startedURLStorage.count }
-            return ready.map(\.continuation)
+            return (ready.map(\.continuation), Self.immediateResponseData)
         }
         resumptions.forEach { $0.resume() }
+        if let immediateResponseData {
+            Self.complete(url: url, with: immediateResponseData)
+        }
     }
 
     override func stopLoading() {
@@ -166,6 +220,10 @@ private final class BlockingPrefetchURLProtocol: URLProtocol {
 
     static var startedURLs: [URL] {
         lock.withLock { startedURLStorage }
+    }
+
+    static var startEvents: [StartEvent] {
+        lock.withLock { startEventStorage }
     }
 
     static func waitUntilStarted(count: Int) async {
@@ -185,18 +243,18 @@ private final class BlockingPrefetchURLProtocol: URLProtocol {
     }
 
     static func complete(url: URL, with data: Data) {
-        let request = lock.withLock { pendingRequests.removeValue(forKey: url) }
+        let request: BlockingPrefetchURLProtocol? = lock.withLock {
+            guard let request = pendingRequests.removeValue(forKey: url) else { return nil }
+            completionEpoch += 1
+            return request
+        }
         request?.complete(with: data)
     }
 
-    static func completeOldestPending(with data: Data) {
-        let request = lock.withLock { () -> BlockingPrefetchURLProtocol? in
-            guard let url = startedURLStorage.first(where: { pendingRequests[$0] != nil }) else {
-                return nil
-            }
-            return pendingRequests.removeValue(forKey: url)
+    static func respondImmediately(with data: Data) {
+        lock.withLock {
+            immediateResponseData = data
         }
-        request?.complete(with: data)
     }
 
     static func completeAll(with data: Data) {
@@ -213,7 +271,10 @@ private final class BlockingPrefetchURLProtocol: URLProtocol {
             let requests = Array(pendingRequests.values)
             pendingRequests.removeAll()
             startedURLStorage.removeAll()
+            startEventStorage.removeAll()
             startWaiters.removeAll()
+            completionEpoch = 0
+            immediateResponseData = nil
             return requests
         }
         requests.forEach { $0.client?.urlProtocol($0, didFailWithError: CancellationError()) }

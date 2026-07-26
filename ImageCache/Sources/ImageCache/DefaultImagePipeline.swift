@@ -14,7 +14,9 @@ actor ImageTaskRegistry {
         for url: URL,
         consumer consumerID: ImageRequestConsumerID,
         makeTask: () -> Task<UIImage, Error>
-    ) -> (task: Task<UIImage, Error>, isNew: Bool) {
+    ) throws -> (task: Task<UIImage, Error>, isNew: Bool) {
+        try Task.checkCancellation()
+
         if var existing = entries[url] {
             existing.consumers.insert(consumerID)
             entries[url] = existing
@@ -49,6 +51,47 @@ actor ImageTaskRegistry {
 
 private final class ImageLoadTracker: @unchecked Sendable {
     var source: StaticString = "loaded"
+}
+
+private final class ImageConsumerWaitGate: @unchecked Sendable {
+    typealias Continuation = CheckedContinuation<UIImage, Error>
+
+    private let lock = NSLock()
+    private var continuation: Continuation?
+    private var pendingResult: Result<UIImage, Error>?
+    private var isFinished = false
+
+    func install(_ continuation: Continuation) -> Bool {
+        let pendingResult = lock.withLock { () -> Result<UIImage, Error>? in
+            if isFinished {
+                let result = self.pendingResult
+                self.pendingResult = nil
+                return result
+            }
+            self.continuation = continuation
+            return nil
+        }
+
+        if let pendingResult {
+            continuation.resume(with: pendingResult)
+            return false
+        }
+        return true
+    }
+
+    func finish(with result: Result<UIImage, Error>) {
+        let continuation = lock.withLock { () -> Continuation? in
+            guard !isFinished else { return nil }
+            isFinished = true
+            if let continuation = self.continuation {
+                self.continuation = nil
+                return continuation
+            }
+            pendingResult = result
+            return nil
+        }
+        continuation?.resume(with: result)
+    }
 }
 
 public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
@@ -113,6 +156,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     }
 
     public func image(for url: URL, consumer consumerID: ImageRequestConsumerID) async throws -> UIImage {
+        try Task.checkCancellation()
         let interval = SignpostInterval(signposter: Signpost.imageLoading, name: "image_request")
 
         if let memoryImage = memoryCache.object(forKey: url as NSURL) {
@@ -122,7 +166,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
         let tracker = ImageLoadTracker()
         let cacheKey = url.reelfinCacheKey
-        let registered = await registry.existingOrRegisterTask(for: url, consumer: consumerID) {
+        let registered = try await registry.existingOrRegisterTask(for: url, consumer: consumerID) {
             Task {
                 if let diskData = await self.diskCache.data(forKey: cacheKey),
                    let image = try await self.decodeImage(data: diskData, for: url) {
@@ -145,7 +189,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
 
         do {
-            let image = try await registered.task.value
+            let image = try await waitForImage(registered.task)
             try Task.checkCancellation()
             guard await registry.hasConsumer(consumerID, for: url) else {
                 throw CancellationError()
@@ -157,6 +201,20 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
             interval.end(name: "image_request", message: "network_error")
             await self.registry.release(url: url, consumer: consumerID)
             throw error
+        }
+    }
+
+    private func waitForImage(_ task: Task<UIImage, Error>) async throws -> UIImage {
+        let gate = ImageConsumerWaitGate()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard gate.install(continuation) else { return }
+                Task {
+                    gate.finish(with: await task.result)
+                }
+            }
+        } onCancel: {
+            gate.finish(with: .failure(CancellationError()))
         }
     }
 
@@ -224,8 +282,12 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
                     }
                     return
                 }
-                group.addTask {
+                guard group.addTaskUnlessCancelled(operation: {
+                    guard !Task.isCancelled else { return }
                     _ = try? await self.image(for: url)
+                }) else {
+                    group.cancelAll()
+                    return
                 }
             }
 
@@ -235,8 +297,12 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
                     return
                 }
                 guard let url = iterator.next() else { continue }
-                group.addTask {
+                guard group.addTaskUnlessCancelled(operation: {
+                    guard !Task.isCancelled else { return }
                     _ = try? await self.image(for: url)
+                }) else {
+                    group.cancelAll()
+                    return
                 }
             }
         }
@@ -282,5 +348,13 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         let width = max(Int((image.size.width * scale).rounded(.up)), 1)
         let height = max(Int((image.size.height * scale).rounded(.up)), 1)
         return width * height * 4
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return body()
     }
 }

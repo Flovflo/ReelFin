@@ -72,6 +72,8 @@ final class CachedRemoteImageLoader: ObservableObject {
         descriptor: CachedRemoteImageDescriptor,
         onImageLoaded: (() -> Void)? = nil
     ) async {
+        guard !Task.isCancelled else { return }
+
         if request.contentKey != descriptor.contentKey {
             image = nil
             request.contentKey = descriptor.contentKey
@@ -88,10 +90,9 @@ final class CachedRemoteImageLoader: ObservableObject {
             request.finish(token)
         }
 
-        guard let url = await resolveURL(descriptor) else {
-            return
-        }
+        let resolvedURL = await resolveURL(descriptor)
         guard isActive(token) else { return }
+        guard let url = resolvedURL else { return }
         cancel(request.attach(url, to: token))
         attachedURL = url
 
@@ -119,12 +120,12 @@ final class CachedRemoteImageLoader: ObservableObject {
                 return
             }
             let fallbackDescriptor = descriptor.replacing(type: fallbackType)
-            guard let fallbackURL = await resolveURL(fallbackDescriptor) else {
-                guard isActive(token) else { return }
+            let resolvedFallbackURL = await resolveURL(fallbackDescriptor)
+            guard isActive(token) else { return }
+            guard let fallbackURL = resolvedFallbackURL else {
                 log(error: error, url: url, token: token)
                 return
             }
-            guard isActive(token) else { return }
             cancel(request.attach(fallbackURL, to: token))
             attachedURL = fallbackURL
 
