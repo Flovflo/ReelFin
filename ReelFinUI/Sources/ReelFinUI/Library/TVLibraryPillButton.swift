@@ -27,10 +27,13 @@ struct TVLibraryPillButton: View {
     }
 
     @ViewBuilder
-    private var highlightBackground: some View {
+    private func controlChrome<Label: View>(
+        @ViewBuilder label: () -> Label
+    ) -> some View {
         switch controlPresentation {
         case .interactiveGlass:
-            Color.clear
+            label()
+                .foregroundStyle(labelColor)
                 .glassEffect(
                     Glass.regular.tint(backgroundTint).interactive(),
                     in: .capsule
@@ -46,8 +49,12 @@ struct TVLibraryPillButton: View {
                     y: isFocused ? 9 : 5
                 )
         case .opaque:
-            Capsule(style: .continuous)
-                .fill(ReelFinTheme.editorialOpaqueFallback)
+            label()
+                .foregroundStyle(labelColor)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(ReelFinTheme.editorialOpaqueFallback)
+                }
                 .overlay {
                     Capsule(style: .continuous)
                         .stroke(
@@ -62,7 +69,8 @@ struct TVLibraryPillButton: View {
                     y: isFocused ? 9 : 5
                 )
         case .passiveGlass:
-            Color.clear
+            label()
+                .foregroundStyle(labelColor)
                 .glassEffect(
                     Glass.regular.tint(backgroundTint),
                     in: .capsule
@@ -127,22 +135,22 @@ struct TVLibraryPillButton: View {
 
     private var content: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 20, weight: .semibold))
-                        .symbolRenderingMode(.monochrome)
-                }
+            controlChrome {
+                HStack(spacing: 10) {
+                    if let systemImage {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 20, weight: .semibold))
+                            .symbolRenderingMode(.monochrome)
+                    }
 
-                Text(title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.86)
+                    Text(title)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.86)
+                }
+                .font(.system(size: 21, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 24)
+                .frame(minHeight: 60)
             }
-            .font(.system(size: 21, weight: .semibold, design: .rounded))
-            .foregroundStyle(labelColor)
-            .padding(.horizontal, 24)
-            .frame(minHeight: 60)
-            .background { highlightBackground }
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(TVNoChromeButtonStyle())

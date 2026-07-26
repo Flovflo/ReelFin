@@ -56,6 +56,7 @@ private enum TVLibraryWarmupScope {
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reelFinDisplayDensity) private var displayDensity
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.accessibilityReduceTransparency) private var accessibilityReduceTransparency
     @Namespace private var posterNamespace
@@ -360,6 +361,7 @@ struct LibraryView: View {
                 .font(.headline.weight(.bold))
                 .foregroundStyle(ReelFinTheme.editorialPrimaryText)
                 .lineLimit(1)
+                .minimumScaleFactor(0.65)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("library_sticky_blur_header")
 
@@ -420,16 +422,16 @@ struct LibraryView: View {
         return Button {
             viewModel.selectedFilter = filter
         } label: {
-            Text(title)
-                .font(.subheadline.weight(.bold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .frame(minWidth: compact ? 54 : 72)
-                .padding(.horizontal, compact ? 8 : 12)
-                .padding(.vertical, compact ? 9 : 11)
-                .foregroundStyle(libraryControlForeground(isActive: isActive))
-                .background { libraryControlBackground(isActive: isActive) }
-                .contentShape(Capsule(style: .continuous))
+            libraryControlSurface(isActive: isActive) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(compact ? 0.5 : 0.78)
+                    .frame(minWidth: compact ? 54 : 72)
+                    .frame(width: compact ? 54 : nil)
+                    .padding(.horizontal, compact ? 8 : 12)
+                    .padding(.vertical, compact ? 9 : 11)
+            }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isActive ? .isSelected : [])
@@ -443,43 +445,47 @@ struct LibraryView: View {
                 }
             }
         } label: {
-            HStack(spacing: compact ? 5 : 7) {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(.caption.weight(.bold))
+            libraryControlSurface(isActive: false) {
+                HStack(spacing: compact ? 5 : 7) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.caption.weight(.bold))
 
-                Text(sortModeDisplayTitle)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.74)
+                    if !compact || !dynamicTypeSize.isAccessibilitySize {
+                        Text(dynamicTypeSize.isAccessibilitySize ? "Sort" : sortModeDisplayTitle)
+                            .lineLimit(1)
+                            .minimumScaleFactor(compact ? 0.5 : 0.74)
+                    }
+                }
+                .font(.subheadline.weight(.bold))
+                .frame(minWidth: compact ? 62 : 86)
+                .frame(width: compact ? 62 : nil)
+                .padding(.horizontal, compact ? 8 : 12)
+                .padding(.vertical, compact ? 9 : 11)
             }
-            .font(.subheadline.weight(.bold))
-            .frame(minWidth: compact ? 62 : 86)
-            .padding(.horizontal, compact ? 8 : 12)
-            .padding(.vertical, compact ? 9 : 11)
-            .foregroundStyle(ReelFinTheme.editorialPrimaryText)
-            .background { libraryControlBackground(isActive: false) }
-            .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Sort, \(sortModeDisplayTitle)")
         .accessibilityIdentifier("library_sort_control")
     }
 
-    private func libraryControlForeground(isActive: Bool) -> Color {
-        if accessibilityReduceTransparency {
-            return ReelFinTheme.editorialPrimaryText
-        }
-        return isActive ? Color.black.opacity(0.92) : ReelFinTheme.editorialPrimaryText
-    }
-
     @ViewBuilder
-    private func libraryControlBackground(isActive: Bool) -> some View {
+    private func libraryControlSurface<Content: View>(
+        isActive: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         let shape = Capsule(style: .continuous)
 
         switch EditorialGlassRole.compactControl.presentation(
             reduceTransparency: accessibilityReduceTransparency
         ) {
         case .interactiveGlass:
-            shape
-                .fill(isActive ? Color.white.opacity(0.78) : Color.white.opacity(0.04))
+            content()
+                .foregroundStyle(
+                    isActive ? Color.black.opacity(0.94) : ReelFinTheme.editorialPrimaryText
+                )
+                .background {
+                    shape.fill(isActive ? Color.white.opacity(0.34) : Color.clear)
+                }
                 .glassEffect(
                     Glass.regular
                         .tint(
@@ -496,21 +502,26 @@ struct LibraryView: View {
                         lineWidth: 1
                     )
                 }
+                .contentShape(shape)
         case .opaque:
-            shape
-                .fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+                .background { shape.fill(ReelFinTheme.editorialOpaqueFallback) }
                 .overlay {
                     shape.stroke(
                         Color.white.opacity(isActive ? 0.46 : 0.30),
                         lineWidth: 1.2
                     )
                 }
+                .contentShape(shape)
         case .passiveGlass:
-            shape
+            content()
+                .foregroundStyle(ReelFinTheme.editorialPrimaryText)
                 .glassEffect(
                     Glass.regular.tint(ReelFinTheme.editorialGlassTint),
                     in: .capsule
                 )
+                .contentShape(shape)
         }
     }
 
