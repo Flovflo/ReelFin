@@ -27,7 +27,7 @@
 - Modify: `ReelFinUI/Sources/ReelFinUI/Theme/ReelFinTheme.swift`
 - Create: `Tests/PlaybackEngineTests/EditorialBrowseVisualSystemTests.swift`
 
-- [ ] **Step 1: Write failing policy tests**
+- [x] **Step 1: Write failing policy tests**
 
 Add tests for automatic hero eligibility, deterministic next index, motion durations, Reduce Motion, Reduce Transparency, glass roles, and Detail artwork cost:
 
@@ -91,7 +91,7 @@ final class EditorialBrowseVisualSystemTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and confirm RED**
+- [x] **Step 2: Run the focused test and confirm RED**
 
 ```bash
 xcodegen generate
@@ -102,7 +102,7 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
 
 Expected: compile failure because the policies do not exist.
 
-- [ ] **Step 3: Implement the pure system**
+- [x] **Step 3: Implement the pure system**
 
 In `EditorialBrowseVisualSystem.swift`, add internal testable types with these stable interfaces:
 
@@ -136,11 +136,11 @@ enum DetailArtworkCostPolicy {
 
 Extend `ReelFinTheme` with `editorialAccent`, primary/secondary text, glass tint, focused rim, and opaque fallback. Keep global `accent` white.
 
-- [ ] **Step 4: Make the focused suite GREEN**
+- [x] **Step 4: Make the focused suite GREEN**
 
 Run the command from Step 2. Expected: all new tests pass.
 
-- [ ] **Step 5: Refactor and validate diff**
+- [x] **Step 5: Refactor and validate diff**
 
 Centralize only repeated literals; do not create a generic design-system abstraction beyond the approved roles.
 
