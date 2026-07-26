@@ -7,6 +7,12 @@ public enum ReelFinTheme {
     public static let card = Color(white: 0.16)
     public static let accent = Color.white
     public static let accentSecondary = Color.white.opacity(0.7)
+    public static let editorialAccent = Color(red: 0.89, green: 0.73, blue: 0.47)
+    public static let editorialPrimaryText = Color.white.opacity(0.96)
+    public static let editorialSecondaryText = Color.white.opacity(0.68)
+    public static let editorialGlassTint = Color(red: 0.90, green: 0.82, blue: 0.70).opacity(0.12)
+    public static let editorialFocusedRim = Color(red: 0.94, green: 0.82, blue: 0.62).opacity(0.46)
+    public static let editorialOpaqueFallback = Color(red: 0.09, green: 0.085, blue: 0.08)
 
     public static let onboardingBackground = Color(red: 0.018, green: 0.024, blue: 0.043)
     public static let onboardingSurface = Color(red: 0.062, green: 0.080, blue: 0.122)
