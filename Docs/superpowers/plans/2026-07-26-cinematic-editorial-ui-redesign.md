@@ -622,47 +622,92 @@ Run the platform builds sequentially (or with distinct DerivedData paths). Recor
 
 **Files:**
 
+- Modify: `ReelFinUI/Sources/ReelFinUI/Theme/EditorialBrowseVisualSystem.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Detail/DetailView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Detail/IOSDetailCarouselLayout.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Detail/TVDetailHeroChromeLayout.swift`
+- Modify: `Tests/PlaybackEngineTests/EditorialBrowseVisualSystemTests.swift`
 - Modify: `Tests/PlaybackEngineTests/IOSDetailCarouselLayoutTests.swift`
-- Modify: `Tests/PlaybackEngineTests/TVDetailViewModelTests.swift`
+- Modify: `Tests/PlaybackEngineTests/TVDetailActionButtonLayoutTests.swift`
+- Modify: `Tests/PlaybackEngineTests/TVUXPolishNavigationTests.swift`
 - Modify: `Tests/PlaybackEngineTests/TVUXPolishLayoutTests.swift`
+- Modify: `Tests/ReelFinUITests/HomeAndDetailActionsUITests.swift`
+- Modify: `PLANS.md`
+- Modify: `OPTIMIZATION_AUDIT.md`
 
 - [ ] **Step 1: Add failing Detail cost and geometry tests**
 
-Assert selected entries budget exactly one hero stack, neighbor entries use the preview profile, scroll presentation buckets are stable across small raw-offset changes, shadow radius is constant inside each state, Play remains tvOS initial focus, and transition-source identity is unchanged.
+Add a concrete `DetailArtworkCompositionPlan` returned from `DetailArtworkCostPolicy`:
+
+- selected: `.hero`, one hero stack, two image layers, canonical roles `[.heroLow, .heroHigh]`;
+- neighbor: `.preview`, zero hero stacks, one image layer, canonical role `[.landscapeRail]`.
+
+Add `IOSDetailScrollPresentation: Equatable` with a 0...32 hero step, a 0...12 chrome step, and a separately derived Boolean horizontal-selection lock. Test equal presentations for nearby offsets in one bucket, the raw lock threshold independently of buckets, and discrete expanded/collapsed values under Reduce Motion. Test fixed iOS selected `30/24` and preview `18/12` shadows plus fixed tvOS `40/24` hero shadow. Add a small `TVDetailFocusTopology` policy proving static cast is not focusable, source-wiring coverage that Detail contains no fixed completion sleep, and regressions for Play-first focus, native action identifiers/order, exact Home/Library transition provenance, and return identity. Treat already-green behavior as regression coverage, not RED.
 
 - [ ] **Step 2: Confirm RED**
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
+  -only-testing:PlaybackEngineTests/EditorialBrowseVisualSystemTests \
   -only-testing:PlaybackEngineTests/IOSDetailCarouselLayoutTests \
+  -only-testing:PlaybackEngineTests/TVDetailActionButtonLayoutTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests \
   -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests
 ```
 
 - [ ] **Step 3: Eliminate duplicate selected hero work**
 
-In `IOSDetailTopCarouselCard`, render `selectedContent()` as the sole selected hero-grade composition. Render non-selected entries with one `CachedRemoteImage` using `.detailPreview`, a static gradient, and no `HeroBackgroundView`. Keep the existing card frames, occurrence-qualified IDs, scroll target behavior, and native zoom continuity.
+In `IOSDetailTopCarouselCard`, switch on `entry.id == currentItemID`—not the transient scroll-position binding. The selected entry renders only `selectedContent()` as the sole hero-grade composition; remove its outer duplicate `HeroBackgroundView`. Each non-selected entry renders one `CachedRemoteImage(request: ArtworkRequest.make(..., role: .landscapeRail))`, one static legibility gradient, and its existing preview overlay: no blur, logo, or hero stack. Preserve frames, clipping, stroke, stable internal display IDs, occurrence-qualified host transition-source IDs, scroll targets, and native zoom continuity.
+
+Canonicalize the surviving `HeroBackgroundView` to `.heroLow` plus `.heroHigh` through `CachedRemoteImage(request:)`, removing its duplicate episode-ID/image-type/profile-width rules. Keep cast requests canonical `.avatar`. Do not introduce the nonexistent `.detailPreview` role.
 
 - [ ] **Step 4: Quantize scroll presentation**
 
-Convert raw `IOSDetailScrollSnapshot` into a small Equatable presentation snapshot before storing it. Keep only visually necessary continuous transforms isolated to the top stage. Use fixed shadow radii and animate opacity/small transforms only.
+Move raw-to-presentation projection into `IOSDetailCarouselLayout.presentation(offsetY:topInset:heroHeight:topTriggerDistance:reduceMotion:)`. Return `IOSDetailScrollPresentation` directly from `onScrollGeometryChange` and assign only changed Equatable values. Compute the selection lock from the raw threshold before quantization. Reduce Motion exposes only discrete expanded/collapsed presentation. Keep supporting-row spacing/padding constant so scroll state invalidates only the top stage and compact chrome. Use fixed selected/preview shadow geometry and vary opacity/small transforms only.
+
+Move tvOS collapse quantization behind the layout policy and reduce it from 64 to 16 visual steps while retaining a separately derived Boolean for focus/preview interaction. Delete unused continuous tvOS shadow fields and expose the rendered fixed `40/24` values through `TVDetailHeroChromeLayout`.
 
 - [ ] **Step 5: Apply editorial action hierarchy**
 
-Use shared logo-first identity and grouped native glass for Back/Share/More and Play/Favorite/completion actions. Maintain neutral-white primary action contrast, champagne kickers/progress, readable synopsis, and lazy supporting rows. On tvOS preserve inline hosting, event-driven dismissal, exact source return, and Play-first focus; remove non-actionable cast nodes from focus participation unless they execute a real action.
+Replace both iOS `IOSDetailHeroTitleView` and tvOS `HeroMetadataColumn` logo/title duplication with `EditorialMediaIdentityView` (`.iosHero` / `.tvHero`), passing a media kicker and one concise metadata line. Logo failure remains immediate text fallback; no action waits for identity loading.
 
-- [ ] **Step 6: Validate Detail/navigation/playback entry tests**
+On iOS, Back remains its own circular native control; Share + More form one stable adjacent cluster, and Play + Favorite + watched/completion form another. More is a visible `Menu` that retains the existing Download action and its coming-soon alert/identifier. Wrap each adjacent group in a stable `GlassEffectContainer`, but apply one interactive glass/opaque Reduce Transparency fallback to each control—not to the container. Keep Play neutral-white and prominent; champagne is limited to kicker/progress/focused accents. Preserve synopsis readability and lazy supporting rows.
+
+On tvOS, group the existing Play/Watchlist/Watched native Buttons without changing order, focus bindings, default focus, IDs, size, inline player overlay, namespace/source identity, or dismissal callback. Play stays first and preferred. Remove focus state, `.focusable()`, motion, and move handling from non-actionable `TVCastRowItem`; update the More Like This Up route so it no longer targets cast as a focusable row. Replace the fixed 320 ms scroll-completion sleep with animation completion (`.logicallyComplete`) while retaining request-ID stale-completion protection and exact source return.
+
+- [ ] **Step 6: Validate Detail/navigation/playback entry tests and both builds**
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodegen generate
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
+  -only-testing:PlaybackEngineTests/EditorialBrowseVisualSystemTests \
+  -only-testing:PlaybackEngineTests/ArtworkRequestTests \
   -only-testing:PlaybackEngineTests/IOSDetailCarouselLayoutTests \
-  -only-testing:PlaybackEngineTests/TVDetailViewModelTests \
+  -only-testing:PlaybackEngineTests/TVDetailActionButtonLayoutTests \
   -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests \
+  -only-testing:PlaybackEngineTests/TVUXPolishNavigationTests \
+  -only-testing:PlaybackEngineTests/HomeCardTransitionSourceTests \
+  -only-testing:PlaybackEngineTests/LibraryCardTransitionSourceTests \
+  -only-testing:PlaybackEngineTests/DetailViewModelActionTests \
   -only-testing:PlaybackEngineTests/PlaybackTransportStateTests
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
+  -only-testing:ReelFinUITests/HomeAndDetailActionsUITests
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.5'
+git diff --check
 ```
+
+Run platform builds sequentially. Use mock simulator journeys for iOS Detail More/Download, Home and Library entry/return, carousel neighbors, and accessibility fallbacks. Run live tvOS focus-return journeys only if the configured environment exists; otherwise report them as not run. Record the reduced artwork/view-layer budget, quantized scroll invalidation, focus changes, and Glass placement in `PLANS.md` and `OPTIMIZATION_AUDIT.md`.
 
 ---
 
