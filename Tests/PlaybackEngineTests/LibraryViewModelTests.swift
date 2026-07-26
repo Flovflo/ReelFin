@@ -172,8 +172,14 @@ final class LibraryViewModelTests: XCTestCase {
         let stalePage = [
             MediaItem(id: "stale-page", name: "Stale Page", mediaType: .movie, libraryID: "movies")
         ]
-        let currentPage = [
-            MediaItem(id: "current-series", name: "Current Series", mediaType: .series, libraryID: "shows")
+        let currentFirstPage = Self.makeItems(
+            prefix: "current-series",
+            count: 48,
+            mediaType: .series,
+            libraryID: "shows"
+        )
+        let currentSecondPage = [
+            MediaItem(id: "current-series-48", name: "Current Series 48", mediaType: .series, libraryID: "shows")
         ]
         let apiClient = LibraryViewModelAPIClientStub(
             views: [],
@@ -181,7 +187,8 @@ final class LibraryViewModelTests: XCTestCase {
             libraryFetchPlans: [
                 .immediate(initialPage),
                 .suspended,
-                .immediate(currentPage)
+                .immediate(currentFirstPage),
+                .immediate(currentSecondPage)
             ]
         )
         let repository = LibraryViewModelRepositoryStub(views: Self.libraryViews)
@@ -210,10 +217,22 @@ final class LibraryViewModelTests: XCTestCase {
         await apiClient.resumeLibraryFetch(at: 1, returning: stalePage)
         await stalePaginationTask.value
 
-        XCTAssertEqual(viewModel.items.map(\.id), currentPage.map(\.id))
-        XCTAssertNil(viewModel.submitPaginationIfNeeded())
+        XCTAssertEqual(viewModel.items.count, currentFirstPage.count)
+        XCTAssertEqual(Set(viewModel.items.map(\.id)), Set(currentFirstPage.map(\.id)))
+        let currentPaginationTask = try XCTUnwrap(viewModel.submitPaginationIfNeeded())
+        await apiClient.waitForLibraryFetchCount(4)
+        await currentPaginationTask.value
+
         let finalQueries = await apiClient.recordedQueries()
-        XCTAssertEqual(finalQueries.count, 3)
+        XCTAssertEqual(finalQueries.map(\.page), [0, 1, 0, 1])
+        XCTAssertEqual(finalQueries[3].mediaType, .series)
+        XCTAssertEqual(finalQueries[3].sortBy, .sortName)
+        XCTAssertFalse(finalQueries[3].sortDescending)
+        XCTAssertEqual(finalQueries[3].resolvedViewIDs, ["shows"])
+        XCTAssertEqual(
+            Set(viewModel.items.map(\.id)),
+            Set((currentFirstPage + currentSecondPage).map(\.id))
+        )
     }
 
     func testCancelIntentPreservesLastCommittedCachedSearchResults() async throws {
