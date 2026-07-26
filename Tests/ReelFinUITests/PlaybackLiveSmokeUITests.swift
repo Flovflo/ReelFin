@@ -425,17 +425,21 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         while Date() < deadline {
             for identifier in identifiers {
                 let element = firstExistingElement(in: app, identifier: identifier)
-                if element.exists, element.isHittable {
+                if isVisibleControl(element, in: app) {
                     logTap(logLabel)
-                    element.tap()
+                    element.coordinate(
+                        withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+                    ).tap()
                     return true
                 }
             }
             for label in labels {
                 let element = firstExistingElement(in: app, label: label)
-                if element.exists, element.isHittable {
+                if isVisibleControl(element, in: app) {
                     logTap(logLabel)
-                    element.tap()
+                    element.coordinate(
+                        withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+                    ).tap()
                     return true
                 }
             }
@@ -465,24 +469,22 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         if let identifier = identifiers.first {
             return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
         }
-        return app.buttons[labels.first ?? ""].firstMatch
+        return firstExistingElement(in: app, label: labels.first ?? "")
     }
 
     private func firstExistingElement(in app: XCUIApplication, identifier: String) -> XCUIElement {
-        let button = app.buttons[identifier].firstMatch
-        if button.exists {
-            return button
-        }
         return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     private func firstExistingElement(in app: XCUIApplication, label: String) -> XCUIElement {
-        let button = app.buttons[label].firstMatch
-        if button.exists {
-            return button
-        }
         let predicate = NSPredicate(format: "label == %@", label)
         return app.descendants(matching: .any).matching(predicate).firstMatch
+    }
+
+    private func isVisibleControl(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard element.exists else { return false }
+        let frame = element.frame
+        return frame.width > 1 && frame.height > 1 && app.frame.intersects(frame)
     }
 
     @discardableResult
