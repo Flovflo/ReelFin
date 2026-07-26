@@ -2,10 +2,26 @@ import Foundation
 import Shared
 import SwiftUI
 
+struct LibraryCriteria: Equatable, Sendable {
+    let searchQuery: String
+    let filter: MediaType
+    let sortMode: LibraryViewModel.SortMode
+
+    init(
+        searchQuery: String,
+        filter: MediaType,
+        sortMode: LibraryViewModel.SortMode
+    ) {
+        self.searchQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.filter = filter
+        self.sortMode = sortMode
+    }
+}
+
 @MainActor
 @Observable
 final class LibraryViewModel {
-    enum SortMode: String, CaseIterable {
+    enum SortMode: String, CaseIterable, Sendable {
         case recent = "Recent"
         case title = "Title"
     }
@@ -14,7 +30,7 @@ final class LibraryViewModel {
     var searchQuery = ""
     var selectedFilter: MediaType = .movie
     var sortMode: SortMode = .recent
-    var isLoadingPage = false
+    private(set) var isLoadingPage = false
     var selectedItem: MediaItem?
 
     private let dependencies: ReelFinDependencies
@@ -23,43 +39,123 @@ final class LibraryViewModel {
     private let pageSize = 48
     private var isLastPage = false
 
+    private var criteriaGeneration = 0
+    private var paginationRequestID = 0
+    private var loadingToken = 0
+    private var activeCriteria: LibraryCriteria
+    private var criteriaTask: Task<Void, Never>?
+    private var paginationTask: Task<Void, Never>?
+    private var loadingOwner: LoadingOwner?
+
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
+        activeCriteria = LibraryCriteria(
+            searchQuery: "",
+            filter: .movie,
+            sortMode: .recent
+        )
     }
 
-    func loadInitial() async {
-        await loadFromCache(reset: true)
-        await fetchRemote(reset: true)
-    }
+    @discardableResult
+    func submitCriteria() -> Task<Void, Never> {
+        let criteria = LibraryCriteria(
+            searchQuery: searchQuery,
+            filter: selectedFilter,
+            sortMode: sortMode
+        )
 
-    func searchChanged() async {
+        criteriaGeneration &+= 1
+        paginationRequestID &+= 1
+        criteriaTask?.cancel()
+        paginationTask?.cancel()
+        criteriaTask = nil
+        paginationTask = nil
+        activeCriteria = criteria
         currentPage = 0
         isLastPage = false
 
-        if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            await loadInitial()
-            return
+        let request = CriteriaRequest(
+            generation: criteriaGeneration,
+            criteria: criteria,
+            loadingToken: beginLoading(
+                generation: criteriaGeneration,
+                paginationRequestID: nil
+            )
+        )
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await perform(request)
+        }
+        criteriaTask = task
+        return task
+    }
+
+    @discardableResult
+    func submitPaginationIfNeeded() -> Task<Void, Never>? {
+        let generation = criteriaGeneration
+        let criteria = activeCriteria
+
+        guard !isCriteriaLoading(generation: generation),
+              searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              criteria.searchQuery.isEmpty,
+              !isLastPage,
+              paginationTask == nil else {
+            return nil
         }
 
-        do {
-            items = try await dependencies.repository.searchItems(query: searchQuery, limit: 100)
-            let query = try await makeLibraryQuery(page: 0, pageSize: pageSize)
-            let remote = try await dependencies.apiClient.fetchLibraryItems(query: query)
-            try await dependencies.repository.upsertItems(remote)
-            items = sorted(items + remote)
-        } catch {
-            AppLog.ui.error("Search failed: \(error.localizedDescription, privacy: .public)")
+        paginationRequestID &+= 1
+        let request = PaginationRequest(
+            generation: generation,
+            requestID: paginationRequestID,
+            criteria: criteria,
+            page: currentPage,
+            loadingToken: beginLoading(
+                generation: generation,
+                paginationRequestID: paginationRequestID
+            )
+        )
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await perform(request)
         }
+        paginationTask = task
+        return task
+    }
+
+    func cancelIntents() {
+        criteriaGeneration &+= 1
+        paginationRequestID &+= 1
+        criteriaTask?.cancel()
+        paginationTask?.cancel()
+        criteriaTask = nil
+        paginationTask = nil
+        loadingOwner = nil
+        isLoadingPage = false
+    }
+
+    func loadInitial() async {
+        let task = submitCriteria()
+        await task.value
+    }
+
+    func searchChanged() async {
+        let task = submitCriteria()
+        await task.value
     }
 
     var paginationTriggerItemID: String? {
-        guard !isLoadingPage, !isLastPage, searchQuery.isEmpty else { return nil }
+        guard !isLoadingPage,
+              !isLastPage,
+              searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              activeCriteria.searchQuery.isEmpty else {
+            return nil
+        }
         return TVLibraryPaginationPolicy.triggerItemID(in: items)
     }
 
     func loadMoreIfNeeded() async {
-        guard paginationTriggerItemID != nil else { return }
-        await fetchRemote(reset: false)
+        guard let task = submitPaginationIfNeeded() else { return }
+        await task.value
     }
 
     func select(item: MediaItem, animated: Bool = true) {
@@ -84,67 +180,162 @@ final class LibraryViewModel {
         }
     }
 
-    private func loadFromCache(reset: Bool) async {
+    private func perform(_ request: CriteriaRequest) async {
+        defer { finish(request) }
+        guard !Task.isCancelled, owns(request) else { return }
+
+        if request.criteria.searchQuery.isEmpty {
+            await loadCachedLibrary(for: request)
+            guard !Task.isCancelled, owns(request) else { return }
+            await loadRemoteLibrary(for: request)
+        } else {
+            await loadSearch(for: request)
+        }
+    }
+
+    private func loadCachedLibrary(for request: CriteriaRequest) async {
+        let ownership = RequestOwnership.criteria(request)
+
         do {
-            let query = try await makeLibraryQuery(
+            guard let query = try await makeLibraryQuery(
+                criteria: request.criteria,
                 page: 0,
-                pageSize: max(pageSize, 120)
-            )
-            let local = try await dependencies.repository.fetchLibraryItems(
-                query: query
-            )
-            items = sorted(local)
-            if reset {
-                currentPage = 0
-                isLastPage = false
+                pageSize: max(pageSize, 120),
+                ownership: ownership
+            ) else {
+                return
             }
+            guard !Task.isCancelled, owns(request) else { return }
+
+            let local = try await dependencies.repository.fetchLibraryItems(query: query)
+            guard !Task.isCancelled, owns(request) else { return }
+            items = sorted(local, criteria: request.criteria)
         } catch {
+            guard !Task.isCancelled, owns(request) else { return }
             AppLog.ui.error("Local library load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    private func fetchRemote(reset: Bool) async {
-        guard !isLoadingPage, !isLastPage else { return }
-        isLoadingPage = true
-        defer { isLoadingPage = false }
+    private func loadRemoteLibrary(for request: CriteriaRequest) async {
+        let ownership = RequestOwnership.criteria(request)
 
         do {
-            let page = reset ? 0 : currentPage
-            let query = try await makeLibraryQuery(page: page, pageSize: pageSize)
+            guard let query = try await makeLibraryQuery(
+                criteria: request.criteria,
+                page: 0,
+                pageSize: pageSize,
+                ownership: ownership
+            ) else {
+                return
+            }
+            guard !Task.isCancelled, owns(request) else { return }
+
             let remoteItems = try await dependencies.apiClient.fetchLibraryItems(query: query)
+            guard !Task.isCancelled, owns(request) else { return }
 
-            if remoteItems.count < pageSize {
-                isLastPage = true
-            }
+            isLastPage = remoteItems.count < pageSize
+            items = sorted(remoteItems, criteria: request.criteria)
+            currentPage = 1
 
-            if reset {
-                items = sorted(remoteItems)
-                currentPage = 1
-            } else {
-                let merged = sorted(items + remoteItems)
-                items = deduped(merged)
-                currentPage += 1
-            }
-
+            guard !Task.isCancelled, owns(request) else { return }
             try await dependencies.repository.upsertItems(remoteItems)
+            guard !Task.isCancelled, owns(request) else { return }
         } catch {
+            guard !Task.isCancelled, owns(request) else { return }
             AppLog.ui.error("Remote library load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    private func makeLibraryQuery(page: Int, pageSize: Int) async throws -> LibraryQuery {
-        let search = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scopedViewIDs = try await resolvedLibraryViewIDs()
+    private func loadSearch(for request: CriteriaRequest) async {
+        let ownership = RequestOwnership.criteria(request)
+
+        do {
+            let local = try await dependencies.repository.searchItems(
+                query: request.criteria.searchQuery,
+                limit: 100
+            )
+            guard !Task.isCancelled, owns(request) else { return }
+            let committedLocal = sorted(local, criteria: request.criteria)
+            items = committedLocal
+
+            guard let query = try await makeLibraryQuery(
+                criteria: request.criteria,
+                page: 0,
+                pageSize: pageSize,
+                ownership: ownership
+            ) else {
+                return
+            }
+            guard !Task.isCancelled, owns(request) else { return }
+
+            let remote = try await dependencies.apiClient.fetchLibraryItems(query: query)
+            guard !Task.isCancelled, owns(request) else { return }
+
+            try await dependencies.repository.upsertItems(remote)
+            guard !Task.isCancelled, owns(request) else { return }
+            items = sorted(committedLocal + remote, criteria: request.criteria)
+        } catch {
+            guard !Task.isCancelled, owns(request) else { return }
+            AppLog.ui.error("Search failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func perform(_ request: PaginationRequest) async {
+        defer { finish(request) }
+        guard !Task.isCancelled, owns(request) else { return }
+        let ownership = RequestOwnership.pagination(request)
+
+        do {
+            guard let query = try await makeLibraryQuery(
+                criteria: request.criteria,
+                page: request.page,
+                pageSize: pageSize,
+                ownership: ownership
+            ) else {
+                return
+            }
+            guard !Task.isCancelled, owns(request) else { return }
+
+            let remoteItems = try await dependencies.apiClient.fetchLibraryItems(query: query)
+            guard !Task.isCancelled, owns(request) else { return }
+
+            isLastPage = remoteItems.count < pageSize
+            items = sorted(items + remoteItems, criteria: request.criteria)
+            currentPage = request.page + 1
+
+            guard !Task.isCancelled, owns(request) else { return }
+            try await dependencies.repository.upsertItems(remoteItems)
+            guard !Task.isCancelled, owns(request) else { return }
+        } catch {
+            guard !Task.isCancelled, owns(request) else { return }
+            AppLog.ui.error("Remote library load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func makeLibraryQuery(
+        criteria: LibraryCriteria,
+        page: Int,
+        pageSize: Int,
+        ownership: RequestOwnership
+    ) async throws -> LibraryQuery? {
+        guard !Task.isCancelled, owns(ownership) else { return nil }
+        guard let scopedViewIDs = try await resolvedLibraryViewIDs(
+            criteria: criteria,
+            ownership: ownership
+        ) else {
+            return nil
+        }
+        guard !Task.isCancelled, owns(ownership) else { return nil }
 
         if scopedViewIDs.isEmpty {
             return LibraryQuery(
                 viewID: nil,
                 page: page,
                 pageSize: pageSize,
-                query: search.isEmpty ? nil : search,
-                mediaType: selectedFilter,
-                sortBy: querySortBy,
-                sortDescending: querySortDescending
+                query: criteria.searchQuery.isEmpty ? nil : criteria.searchQuery,
+                mediaType: criteria.filter,
+                sortBy: querySortBy(for: criteria),
+                sortDescending: querySortDescending(for: criteria)
             )
         }
 
@@ -152,15 +343,50 @@ final class LibraryViewModel {
             viewIDs: scopedViewIDs,
             page: page,
             pageSize: pageSize,
-            query: search.isEmpty ? nil : search,
-            mediaType: selectedFilter,
-            sortBy: querySortBy,
-            sortDescending: querySortDescending
+            query: criteria.searchQuery.isEmpty ? nil : criteria.searchQuery,
+            mediaType: criteria.filter,
+            sortBy: querySortBy(for: criteria),
+            sortDescending: querySortDescending(for: criteria)
         )
     }
 
-    private var querySortBy: LibraryItemSort {
-        switch sortMode {
+    private func resolvedLibraryViewIDs(
+        criteria: LibraryCriteria,
+        ownership: RequestOwnership
+    ) async throws -> [String]? {
+        guard !Task.isCancelled, owns(ownership) else { return nil }
+        let cachedViews = try await dependencies.repository.fetchLibraryViews()
+        guard !Task.isCancelled, owns(ownership) else { return nil }
+
+        let cachedMatches = matchingLibraryViewIDs(in: cachedViews, criteria: criteria)
+        if !cachedMatches.isEmpty {
+            return cachedMatches
+        }
+
+        guard !Task.isCancelled, owns(ownership) else { return nil }
+        let remoteViews = try await dependencies.apiClient.fetchUserViews()
+        guard !Task.isCancelled, owns(ownership) else { return nil }
+
+        if !remoteViews.isEmpty {
+            guard !Task.isCancelled, owns(ownership) else { return nil }
+            try await dependencies.repository.saveLibraryViews(remoteViews)
+            guard !Task.isCancelled, owns(ownership) else { return nil }
+        }
+
+        return matchingLibraryViewIDs(in: remoteViews, criteria: criteria)
+    }
+
+    private func matchingLibraryViewIDs(
+        in views: [Shared.LibraryView],
+        criteria: LibraryCriteria
+    ) -> [String] {
+        views
+            .filter { $0.supports(mediaType: criteria.filter) }
+            .map(\.id)
+    }
+
+    private func querySortBy(for criteria: LibraryCriteria) -> LibraryItemSort {
+        switch criteria.sortMode {
         case .recent:
             return .dateCreated
         case .title:
@@ -168,8 +394,8 @@ final class LibraryViewModel {
         }
     }
 
-    private var querySortDescending: Bool {
-        switch sortMode {
+    private func querySortDescending(for criteria: LibraryCriteria) -> Bool {
+        switch criteria.sortMode {
         case .recent:
             return true
         case .title:
@@ -177,30 +403,9 @@ final class LibraryViewModel {
         }
     }
 
-    private func resolvedLibraryViewIDs() async throws -> [String] {
-        let cachedViews = try await dependencies.repository.fetchLibraryViews()
-        let cachedMatches = matchingLibraryViewIDs(in: cachedViews)
-        if !cachedMatches.isEmpty {
-            return cachedMatches
-        }
-
-        let remoteViews = try await dependencies.apiClient.fetchUserViews()
-        if !remoteViews.isEmpty {
-            try await dependencies.repository.saveLibraryViews(remoteViews)
-        }
-
-        return matchingLibraryViewIDs(in: remoteViews)
-    }
-
-    private func matchingLibraryViewIDs(in views: [Shared.LibraryView]) -> [String] {
-        views
-            .filter { $0.supports(mediaType: selectedFilter) }
-            .map(\.id)
-    }
-
-    private func sorted(_ values: [MediaItem]) -> [MediaItem] {
+    private func sorted(_ values: [MediaItem], criteria: LibraryCriteria) -> [MediaItem] {
         let unique = deduped(values)
-        switch sortMode {
+        switch criteria.sortMode {
         case .recent:
             return unique.sorted {
                 ($0.year ?? 0, $0.name) > ($1.year ?? 0, $1.name)
@@ -284,4 +489,85 @@ final class LibraryViewModel {
         score += min(item.genres.count, 3)
         return score
     }
+
+    private func beginLoading(
+        generation: Int,
+        paginationRequestID: Int?
+    ) -> Int {
+        loadingToken &+= 1
+        loadingOwner = LoadingOwner(
+            token: loadingToken,
+            generation: generation,
+            paginationRequestID: paginationRequestID
+        )
+        isLoadingPage = true
+        return loadingToken
+    }
+
+    private func isCriteriaLoading(generation: Int) -> Bool {
+        guard let loadingOwner else { return false }
+        return loadingOwner.generation == generation && loadingOwner.paginationRequestID == nil
+    }
+
+    private func owns(_ request: CriteriaRequest) -> Bool {
+        criteriaGeneration == request.generation && activeCriteria == request.criteria
+    }
+
+    private func owns(_ request: PaginationRequest) -> Bool {
+        criteriaGeneration == request.generation &&
+            paginationRequestID == request.requestID &&
+            activeCriteria == request.criteria
+    }
+
+    private func owns(_ ownership: RequestOwnership) -> Bool {
+        switch ownership {
+        case let .criteria(request):
+            return owns(request)
+        case let .pagination(request):
+            return owns(request)
+        }
+    }
+
+    private func finish(_ request: CriteriaRequest) {
+        guard owns(request) else { return }
+        criteriaTask = nil
+        clearLoading(token: request.loadingToken)
+    }
+
+    private func finish(_ request: PaginationRequest) {
+        guard owns(request) else { return }
+        paginationTask = nil
+        clearLoading(token: request.loadingToken)
+    }
+
+    private func clearLoading(token: Int) {
+        guard loadingOwner?.token == token else { return }
+        loadingOwner = nil
+        isLoadingPage = false
+    }
+}
+
+private struct CriteriaRequest: Equatable, Sendable {
+    let generation: Int
+    let criteria: LibraryCriteria
+    let loadingToken: Int
+}
+
+private struct PaginationRequest: Equatable, Sendable {
+    let generation: Int
+    let requestID: Int
+    let criteria: LibraryCriteria
+    let page: Int
+    let loadingToken: Int
+}
+
+private enum RequestOwnership: Equatable, Sendable {
+    case criteria(CriteriaRequest)
+    case pagination(PaginationRequest)
+}
+
+private struct LoadingOwner: Equatable, Sendable {
+    let token: Int
+    let generation: Int
+    let paginationRequestID: Int?
 }

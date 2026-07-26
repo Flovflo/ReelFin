@@ -33,9 +33,10 @@ final class LibraryViewModelTests: XCTestCase {
         let viewModel = LibraryViewModel(dependencies: dependencies)
         await viewModel.loadInitial()
         let resolvedViewIDs = await apiClient.recordedQueries().last?.resolvedViewIDs
+        let savedViewIDs = await repository.recordedSavedViews().map(\.id)
 
         XCTAssertEqual(viewModel.items.map(\.id), ["movie-a-1", "movie-b-1"])
-        XCTAssertEqual(repository.savedViews.map(\.id), ["movies-a", "movies-b", "shows-a"])
+        XCTAssertEqual(savedViewIDs, ["movies-a", "movies-b", "shows-a"])
         XCTAssertEqual(resolvedViewIDs, ["movies-a", "movies-b"])
     }
 
@@ -81,17 +82,273 @@ final class LibraryViewModelTests: XCTestCase {
         let playbackSourceItemIDs = await apiClient.recordedPlaybackSourceItemIDs()
         XCTAssertEqual(playbackSourceItemIDs, [])
     }
+
+    func testLatestCriteriaWinsWhenOlderRemoteFetchFinishesLast() async throws {
+        let cachedAlpha = MediaItem(
+            id: "cached-alpha",
+            name: "Cached Alpha",
+            mediaType: .movie,
+            libraryID: "movies"
+        )
+        let cachedBeta = MediaItem(
+            id: "cached-beta",
+            name: "Cached Beta",
+            mediaType: .series,
+            libraryID: "shows"
+        )
+        let remoteAlpha = MediaItem(
+            id: "remote-alpha",
+            name: "Remote Alpha",
+            mediaType: .movie,
+            libraryID: "movies"
+        )
+        let remoteBeta = MediaItem(
+            id: "remote-beta",
+            name: "Remote Beta",
+            mediaType: .series,
+            libraryID: "shows"
+        )
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: [],
+            itemsByViewID: [:],
+            libraryFetchPlans: [
+                .suspended,
+                .immediate([remoteBeta])
+            ]
+        )
+        let repository = LibraryViewModelRepositoryStub(
+            views: Self.libraryViews,
+            searchPlans: [
+                .immediate([cachedAlpha]),
+                .immediate([cachedBeta])
+            ]
+        )
+        let viewModel = LibraryViewModel(
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        viewModel.searchQuery = "  alpha  "
+        viewModel.selectedFilter = .movie
+        viewModel.sortMode = .recent
+        let alphaTask = viewModel.submitCriteria()
+        await apiClient.waitForLibraryFetchCount(1)
+
+        viewModel.searchQuery = " beta "
+        viewModel.selectedFilter = .series
+        viewModel.sortMode = .title
+        let betaTask = viewModel.submitCriteria()
+        await apiClient.waitForLibraryFetchCount(2)
+        await betaTask.value
+
+        XCTAssertEqual(viewModel.items.map(\.id), [cachedBeta.id, remoteBeta.id])
+        let queriesBeforeAlphaFinishes = await apiClient.recordedQueries()
+        XCTAssertEqual(queriesBeforeAlphaFinishes.count, 2)
+        XCTAssertEqual(queriesBeforeAlphaFinishes[0].query, "alpha")
+        XCTAssertEqual(queriesBeforeAlphaFinishes[0].mediaType, .movie)
+        XCTAssertEqual(queriesBeforeAlphaFinishes[0].sortBy, .dateCreated)
+        XCTAssertTrue(queriesBeforeAlphaFinishes[0].sortDescending)
+        XCTAssertEqual(queriesBeforeAlphaFinishes[0].resolvedViewIDs, ["movies"])
+        XCTAssertEqual(queriesBeforeAlphaFinishes[1].query, "beta")
+        XCTAssertEqual(queriesBeforeAlphaFinishes[1].mediaType, .series)
+        XCTAssertEqual(queriesBeforeAlphaFinishes[1].sortBy, .sortName)
+        XCTAssertFalse(queriesBeforeAlphaFinishes[1].sortDescending)
+        XCTAssertEqual(queriesBeforeAlphaFinishes[1].resolvedViewIDs, ["shows"])
+
+        await apiClient.resumeLibraryFetch(at: 0, returning: [remoteAlpha])
+        await alphaTask.value
+
+        XCTAssertEqual(viewModel.items.map(\.id), [cachedBeta.id, remoteBeta.id])
+        let upsertedBatches = await repository.recordedUpsertBatches()
+        XCTAssertEqual(upsertedBatches.map { $0.map(\.id) }, [[remoteBeta.id]])
+    }
+
+    func testFilterAndSortReloadStartsWhilePreviousPaginationIsSuspended() async throws {
+        let initialPage = Self.makeItems(
+            prefix: "movie",
+            count: 48,
+            mediaType: .movie,
+            libraryID: "movies"
+        )
+        let stalePage = [
+            MediaItem(id: "stale-page", name: "Stale Page", mediaType: .movie, libraryID: "movies")
+        ]
+        let currentPage = [
+            MediaItem(id: "current-series", name: "Current Series", mediaType: .series, libraryID: "shows")
+        ]
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: [],
+            itemsByViewID: [:],
+            libraryFetchPlans: [
+                .immediate(initialPage),
+                .suspended,
+                .immediate(currentPage)
+            ]
+        )
+        let repository = LibraryViewModelRepositoryStub(views: Self.libraryViews)
+        let viewModel = LibraryViewModel(
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        await viewModel.submitCriteria().value
+        let stalePaginationTask = try XCTUnwrap(viewModel.submitPaginationIfNeeded())
+        await apiClient.waitForLibraryFetchCount(2)
+
+        viewModel.selectedFilter = .series
+        viewModel.sortMode = .title
+        let currentCriteriaTask = viewModel.submitCriteria()
+        await apiClient.waitForLibraryFetchCount(3)
+
+        let queries = await apiClient.recordedQueries()
+        XCTAssertEqual(queries.map(\.page), [0, 1, 0])
+        XCTAssertEqual(queries[2].query, nil)
+        XCTAssertEqual(queries[2].mediaType, .series)
+        XCTAssertEqual(queries[2].sortBy, .sortName)
+        XCTAssertFalse(queries[2].sortDescending)
+        XCTAssertEqual(queries[2].resolvedViewIDs, ["shows"])
+
+        await currentCriteriaTask.value
+        await apiClient.resumeLibraryFetch(at: 1, returning: stalePage)
+        await stalePaginationTask.value
+
+        XCTAssertEqual(viewModel.items.map(\.id), currentPage.map(\.id))
+        XCTAssertNil(viewModel.submitPaginationIfNeeded())
+        let finalQueries = await apiClient.recordedQueries()
+        XCTAssertEqual(finalQueries.count, 3)
+    }
+
+    func testCancelIntentPreservesLastCommittedCachedSearchResults() async throws {
+        let cachedResult = MediaItem(
+            id: "cached-search",
+            name: "Cached Search",
+            mediaType: .movie,
+            libraryID: "movies"
+        )
+        let staleRemoteResult = MediaItem(
+            id: "stale-remote-search",
+            name: "Stale Remote Search",
+            mediaType: .movie,
+            libraryID: "movies"
+        )
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: [],
+            itemsByViewID: [:],
+            libraryFetchPlans: [.suspended]
+        )
+        let repository = LibraryViewModelRepositoryStub(
+            views: Self.libraryViews,
+            searchPlans: [.immediate([cachedResult])]
+        )
+        let viewModel = LibraryViewModel(
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        viewModel.searchQuery = "cached"
+        let searchTask = viewModel.submitCriteria()
+        await apiClient.waitForLibraryFetchCount(1)
+        XCTAssertEqual(viewModel.items.map(\.id), [cachedResult.id])
+
+        viewModel.cancelIntents()
+        await apiClient.resumeLibraryFetch(at: 0, returning: [staleRemoteResult])
+        await searchTask.value
+
+        XCTAssertEqual(viewModel.items.map(\.id), [cachedResult.id])
+        XCTAssertFalse(viewModel.isLoadingPage)
+        let upsertedBatches = await repository.recordedUpsertBatches()
+        XCTAssertTrue(upsertedBatches.isEmpty)
+    }
+
+    func testIsLoadingPageTracksOnlyCurrentCriteriaGeneration() async throws {
+        let initialPage = Self.makeItems(
+            prefix: "movie",
+            count: 48,
+            mediaType: .movie,
+            libraryID: "movies"
+        )
+        let stalePage = [
+            MediaItem(id: "stale-page", name: "Stale Page", mediaType: .movie, libraryID: "movies")
+        ]
+        let currentPage = [
+            MediaItem(id: "current-series", name: "Current Series", mediaType: .series, libraryID: "shows")
+        ]
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: [],
+            itemsByViewID: [:],
+            libraryFetchPlans: [
+                .immediate(initialPage),
+                .suspended,
+                .suspended
+            ]
+        )
+        let repository = LibraryViewModelRepositoryStub(views: Self.libraryViews)
+        let viewModel = LibraryViewModel(
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        await viewModel.submitCriteria().value
+        let stalePaginationTask = try XCTUnwrap(viewModel.submitPaginationIfNeeded())
+        await apiClient.waitForLibraryFetchCount(2)
+
+        viewModel.selectedFilter = .series
+        viewModel.sortMode = .title
+        let currentCriteriaTask = viewModel.submitCriteria()
+        await apiClient.waitForLibraryFetchCount(3)
+        XCTAssertTrue(viewModel.isLoadingPage)
+
+        await apiClient.resumeLibraryFetch(at: 1, returning: stalePage)
+        await stalePaginationTask.value
+        XCTAssertTrue(viewModel.isLoadingPage)
+
+        await apiClient.resumeLibraryFetch(at: 2, returning: currentPage)
+        await currentCriteriaTask.value
+        XCTAssertFalse(viewModel.isLoadingPage)
+        XCTAssertEqual(viewModel.items.map(\.id), currentPage.map(\.id))
+    }
+
+    private static let libraryViews = [
+        SharedLibraryView(id: "movies", name: "Movies", collectionType: "movies"),
+        SharedLibraryView(id: "shows", name: "Shows", collectionType: "tvshows")
+    ]
+
+    private static func makeItems(
+        prefix: String,
+        count: Int,
+        mediaType: MediaType,
+        libraryID: String
+    ) -> [MediaItem] {
+        (0 ..< count).map { index in
+            MediaItem(
+                id: "\(prefix)-\(index)",
+                name: "\(prefix.capitalized) \(index)",
+                mediaType: mediaType,
+                year: 2_100 - index,
+                libraryID: libraryID
+            )
+        }
+    }
+}
+
+private enum LibraryItemFetchPlan: Sendable {
+    case immediate([MediaItem])
+    case suspended
 }
 
 private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
     private let views: [SharedLibraryView]
     private let itemsByViewID: [String: [MediaItem]]
+    private var libraryFetchPlans: [LibraryItemFetchPlan]
     private var queries: [LibraryQuery] = []
     private var playbackSourceItemIDs: [String] = []
+    private var suspendedLibraryFetches: [Int: CheckedContinuation<[MediaItem], Never>] = [:]
+    private var libraryFetchCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
-    init(views: [SharedLibraryView], itemsByViewID: [String: [MediaItem]]) {
+    init(
+        views: [SharedLibraryView],
+        itemsByViewID: [String: [MediaItem]],
+        libraryFetchPlans: [LibraryItemFetchPlan] = []
+    ) {
         self.views = views
         self.itemsByViewID = itemsByViewID
+        self.libraryFetchPlans = libraryFetchPlans
     }
 
     func currentConfiguration() async -> ServerConfiguration? {
@@ -149,6 +406,20 @@ private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
 
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
         queries.append(query)
+        resumeLibraryFetchCountWaiters()
+        let callIndex = queries.count - 1
+
+        if !libraryFetchPlans.isEmpty {
+            switch libraryFetchPlans.removeFirst() {
+            case let .immediate(items):
+                return items
+            case .suspended:
+                return await withCheckedContinuation { continuation in
+                    suspendedLibraryFetches[callIndex] = continuation
+                }
+            }
+        }
+
         let viewIDs = query.resolvedViewIDs
         if viewIDs.isEmpty {
             return []
@@ -193,12 +464,55 @@ private actor LibraryViewModelAPIClientStub: JellyfinAPIClientProtocol {
     func recordedPlaybackSourceItemIDs() -> [String] {
         playbackSourceItemIDs
     }
+
+    func waitForLibraryFetchCount(_ count: Int) async {
+        guard queries.count < count else { return }
+
+        await withCheckedContinuation { continuation in
+            libraryFetchCountWaiters.append((count, continuation))
+        }
+    }
+
+    func resumeLibraryFetch(at callIndex: Int, returning items: [MediaItem]) {
+        suspendedLibraryFetches.removeValue(forKey: callIndex)?.resume(returning: items)
+    }
+
+    private func resumeLibraryFetchCountWaiters() {
+        var remaining: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in libraryFetchCountWaiters {
+            if queries.count >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        libraryFetchCountWaiters = remaining
+    }
 }
 
-private final class LibraryViewModelRepositoryStub: MetadataRepositoryProtocol, @unchecked Sendable {
-    var savedViews: [SharedLibraryView] = []
-    private var views: [SharedLibraryView] = []
+private actor LibraryViewModelRepositoryStub: MetadataRepositoryProtocol {
+    private var savedViews: [SharedLibraryView] = []
+    private var views: [SharedLibraryView]
     private var itemsByID: [String: MediaItem] = [:]
+    private var libraryFetchPlans: [LibraryItemFetchPlan]
+    private var searchPlans: [LibraryItemFetchPlan]
+    private var libraryQueries: [LibraryQuery] = []
+    private var searchQueries: [(query: String, limit: Int)] = []
+    private var upsertBatches: [[MediaItem]] = []
+    private var suspendedLibraryFetches: [Int: CheckedContinuation<[MediaItem], Never>] = [:]
+    private var suspendedSearches: [Int: CheckedContinuation<[MediaItem], Never>] = [:]
+    private var libraryFetchCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private var searchCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    init(
+        views: [SharedLibraryView] = [],
+        libraryFetchPlans: [LibraryItemFetchPlan] = [],
+        searchPlans: [LibraryItemFetchPlan] = []
+    ) {
+        self.views = views
+        self.libraryFetchPlans = libraryFetchPlans
+        self.searchPlans = searchPlans
+    }
 
     func saveLibraryViews(_ views: [SharedLibraryView]) async throws {
         self.views = views
@@ -213,6 +527,7 @@ private final class LibraryViewModelRepositoryStub: MetadataRepositoryProtocol, 
     func fetchHomeFeed() async throws -> HomeFeed { .empty }
 
     func upsertItems(_ items: [MediaItem]) async throws {
+        upsertBatches.append(items)
         for item in items {
             itemsByID[item.id] = item
         }
@@ -223,6 +538,21 @@ private final class LibraryViewModelRepositoryStub: MetadataRepositoryProtocol, 
     }
 
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
+        libraryQueries.append(query)
+        resumeLibraryFetchCountWaiters()
+        let callIndex = libraryQueries.count - 1
+
+        if !libraryFetchPlans.isEmpty {
+            switch libraryFetchPlans.removeFirst() {
+            case let .immediate(items):
+                return items
+            case .suspended:
+                return await withCheckedContinuation { continuation in
+                    suspendedLibraryFetches[callIndex] = continuation
+                }
+            }
+        }
+
         let allowedViewIDs = Set(query.resolvedViewIDs)
         return itemsByID.values
             .filter { item in
@@ -234,6 +564,21 @@ private final class LibraryViewModelRepositoryStub: MetadataRepositoryProtocol, 
     }
 
     func searchItems(query: String, limit: Int) async throws -> [MediaItem] {
+        searchQueries.append((query, limit))
+        resumeSearchCountWaiters()
+        let callIndex = searchQueries.count - 1
+
+        if !searchPlans.isEmpty {
+            switch searchPlans.removeFirst() {
+            case let .immediate(items):
+                return items
+            case .suspended:
+                return await withCheckedContinuation { continuation in
+                    suspendedSearches[callIndex] = continuation
+                }
+            }
+        }
+
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
         return Array(itemsByID.values.prefix(limit))
@@ -243,6 +588,70 @@ private final class LibraryViewModelRepositoryStub: MetadataRepositoryProtocol, 
     func fetchPlaybackProgress(itemID: String) async throws -> PlaybackProgress? { _ = itemID; return nil }
     func fetchLastSyncDate() async throws -> Date? { nil }
     func setLastSyncDate(_ date: Date) async throws { _ = date }
+
+    func recordedSavedViews() -> [SharedLibraryView] {
+        savedViews
+    }
+
+    func recordedLibraryQueries() -> [LibraryQuery] {
+        libraryQueries
+    }
+
+    func recordedSearchQueries() -> [(query: String, limit: Int)] {
+        searchQueries
+    }
+
+    func recordedUpsertBatches() -> [[MediaItem]] {
+        upsertBatches
+    }
+
+    func waitForLibraryFetchCount(_ count: Int) async {
+        guard libraryQueries.count < count else { return }
+
+        await withCheckedContinuation { continuation in
+            libraryFetchCountWaiters.append((count, continuation))
+        }
+    }
+
+    func waitForSearchCount(_ count: Int) async {
+        guard searchQueries.count < count else { return }
+
+        await withCheckedContinuation { continuation in
+            searchCountWaiters.append((count, continuation))
+        }
+    }
+
+    func resumeLibraryFetch(at callIndex: Int, returning items: [MediaItem]) {
+        suspendedLibraryFetches.removeValue(forKey: callIndex)?.resume(returning: items)
+    }
+
+    func resumeSearch(at callIndex: Int, returning items: [MediaItem]) {
+        suspendedSearches.removeValue(forKey: callIndex)?.resume(returning: items)
+    }
+
+    private func resumeLibraryFetchCountWaiters() {
+        var remaining: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in libraryFetchCountWaiters {
+            if libraryQueries.count >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        libraryFetchCountWaiters = remaining
+    }
+
+    private func resumeSearchCountWaiters() {
+        var remaining: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in searchCountWaiters {
+            if searchQueries.count >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        searchCountWaiters = remaining
+    }
 }
 
 @MainActor

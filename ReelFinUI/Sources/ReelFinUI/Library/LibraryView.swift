@@ -18,6 +18,7 @@ struct LibraryView: View {
 #endif
     @State private var viewModel: LibraryViewModel
     private let dependencies: ReelFinDependencies
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var warmupTask: Task<Void, Never>?
     @State private var selectedDetailTransitionSourceID: String?
 #if os(tvOS)
@@ -68,6 +69,9 @@ struct LibraryView: View {
             }
         }
         .onDisappear {
+            searchDebounceTask?.cancel()
+            searchDebounceTask = nil
+            viewModel.cancelIntents()
             warmupTask?.cancel()
 #if os(tvOS)
             controlBarNavigationUnlockTask?.cancel()
@@ -79,21 +83,16 @@ struct LibraryView: View {
 #endif
         }
         .task {
-            await viewModel.loadInitial()
+            _ = viewModel.submitCriteria()
         }
         .onChange(of: viewModel.searchQuery) { _, _ in
-            Task {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                if !Task.isCancelled {
-                    await viewModel.searchChanged()
-                }
-            }
+            scheduleSearchCriteriaSubmission()
         }
         .onChange(of: viewModel.selectedFilter) { _, _ in
-            Task { await viewModel.loadInitial() }
+            submitCriteriaImmediately()
         }
         .onChange(of: viewModel.sortMode) { _, _ in
-            Task { await viewModel.loadInitial() }
+            submitCriteriaImmediately()
         }
 #if os(tvOS)
         .toolbar(.hidden, for: .navigationBar)
@@ -570,9 +569,27 @@ struct LibraryView: View {
 
     private func handleVisibleItem(_ item: MediaItem) {
         guard viewModel.paginationTriggerItemID == item.id else { return }
-        Task {
-            await viewModel.loadMoreIfNeeded()
+        _ = viewModel.submitPaginationIfNeeded()
+    }
+
+    private func scheduleSearchCriteriaSubmission() {
+        searchDebounceTask?.cancel()
+        searchDebounceTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            searchDebounceTask = nil
+            _ = viewModel.submitCriteria()
         }
+    }
+
+    private func submitCriteriaImmediately() {
+        searchDebounceTask?.cancel()
+        searchDebounceTask = nil
+        _ = viewModel.submitCriteria()
     }
 
     private var nativeDetailNavigationBinding: Binding<Bool> {
