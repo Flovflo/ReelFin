@@ -346,22 +346,56 @@ Regenerate with XcodeGen, build iOS and tvOS sequentially or with distinct Deriv
 
 **Files:**
 
+- Modify: `ReelFinUI/Sources/ReelFinUI/Theme/EditorialBrowseVisualSystem.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Components/HeroCarouselView.swift`
 - Create: `ReelFinUI/Sources/ReelFinUI/Components/EditorialMediaIdentityView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Components/CinematicBackdropView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Theme/ReelFinTheme.swift`
+- Modify: `Tests/PlaybackEngineTests/EditorialBrowseVisualSystemTests.swift`
 - Modify: `Tests/PlaybackEngineTests/TVPerformanceStateTests.swift`
 - Modify: `Tests/PlaybackEngineTests/TVUXPolishLayoutTests.swift`
+- Modify: `Tests/ReelFinUITests/HomeAndDetailActionsUITests.swift`
+- Modify: `PLANS.md`
+- Modify: `OPTIMIZATION_AUDIT.md`
 
 - [ ] **Step 1: Extend failing Home policy/layout tests**
 
-Cover `HeroRotationPolicy.nextIndex`, no advance for a single item, fixed hero transition duration, champagne active-page indicator role, focus scale/fixed shadow values, and that auto-advance has no haptic policy while direct paging may.
+Add small pure seams before touching the views:
+
+```swift
+enum HeroPageChangeOrigin { case automatic, direct }
+
+extension HeroRotationPolicy {
+    static func allowsHaptic(for origin: HeroPageChangeOrigin) -> Bool
+}
+
+enum CinematicBackdropLayerPolicy {
+    enum Source: Equatable { case item, fallback, none }
+    static let artworkLayerCount = 2
+    static func source(hasItem: Bool, hasFallbackItem: Bool) -> Source
+}
+
+enum HomeEditorialPresentationPolicy {
+    static let activeIndicatorWidth: CGFloat = 24
+    static let inactiveIndicatorWidth: CGFloat = 8
+    static let focusedShadowRadius: CGFloat = 34
+    static let focusedShadowYOffset: CGFloat = 18
+    static func focusedMediaGlass(
+        isFocused: Bool,
+        reduceTransparency: Bool
+    ) -> EditorialGlassPresentation?
+}
+```
+
+Test that automatic page changes never request haptics while direct changes may; an item replaces the fallback backdrop, fallback is used only without an item, and the artwork budget is exactly two layers; resting media has no glass, focused media is passive glass, Reduce Transparency produces opaque focused media, and the focused shadow stays fixed at `34/18`. Keep the already-green `nextIndex`, single-item, duration, and glass role assertions as regression coverage rather than pretending they are RED.
 
 - [ ] **Step 2: Confirm targeted RED**
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
   -only-testing:PlaybackEngineTests/EditorialBrowseVisualSystemTests \
   -only-testing:PlaybackEngineTests/TVPerformanceStateTests \
   -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests
@@ -369,30 +403,48 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
 
 - [ ] **Step 3: Make hero rotation owned and accessible**
 
-Replace unconditional timer behavior with scene-phase, interaction, Reduce Motion, and VoiceOver eligibility. Pause while drag/press interaction is active. Remove `.sensoryFeedback(trigger: currentIndex)` from the Play button; attach haptic only to direct user paging/activation if appropriate. Use a local animation on page identity, never an ancestor animation.
+In the iOS hero, observe scene phase, Reduce Motion, Reduce Transparency, and VoiceOver. Track touch/drag interaction with a simultaneous zero-distance gesture so the native `TabView` paging gesture remains intact. Gate timer advancement through `HeroRotationPolicy`, calculate the next page with `nextIndex`, and use only a local `.easeInOut(duration: EditorialMotion.heroPageDuration(...))` animation. Remove `.sensoryFeedback(trigger: currentIndex)` from Play: an automatic timer tick must never generate haptics. Preserve the public initializer, the selected-item binding/callbacks, transition IDs, and all existing favorite identifiers.
 
 - [ ] **Step 4: Add shared logo-first identity**
 
-Extract the existing tvOS logo-first behavior into `EditorialMediaIdentityView`, supporting logo URL, title fallback, kicker, metadata, and platform-specific max sizes. Failed logos reveal title without delaying actions.
+Create `EditorialMediaIdentityView` with `iosHero`, `tvHero`, and `landscapeRail` styles plus item, fallback title, optional kicker/metadata, API client, and image pipeline. Resolve the canonical `.logo` `ArtworkRequest`, use the authenticated `apiClient.imageURL(for:)` path, check the shared cache before transport, and pass both cached and downloaded images through the existing `TransparentImageCropper.readableLogoImage`. Check task cancellation after every suspension and immediately before publishing. The text fallback must render immediately, actions must never wait for a logo, the image is decorative, and the combined element exposes the media name as a header. Fade logo opacity using `EditorialMotion`; do not animate layout size. Extract/reuse the existing cropper—do not duplicate its pixel logic. Replace `TVHeroTitleView`, the iOS hero text title, and `ImmersiveRowArtworkTitleView` with this component; leave Detail identity for Task 7.
 
 - [ ] **Step 5: Apply editorial Home composition**
 
-On iOS: kicker → logo/title → one metadata line → grouped Play/Favorite/More actions inside one stable `GlassEffectContainer`; active indicator uses champagne; section-forward buttons use compact glass. On tvOS: preserve exact focus IDs and native Buttons; grouped navigation/actions use native glass; only focused media gets tonal fill/rim/fixed shadow. Resting cards and background remain non-glass.
+On iOS, compose kicker → logo/title → one metadata line → actions, then use champagne only for the active capsule indicator. Keep the media backdrop itself tappable and add a distinct More circle calling `onTap(item)` with identifier `home_featured_more_button_<id>`. Put Play, Favorite, and More in one stable `GlassEffectContainer(spacing: 12)`, applying one interactive effect per control—never to the container/HStack—and provide an opaque tonal fallback when Reduce Transparency is enabled. Use a private press style driven by `EditorialMotion` and suppress scale under Reduce Motion. Apply compact-control glass only to each section chevron, not the header row. Add a UI regression proving More opens Detail.
+
+On tvOS, preserve native `Button`, `TVNoChromeButtonStyle`, focus IDs, `.onMoveCommand`, action order, and the existing single-action topology. Give the action the `actionCluster` presentation with an opaque Reduce Transparency fallback. Keep promo/quality badges static tonal (they are not controls). Only a focused Home shelf card receives passive media glass; resting cards have no glass/rim, and Reduce Transparency uses opaque tonal focus. Keep the fixed `34/18` focused shadow, current matched transitions/focus modifiers, and focus scale; route the latter through `EditorialMotion.focusScale` in `TVMotionFocusModifier`.
 
 - [ ] **Step 6: Reduce backdrop variants**
 
-Refactor `CinematicBackdropView` to one low-resolution blurred base plus one selected sharp layer, with fallback replacing rather than doubling the layer tree. Remove `.drawingGroup()` unless a measured comparison proves it faster.
+Resolve exactly one displayed source: current item, otherwise fallback, otherwise none. Render exactly one low-resolution blurred `.heroLow` request plus one sharp `.heroHigh` request for that source. Remove the second blur, full-screen material wash, and `.drawingGroup()`; retain the cheap gradient scrims. Fire `onHeroImageVisible` only from the sharp layer. Keep the Home call site and its ambient telemetry semantics unchanged.
 
-- [ ] **Step 7: Validate Home tests and both builds**
+- [ ] **Step 7: Keep the change scoped and document the hot path**
+
+Do not change navigation roots, playback routing, Home section ordering, transition identities, public hero API, or tvOS focus topology. Record the two-layer backdrop, cache-first logo identity, owned carousel motion, and Glass placement in `PLANS.md` and `OPTIMIZATION_AUDIT.md`.
+
+- [ ] **Step 8: Validate Home tests, UI route, and both builds**
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
+  -only-testing:PlaybackEngineTests/EditorialBrowseVisualSystemTests \
   -only-testing:PlaybackEngineTests/TVPerformanceStateTests \
   -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
+  -only-testing:ReelFinUITests/HomeAndDetailActionsUITests
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
-  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.5'
 ```
+
+Run `xcodegen generate` before the builds, execute the two platform builds sequentially (or with distinct DerivedData paths), and finish with `git diff --check`.
 
 ---
 
