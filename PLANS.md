@@ -731,3 +731,11 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Route speculative artwork from Sync, Home, Library, and Detail through one required `ArtworkPrefetching` dependency backed by the authenticated image pipeline; remove the API fetch-and-discard path and all production `prefetchImages` calls.
 - Keep prefetch URL resolution sequential and cancelable, de-duplicate first-seen URLs, replace stale Sync prefetch tasks, and defer concurrency bounds/stale-generation work to the next optimization lot.
 - Validate canonical mappings, cancellation, ordering, pipeline batching, token headers, Sync row roles, and latest-wins replacement before sequential iOS/tvOS builds.
+
+## Bounded Artwork Image Work And Stale-Publication Guard - 2026-07-26
+
+- Bound speculative image prefetch to four active pipeline consumers after stable URL de-duplication, and admit at most 24 first-seen candidates one-for-one as work completes.
+- Run ImageIO thumbnail work on one utility `OperationQueue` capped at two synchronous operations. Queued/running cancellation rejects results, while cache lookup remains nonthrowing and disk/network load paths propagate cancellation.
+- Give every `CachedRemoteImage` load a wrapping generation token and a dedicated consumer identity. Guard URL resolution, cache lookup, primary fetch, fallback resolution/fetch, logging, publication, and callbacks against cancellation plus current-generation ownership.
+- Split shimmer rendering into distinct static and animated subviews. iOS destroys the animated branch when Reduce Motion becomes active or animation is disabled; tvOS always renders the static branch.
+- Preserve the Task 2 `ArtworkRequest`, `DefaultArtworkPrefetcher`, authenticated transport/cache keys, and both public `CachedRemoteImage` initializers. Validate continuation-driven races without sleeps, then regenerate and build iOS/tvOS sequentially.

@@ -1,10 +1,52 @@
 import SwiftUI
 
-public struct ShimmerView: View {
-#if os(tvOS)
-    public init() {}
+enum ShimmerAnimationBranch: String, Hashable, Identifiable {
+    case `static`
+    case animated
 
+    var id: Self { self }
+}
+
+enum ShimmerAnimationPolicy {
+    static func branch(animationEnabled: Bool, reduceMotion: Bool) -> ShimmerAnimationBranch {
+        animationEnabled && !reduceMotion ? .animated : .static
+    }
+}
+
+public struct ShimmerView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let animationEnabled: Bool
+
+    public init(animationEnabled: Bool = true) {
+        self.animationEnabled = animationEnabled
+    }
+
+    @ViewBuilder
     public var body: some View {
+#if os(tvOS)
+        StaticShimmerView()
+            .id(ShimmerAnimationBranch.static)
+#else
+        let branch = ShimmerAnimationPolicy.branch(
+            animationEnabled: animationEnabled,
+            reduceMotion: reduceMotion
+        )
+
+        switch branch {
+        case .static:
+            StaticShimmerView()
+                .id(branch)
+        case .animated:
+            AnimatedShimmerView()
+                .id(branch)
+        }
+#endif
+    }
+}
+
+private struct StaticShimmerView: View {
+    var body: some View {
         Rectangle()
             .fill(Color.white.opacity(0.08))
             .overlay {
@@ -21,12 +63,13 @@ public struct ShimmerView: View {
             }
             .clipped()
     }
-#else
+}
+
+#if !os(tvOS)
+private struct AnimatedShimmerView: View {
     @State private var phase: CGFloat = -0.7
 
-    public init() {}
-
-    public var body: some View {
+    var body: some View {
         GeometryReader { geometry in
             let gradient = LinearGradient(
                 colors: [
@@ -53,5 +96,5 @@ public struct ShimmerView: View {
                 }
         }
     }
-#endif
 }
+#endif

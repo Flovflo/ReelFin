@@ -12,12 +12,9 @@ public struct CachedRemoteImage: View {
     private let width: Int
     private let quality: Int
     private let contentMode: CachedRemoteImageContentMode
-    private let apiClient: JellyfinAPIClientProtocol
-    private let imagePipeline: ImagePipelineProtocol
     private let onImageLoaded: (() -> Void)?
 
-    @State private var image: UIImage?
-    @State private var request = CachedRemoteImageRequestState()
+    @StateObject private var loader: CachedRemoteImageLoader
 
     public init(
         request: ArtworkRequest,
@@ -31,9 +28,10 @@ public struct CachedRemoteImage: View {
         width = request.profile.width
         quality = request.profile.quality
         self.contentMode = contentMode
-        self.apiClient = apiClient
-        self.imagePipeline = imagePipeline
         self.onImageLoaded = onImageLoaded
+        _loader = StateObject(
+            wrappedValue: CachedRemoteImageLoader(apiClient: apiClient, imagePipeline: imagePipeline)
+        )
     }
 
     public init(
@@ -51,14 +49,15 @@ public struct CachedRemoteImage: View {
         self.width = width
         self.quality = quality
         self.contentMode = contentMode
-        self.apiClient = apiClient
-        self.imagePipeline = imagePipeline
         self.onImageLoaded = onImageLoaded
+        _loader = StateObject(
+            wrappedValue: CachedRemoteImageLoader(apiClient: apiClient, imagePipeline: imagePipeline)
+        )
     }
 
     public var body: some View {
         Group {
-            if let image {
+            if let image = loader.image {
                 Image(uiImage: image)
                     .resizable()
                     .modifier(RemoteImageScalingModifier(contentMode: contentMode))
@@ -74,94 +73,20 @@ public struct CachedRemoteImage: View {
         }
         .clipped()
         .task(id: requestIdentity) {
-            await load()
+            await loader.load(descriptor: descriptor, onImageLoaded: onImageLoaded)
         }
         .onDisappear {
-            if let requestURL = request.requestURL {
-                imagePipeline.cancel(url: requestURL, consumer: request.consumerID)
-                request.requestURL = nil
-            }
+            loader.invalidate()
         }
     }
 
-    @MainActor
-    private func load() async {
-        let previousConsumerID = request.consumerID
-        let consumerID = request.nextConsumerID()
-        let contentKey = "\(itemID)-\(type.rawValue)"
-        if request.contentKey != contentKey {
-            image = nil
-            request.contentKey = contentKey
-        }
-
-        guard let url = await apiClient.imageURL(
-            for: itemID,
+    private var descriptor: CachedRemoteImageDescriptor {
+        CachedRemoteImageDescriptor(
+            itemID: itemID,
             type: type,
             width: normalizedWidth,
             quality: quality
-        ) else {
-            if let requestURL = request.requestURL {
-                imagePipeline.cancel(url: requestURL, consumer: previousConsumerID)
-            }
-            return
-        }
-
-        var activeURL = url
-        if let requestURL = request.requestURL, requestURL != url {
-            imagePipeline.cancel(url: requestURL, consumer: previousConsumerID)
-        }
-        request.requestURL = activeURL
-        defer {
-            imagePipeline.cancel(url: activeURL, consumer: consumerID)
-        }
-
-        if let cached = await imagePipeline.cachedImage(for: activeURL) {
-            image = cached
-            onImageLoaded?()
-            return
-        }
-
-        do {
-            let downloaded = try await imagePipeline.image(for: activeURL, consumer: consumerID)
-            image = downloaded
-            onImageLoaded?()
-        } catch is CancellationError {
-            return
-        } catch {
-            if Self.shouldIgnoreImageError(error) {
-                return
-            }
-
-            // Fallback path: when poster/backdrop is missing, try the opposite type once.
-            if let fallbackType = Self.fallbackType(for: type),
-               let fallbackURL = await apiClient.imageURL(
-                for: itemID,
-                type: fallbackType,
-                width: normalizedWidth,
-                quality: quality
-               ) {
-                if activeURL != fallbackURL {
-                    imagePipeline.cancel(url: activeURL, consumer: consumerID)
-                }
-                activeURL = fallbackURL
-                request.requestURL = activeURL
-
-                do {
-                    let fallbackImage = try await imagePipeline.image(for: fallbackURL, consumer: consumerID)
-                    image = fallbackImage
-                    onImageLoaded?()
-                    return
-                } catch is CancellationError {
-                    return
-                } catch {
-                    if Self.shouldIgnoreImageError(error) {
-                        return
-                    }
-                }
-            }
-
-            AppLog.caching.error("Image load failed for \(url.reelfinLogString, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
+        )
     }
 
     private var requestIdentity: String {

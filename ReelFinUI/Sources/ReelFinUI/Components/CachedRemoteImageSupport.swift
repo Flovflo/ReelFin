@@ -26,15 +26,72 @@ struct RemoteImageScalingModifier: ViewModifier {
     }
 }
 
+struct CachedRemoteImageRequestToken: Hashable, Sendable {
+    fileprivate let generation: UInt
+    let consumerID: ImageRequestConsumerID
+}
+
+struct CachedRemoteImageCancellation: Hashable, Sendable {
+    let url: URL
+    let consumerID: ImageRequestConsumerID
+}
+
 struct CachedRemoteImageRequestState: Sendable {
-    var consumerID = ImageRequestConsumerID()
-    var requestURL: URL?
+    private var generation: UInt = 0
+    private var activeToken: CachedRemoteImageRequestToken?
+    private(set) var requestURL: URL?
     var contentKey: String?
 
-    mutating func nextConsumerID() -> ImageRequestConsumerID {
-        let consumerID = ImageRequestConsumerID()
-        self.consumerID = consumerID
-        return consumerID
+    mutating func begin() -> (
+        token: CachedRemoteImageRequestToken,
+        cancellation: CachedRemoteImageCancellation?
+    ) {
+        let cancellation = activeCancellation
+        generation &+= 1
+        let token = CachedRemoteImageRequestToken(
+            generation: generation,
+            consumerID: ImageRequestConsumerID()
+        )
+        activeToken = token
+        requestURL = nil
+        return (token, cancellation)
+    }
+
+    func owns(_ token: CachedRemoteImageRequestToken) -> Bool {
+        activeToken == token
+    }
+
+    mutating func attach(
+        _ url: URL,
+        to token: CachedRemoteImageRequestToken
+    ) -> CachedRemoteImageCancellation? {
+        guard owns(token) else { return nil }
+        let cancellation = requestURL.flatMap { attachedURL in
+            attachedURL == url
+                ? nil
+                : CachedRemoteImageCancellation(url: attachedURL, consumerID: token.consumerID)
+        }
+        requestURL = url
+        return cancellation
+    }
+
+    mutating func finish(_ token: CachedRemoteImageRequestToken) {
+        guard owns(token) else { return }
+        activeToken = nil
+        requestURL = nil
+    }
+
+    mutating func invalidate() -> CachedRemoteImageCancellation? {
+        let cancellation = activeCancellation
+        generation &+= 1
+        activeToken = nil
+        requestURL = nil
+        return cancellation
+    }
+
+    private var activeCancellation: CachedRemoteImageCancellation? {
+        guard let activeToken, let requestURL else { return nil }
+        return CachedRemoteImageCancellation(url: requestURL, consumerID: activeToken.consumerID)
     }
 }
 

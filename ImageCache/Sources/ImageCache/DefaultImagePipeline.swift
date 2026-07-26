@@ -1,7 +1,6 @@
 import Foundation
 import Shared
 import UIKit
-import ImageIO
 
 actor ImageTaskRegistry {
     private struct Entry {
@@ -53,11 +52,15 @@ private final class ImageLoadTracker: @unchecked Sendable {
 }
 
 public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
+    static let maximumConcurrentPrefetches = 4
+    static let maximumPrefetchURLs = 24
+
     private let memoryCache = NSCache<NSURL, UIImage>()
     private let diskCache: LRUDiskCache
     private let urlSession: URLSession
     private let tokenStore: TokenStoreProtocol
     private let registry = ImageTaskRegistry()
+    private let decodeScheduler = ImageDecodeScheduler()
 
     public init(
         diskCache: LRUDiskCache? = nil,
@@ -122,7 +125,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         let registered = await registry.existingOrRegisterTask(for: url, consumer: consumerID) {
             Task {
                 if let diskData = await self.diskCache.data(forKey: cacheKey),
-                   let image = await self.decodeImage(data: diskData, for: url) {
+                   let image = try await self.decodeImage(data: diskData, for: url) {
                     tracker.source = "disk_hit"
                     self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
                     return image
@@ -130,7 +133,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
                 let data = try await self.fetchImageData(url: url)
 
-                guard let image = await self.decodeImage(data: data, for: url) else {
+                guard let image = try await self.decodeImage(data: data, for: url) else {
                     throw AppError.decoding("Invalid image payload.")
                 }
 
@@ -188,7 +191,13 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         guard let data = await diskCache.data(forKey: url.reelfinCacheKey) else {
             return nil
         }
-        guard let image = await decodeImage(data: data, for: url) else {
+        let image: UIImage
+        do {
+            guard let decodedImage = try await decodeImage(data: data, for: url) else {
+                return nil
+            }
+            image = decodedImage
+        } catch {
             return nil
         }
         memoryCache.setObject(image, forKey: url as NSURL, cost: memoryCost(for: image))
@@ -196,9 +205,36 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     }
 
     public func prefetch(urls: [URL]) async {
+        var seenURLs = Set<URL>()
+        var candidates = [URL]()
+        candidates.reserveCapacity(min(urls.count, Self.maximumPrefetchURLs))
+        for url in urls where seenURLs.insert(url).inserted {
+            candidates.append(url)
+            if candidates.count == Self.maximumPrefetchURLs {
+                break
+            }
+        }
+        var iterator = candidates.makeIterator()
+
         await withTaskGroup(of: Void.self) { group in
-            for url in urls.prefix(24) {
-                guard !Task.isCancelled else { return }
+            for _ in 0 ..< Self.maximumConcurrentPrefetches {
+                guard !Task.isCancelled, let url = iterator.next() else {
+                    if Task.isCancelled {
+                        group.cancelAll()
+                    }
+                    return
+                }
+                group.addTask {
+                    _ = try? await self.image(for: url)
+                }
+            }
+
+            while await group.next() != nil {
+                guard !Task.isCancelled else {
+                    group.cancelAll()
+                    return
+                }
+                guard let url = iterator.next() else { continue }
                 group.addTask {
                     _ = try? await self.image(for: url)
                 }
@@ -220,26 +256,9 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
     }
 
-    private func decodeImage(data: Data, for url: URL) async -> UIImage? {
+    private func decodeImage(data: Data, for url: URL) async throws -> UIImage? {
         let maxPixelSize = max(requestedPixelSize(for: url), 320)
-        return await Task.detached(priority: .utility) {
-            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-                return UIImage(data: data)
-            }
-
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-            ]
-
-            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
-                return UIImage(cgImage: cgImage)
-            }
-
-            return UIImage(data: data)
-        }.value
+        return try await decodeScheduler.decode(data: data, maxPixelSize: maxPixelSize)
     }
 
     private func requestedPixelSize(for url: URL) -> Int {
