@@ -724,3 +724,10 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Publish iPhone and Apple TV as build `16` under the same `0.1.2` App Store record, attach both binaries to the existing tester groups, and explicitly submit each platform to Beta App Review. Build 16 supersedes the already-uploaded tvOS build 15 so both platforms contain the final async-boundary identity guard.
 - Gate completed: 33/33 tvOS UI tests passed, including ten authenticated real-player journeys, and the final authenticated iPhone player smoke passed with rendered video, active audio, pause/resume, and clean dismissal. Both signed archives passed platform, device-family, bundle, version, encryption, and signature inspection.
 - App Store Connect accepted iPhone build `16` and Apple TV build `16` as `VALID`; both are available to internal testers and `WAITING_FOR_BETA_REVIEW` for external testers. The superseded Apple TV build `15` was expired before submitting build `16`.
+
+## Canonical Artwork And Authenticated Prefetch Foundation - 2026-07-26
+
+- Canonicalize poster grid, poster row, landscape rail, low/high hero, logo, and avatar requests in `Shared`, including episode series identity and backdrop-to-primary selection.
+- Route speculative artwork from Sync, Home, Library, and Detail through one required `ArtworkPrefetching` dependency backed by the authenticated image pipeline; remove the API fetch-and-discard path and all production `prefetchImages` calls.
+- Keep prefetch URL resolution sequential and cancelable, de-duplicate first-seen URLs, replace stale Sync prefetch tasks, and defer concurrency bounds/stale-generation work to the next optimization lot.
+- Validate canonical mappings, cancellation, ordering, pipeline batching, token headers, Sync row roles, and latest-wins replacement before sequential iOS/tvOS builds.

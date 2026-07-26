@@ -1,6 +1,5 @@
 import Shared
 @testable import SyncEngine
-import UIKit
 import XCTest
 
 final class DefaultSyncEngineHomeFeedTests: XCTestCase {
@@ -20,7 +19,7 @@ final class DefaultSyncEngineHomeFeedTests: XCTestCase {
         let syncEngine = DefaultSyncEngine(
             apiClient: apiClient,
             repository: repository,
-            imagePipeline: HomeFeedSyncImagePipeline()
+            artworkPrefetcher: RecordingArtworkPrefetcher()
         )
 
         await syncEngine.sync(reason: .appForeground)
@@ -30,6 +29,82 @@ final class DefaultSyncEngineHomeFeedTests: XCTestCase {
         XCTAssertEqual(savedFeed.rows.map { $0.items.map(\.id) }, fullFeed.rows.map { $0.items.map(\.id) })
         let sinceValues = await apiClient.fetchHomeFeedSinceValues()
         XCTAssertEqual(sinceValues, [Date(timeIntervalSince1970: 1_700_000_000), nil])
+    }
+
+    func testPrefetchMapsFeaturedResumeNextUpAndCatalogRowsToCanonicalRoles() async throws {
+        let featured = MediaItem(id: "featured", name: "Featured", backdropTag: "featured-backdrop")
+        let resume = MediaItem(
+            id: "episode",
+            name: "Episode",
+            mediaType: .episode,
+            backdropTag: "episode-backdrop",
+            parentID: "series"
+        )
+        let nextUp = MediaItem(id: "next", name: "Next")
+        let catalog = MediaItem(id: "catalog", name: "Catalog", backdropTag: "catalog-backdrop")
+        let feed = HomeFeed(
+            featured: [featured],
+            rows: [
+                HomeRow(kind: .continueWatching, title: "Continue", items: [resume]),
+                HomeRow(kind: .nextUp, title: "Next Up", items: [nextUp]),
+                HomeRow(kind: .recentlyAddedMovies, title: "Recently Added", items: [catalog])
+            ]
+        )
+        let repository = HomeFeedSyncRepository(cachedFeed: feed, lastSyncDate: nil)
+        let apiClient = HomeFeedSyncAPIClient(incrementalFeed: feed, fullFeed: feed)
+        let prefetcher = RecordingArtworkPrefetcher()
+        let syncEngine = DefaultSyncEngine(
+            apiClient: apiClient,
+            repository: repository,
+            artworkPrefetcher: prefetcher
+        )
+
+        await syncEngine.sync(reason: .manualRefresh)
+        try await waitUntil { await prefetcher.batches.count == 1 }
+
+        let requests = await prefetcher.batches[0]
+        XCTAssertEqual(requests.map(\.itemID), ["featured", "series", "next", "catalog"])
+        XCTAssertEqual(
+            requests.map(\.profile),
+            [.heroBackdropLow, .landscapeRail, .landscapeRail, .posterRow]
+        )
+        XCTAssertEqual(requests.map(\.type), [.backdrop, .backdrop, .primary, .primary])
+    }
+
+    func testStartingNewPrefetchCancelsPreviousPrefetchTask() async throws {
+        let feed = Self.homeFeed(itemSuffix: "latest", emptyKinds: [])
+        let repository = HomeFeedSyncRepository(cachedFeed: feed, lastSyncDate: nil)
+        let apiClient = HomeFeedSyncAPIClient(incrementalFeed: feed, fullFeed: feed)
+        let prefetcher = CancellationRecordingArtworkPrefetcher()
+        let syncEngine = DefaultSyncEngine(
+            apiClient: apiClient,
+            repository: repository,
+            artworkPrefetcher: prefetcher
+        )
+
+        await syncEngine.sync(reason: .manualRefresh)
+        try await waitUntil { await prefetcher.callCount == 1 }
+
+        await syncEngine.sync(reason: .manualRefresh)
+
+        try await waitUntil {
+            let status = await prefetcher.status()
+            return status.callCount == 2 && status.cancelledCallIndices == [0]
+        }
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        condition: @escaping @Sendable () async -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for condition")
     }
 
     private static let expectedKinds: [HomeSectionKind] = [
@@ -142,9 +217,40 @@ private actor HomeFeedSyncAPIClient: JellyfinAPIClientProtocol {
     func reportPlayed(itemID: String) async throws { _ = itemID }
 }
 
-private final class HomeFeedSyncImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
-    func image(for url: URL) async throws -> UIImage { UIImage() }
-    func cachedImage(for url: URL) async -> UIImage? { nil }
-    func prefetch(urls: [URL]) async { _ = urls }
-    func cancel(url: URL) { _ = url }
+private actor RecordingArtworkPrefetcher: ArtworkPrefetching {
+    private(set) var batches = [[ArtworkRequest]]()
+
+    func prefetch(_ requests: [ArtworkRequest]) async {
+        batches.append(requests)
+    }
+}
+
+private actor CancellationRecordingArtworkPrefetcher: ArtworkPrefetching {
+    private(set) var callCount = 0
+    private(set) var cancelledCallIndices = [Int]()
+
+    func status() -> (callCount: Int, cancelledCallIndices: [Int]) {
+        (callCount, cancelledCallIndices)
+    }
+
+    func prefetch(_ requests: [ArtworkRequest]) async {
+        _ = requests
+        let callIndex = callCount
+        callCount += 1
+        guard callIndex == 0 else { return }
+
+        await withTaskCancellationHandler {
+            do {
+                try await Task.sleep(nanoseconds: UInt64.max)
+            } catch {
+                // Cancellation is asserted through the handler below.
+            }
+        } onCancel: {
+            Task { await self.recordCancellation(callIndex) }
+        }
+    }
+
+    private func recordCancellation(_ callIndex: Int) {
+        cancelledCallIndices.append(callIndex)
+    }
 }

@@ -294,6 +294,7 @@ final class HomeViewModelActionTests: XCTestCase {
             repository: repository,
             detailRepository: detailRepository,
             imagePipeline: MockImagePipeline(),
+            artworkPrefetcher: ArtworkPrefetcherTestDouble(),
             syncEngine: syncEngine,
             settingsStore: MockSettingsStore(),
             episodeReleaseNotificationManager: notifications,

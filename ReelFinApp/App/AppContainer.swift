@@ -14,6 +14,7 @@ final class AppContainer {
     let repository: any MetadataRepositoryProtocol & Sendable
     let detailRepository: any MediaDetailRepositoryProtocol & Sendable
     let imagePipeline: DefaultImagePipeline
+    let artworkPrefetcher: DefaultArtworkPrefetcher
     let syncEngine: DefaultSyncEngine
     let episodeReleaseNotificationManager: any EpisodeReleaseNotificationManaging
     let seriesCache: SeriesLookupCache
@@ -47,6 +48,10 @@ final class AppContainer {
         }
 
         imagePipeline = DefaultImagePipeline()
+        artworkPrefetcher = DefaultArtworkPrefetcher(
+            urlProvider: apiClient,
+            imagePipeline: imagePipeline
+        )
         episodeReleaseNotificationManager = SystemEpisodeReleaseNotificationManager(settingsStore: settingsStore)
         episodeReleaseTracker = DefaultEpisodeReleaseTracker(
             apiClient: apiClient,
@@ -59,7 +64,7 @@ final class AppContainer {
         syncEngine = DefaultSyncEngine(
             apiClient: apiClient,
             repository: repository,
-            imagePipeline: imagePipeline,
+            artworkPrefetcher: artworkPrefetcher,
             episodeReleaseTracker: episodeReleaseTracker,
             episodeReleaseNotificationManager: episodeReleaseNotificationManager
         )
@@ -89,6 +94,7 @@ final class AppContainer {
             repository: repository,
             detailRepository: detailRepository,
             imagePipeline: imagePipeline,
+            artworkPrefetcher: artworkPrefetcher,
             syncEngine: syncEngine,
             settingsStore: settingsStore,
             episodeReleaseNotificationManager: episodeReleaseNotificationManager,

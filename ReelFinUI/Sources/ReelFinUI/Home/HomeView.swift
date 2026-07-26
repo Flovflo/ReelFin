@@ -2334,19 +2334,10 @@ struct HomeView: View {
     }
 
     private func prefetchPresentationArtwork(for item: MediaItem, neighbors: [MediaItem]) async {
-        let detailItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
         let nearbyItems = Array(neighbors.prefix(2))
-        await dependencies.apiClient.prefetchImages(for: nearbyItems)
-        guard !Task.isCancelled else { return }
-
-        if let heroURL = await dependencies.apiClient.imageURL(
-            for: detailItemID,
-            type: item.backdropTag == nil ? .primary : .backdrop,
-            width: ArtworkRequestProfile.heroBackdropHigh.width,
-            quality: ArtworkRequestProfile.heroBackdropHigh.quality
-        ) {
-            await dependencies.imagePipeline.prefetch(urls: [heroURL])
-        }
+        let requests = nearbyItems.map { ArtworkRequest.make(for: $0, role: .posterRow) }
+            + [ArtworkRequest.make(for: item, role: .heroHigh)]
+        await dependencies.artworkPrefetcher.prefetch(requests)
     }
 
     private func warmPresentationPlayback(for item: MediaItem, neighbors: [MediaItem]) async {

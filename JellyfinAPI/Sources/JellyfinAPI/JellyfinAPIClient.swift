@@ -733,36 +733,6 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         )
     }
 
-    public func prefetchImages(for items: [MediaItem]) async {
-        // Speculative prefetching: Generate the most likely artwork requests up front.
-        // This warms the server-side cache and improves perceived detail-page readiness.
-        for item in items {
-            guard !Task.isCancelled else { return }
-            let imageTargets: [(itemID: String, type: JellyfinImageType, width: Int, quality: Int)] = [
-                (item.id, .primary, 400, 80),
-                (item.mediaType == .episode ? (item.parentID ?? item.id) : item.id, .backdrop, 1280, 72)
-            ]
-
-            for target in imageTargets {
-                guard !Task.isCancelled else { return }
-                guard let imageURL = await imageURL(
-                    for: target.itemID,
-                    type: target.type,
-                    width: target.width,
-                    quality: target.quality
-                ) else {
-                    continue
-                }
-
-                var request = URLRequest(url: imageURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
-                if let token = activeSession?.token, !token.isEmpty {
-                    request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
-                }
-                _ = try? await urlSession.data(for: request)
-            }
-        }
-    }
-
     public func reportPlayback(progress: PlaybackProgressUpdate) async throws {
         let body = PlaybackProgressRequestDTO(
             itemID: progress.itemID,

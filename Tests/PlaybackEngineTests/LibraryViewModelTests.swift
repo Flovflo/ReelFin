@@ -265,6 +265,7 @@ private func makeDependencies(
         repository: repository,
         detailRepository: detailRepository,
         imagePipeline: MockImagePipeline(),
+        artworkPrefetcher: ArtworkPrefetcherTestDouble(),
         syncEngine: MockSyncEngine(),
         settingsStore: MockSettingsStore(),
         episodeReleaseNotificationManager: NoopEpisodeReleaseNotificationManager(),

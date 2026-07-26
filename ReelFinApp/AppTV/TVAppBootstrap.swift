@@ -28,6 +28,7 @@ final class TVAppContainer {
     let repository: any MetadataRepositoryProtocol & Sendable
     let detailRepository: any MediaDetailRepositoryProtocol & Sendable
     let imagePipeline: DefaultImagePipeline
+    let artworkPrefetcher: DefaultArtworkPrefetcher
     let syncEngine: DefaultSyncEngine
     let episodeReleaseNotificationManager: any EpisodeReleaseNotificationManaging
     let seriesCache: SeriesLookupCache
@@ -55,6 +56,10 @@ final class TVAppContainer {
         }
 
         imagePipeline = DefaultImagePipeline()
+        artworkPrefetcher = DefaultArtworkPrefetcher(
+            urlProvider: apiClient,
+            imagePipeline: imagePipeline
+        )
         episodeReleaseNotificationManager = NoopEpisodeReleaseNotificationManager()
         detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
@@ -63,7 +68,7 @@ final class TVAppContainer {
         syncEngine = DefaultSyncEngine(
             apiClient: apiClient,
             repository: repository,
-            imagePipeline: imagePipeline
+            artworkPrefetcher: artworkPrefetcher
         )
         seriesCache = SeriesLookupCache(apiClient: apiClient)
         playbackWarmupManager = PlaybackWarmupManager(apiClient: apiClient)
@@ -77,6 +82,7 @@ final class TVAppContainer {
             repository: repository,
             detailRepository: detailRepository,
             imagePipeline: imagePipeline,
+            artworkPrefetcher: artworkPrefetcher,
             syncEngine: syncEngine,
             settingsStore: settingsStore,
             episodeReleaseNotificationManager: episodeReleaseNotificationManager,

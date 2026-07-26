@@ -20,6 +20,23 @@ public struct CachedRemoteImage: View {
     @State private var request = CachedRemoteImageRequestState()
 
     public init(
+        request: ArtworkRequest,
+        contentMode: CachedRemoteImageContentMode = .fill,
+        apiClient: JellyfinAPIClientProtocol,
+        imagePipeline: ImagePipelineProtocol,
+        onImageLoaded: (() -> Void)? = nil
+    ) {
+        itemID = request.itemID
+        type = request.type
+        width = request.profile.width
+        quality = request.profile.quality
+        self.contentMode = contentMode
+        self.apiClient = apiClient
+        self.imagePipeline = imagePipeline
+        self.onImageLoaded = onImageLoaded
+    }
+
+    public init(
         itemID: String,
         type: JellyfinImageType,
         width: Int,

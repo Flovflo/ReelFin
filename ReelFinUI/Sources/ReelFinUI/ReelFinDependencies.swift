@@ -7,6 +7,7 @@ public struct ReelFinDependencies {
     public let repository: MetadataRepositoryProtocol
     public let detailRepository: MediaDetailRepositoryProtocol
     public let imagePipeline: ImagePipelineProtocol
+    public let artworkPrefetcher: any ArtworkPrefetching
     public let syncEngine: SyncEngineProtocol
     public let settingsStore: SettingsStoreProtocol
     public let episodeReleaseNotificationManager: EpisodeReleaseNotificationManaging
@@ -20,6 +21,7 @@ public struct ReelFinDependencies {
         repository: MetadataRepositoryProtocol,
         detailRepository: MediaDetailRepositoryProtocol,
         imagePipeline: ImagePipelineProtocol,
+        artworkPrefetcher: any ArtworkPrefetching,
         syncEngine: SyncEngineProtocol,
         settingsStore: SettingsStoreProtocol,
         episodeReleaseNotificationManager: EpisodeReleaseNotificationManaging,
@@ -32,6 +34,7 @@ public struct ReelFinDependencies {
         self.repository = repository
         self.detailRepository = detailRepository
         self.imagePipeline = imagePipeline
+        self.artworkPrefetcher = artworkPrefetcher
         self.syncEngine = syncEngine
         self.settingsStore = settingsStore
         self.episodeReleaseNotificationManager = episodeReleaseNotificationManager

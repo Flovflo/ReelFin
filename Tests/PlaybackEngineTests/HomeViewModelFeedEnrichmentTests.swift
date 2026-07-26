@@ -314,6 +314,7 @@ final class HomeViewModelFeedEnrichmentTests: XCTestCase {
             repository: repository,
             detailRepository: detailRepository,
             imagePipeline: MockImagePipeline(),
+            artworkPrefetcher: ArtworkPrefetcherTestDouble(),
             syncEngine: MockSyncEngine(),
             settingsStore: MockSettingsStore(),
             episodeReleaseNotificationManager: NoopEpisodeReleaseNotificationManager(),

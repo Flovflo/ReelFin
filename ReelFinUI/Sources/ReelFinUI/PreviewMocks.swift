@@ -398,6 +398,12 @@ final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     }
 }
 
+actor MockArtworkPrefetcher: ArtworkPrefetching {
+    func prefetch(_ requests: [ArtworkRequest]) async {
+        _ = requests
+    }
+}
+
 private enum ArtworkPlaceholderRenderer {
     static func makeImage(seed: String, size: CGSize = CGSize(width: 900, height: 1350)) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -481,6 +487,7 @@ public enum ReelFinPreviewFactory {
             repository: repository,
             detailRepository: detailRepository,
             imagePipeline: images,
+            artworkPrefetcher: MockArtworkPrefetcher(),
             syncEngine: sync,
             settingsStore: settings,
             episodeReleaseNotificationManager: notifications,

@@ -372,7 +372,10 @@ final class DetailViewModel {
             advancePhase(to: .content)
             await DetailPresentationTelemetry.shared.markMetadataReady(for: itemID)
 
-            await dependencies.apiClient.prefetchImages(for: refreshedDetail.similar.prefix(4).map { $0 })
+            let artworkRequests = refreshedDetail.similar.prefix(4).map {
+                ArtworkRequest.make(for: $0, role: .posterRow)
+            }
+            await dependencies.artworkPrefetcher.prefetch(artworkRequests)
         } catch {
             guard isActive(loadToken: loadToken, itemID: itemID) else { return }
             if detail.cast.isEmpty, detail.similar.isEmpty {

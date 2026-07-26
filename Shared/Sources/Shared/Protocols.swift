@@ -62,7 +62,15 @@ public protocol SettingsStoreProtocol: AnyObject, Sendable {
     var useCustomPlayerEngine: Bool { get set }
 }
 
-public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
+public protocol ArtworkURLProviding: AnyObject, Sendable {
+    func imageURL(for request: ArtworkRequest) async -> URL?
+}
+
+public protocol ArtworkPrefetching: AnyObject, Sendable {
+    func prefetch(_ requests: [ArtworkRequest]) async
+}
+
+public protocol JellyfinAPIClientProtocol: ArtworkURLProviding {
     func currentConfiguration() async -> ServerConfiguration?
     func currentSession() async -> UserSession?
 
@@ -94,7 +102,6 @@ public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
     func trickplayTileBaseURL(itemID: String, mediaSourceID: String?, width: Int) async -> URL?
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
-    func prefetchImages(for items: [MediaItem]) async
     func reportPlayback(progress: PlaybackProgressUpdate) async throws
     func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws
     func reportPlayed(itemID: String) async throws
@@ -150,6 +157,15 @@ public protocol SyncEngineProtocol: AnyObject, Sendable {
 }
 
 public extension JellyfinAPIClientProtocol {
+    func imageURL(for request: ArtworkRequest) async -> URL? {
+        await imageURL(
+            for: request.itemID,
+            type: request.type,
+            width: request.profile.width,
+            quality: request.profile.quality
+        )
+    }
+
     func fetchNextUpEpisodes(limit _: Int) async throws -> [MediaItem] {
         []
     }
@@ -158,9 +174,6 @@ public extension JellyfinAPIClientProtocol {
         _ = options
         return try await fetchPlaybackSources(itemID: itemID)
     }
-
-    // Default no-op: concrete clients may provide a real implementation.
-    func prefetchImages(for items: [MediaItem]) async {}
 
     func fetchMediaSegments(itemID _: String) async throws -> [MediaSegment] {
         []

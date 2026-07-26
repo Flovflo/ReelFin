@@ -4,24 +4,25 @@ import Shared
 public actor DefaultSyncEngine: SyncEngineProtocol {
     private let apiClient: any JellyfinAPIClientProtocol & Sendable
     private let repository: any MetadataRepositoryProtocol & Sendable
-    private let imagePipeline: any ImagePipelineProtocol & Sendable
+    private let artworkPrefetcher: any ArtworkPrefetching
     private let episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)?
     private let episodeReleaseNotificationManager: (any EpisodeReleaseNotificationManaging)?
 
     private var isSyncing = false
     private var lastForegroundLikeSyncAt: Date?
+    private var prefetchTask: Task<Void, Never>?
     private let foregroundLikeCooldown: TimeInterval = 45
 
     public init(
         apiClient: any JellyfinAPIClientProtocol & Sendable,
         repository: any MetadataRepositoryProtocol & Sendable,
-        imagePipeline: any ImagePipelineProtocol & Sendable,
+        artworkPrefetcher: any ArtworkPrefetching,
         episodeReleaseTracker: (any EpisodeReleaseTrackingProtocol)? = nil,
         episodeReleaseNotificationManager: (any EpisodeReleaseNotificationManaging)? = nil
     ) {
         self.apiClient = apiClient
         self.repository = repository
-        self.imagePipeline = imagePipeline
+        self.artworkPrefetcher = artworkPrefetcher
         self.episodeReleaseTracker = episodeReleaseTracker
         self.episodeReleaseNotificationManager = episodeReleaseNotificationManager
     }
@@ -83,11 +84,14 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
             markForegroundLikeSyncIfNeeded(reason: reason)
 
             let prefetchLimit = reason == .appLaunch ? 8 : 16
-            let posterURLs = await buildPrefetchURLs(feed: feed, limit: prefetchLimit)
-            if !posterURLs.isEmpty {
-                let imagePipeline = imagePipeline
-                Task.detached(priority: .background) {
-                    await imagePipeline.prefetch(urls: posterURLs)
+            let artworkRequests = buildPrefetchRequests(feed: feed, limit: prefetchLimit)
+            prefetchTask?.cancel()
+            if artworkRequests.isEmpty {
+                prefetchTask = nil
+            } else {
+                let artworkPrefetcher = artworkPrefetcher
+                prefetchTask = Task(priority: .background) {
+                    await artworkPrefetcher.prefetch(artworkRequests)
                 }
             }
 
@@ -116,15 +120,22 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
         }
     }
 
-    private func buildPrefetchURLs(feed: HomeFeed, limit: Int) async -> [URL] {
-        var urls = [URL]()
-        let items = feed.featured + feed.rows.flatMap(\.items)
-        for item in items.prefix(limit) {
-            if let url = await apiClient.imageURL(for: item.id, type: .primary, width: 420, quality: 85) {
-                urls.append(url)
-            }
+    private func buildPrefetchRequests(feed: HomeFeed, limit: Int) -> [ArtworkRequest] {
+        var requests = feed.featured.map {
+            ArtworkRequest.make(for: $0, role: .heroLow)
         }
-        return urls
+
+        for row in feed.rows {
+            let role: ArtworkRequestRole
+            switch row.kind {
+            case .continueWatching, .nextUp:
+                role = .landscapeRail
+            default:
+                role = .posterRow
+            }
+            requests.append(contentsOf: row.items.map { ArtworkRequest.make(for: $0, role: role) })
+        }
+        return Array(requests.prefix(limit))
     }
 
     private func isEmpty(_ feed: HomeFeed) -> Bool {

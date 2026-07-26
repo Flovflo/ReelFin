@@ -184,9 +184,7 @@ public struct PosterCardArtworkView: View {
     public var body: some View {
         ZStack(alignment: .bottomLeading) {
             CachedRemoteImage(
-                itemID: imageItemID,
-                type: layoutStyle == .landscape ? .backdrop : .primary,
-                width: layoutStyle == .landscape ? 400 : 360,
+                request: ArtworkRequest.make(for: item, role: artworkRole),
                 apiClient: apiClient,
                 imagePipeline: imagePipeline
             )
@@ -277,11 +275,15 @@ public struct PosterCardArtworkView: View {
         #endif
     }
 
-    private var imageItemID: String {
-        if item.mediaType == .episode {
-            return item.parentID ?? item.id
+    private var artworkRole: ArtworkRequestRole {
+        switch layoutStyle {
+        case .row:
+            return .posterRow
+        case .grid:
+            return .posterGrid
+        case .landscape:
+            return .landscapeRail
         }
-        return item.id
     }
 
     private var metrics: PosterCardMetrics {

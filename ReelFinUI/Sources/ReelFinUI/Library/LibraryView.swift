@@ -503,17 +503,10 @@ struct LibraryView: View {
                         await dependencies.detailRepository.primeDetail(id: item.id)
                     },
                     artworkPrefetch: {
-                        await dependencies.apiClient.prefetchImages(for: [item])
-                        guard !Task.isCancelled else { return }
-
-                        if let heroURL = await dependencies.apiClient.imageURL(
-                            for: item.id,
-                            type: item.backdropTag == nil ? .primary : .backdrop,
-                            width: ArtworkRequestProfile.heroBackdropHigh.width,
-                            quality: ArtworkRequestProfile.heroBackdropHigh.quality
-                        ) {
-                            await dependencies.imagePipeline.prefetch(urls: [heroURL])
-                        }
+                        await dependencies.artworkPrefetcher.prefetch([
+                            ArtworkRequest.make(for: item, role: .posterGrid),
+                            ArtworkRequest.make(for: item, role: .heroHigh)
+                        ])
                     },
                     playbackWarmup: {
                         guard !Task.isCancelled else { return }
@@ -532,17 +525,10 @@ struct LibraryView: View {
             guard !Task.isCancelled else { return }
             await dependencies.detailRepository.primeDetail(id: item.id)
             guard !Task.isCancelled else { return }
-            await dependencies.apiClient.prefetchImages(for: [item])
-            guard !Task.isCancelled else { return }
-
-            if let heroURL = await dependencies.apiClient.imageURL(
-                for: item.id,
-                type: item.backdropTag == nil ? .primary : .backdrop,
-                width: ArtworkRequestProfile.heroBackdropHigh.width,
-                quality: ArtworkRequestProfile.heroBackdropHigh.quality
-            ) {
-                await dependencies.imagePipeline.prefetch(urls: [heroURL])
-            }
+            await dependencies.artworkPrefetcher.prefetch([
+                ArtworkRequest.make(for: item, role: .posterGrid),
+                ArtworkRequest.make(for: item, role: .heroHigh)
+            ])
             guard !Task.isCancelled else { return }
 
             await dependencies.playbackWarmupManager.trim(keeping: [item.id])

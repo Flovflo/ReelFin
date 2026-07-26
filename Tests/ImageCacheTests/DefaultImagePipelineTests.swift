@@ -83,6 +83,20 @@ final class DefaultImagePipelineTests: XCTestCase {
         XCTAssertEqual(AuthenticatedImageURLProtocol.lastTokenHeader, "header-token")
     }
 
+    func testPrefetchAddsTokenHeaderWhenFetchingImages() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = try LRUDiskCache(directoryURL: cacheDir)
+        let session = makeAuthenticatedSession()
+        let tokenStore = MockImageTokenStore(storedToken: "prefetch-token")
+        let pipeline = DefaultImagePipeline(diskCache: cache, urlSession: session, tokenStore: tokenStore)
+
+        await pipeline.prefetch(
+            urls: [URL(string: "https://example.com/Items/item-1/Images/Primary?maxWidth=360")!]
+        )
+
+        XCTAssertEqual(AuthenticatedImageURLProtocol.lastTokenHeader, "prefetch-token")
+    }
+
     private func makeBlockingSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BlockingImageURLProtocol.self]
