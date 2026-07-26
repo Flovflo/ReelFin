@@ -635,7 +635,7 @@ Run the platform builds sequentially (or with distinct DerivedData paths). Recor
 - Modify: `PLANS.md`
 - Modify: `OPTIMIZATION_AUDIT.md`
 
-- [ ] **Step 1: Add failing Detail cost and geometry tests**
+- [x] **Step 1: Add failing Detail cost and geometry tests**
 
 Add a concrete `DetailArtworkCompositionPlan` returned from `DetailArtworkCostPolicy`:
 
@@ -644,7 +644,7 @@ Add a concrete `DetailArtworkCompositionPlan` returned from `DetailArtworkCostPo
 
 Add `IOSDetailScrollPresentation: Equatable` with a 0...32 hero step, a 0...12 chrome step, and a separately derived Boolean horizontal-selection lock. Test equal presentations for nearby offsets in one bucket, the raw lock threshold independently of buckets, and discrete expanded/collapsed values under Reduce Motion. Test fixed iOS selected `30/24` and preview `18/12` shadows plus fixed tvOS `40/24` hero shadow. Add a small `TVDetailFocusTopology` policy proving static cast is not focusable, source-wiring coverage that Detail contains no fixed completion sleep, and regressions for Play-first focus, native action identifiers/order, exact Home/Library transition provenance, and return identity. Treat already-green behavior as regression coverage, not RED.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
@@ -657,19 +657,19 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
   -only-testing:PlaybackEngineTests/TVUXPolishLayoutTests
 ```
 
-- [ ] **Step 3: Eliminate duplicate selected hero work**
+- [x] **Step 3: Eliminate duplicate selected hero work**
 
 In `IOSDetailTopCarouselCard`, switch on `entry.id == currentItemID`—not the transient scroll-position binding. The selected entry renders only `selectedContent()` as the sole hero-grade composition; remove its outer duplicate `HeroBackgroundView`. Each non-selected entry renders one `CachedRemoteImage(request: ArtworkRequest.make(..., role: .landscapeRail))`, one static legibility gradient, and its existing preview overlay: no blur, logo, or hero stack. Preserve frames, clipping, stroke, stable internal display IDs, occurrence-qualified host transition-source IDs, scroll targets, and native zoom continuity.
 
 Canonicalize the surviving `HeroBackgroundView` to `.heroLow` plus `.heroHigh` through `CachedRemoteImage(request:)`, removing its duplicate episode-ID/image-type/profile-width rules. Keep cast requests canonical `.avatar`. Do not introduce the nonexistent `.detailPreview` role.
 
-- [ ] **Step 4: Quantize scroll presentation**
+- [x] **Step 4: Quantize scroll presentation**
 
 Move raw-to-presentation projection into `IOSDetailCarouselLayout.presentation(offsetY:topInset:heroHeight:topTriggerDistance:reduceMotion:)`. Return `IOSDetailScrollPresentation` directly from `onScrollGeometryChange` and assign only changed Equatable values. Compute the selection lock from the raw threshold before quantization. Reduce Motion exposes only discrete expanded/collapsed presentation. Keep supporting-row spacing/padding constant so scroll state invalidates only the top stage and compact chrome. Use fixed selected/preview shadow geometry and vary opacity/small transforms only.
 
 Move tvOS collapse quantization behind the layout policy and reduce it from 64 to 16 visual steps while retaining a separately derived Boolean for focus/preview interaction. Delete unused continuous tvOS shadow fields and expose the rendered fixed `40/24` values through `TVDetailHeroChromeLayout`.
 
-- [ ] **Step 5: Apply editorial action hierarchy**
+- [x] **Step 5: Apply editorial action hierarchy**
 
 Replace both iOS `IOSDetailHeroTitleView` and tvOS `HeroMetadataColumn` logo/title duplication with `EditorialMediaIdentityView` (`.iosHero` / `.tvHero`), passing a media kicker and one concise metadata line. Logo failure remains immediate text fallback; no action waits for identity loading.
 
@@ -677,7 +677,7 @@ On iOS, Back remains its own circular native control; Share + More form one stab
 
 On tvOS, group the existing Play/Watchlist/Watched native Buttons without changing order, focus bindings, default focus, IDs, size, inline player overlay, namespace/source identity, or dismissal callback. Play stays first and preferred. Remove focus state, `.focusable()`, motion, and move handling from non-actionable `TVCastRowItem`; update the More Like This Up route so it no longer targets cast as a focusable row. Replace the fixed 320 ms scroll-completion sleep with animation completion (`.logicallyComplete`) while retaining request-ID stale-completion protection and exact source return.
 
-- [ ] **Step 6: Validate Detail/navigation/playback entry tests and both builds**
+- [x] **Step 6: Validate Detail/navigation/playback entry tests and both builds**
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodegen generate
@@ -718,44 +718,68 @@ Run platform builds sequentially. Use mock simulator journeys for iOS Detail Mor
 - Modify only if evidence requires: affected source/test files from Tasks 1–7
 - Create artifacts under ignored `.artifacts/` or `.superpowers/`; do not commit simulator state or logs
 
-- [ ] **Step 1: Regenerate and build exact configured destinations**
+- [ ] **Step 1: Create a private evidence run, regenerate, and build installed runtimes**
 
 ```bash
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+umask 077
+VALIDATION_DIR="$PWD/.artifacts/final-validation/$(date +%Y%m%d-%H%M%S)"
+IOS_DEST='platform=iOS Simulator,name=iPhone 17,OS=26.5'
+TVOS_DEST='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.5'
+mkdir -p "$VALIDATION_DIR"/{logs,results,attachments,screenshots,traces,private}
+
 xcodegen generate
 xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+  -destination "$IOS_DEST" \
+  -derivedDataPath "$VALIDATION_DIR/DerivedData-iOS" \
+  -resultBundlePath "$VALIDATION_DIR/results/ReelFin-build.xcresult"
 xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
-  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+  -destination "$TVOS_DEST" \
+  -derivedDataPath "$VALIDATION_DIR/DerivedData-tvOS" \
+  -resultBundlePath "$VALIDATION_DIR/results/ReelFinTV-build.xcresult"
 ```
 
-- [ ] **Step 2: Run complete unit/UI schemes**
+Always set `DEVELOPER_DIR`; the configured 26.3.1/26.2 runtimes are not installed locally. Run the two builds sequentially with distinct DerivedData directories. Resolve simulator UDIDs from `simctl list --json`; never guess or use `booted` when recording evidence. Keep logs that may contain server metadata under the mode-0700 `private/` directory and never quote credentials, tokens, or signed media URLs.
+
+- [ ] **Step 2: Run complete schemes, then deterministic fallback slices**
 
 ```bash
+REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY=1 \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+  -destination "$IOS_DEST" \
+  -derivedDataPath "$VALIDATION_DIR/DerivedData-iOS" \
+  -parallel-testing-enabled NO \
+  -resultBundlePath "$VALIDATION_DIR/results/ReelFin-full.xcresult"
+
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV \
-  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+  -destination "$TVOS_DEST" \
+  -derivedDataPath "$VALIDATION_DIR/DerivedData-tvOS" \
+  -parallel-testing-enabled NO \
+  -resultBundlePath "$VALIDATION_DIR/results/ReelFinTV-full.xcresult"
 ```
 
-If an existing environment-dependent UI test cannot run, capture the exact failure and still run all unit targets plus the relevant manual journey. Do not describe a skipped test as passing.
+Load the existing live environment only inside the private shell, without printing it. The full schemes mix deterministic and environment-dependent tests, so record exact pass/fail/skip counts. If a live test cannot run, capture the exact reason and still run these deterministic gates: iOS unit/image/API/playback targets with known live-only methods explicitly excluded; mock-auth App Store/Home/Library/Detail UI tests; and tvOS `ReelFinTVTests` plus `TVAuthFlowUITests`. Do not describe a skipped test as passing. The three live LocalMediaGateway tests and `CacheLoaderLiveIntegrationTests` currently reference an absent legacy path and must be reported as skips rather than inferred successes.
 
-- [ ] **Step 3: Exercise iOS in Simulator**
+- [ ] **Step 3: Exercise iOS in Simulator and export visual evidence**
 
-Run authenticated cold/warm Home, manual/automatic carousel, background/foreground, fast rails, rapid Library typing/filter/sort/pagination overlap, expanded-to-compact header, Home/Library Detail entry and exact return, Detail carousel/supporting rows, bright/dark art, image fallback, Reduce Motion, Reduce Transparency, and VoiceOver labels. Capture Home, compact Library, and Detail screenshots.
+Run authenticated cold/warm Home, manual/automatic carousel, background/foreground, fast rails, rapid Library typing/filter/sort/pagination overlap, expanded-to-compact header, Home/Library Detail entry and exact return, Detail carousel/supporting rows, bright/dark art, image fallback, Reduce Motion, Reduce Transparency, Accessibility Large, and VoiceOver labels. Use deterministic UI journeys wherever possible, including More → Download and exact Detail return. Export screenshots/attachments from the result bundles, capture Home, compact Library, and Detail against the explicit iPhone UDID, and visually inspect the exported pixels rather than relying only on element existence.
 
-- [ ] **Step 4: Exercise tvOS in Simulator**
+- [ ] **Step 4: Exercise tvOS and native-player entry in Simulator**
 
-Traverse Home and Library quickly, verify one focus transition per input, immediate poster activation, every first-row route, inline Detail Play-first focus, exact source return, playback launch/dismissal, Reduce Motion, Reduce Transparency, and focused/resting pairs over bright/dark artwork. Capture screenshots.
-
-- [ ] **Step 5: Run performance probes**
+Traverse Home and Library quickly, verify one focus transition per input, immediate poster activation, every first-row route, inline Detail Play-first focus, exact source return, playback launch/dismissal, Reduce Motion, Reduce Transparency, and focused/resting pairs over bright/dark artwork. Capture and inspect screenshots. When the configured private environment is usable, also run the standard native-player E2E driver with explicit 26.5 destinations, two loops, and sample size eight. This live driver mutates simulator app state and resume position, so keep its raw output private and record whether best-effort resume restoration succeeded. It builds rather than tests the tvOS target; retain the full tvOS test result as the actual tvOS gate. Do not claim distinct movie and series coverage because both configured live UI methods currently resolve the same MP4 fixture.
 
 ```bash
-scripts/run_player_ui_probe.sh
-scripts/run_playback_qa_loop.sh
-python3 scripts/test_tvos_profile.py
+REELFIN_E2E_IOS_DESTINATION="$IOS_DEST" \
+REELFIN_E2E_TVOS_DESTINATION="$TVOS_DEST" \
+scripts/run_reelfin_player_e2e.sh --loops 2 --sample-size 8 \
+  > "$VALIDATION_DIR/private/player-e2e-driver.log" 2>&1
 ```
 
-Also capture comparative SwiftUI body updates, Animation Hitches, Time Profiler samples around ImageIO/layout/material work, peak decoded-image memory, and image request/dedupe/cancellation signposts for the same journeys where local tooling permits.
+- [ ] **Step 5: Capture focused performance evidence**
+
+Profile one named, reproducible iOS flow at a time—for example cached Home first paint and Home → Detail—using the exact built app and explicit simulator. Prefer a symbolicated ETTrace capture when the runner/framework can be wired temporarily and removed cleanly; otherwise use the installed Instruments Time Profiler/Animation Hitches templates and retain the `.trace` artifact. Record run count, first-party hotspots, symbolication status, and simulator/network caveats. Do not claim an improvement delta without a comparable pre-change trace.
+
+Inspect SwiftUI body updates, Animation Hitches, Time Profiler samples around ImageIO/layout/material work, peak decoded-image memory, and image request/dedupe/cancellation signposts where local tooling permits. The existing `scripts/test_tvos_profile.py` is a live negotiation diagnostic, not a timing/assertion probe, and may print sensitive server data; do not use it as performance evidence. Treat `run_player_ui_probe.sh` and `run_playback_qa_loop.sh` as optional live diagnostics only when their direct-target prerequisites are explicitly satisfied, never as substitutes for result-bundled tests.
 
 ---
 
