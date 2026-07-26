@@ -99,4 +99,74 @@ final class IOSDetailCarouselLayoutTests: XCTestCase {
             )
         )
     }
+
+    func testNearbyOffsetsInOneBucketProduceEqualScrollPresentation() {
+        let first = IOSDetailCarouselLayout.presentation(
+            offsetY: 15,
+            topInset: 0,
+            heroHeight: 800,
+            topTriggerDistance: 50,
+            reduceMotion: false
+        )
+        let second = IOSDetailCarouselLayout.presentation(
+            offsetY: 15.2,
+            topInset: 0,
+            heroHeight: 800,
+            topTriggerDistance: 50,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(first, second)
+    }
+
+    func testHorizontalSelectionLockUsesRawThresholdBeforeQuantization() {
+        let unlocked = IOSDetailCarouselLayout.presentation(
+            offsetY: 10.49,
+            topInset: 0,
+            heroHeight: 800,
+            topTriggerDistance: 50,
+            reduceMotion: false
+        )
+        let locked = IOSDetailCarouselLayout.presentation(
+            offsetY: 10.51,
+            topInset: 0,
+            heroHeight: 800,
+            topTriggerDistance: 50,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(unlocked.heroStep, locked.heroStep)
+        XCTAssertEqual(unlocked.chromeStep, locked.chromeStep)
+        XCTAssertTrue(unlocked.allowsHorizontalSelection)
+        XCTAssertFalse(locked.allowsHorizontalSelection)
+    }
+
+    func testReduceMotionUsesOnlyExpandedOrCollapsedPresentation() {
+        let expanded = IOSDetailCarouselLayout.presentation(
+            offsetY: 34,
+            topInset: 0,
+            heroHeight: 800,
+            topTriggerDistance: 50,
+            reduceMotion: true
+        )
+        let collapsed = IOSDetailCarouselLayout.presentation(
+            offsetY: 36,
+            topInset: 0,
+            heroHeight: 800,
+            topTriggerDistance: 50,
+            reduceMotion: true
+        )
+
+        XCTAssertEqual(expanded.heroStep, 0)
+        XCTAssertEqual(expanded.chromeStep, 0)
+        XCTAssertEqual(collapsed.heroStep, 32)
+        XCTAssertEqual(collapsed.chromeStep, 12)
+    }
+
+    func testDetailCarouselShadowsKeepFixedGeometryAcrossScroll() {
+        XCTAssertEqual(IOSDetailCarouselLayout.selectedShadowRadius, 30)
+        XCTAssertEqual(IOSDetailCarouselLayout.selectedShadowYOffset, 24)
+        XCTAssertEqual(IOSDetailCarouselLayout.previewShadowRadius, 18)
+        XCTAssertEqual(IOSDetailCarouselLayout.previewShadowYOffset, 12)
+    }
 }

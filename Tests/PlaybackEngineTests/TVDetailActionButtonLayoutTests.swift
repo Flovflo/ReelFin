@@ -202,6 +202,40 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
         XCTAssertGreaterThan(layout.strokeOpacity, 0)
     }
 
+    func testHeroChromeUsesSixteenVisualStepsAndRawPreviewInteraction() {
+        let interactive = TVDetailHeroChromeLayout.presentation(
+            offsetY: 21.9,
+            topInset: 0,
+            topTriggerDistance: 100
+        )
+        let locked = TVDetailHeroChromeLayout.presentation(
+            offsetY: 22.1,
+            topInset: 0,
+            topTriggerDistance: 100
+        )
+
+        XCTAssertEqual(TVDetailHeroChromeLayout.visualStepCount, 16)
+        XCTAssertEqual(interactive.collapseStep, locked.collapseStep)
+        XCTAssertTrue(interactive.previewInteractionEnabled)
+        XCTAssertFalse(locked.previewInteractionEnabled)
+    }
+
+    func testHeroChromeShadowUsesFixedRenderedGeometry() {
+        XCTAssertEqual(TVDetailHeroChromeLayout.heroShadowRadius, 40)
+        XCTAssertEqual(TVDetailHeroChromeLayout.heroShadowYOffset, 24)
+    }
+
+    func testDetailPrimaryActionsRemainNativePlayFirstAndStable() {
+        XCTAssertEqual(
+            TVDetailFocusTopology.primaryActionOrder,
+            [.play, .watchlist, .watched]
+        )
+        XCTAssertEqual(TVDetailFocusTopology.defaultPrimaryAction, .play)
+        XCTAssertEqual(TVDetailPrimaryAction.play.accessibilityIdentifier, "detail_primary_play_button")
+        XCTAssertEqual(TVDetailPrimaryAction.watchlist.accessibilityIdentifier, "detail_watchlist_button")
+        XCTAssertEqual(TVDetailPrimaryAction.watched.accessibilityIdentifier, "detail_watched_button")
+    }
+
     func testInitialSeasonDefaultFocusWaitsForHeroFocus() {
         XCTAssertNil(
             TVDetailInitialFocusPolicy.seasonDefaultFocusID(

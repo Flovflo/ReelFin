@@ -248,4 +248,50 @@ final class TVUXPolishNavigationTests: XCTestCase {
         XCTAssertTrue(library.contains("savedSelectedPosterID = item.id"))
         XCTAssertTrue(library.contains("focusedLibraryItemID = returnPosterID"))
     }
+
+    func testDetailScrollCompletionIsEventDrivenAndStaleSafe() throws {
+        let detail = try detailSource()
+
+        XCTAssertFalse(detail.contains("Task.sleep(nanoseconds: 320_000_000)"))
+        XCTAssertTrue(
+            detail.contains(
+                "withAnimation(.easeInOut(duration: 0.28), completionCriteria: .logicallyComplete)"
+            )
+        )
+        XCTAssertTrue(detail.contains("guard tvScrollRequest == request else { return }"))
+        XCTAssertTrue(detail.contains("onScrollRequestCompleted(request)"))
+    }
+
+    func testDetailKeepsOccurrenceQualifiedTransitionAndDisplayedReturnIdentity() throws {
+        let detail = try detailSource()
+
+        XCTAssertTrue(detail.contains("transitionSourceID.hasSuffix(\"::\\(currentReturnSourceItem.id)\")"))
+        XCTAssertTrue(detail.contains("onDisplayedSourceItemChange?(currentReturnSourceItem)"))
+        XCTAssertTrue(detail.contains("entry.id == currentItemID"))
+        XCTAssertEqual(
+            HomeCardTransitionSource.id(
+                rowID: "continue-watching",
+                itemID: "episode-1",
+                occurrenceID: "cycle-2-index-0"
+            ),
+            "continue-watching::cycle-2-index-0::episode-1"
+        )
+        XCTAssertEqual(
+            LibraryCardTransitionSource.id(itemID: "movie-1"),
+            "library::movie-1"
+        )
+    }
+
+    private func detailSource() throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: root.appendingPathComponent(
+                "ReelFinUI/Sources/ReelFinUI/Detail/DetailView.swift"
+            ),
+            encoding: .utf8
+        )
+    }
 }

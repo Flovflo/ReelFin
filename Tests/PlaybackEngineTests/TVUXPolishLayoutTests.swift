@@ -144,6 +144,29 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertEqual(TVTopNavigationLayout.isolatedDestination, .search)
     }
 
+    func testStaticCastIsNotAFocusableDetailDestination() {
+        XCTAssertFalse(TVDetailFocusTopology.acceptsFocus(.cast))
+        XCTAssertTrue(TVDetailFocusTopology.acceptsFocus(.episodes))
+        XCTAssertTrue(TVDetailFocusTopology.acceptsFocus(.related))
+    }
+
+    func testMoreLikeThisUpRouteIgnoresStaticCast() {
+        XCTAssertFalse(
+            TVDetailFocusTopology.hasFocusableContentBeforeMoreLikeThis(
+                hasSeasonPicker: false,
+                hasEpisodes: false,
+                hasCast: true
+            )
+        )
+        XCTAssertTrue(
+            TVDetailFocusTopology.hasFocusableContentBeforeMoreLikeThis(
+                hasSeasonPicker: false,
+                hasEpisodes: true,
+                hasCast: true
+            )
+        )
+    }
+
     @MainActor
     private func update(
         _ container: PlayerAccessibilityEvidenceContainerView,

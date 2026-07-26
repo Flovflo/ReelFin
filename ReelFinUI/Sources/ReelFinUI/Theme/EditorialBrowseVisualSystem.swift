@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 import SwiftUI
 
 enum EditorialGlassPresentation: Equatable {
@@ -30,6 +31,61 @@ enum EditorialGlassRole {
 enum DetailArtworkRole: Equatable {
     case hero
     case preview
+}
+
+struct DetailArtworkCompositionPlan: Equatable {
+    let role: DetailArtworkRole
+    let heroStackCount: Int
+    let imageLayerCount: Int
+    let canonicalRoles: [ArtworkRequestRole]
+}
+
+enum TVDetailPrimaryAction: CaseIterable, Equatable {
+    case play
+    case watchlist
+    case watched
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .play:
+            return "detail_primary_play_button"
+        case .watchlist:
+            return "detail_watchlist_button"
+        case .watched:
+            return "detail_watched_button"
+        }
+    }
+}
+
+enum TVDetailSupportingContentRole: Equatable {
+    case seasons
+    case episodes
+    case cast
+    case related
+}
+
+enum TVDetailFocusTopology {
+    static let primaryActionOrder: [TVDetailPrimaryAction] = [.play, .watchlist, .watched]
+    static let defaultPrimaryAction: TVDetailPrimaryAction = .play
+
+    static func acceptsFocus(_ role: TVDetailSupportingContentRole) -> Bool {
+        switch role {
+        case .cast:
+            return false
+        case .seasons, .episodes, .related:
+            return true
+        }
+    }
+
+    static func hasFocusableContentBeforeMoreLikeThis(
+        hasSeasonPicker: Bool,
+        hasEpisodes: Bool,
+        hasCast: Bool
+    ) -> Bool {
+        (hasSeasonPicker && acceptsFocus(.seasons))
+            || (hasEpisodes && acceptsFocus(.episodes))
+            || (hasCast && acceptsFocus(.cast))
+    }
 }
 
 enum HeroPageChangeOrigin: Equatable {
@@ -119,5 +175,23 @@ enum DetailArtworkCostPolicy {
 
     static func heroLayerBudget(isSelected: Bool) -> Int {
         isSelected ? 1 : 0
+    }
+
+    static func composition(isSelected: Bool) -> DetailArtworkCompositionPlan {
+        if isSelected {
+            return DetailArtworkCompositionPlan(
+                role: .hero,
+                heroStackCount: 1,
+                imageLayerCount: 2,
+                canonicalRoles: [.heroLow, .heroHigh]
+            )
+        }
+
+        return DetailArtworkCompositionPlan(
+            role: .preview,
+            heroStackCount: 0,
+            imageLayerCount: 1,
+            canonicalRoles: [.landscapeRail]
+        )
     }
 }

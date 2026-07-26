@@ -73,4 +73,22 @@ final class EditorialBrowseVisualSystemTests: XCTestCase {
         XCTAssertEqual(DetailArtworkCostPolicy.heroLayerBudget(isSelected: true), 1)
         XCTAssertEqual(DetailArtworkCostPolicy.heroLayerBudget(isSelected: false), 0)
     }
+
+    func testSelectedDetailArtworkCompositionUsesOneCanonicalTwoLayerHero() {
+        let plan = DetailArtworkCostPolicy.composition(isSelected: true)
+
+        XCTAssertEqual(plan.role, .hero)
+        XCTAssertEqual(plan.heroStackCount, 1)
+        XCTAssertEqual(plan.imageLayerCount, 2)
+        XCTAssertEqual(plan.canonicalRoles, [.heroLow, .heroHigh])
+    }
+
+    func testNeighborDetailArtworkCompositionUsesOneCanonicalLandscapeImage() {
+        let plan = DetailArtworkCostPolicy.composition(isSelected: false)
+
+        XCTAssertEqual(plan.role, .preview)
+        XCTAssertEqual(plan.heroStackCount, 0)
+        XCTAssertEqual(plan.imageLayerCount, 1)
+        XCTAssertEqual(plan.canonicalRoles, [.landscapeRail])
+    }
 }

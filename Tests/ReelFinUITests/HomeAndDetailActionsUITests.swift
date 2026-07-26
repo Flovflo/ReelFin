@@ -81,7 +81,13 @@ final class HomeAndDetailActionsUITests: XCTestCase {
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
         firstPoster.tap()
 
-        let downloadButton = app.buttons["Download"].firstMatch
+        let moreButton = app.buttons["detail_more_button"].firstMatch
+        XCTAssertTrue(moreButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitUntilHittable(moreButton, timeout: 5))
+        capture(name: "detail-action-hierarchy")
+        moreButton.tap()
+
+        let downloadButton = app.buttons["detail_download_button"].firstMatch
         XCTAssertTrue(downloadButton.waitForExistence(timeout: 8))
         XCTAssertTrue(waitUntilHittable(downloadButton, timeout: 5))
 
@@ -94,6 +100,51 @@ final class HomeAndDetailActionsUITests: XCTestCase {
                 "Offline downloads are not available yet. This feature will arrive in a future update."
             ].exists
         )
+    }
+
+    func testMockDetailCarouselSelectsAdjacentNeighbor() throws {
+        let app = launchMockApp()
+
+        let continueWatchingEpisode = app.buttons[
+            "media_card_button_continueWatching_cw-episode-2"
+        ].firstMatch
+        XCTAssertTrue(continueWatchingEpisode.waitForExistence(timeout: 12))
+        XCTAssertTrue(waitUntilHittable(continueWatchingEpisode, timeout: 5))
+        continueWatchingEpisode.tap()
+
+        let carousel = app.scrollViews["detail_ios_top_carousel"].firstMatch
+        XCTAssertTrue(carousel.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Continue Series"].waitForExistence(timeout: 5))
+
+        carousel.swipeLeft()
+
+        XCTAssertTrue(app.staticTexts["Resume Movie"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["detail_more_button"].exists)
+        capture(name: "detail-adjacent-neighbor")
+    }
+
+    func testMockLibraryDetailEntryReturnsToLibraryRoot() throws {
+        let app = launchMockApp()
+        openLibrary(in: app)
+
+        let librarySearch = app.textFields["library_search_field"].firstMatch
+        XCTAssertTrue(librarySearch.waitForExistence(timeout: 8))
+
+        let firstPoster = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        ).firstMatch
+        XCTAssertTrue(firstPoster.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitUntilHittable(firstPoster, timeout: 5))
+        firstPoster.tap()
+
+        let backButton = app.buttons["Back"].firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["detail_primary_play_button"].exists)
+        backButton.tap()
+
+        XCTAssertTrue(librarySearch.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitUntilHittable(librarySearch, timeout: 5))
+        capture(name: "library-detail-return")
     }
 
     private func launchMockApp() -> XCUIApplication {
@@ -133,6 +184,31 @@ final class HomeAndDetailActionsUITests: XCTestCase {
         return homeMarker.exists
     }
 
+    private func openLibrary(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let searchTab = app.tabBars.buttons["Search"].firstMatch
+        if searchTab.waitForExistence(timeout: 5) {
+            searchTab.tap()
+            return
+        }
+
+        if app.tabBars.buttons.count > 1 {
+            app.tabBars.buttons.element(boundBy: 1).tap()
+            return
+        }
+
+        let sidebarButton = app.buttons["Search"].firstMatch
+        if sidebarButton.exists {
+            sidebarButton.tap()
+            return
+        }
+
+        XCTFail("Unable to navigate to Library", file: file, line: line)
+    }
+
     private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
 
@@ -159,5 +235,12 @@ final class HomeAndDetailActionsUITests: XCTestCase {
         }
 
         return (element.value as? String) == expectedValue
+    }
+
+    private func capture(name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }
