@@ -13,6 +13,40 @@ enum LibraryHeaderPresentation: Equatable {
     }
 }
 
+enum LibraryResultContext {
+    static func resolve(visibleItemCount: Int, isUpdating: Bool) -> String {
+        let count = max(visibleItemCount, 0)
+        let base: String
+
+        switch count {
+        case 0:
+            base = isUpdating ? "Loading titles" : "No titles visible"
+        case 1:
+            base = "1 title visible"
+        default:
+            base = "\(count) titles visible"
+        }
+
+        return isUpdating && count > 0 ? "\(base) · Updating" : base
+    }
+}
+
+enum TVLibraryGridMetrics {
+    static let horizontalPadding: CGFloat = 56
+    static let minimumItemWidth: CGFloat = 240
+    static let maximumItemWidth: CGFloat = 280
+    static let interItemSpacing: CGFloat = 32
+
+    static func focusLayout(containerWidth: CGFloat) -> TVAdaptiveGridFocusLayout {
+        TVAdaptiveGridFocusLayout(
+            containerWidth: containerWidth,
+            horizontalPadding: horizontalPadding,
+            minimumItemWidth: minimumItemWidth,
+            interItemSpacing: interItemSpacing
+        )
+    }
+}
+
 #if os(tvOS)
 private enum TVLibraryWarmupScope {
     static let focus = "library.focus"
@@ -509,29 +543,10 @@ struct LibraryView: View {
     }
 
     private var libraryResultContext: String {
-        let trimmedQuery = viewModel.searchQuery.trimmingCharacters(
-            in: .whitespacesAndNewlines
+        LibraryResultContext.resolve(
+            visibleItemCount: viewModel.items.count,
+            isUpdating: viewModel.isLoadingPage
         )
-        let count = viewModel.items.count
-
-        if count == 0 {
-            if viewModel.isLoadingPage {
-                return trimmedQuery.isEmpty ? "Loading titles" : "Searching for \(trimmedQuery)"
-            }
-            return trimmedQuery.isEmpty
-                ? "No \(selectedFilterDisplayTitle.lowercased()) loaded"
-                : "No results loaded for \(trimmedQuery)"
-        }
-
-        let countLabel = "\(count) \(count == 1 ? "title" : "titles") loaded"
-        let context = trimmedQuery.isEmpty
-            ? "\(countLabel) · \(selectedFilterDisplayTitle)"
-            : "\(countLabel) for \(trimmedQuery)"
-        return viewModel.isLoadingPage ? "\(context) · Updating" : context
-    }
-
-    private var selectedFilterDisplayTitle: String {
-        viewModel.selectedFilter == .series ? "Shows" : "Movies"
     }
 
     private var sortModeDisplayTitle: String {
@@ -545,7 +560,15 @@ struct LibraryView: View {
 
     private var columns: [GridItem] {
 #if os(tvOS)
-        return [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 32)]
+        return [
+            GridItem(
+                .adaptive(
+                    minimum: TVLibraryGridMetrics.minimumItemWidth,
+                    maximum: TVLibraryGridMetrics.maximumItemWidth
+                ),
+                spacing: TVLibraryGridMetrics.interItemSpacing
+            )
+        ]
 #else
         let width = PosterCardMetrics.posterWidth(
             for: .grid,
@@ -566,7 +589,7 @@ struct LibraryView: View {
 
     private var horizontalPadding: CGFloat {
 #if os(tvOS)
-        return 56
+        return TVLibraryGridMetrics.horizontalPadding
 #else
         return displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 12 : 22)
 #endif
@@ -873,12 +896,7 @@ struct LibraryView: View {
     }
 
     private func tvTopRowItemIDs(containerWidth: CGFloat) -> Set<String> {
-        TVAdaptiveGridFocusLayout(
-            containerWidth: containerWidth,
-            horizontalPadding: horizontalPadding,
-            minimumItemWidth: 240,
-            interItemSpacing: 32
-        )
+        TVLibraryGridMetrics.focusLayout(containerWidth: containerWidth)
         .firstRowItemIDs(in: viewModel.items)
     }
 #endif

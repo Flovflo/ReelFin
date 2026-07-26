@@ -130,12 +130,7 @@ final class TVUXPolishLayoutTests: XCTestCase {
     }
 
     func testFullHDLibraryGridKeepsSixItemsInTheFirstRow() {
-        let layout = TVAdaptiveGridFocusLayout(
-            containerWidth: 1_920,
-            horizontalPadding: 56,
-            minimumItemWidth: 240,
-            interItemSpacing: 32
-        )
+        let layout = TVLibraryGridMetrics.focusLayout(containerWidth: 1_920)
 
         XCTAssertEqual(layout.columnCount, 6)
         for index in 0 ... 5 {

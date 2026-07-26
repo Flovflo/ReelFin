@@ -78,6 +78,42 @@ final class LibraryEditorialLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("onSelect(item)"))
     }
 
+    func testLibraryGridAndTopRowResolverShareFullHDMetrics() throws {
+        let layout = TVLibraryGridMetrics.focusLayout(containerWidth: 1_920)
+
+        XCTAssertEqual(layout.columnCount, 6)
+
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift"
+        )
+        XCTAssertTrue(
+            source.contains("minimum: TVLibraryGridMetrics.minimumItemWidth")
+        )
+        XCTAssertTrue(
+            source.contains("spacing: TVLibraryGridMetrics.interItemSpacing")
+        )
+        XCTAssertTrue(
+            source.contains("TVLibraryGridMetrics.focusLayout(containerWidth: containerWidth)")
+        )
+    }
+
+    func testResultContextDescribesVisibleGridWhileReplacementCriteriaIsPending() {
+        XCTAssertEqual(
+            LibraryResultContext.resolve(
+                visibleItemCount: 48,
+                isUpdating: true
+            ),
+            "48 titles visible · Updating"
+        )
+        XCTAssertEqual(
+            LibraryResultContext.resolve(
+                visibleItemCount: 1,
+                isUpdating: false
+            ),
+            "1 title visible"
+        )
+    }
+
     private func sourceText(at path: String) throws -> String {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
