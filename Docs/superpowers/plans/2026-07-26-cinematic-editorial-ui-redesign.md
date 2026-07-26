@@ -530,7 +530,7 @@ Record the latest-wins ownership/cancellation work in `PLANS.md` and `OPTIMIZATI
 - Modify: `PLANS.md`
 - Modify: `OPTIMIZATION_AUDIT.md`
 
-- [ ] **Step 1: Add failing pure layout/activation tests**
+- [x] **Step 1: Add failing pure layout/activation tests**
 
 Add these small testable seams outside tvOS-only compilation where the iOS `PlaybackEngineTests` target can see them:
 
@@ -565,7 +565,7 @@ enum TVLibraryActivationPolicy {
 
 Test that raw offsets inside one bucket produce equal presentations; the 24-bucket threshold changes only at step 18 (120 points of a 160-point reveal); `.always` never requests tracking; and activation invokes its closure synchronously. Add a source-wiring assertion that `TVLibraryPosterCard` contains no `Task.sleep` and calls selection directly. Preserve the exact first-row Up route, focus binding, saved/returned poster IDs, and `LibraryCardTransitionSource` wiring in navigation tests. Add a 1920-point adaptive-grid regression proving six columns and indices 0...5 as the first row.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
@@ -577,23 +577,23 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
   -only-testing:PlaybackEngineTests/LibraryCardTransitionSourceTests
 ```
 
-- [ ] **Step 3: Stop per-pixel header invalidation where unnecessary**
+- [x] **Step 3: Stop per-pixel header invalidation where unnecessary**
 
 In `StickyBlurHeader`, build the unobserved base `ScrollView` once and return it directly for `.always`. Only `.revealOnScroll` installs `onScrollGeometryChange`. Quantize inside the transform closure—before any state assignment—to `StickyBlurHeaderScrollPresentation`, then ignore equal values in the action. Keep header content mounted and derive opacity/hit-testing/accessibility from the quantized progress; conditional insertion would change measured inset and can oscillate around the threshold. Under Reduce Transparency, skip live transparent/variable blur sampling and use the opaque control surfaces.
 
-- [ ] **Step 4: Build expanded plus compact iOS header**
+- [x] **Step 4: Build expanded plus compact iOS header**
 
 Retain `StickyBlurHeader` as the sole iOS `ScrollView`. Its stable content becomes expanded header followed by the existing grid; the pinned header contains the compact filter/sort cluster. The expanded header supplies editorial kicker/title, a truthful loaded/visible result context, the **only** bound search field, then Movies/Shows/Sort. The compact header remains mounted at fixed geometry but is hidden, non-hittable, and accessibility-hidden until the quantized phase becomes compact. Account for the safe-area inset explicitly when using zero content inset. Do not branch/remount the grid: preserve `LazyVGrid`, media domain IDs, poster metrics, namespace, transitions, and Task 5's model-owned debounce/intent lifecycle exactly.
 
 Place each adjacent control group in one stable `GlassEffectContainer` while applying one effect to each laid-out interactive control, never the container/HStack. Resolve `EditorialGlassRole.compactControl`: native interactive glass normally, `ReelFinTheme.editorialOpaqueFallback` plus a high-contrast stroke under Reduce Transparency. Title, result text, search field artwork, and resting cards are not glass.
 
-- [ ] **Step 5: Update tvOS controls and activation**
+- [x] **Step 5: Update tvOS controls and activation**
 
 Remove the tvOS control-bar rail backdrop so it cannot create glass-on-glass. Put the existing Movies/Shows/Sort native buttons in one stable `GlassEffectContainer`; each `TVLibraryPillButton` owns its single interactive glass/opaque fallback. Preserve labels, identifiers, current selection, focus bindings, and directional movement.
 
 For `TVLibraryPosterCard`, keep artwork outside the glass container and all geometry fixed. Resting cards have no live glass/rim. Only the focused card receives passive `focusedMedia` glass or an opaque Reduce Transparency surface, plus the existing fixed scale/shadow/rim policy. Remove `isActivating`, the 105 ms sleep, and any delayed manual scale; invoke `onSelect(item)` synchronously through `TVLibraryActivationPolicy`. Provide press feedback with a private `ButtonStyle` based on `configuration.isPressed`: opacity always, activation scale only when Reduce Motion is off, and `EditorialMotion.buttonPressAnimation`. Preserve the top-row Up callback, transition source, focus ID, card dimensions, and exact Detail/back focus restoration. Remember that this card is also used by tvOS Search.
 
-- [ ] **Step 6: Document and validate Library UI on both platforms**
+- [x] **Step 6: Document and validate Library UI on both platforms**
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodegen generate
