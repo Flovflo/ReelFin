@@ -282,6 +282,121 @@ final class TVUXPolishNavigationTests: XCTestCase {
         )
     }
 
+    func testDetailGlassOwnsCompleteControlLabelsInsteadOfDetachedBackgrounds() throws {
+        let detail = try detailSource()
+        let detachedMaterialBackgrounds = [
+            ".background { backgroundSurface }",
+            ".background { primaryButtonBackground }",
+            ".background { secondaryGlassBackground }",
+            ".background { buttonBackground }",
+        ]
+
+        for detachedMaterialBackground in detachedMaterialBackgrounds {
+            XCTAssertFalse(
+                detail.contains(detachedMaterialBackground),
+                "Glass attached to a detached background can composite above and erase its label."
+            )
+        }
+
+        XCTAssertGreaterThanOrEqual(
+            detail.components(separatedBy: "completeControlSurface {").count - 1,
+            8,
+            "Every iOS/tvOS Detail action surface should wrap its complete laid-out label."
+        )
+    }
+
+    func testDetailWiresArtworkAndPrimaryActionPoliciesIntoRenderedViews() throws {
+        let detail = try detailSource()
+
+        XCTAssertTrue(
+            detail.contains("DetailArtworkCostPolicy.composition(isSelected: isSelected)")
+        )
+        XCTAssertTrue(
+            detail.contains("ForEach(TVDetailFocusTopology.primaryActionOrder, id: \\.self)")
+        )
+    }
+
+    func testIOSDetailPrimaryActionsFollowEditorialOrder() throws {
+        let detail = try detailSource()
+        let identityBlock = try sourceSection(
+            in: detail,
+            from: "private var identityBlock: some View",
+            to: "@ViewBuilder\n    private var resumeProgressBlock"
+        )
+        let play = try XCTUnwrap(identityBlock.range(of: "detail_primary_play_button"))
+        let favorite = try XCTUnwrap(identityBlock.range(of: "detail_favorite_button"))
+        let watched = try XCTUnwrap(identityBlock.range(of: "detail_watched_button"))
+
+        XCTAssertLessThan(play.lowerBound, favorite.lowerBound)
+        XCTAssertLessThan(favorite.lowerBound, watched.lowerBound)
+    }
+
+    func testIOSDetailScrollPresentationIsObservedOnlyByTopStageAndChrome() throws {
+        let detail = try detailSource()
+
+        XCTAssertFalse(
+            detail.contains("@State private var scrollPresentation = IOSDetailScrollPresentation.expanded")
+        )
+        XCTAssertTrue(detail.contains("@Observable\nprivate final class IOSDetailScrollPresentationStore"))
+        XCTAssertTrue(detail.contains("private struct IOSDetailTopStage"))
+        XCTAssertTrue(detail.contains("private struct IOSDetailCompactHeader"))
+    }
+
+    func testIOSDetailCompactHeaderDestroysLiveBlurForReduceTransparency() throws {
+        let detail = try detailSource()
+        let compactHeader = try sourceSection(
+            in: detail,
+            from: "private struct IOSDetailCompactHeader",
+            to: "private struct IOSDetailTopStage"
+        )
+
+        XCTAssertTrue(
+            compactHeader.contains("@Environment(\\.accessibilityReduceTransparency)")
+        )
+        XCTAssertTrue(compactHeader.contains("if reduceTransparency"))
+        XCTAssertTrue(compactHeader.contains("TransparentBlurView(style: .systemUltraThinMaterial)"))
+    }
+
+    func testDetailIdentitySpeaksVisibleKickerTitleAndMetadata() throws {
+        let identity = try identitySource()
+
+        XCTAssertTrue(identity.contains("EditorialMediaIdentityAccessibility.label("))
+        XCTAssertFalse(identity.contains(".accessibilityLabel(item.name)"))
+    }
+
+    func testDetailMetadataDoesNotRepeatTheMediaTypeKicker() throws {
+        let detail = try detailSource()
+        let subtitle = try sourceSection(
+            in: detail,
+            from: "private var subtitleText: String",
+            to: "private var mediaKicker: String"
+        )
+
+        for duplicatedType in ["TV Show", "Movie", "Episode", "Season"] {
+            XCTAssertFalse(subtitle.contains("values.append(\"\(duplicatedType)\")"))
+        }
+    }
+
+    func testStaticCastAndNeighborArtworkRemainNonInteractiveAndDecorative() throws {
+        let detail = try detailSource()
+        let castItem = try sourceSection(
+            in: detail,
+            from: "private struct TVCastRowItem",
+            to: "private struct CastAvatarView"
+        )
+        let carouselCard = try sourceSection(
+            in: detail,
+            from: "private struct IOSDetailTopCarouselCard",
+            to: "private enum HeroMetadataLayout"
+        )
+
+        for forbiddenFocusWork in ["@FocusState", ".focusable(", ".onMoveCommand", ".scaleEffect("] {
+            XCTAssertFalse(castItem.contains(forbiddenFocusWork))
+        }
+        XCTAssertTrue(detail.contains("TVDetailFocusTopology.hasFocusableContentBeforeMoreLikeThis("))
+        XCTAssertTrue(carouselCard.contains(".accessibilityHidden(true)"))
+    }
+
     private func detailSource() throws -> String {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -293,5 +408,28 @@ final class TVUXPolishNavigationTests: XCTestCase {
             ),
             encoding: .utf8
         )
+    }
+
+    private func identitySource() throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: root.appendingPathComponent(
+                "ReelFinUI/Sources/ReelFinUI/Components/EditorialMediaIdentityView.swift"
+            ),
+            encoding: .utf8
+        )
+    }
+
+    private func sourceSection(
+        in source: String,
+        from startMarker: String,
+        to endMarker: String
+    ) throws -> Substring {
+        let start = try XCTUnwrap(source.range(of: startMarker)?.lowerBound)
+        let end = try XCTUnwrap(source.range(of: endMarker, range: start..<source.endIndex)?.lowerBound)
+        return source[start..<end]
     }
 }

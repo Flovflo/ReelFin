@@ -36,11 +36,17 @@ enum DetailArtworkRole: Equatable {
 struct DetailArtworkCompositionPlan: Equatable {
     let role: DetailArtworkRole
     let heroStackCount: Int
-    let imageLayerCount: Int
-    let canonicalRoles: [ArtworkRequestRole]
+    let primaryRole: ArtworkRequestRole
+    let secondaryRole: ArtworkRequestRole?
+
+    var imageLayerCount: Int { canonicalRoles.count }
+
+    var canonicalRoles: [ArtworkRequestRole] {
+        [primaryRole] + (secondaryRole.map { [$0] } ?? [])
+    }
 }
 
-enum TVDetailPrimaryAction: CaseIterable, Equatable {
+enum TVDetailPrimaryAction: CaseIterable, Hashable {
     case play
     case watchlist
     case watched
@@ -54,6 +60,27 @@ enum TVDetailPrimaryAction: CaseIterable, Equatable {
         case .watched:
             return "detail_watched_button"
         }
+    }
+}
+
+enum EditorialMediaIdentityAccessibility {
+    static func label(
+        itemName: String,
+        kicker: String?,
+        metadata: String?
+    ) -> String {
+        [kicker, itemName, metadata]
+            .compactMap(normalized)
+            .joined(separator: ", ")
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !normalized.isEmpty
+        else {
+            return nil
+        }
+        return normalized
     }
 }
 
@@ -182,16 +209,16 @@ enum DetailArtworkCostPolicy {
             return DetailArtworkCompositionPlan(
                 role: .hero,
                 heroStackCount: 1,
-                imageLayerCount: 2,
-                canonicalRoles: [.heroLow, .heroHigh]
+                primaryRole: .heroLow,
+                secondaryRole: .heroHigh
             )
         }
 
         return DetailArtworkCompositionPlan(
             role: .preview,
             heroStackCount: 0,
-            imageLayerCount: 1,
-            canonicalRoles: [.landscapeRail]
+            primaryRole: .landscapeRail,
+            secondaryRole: nil
         )
     }
 }

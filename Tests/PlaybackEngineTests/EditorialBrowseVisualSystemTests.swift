@@ -91,4 +91,23 @@ final class EditorialBrowseVisualSystemTests: XCTestCase {
         XCTAssertEqual(plan.imageLayerCount, 1)
         XCTAssertEqual(plan.canonicalRoles, [.landscapeRail])
     }
+
+    func testEditorialIdentityAccessibilitySpeaksAllVisibleContext() {
+        XCTAssertEqual(
+            EditorialMediaIdentityAccessibility.label(
+                itemName: "Continue Series",
+                kicker: " Series ",
+                metadata: "Drama · Mystery"
+            ),
+            "Series, Continue Series, Drama · Mystery"
+        )
+        XCTAssertEqual(
+            EditorialMediaIdentityAccessibility.label(
+                itemName: "Sample Movie",
+                kicker: nil,
+                metadata: "  "
+            ),
+            "Sample Movie"
+        )
+    }
 }

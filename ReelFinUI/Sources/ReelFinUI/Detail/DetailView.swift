@@ -1805,6 +1805,16 @@ private struct IOSDetailStageMetrics: Equatable {
     var heroContentScale: CGFloat { 1 }
 }
 
+@Observable
+private final class IOSDetailScrollPresentationStore {
+    var presentation = IOSDetailScrollPresentation.expanded
+
+    func update(_ newPresentation: IOSDetailScrollPresentation) {
+        guard presentation != newPresentation else { return }
+        presentation = newPresentation
+    }
+}
+
 private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1823,20 +1833,29 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
     @ViewBuilder let selectedCard: (IOSDetailStageMetrics) -> SelectedCard
     @ViewBuilder let supportingContent: () -> Supporting
 
-    @State private var scrollPresentation = IOSDetailScrollPresentation.expanded
-    @State private var lastAlignedCarouselItemID: String?
-    @State private var carouselScrollPositionID: String?
+    @State private var scrollPresentationStore = IOSDetailScrollPresentationStore()
 
     var body: some View {
-        let metrics = IOSDetailStageMetrics(presentation: scrollPresentation)
-
         ZStack(alignment: .top) {
             Color.black
                 .ignoresSafeArea()
 
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: sectionSpacing) {
-                    topStage(metrics: metrics)
+                    IOSDetailTopStage(
+                        viewportSize: viewportSize,
+                        heroHeight: heroHeight,
+                        horizontalPadding: horizontalPadding,
+                        stageTopInset: stageTopInset,
+                        entries: entries,
+                        currentItemID: currentItemID,
+                        selectedItemID: $selectedItemID,
+                        scrollPresentationStore: scrollPresentationStore,
+                        apiClient: apiClient,
+                        imagePipeline: imagePipeline,
+                        onSelectItem: onSelectItem,
+                        selectedCard: selectedCard
+                    )
 
                     supportingContent()
                         .padding(.horizontal, horizontalPadding)
@@ -1854,117 +1873,44 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
                     reduceMotion: reduceMotion
                 )
             } action: { _, newValue in
-                if scrollPresentation != newValue {
-                    scrollPresentation = newValue
-                }
+                scrollPresentationStore.update(newValue)
             }
 
             if showsCompactHeader {
-                compactHeader(metrics: metrics)
+                IOSDetailCompactHeader(
+                    safeAreaTop: safeAreaTop,
+                    scrollPresentationStore: scrollPresentationStore
+                )
             }
-        }
-        .onAppear {
-            if selectedItemID == nil {
-                selectedItemID = currentItemID
-            }
-            if carouselScrollPositionID == nil {
-                carouselScrollPositionID = currentItemID
-            }
-        }
-        .onChange(of: currentItemID) { _, newValue in
-            selectedItemID = newValue
-            carouselScrollPositionID = newValue
-        }
-        .onChange(of: carouselScrollPositionID) { _, newValue in
-            guard metrics.allowsHorizontalSelection else {
-                carouselScrollPositionID = currentItemID
-                return
-            }
-            guard let acceptedID = IOSDetailCarouselLayout.acceptedSelectionID(
-                currentItemID: currentItemID,
-                proposedItemID: newValue,
-                topInsetProgress: metrics.topInsetProgress
-            ) else {
-                carouselScrollPositionID = currentItemID
-                return
-            }
-            guard let entry = entries.first(where: { $0.id == acceptedID }) else { return }
-            selectedItemID = acceptedID
-            onSelectItem(entry)
         }
     }
 
-    private func topStage(metrics: IOSDetailStageMetrics) -> some View {
-        GeometryReader { proxy in
-            let cardWidth = resolvedCardWidth(for: proxy.size.width)
-            let sideInset = resolvedSideInset(for: proxy.size.width, cardWidth: cardWidth)
-            let animatedSideInset = sideInset * (1 - metrics.topInsetProgress)
-            let expandedCardWidth = min(
-                cardWidth + ((proxy.size.width - cardWidth) * metrics.topInsetProgress),
-                proxy.size.width
-            )
-            let neighborPreviewOpacity = IOSDetailCarouselLayout.neighborPreviewOpacity(
-                topInsetProgress: metrics.topInsetProgress
-            )
-
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 18) {
-                        ForEach(entries) { entry in
-                            IOSDetailTopCarouselCard(
-                                entry: entry,
-                                currentItemID: currentItemID,
-                                heroHeight: heroHeight,
-                                cardWidth: cardWidth,
-                                expandedCardWidth: expandedCardWidth,
-                                metrics: metrics,
-                                topInsetProgress: metrics.topInsetProgress,
-                                neighborPreviewOpacity: neighborPreviewOpacity,
-                                apiClient: apiClient,
-                                imagePipeline: imagePipeline
-                            ) {
-                                selectedCard(metrics)
-                            }
-                            .id(entry.id)
-                        }
-                    }
-                }
-                .scrollTargetLayout()
-                .padding(.horizontal, animatedSideInset)
-                .padding(.vertical, 8)
-                .onAppear {
-                    alignCarouselIfNeeded(
-                        to: selectedItemID ?? currentItemID,
-                        using: proxy
-                    )
-                }
-                .onChange(of: currentItemID) { _, newValue in
-                    alignCarouselIfNeeded(to: newValue, using: proxy)
-                }
-                .onChange(of: entries.map(\.id)) { _, _ in
-                    alignCarouselIfNeeded(
-                        to: selectedItemID ?? currentItemID,
-                        using: proxy,
-                        force: true
-                    )
-                }
-                .scrollClipDisabled()
-                .scrollDisabled(!metrics.allowsHorizontalSelection)
-                .scrollTargetBehavior(.viewAligned)
-                .scrollPosition(id: $carouselScrollPositionID)
-            }
-            .accessibilityIdentifier("detail_ios_top_carousel")
-        }
-        .frame(height: metrics.stageHeight(for: heroHeight))
-        .padding(.top, stageTopInset)
+    private var stageTopInset: CGFloat {
+        min(max(safeAreaTop * 0.66, 40), 60)
     }
+}
 
-    private func compactHeader(metrics: IOSDetailStageMetrics) -> some View {
+private struct IOSDetailCompactHeader: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    let safeAreaTop: CGFloat
+    let scrollPresentationStore: IOSDetailScrollPresentationStore
+
+    var body: some View {
 #if os(iOS)
+        let metrics = IOSDetailStageMetrics(
+            presentation: scrollPresentationStore.presentation
+        )
+
         VStack(spacing: 0) {
             ZStack {
-                TransparentBlurView(style: .systemUltraThinMaterial)
-                    .opacity(metrics.headerBlurOpacity)
+                if reduceTransparency {
+                    ReelFinTheme.editorialOpaqueFallback
+                        .opacity(metrics.headerBlurOpacity)
+                } else {
+                    TransparentBlurView(style: .systemUltraThinMaterial)
+                        .opacity(metrics.headerBlurOpacity)
+                }
 
                 LinearGradient(
                     colors: [
@@ -1994,9 +1940,122 @@ private struct IOSDetailScreen<SelectedCard: View, Supporting: View>: View {
         EmptyView()
 #endif
     }
+}
 
-    private var stageTopInset: CGFloat {
-        min(max(safeAreaTop * 0.66, 40), 60)
+private struct IOSDetailTopStage<SelectedCard: View>: View {
+    let viewportSize: CGSize
+    let heroHeight: CGFloat
+    let horizontalPadding: CGFloat
+    let stageTopInset: CGFloat
+    let entries: [IOSDetailCarouselEntry]
+    let currentItemID: String
+    @Binding var selectedItemID: String?
+    let scrollPresentationStore: IOSDetailScrollPresentationStore
+    let apiClient: any JellyfinAPIClientProtocol
+    let imagePipeline: any ImagePipelineProtocol
+    let onSelectItem: (IOSDetailCarouselEntry) -> Void
+    @ViewBuilder let selectedCard: (IOSDetailStageMetrics) -> SelectedCard
+
+    @State private var lastAlignedCarouselItemID: String?
+    @State private var carouselScrollPositionID: String?
+
+    var body: some View {
+        let metrics = IOSDetailStageMetrics(
+            presentation: scrollPresentationStore.presentation
+        )
+
+        GeometryReader { geometry in
+            let cardWidth = resolvedCardWidth(for: geometry.size.width)
+            let sideInset = resolvedSideInset(
+                for: geometry.size.width,
+                cardWidth: cardWidth
+            )
+            let animatedSideInset = sideInset * (1 - metrics.topInsetProgress)
+            let expandedCardWidth = min(
+                cardWidth + ((geometry.size.width - cardWidth) * metrics.topInsetProgress),
+                geometry.size.width
+            )
+            let neighborPreviewOpacity = IOSDetailCarouselLayout.neighborPreviewOpacity(
+                topInsetProgress: metrics.topInsetProgress
+            )
+
+            ScrollViewReader { scrollProxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 18) {
+                        ForEach(entries) { entry in
+                            IOSDetailTopCarouselCard(
+                                entry: entry,
+                                currentItemID: currentItemID,
+                                heroHeight: heroHeight,
+                                cardWidth: cardWidth,
+                                expandedCardWidth: expandedCardWidth,
+                                metrics: metrics,
+                                topInsetProgress: metrics.topInsetProgress,
+                                neighborPreviewOpacity: neighborPreviewOpacity,
+                                apiClient: apiClient,
+                                imagePipeline: imagePipeline
+                            ) {
+                                selectedCard(metrics)
+                            }
+                            .id(entry.id)
+                        }
+                    }
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, animatedSideInset)
+                .padding(.vertical, 8)
+                .onAppear {
+                    alignCarouselIfNeeded(
+                        to: selectedItemID ?? currentItemID,
+                        using: scrollProxy
+                    )
+                }
+                .onChange(of: currentItemID) { _, newValue in
+                    selectedItemID = newValue
+                    carouselScrollPositionID = newValue
+                    alignCarouselIfNeeded(to: newValue, using: scrollProxy)
+                }
+                .onChange(of: entries.map(\.id)) { _, _ in
+                    alignCarouselIfNeeded(
+                        to: selectedItemID ?? currentItemID,
+                        using: scrollProxy,
+                        force: true
+                    )
+                }
+                .scrollClipDisabled()
+                .scrollDisabled(!metrics.allowsHorizontalSelection)
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: $carouselScrollPositionID)
+            }
+            .accessibilityIdentifier("detail_ios_top_carousel")
+        }
+        .frame(height: metrics.stageHeight(for: heroHeight))
+        .padding(.top, stageTopInset)
+        .onAppear {
+            if selectedItemID == nil {
+                selectedItemID = currentItemID
+            }
+            if carouselScrollPositionID == nil {
+                carouselScrollPositionID = currentItemID
+            }
+        }
+        .onChange(of: carouselScrollPositionID) { _, newValue in
+            guard metrics.allowsHorizontalSelection else {
+                carouselScrollPositionID = currentItemID
+                return
+            }
+            guard let acceptedID = IOSDetailCarouselLayout.acceptedSelectionID(
+                currentItemID: currentItemID,
+                proposedItemID: newValue,
+                topInsetProgress: metrics.topInsetProgress
+            ) else {
+                carouselScrollPositionID = currentItemID
+                return
+            }
+            guard let entry = entries.first(where: { $0.id == acceptedID }) else { return }
+            selectedItemID = acceptedID
+            onSelectItem(entry)
+        }
     }
 
     private func resolvedCardWidth(for availableWidth: CGFloat) -> CGFloat {
@@ -2048,21 +2107,26 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
 
     var body: some View {
         let selected = isSelected
+        let composition = DetailArtworkCostPolicy.composition(isSelected: isSelected)
 
         ZStack(alignment: .bottomLeading) {
             Color.black
 
-            if selected {
+            if composition.role == .hero {
                 selectedContent()
             } else {
                 CachedRemoteImage(
-                    request: ArtworkRequest.make(for: entry.displayItem, role: .landscapeRail),
+                    request: ArtworkRequest.make(
+                        for: entry.displayItem,
+                        role: composition.primaryRole
+                    ),
                     contentMode: .fill,
                     apiClient: apiClient,
                     imagePipeline: imagePipeline
                 )
                 .frame(width: resolvedCardWidth, height: cardHeight)
                 .clipped()
+                .accessibilityHidden(true)
 
                 LinearGradient(
                     stops: [
@@ -2075,6 +2139,7 @@ private struct IOSDetailTopCarouselCard<SelectedContent: View>: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
+                .accessibilityHidden(true)
 
                 previewOverlay
             }
@@ -2352,16 +2417,6 @@ private struct IOSDetailHeroContent: View {
                     .frame(maxWidth: visualSize(isCompactHeroLayout ? 236 : 272))
 
                     IOSDetailHeroRoundActionButton(
-                        systemImage: isWatched ? "eye.fill" : "eye",
-                        accessibilityLabel: isWatched ? "Mark Unwatched" : "Mark Watched",
-                        accessibilityIdentifier: "detail_watched_button",
-                        accessibilityValue: isWatched ? "watched" : "not_watched",
-                        isActive: isWatched,
-                        size: visualSize(isCompactHeroLayout ? 48 : 56),
-                        action: onToggleWatched
-                    )
-
-                    IOSDetailHeroRoundActionButton(
                         systemImage: isInWatchlist ? "heart.fill" : "heart",
                         accessibilityLabel: isInWatchlist ? "Unlike" : "Like",
                         accessibilityIdentifier: "detail_favorite_button",
@@ -2369,6 +2424,16 @@ private struct IOSDetailHeroContent: View {
                         isActive: isInWatchlist,
                         size: visualSize(isCompactHeroLayout ? 48 : 56),
                         action: onToggleWatchlist
+                    )
+
+                    IOSDetailHeroRoundActionButton(
+                        systemImage: isWatched ? "eye.fill" : "eye",
+                        accessibilityLabel: isWatched ? "Mark Unwatched" : "Mark Watched",
+                        accessibilityIdentifier: "detail_watched_button",
+                        accessibilityValue: isWatched ? "watched" : "not_watched",
+                        isActive: isWatched,
+                        size: visualSize(isCompactHeroLayout ? 48 : 56),
+                        action: onToggleWatched
                     )
                 }
             }
@@ -2528,26 +2593,9 @@ private struct IOSDetailHeroContent: View {
     }
 
     private var subtitleText: String {
-        var values: [String] = []
-
-        switch item.mediaType {
-        case .series:
-            values.append("TV Show")
-        case .movie:
-            values.append("Movie")
-        case .episode:
-            values.append("Episode")
-        case .season:
-            values.append("Season")
-        case .unknown:
-            break
-        }
-
-        if !item.genres.isEmpty {
-            values.append(contentsOf: item.genres.prefix(2))
-        }
-
-        return values.joined(separator: " · ")
+        item.genres
+            .prefix(2)
+            .joined(separator: " · ")
     }
 
     private var mediaKicker: String {
@@ -2742,11 +2790,12 @@ private struct IOSHeroChromeCircleButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: max(18, diameter * 0.42), weight: .semibold))
-                .foregroundStyle(.white.opacity(0.94))
-                .frame(width: diameter, height: diameter)
-                .background { backgroundSurface }
+            completeControlSurface {
+                Image(systemName: systemImage)
+                    .font(.system(size: max(18, diameter * 0.42), weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .frame(width: diameter, height: diameter)
+            }
                 .overlay {
                     Circle().stroke(Color.white.opacity(reduceTransparency ? 0.28 : 0.16), lineWidth: 1)
                 }
@@ -2758,16 +2807,21 @@ private struct IOSHeroChromeCircleButton: View {
     }
 
     @ViewBuilder
-    private var backgroundSurface: some View {
+    private func completeControlSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if reduceTransparency {
-            Circle().fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background { Circle().fill(ReelFinTheme.editorialOpaqueFallback) }
         } else if #available(iOS 26.0, tvOS 26.0, *) {
-            Color.clear.glassEffect(
-                Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
-                in: .circle
-            )
+            content()
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
+                    in: .circle
+                )
         } else {
-            Circle().fill(.ultraThinMaterial)
+            content()
+                .background { Circle().fill(.ultraThinMaterial) }
         }
     }
 }
@@ -2780,11 +2834,12 @@ private struct IOSHeroChromeBarGlyph: View {
     let diameter: CGFloat
 
     var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: max(17, diameter * 0.40), weight: .semibold))
-            .foregroundStyle(.white.opacity(0.94))
-            .frame(width: diameter, height: diameter)
-            .background { backgroundSurface }
+        completeControlSurface {
+            Image(systemName: systemImage)
+                .font(.system(size: max(17, diameter * 0.40), weight: .semibold))
+                .foregroundStyle(.white.opacity(0.94))
+                .frame(width: diameter, height: diameter)
+        }
             .overlay {
                 Circle().stroke(Color.white.opacity(reduceTransparency ? 0.28 : 0.16), lineWidth: 1)
             }
@@ -2794,16 +2849,21 @@ private struct IOSHeroChromeBarGlyph: View {
     }
 
     @ViewBuilder
-    private var backgroundSurface: some View {
+    private func completeControlSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if reduceTransparency {
-            Circle().fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background { Circle().fill(ReelFinTheme.editorialOpaqueFallback) }
         } else if #available(iOS 26.0, tvOS 26.0, *) {
-            Color.clear.glassEffect(
-                Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
-                in: .circle
-            )
+            content()
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
+                    in: .circle
+                )
         } else {
-            Circle().fill(.ultraThinMaterial)
+            content()
+                .background { Circle().fill(.ultraThinMaterial) }
         }
     }
 }
@@ -2821,21 +2881,22 @@ private struct IOSDetailHeroPrimaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                if isLoading {
-                    ProgressView()
-                        .tint(.black)
-                    Text("Preparing")
-                } else {
-                    Image(systemName: "play.fill")
-                    Text(title)
+            completeControlSurface {
+                HStack(spacing: 12) {
+                    if isLoading {
+                        ProgressView()
+                            .tint(.black)
+                        Text("Preparing")
+                    } else {
+                        Image(systemName: "play.fill")
+                        Text(title)
+                    }
                 }
+                .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.black.opacity(0.92))
+                .frame(maxWidth: .infinity, minHeight: minHeight)
+                .padding(.horizontal, 18)
             }
-            .font(.system(size: fontSize, weight: .semibold, design: .rounded))
-            .foregroundStyle(.black.opacity(0.92))
-            .frame(maxWidth: .infinity, minHeight: minHeight)
-            .padding(.horizontal, 18)
-            .background { backgroundSurface }
             .overlay {
                 Capsule(style: .continuous)
                     .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
@@ -2852,20 +2913,28 @@ private struct IOSDetailHeroPrimaryButton: View {
     }
 
     @ViewBuilder
-    private var backgroundSurface: some View {
+    private func completeControlSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if reduceTransparency {
-            Capsule(style: .continuous).fill(Color.white.opacity(0.98))
+            content()
+                .background {
+                    Capsule(style: .continuous).fill(Color.white.opacity(0.98))
+                }
         } else if #available(iOS 26.0, tvOS 26.0, *) {
-            Color.clear
+            content()
+                .background {
+                    Capsule(style: .continuous).fill(Color.white.opacity(0.34))
+                }
                 .glassEffect(
                     Glass.regular.tint(Color.white.opacity(0.88)).interactive(),
                     in: .capsule
                 )
-                .overlay {
-                    Capsule(style: .continuous).fill(Color.white.opacity(0.70))
-                }
         } else {
-            Capsule(style: .continuous).fill(Color.white.opacity(0.98))
+            content()
+                .background {
+                    Capsule(style: .continuous).fill(Color.white.opacity(0.98))
+                }
         }
     }
 }
@@ -2884,11 +2953,12 @@ private struct IOSDetailHeroRoundActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: size * 0.40, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.94))
-                .frame(width: size, height: size)
-                .background { backgroundSurface }
+            completeControlSurface {
+                Image(systemName: systemImage)
+                    .font(.system(size: size * 0.40, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .frame(width: size, height: size)
+            }
                 .overlay {
                     Circle()
                         .stroke(borderColor, lineWidth: 0.9)
@@ -2914,12 +2984,17 @@ private struct IOSDetailHeroRoundActionButton: View {
     }
 
     @ViewBuilder
-    private var backgroundSurface: some View {
+    private func completeControlSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if reduceTransparency {
-            Circle().fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background { Circle().fill(ReelFinTheme.editorialOpaqueFallback) }
         } else if #available(iOS 26.0, tvOS 26.0, *) {
-            Circle()
-                .fill(isFocused ? Color.white.opacity(0.12) : .clear)
+            content()
+                .background {
+                    Circle().fill(isFocused ? Color.white.opacity(0.12) : .clear)
+                }
                 .glassEffect(
                     Glass.regular
                         .tint(Color.white.opacity(isActive ? 0.14 : 0.08))
@@ -2927,11 +3002,14 @@ private struct IOSDetailHeroRoundActionButton: View {
                     in: .circle
                 )
         } else {
-            Circle().fill(
-                isFocused
-                    ? Color.white.opacity(0.22)
-                    : Color.white.opacity(isActive ? 0.18 : 0.11)
-            )
+            content()
+                .background {
+                    Circle().fill(
+                        isFocused
+                            ? Color.white.opacity(0.22)
+                            : Color.white.opacity(isActive ? 0.18 : 0.11)
+                    )
+                }
         }
     }
 }
@@ -3571,12 +3649,22 @@ private struct PrimaryActionsRow: View {
                 tvActionButtons
             }
         }
-        .defaultFocus(focusedAction, .play, priority: .userInitiated)
+        .defaultFocus(focusedAction, defaultFocusValue, priority: .userInitiated)
         .accessibilityElement(children: .contain)
     }
 
     private var tvActionButtons: some View {
         HStack(spacing: 16) {
+            ForEach(TVDetailFocusTopology.primaryActionOrder, id: \.self) { action in
+                tvActionButton(for: action)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tvActionButton(for action: TVDetailPrimaryAction) -> some View {
+        switch action {
+        case .play:
             HeroPrimaryButton(
                 title: playButtonLabel,
                 isLoading: isLoadingPlayback,
@@ -3586,6 +3674,7 @@ private struct PrimaryActionsRow: View {
             )
             .prefersDefaultFocus(true, in: focusScope)
 
+        case .watchlist:
             HeroSecondaryButton(
                 title: isInWatchlist ? "In Watchlist" : "Watchlist",
                 systemImage: isInWatchlist ? "checkmark" : "plus",
@@ -3596,6 +3685,7 @@ private struct PrimaryActionsRow: View {
                 action: onToggleWatchlist
             )
 
+        case .watched:
             HeroSecondaryButton(
                 title: isWatched ? "Watched" : "Mark Watched",
                 systemImage: isWatched ? "eye.fill" : "eye",
@@ -3605,6 +3695,14 @@ private struct PrimaryActionsRow: View {
                 accessibilityIdentifier: TVDetailPrimaryAction.watched.accessibilityIdentifier,
                 action: onToggleWatched
             )
+        }
+    }
+
+    private var defaultFocusValue: DetailHeroAction {
+        switch TVDetailFocusTopology.defaultPrimaryAction {
+        case .play: return .play
+        case .watchlist: return .watchlist
+        case .watched: return .watched
         }
     }
 #endif
@@ -3644,13 +3742,14 @@ private struct HeroPrimaryButton: View {
             guard !isLoading else { return }
             action()
         } label: {
-            primaryLabel
-                .foregroundStyle(primaryButtonForeground)
-                .frame(
-                    width: TVDetailActionButtonLayout.controlSize.width,
-                    height: TVDetailActionButtonLayout.controlSize.height
-                )
-                .background { primaryButtonBackground }
+            completeControlSurface {
+                primaryLabel
+                    .foregroundStyle(primaryButtonForeground)
+                    .frame(
+                        width: TVDetailActionButtonLayout.controlSize.width,
+                        height: TVDetailActionButtonLayout.controlSize.height
+                    )
+            }
                 .contentShape(Capsule(style: .continuous))
         }
         .focused(focusedAction, equals: focusValue)
@@ -3670,13 +3769,14 @@ private struct HeroPrimaryButton: View {
             guard !isLoading else { return }
             action()
         } label: {
-            primaryLabel
-                .foregroundStyle(primaryButtonForeground)
-                .frame(
-                    width: TVDetailActionButtonLayout.controlSize.width,
-                    height: TVDetailActionButtonLayout.controlSize.height
-                )
-                .background { primaryButtonBackground }
+            completeControlSurface {
+                primaryLabel
+                    .foregroundStyle(primaryButtonForeground)
+                    .frame(
+                        width: TVDetailActionButtonLayout.controlSize.width,
+                        height: TVDetailActionButtonLayout.controlSize.height
+                    )
+            }
                 .contentShape(Capsule(style: .continuous))
         }
         .focused(focusedAction, equals: focusValue)
@@ -3715,27 +3815,39 @@ private struct HeroPrimaryButton: View {
     }
 
     @ViewBuilder
-    private var primaryButtonBackground: some View {
+    private func completeControlSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if isFocused {
-            Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.98))
+            content()
+                .background {
+                    Capsule(style: .continuous).fill(Color.white.opacity(0.98))
+                }
         } else if reduceTransparency {
-            Capsule(style: .continuous)
-                .fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background {
+                    Capsule(style: .continuous).fill(ReelFinTheme.editorialOpaqueFallback)
+                }
                 .overlay {
                     Capsule(style: .continuous)
                         .stroke(Color.white.opacity(0.30), lineWidth: 1)
                 }
+        } else if #available(tvOS 26.0, *) {
+            content()
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
+                    in: .capsule
+                )
         } else {
-            Color.clear.reelFinGlassCapsule(
-                interactive: true,
-                tint: ReelFinTheme.editorialGlassTint,
-                stroke: .clear,
-                strokeWidth: 0,
-                shadowOpacity: 0.12,
-                shadowRadius: 12,
-                shadowYOffset: 6
-            )
+            content()
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .fill(ReelFinTheme.editorialGlassTint)
+                        }
+                }
         }
     }
     #endif
@@ -3864,13 +3976,14 @@ private struct HeroSecondaryButton: View {
     @available(tvOS 26.0, *)
     private var tvOS26Button: some View {
         Button(action: action) {
-            buttonLabel
-                .foregroundStyle(buttonForeground)
-                .frame(
-                    width: TVDetailActionButtonLayout.controlSize.width,
-                    height: TVDetailActionButtonLayout.controlSize.height
-                )
-                .background { secondaryGlassBackground }
+            completeControlSurface {
+                buttonLabel
+                    .foregroundStyle(buttonForeground)
+                    .frame(
+                        width: TVDetailActionButtonLayout.controlSize.width,
+                        height: TVDetailActionButtonLayout.controlSize.height
+                    )
+            }
                 .contentShape(Capsule(style: .continuous))
         }
         .focused(focusedAction, equals: focusValue)
@@ -3887,39 +4000,16 @@ private struct HeroSecondaryButton: View {
         focusedAction.wrappedValue == focusValue
     }
 
-    @available(tvOS 26.0, *)
-    @ViewBuilder
-    private var secondaryGlassBackground: some View {
-        if isFocused {
-            Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.96))
-        } else if reduceTransparency {
-            Capsule(style: .continuous)
-                .fill(ReelFinTheme.editorialOpaqueFallback)
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(0.30), lineWidth: 1)
-                }
-        } else {
-            Color.clear
-                .glassEffect(
-                    Glass.regular
-                        .tint(Color.white.opacity(isActive ? 0.045 : 0.032))
-                        .interactive(),
-                    in: .capsule
-                )
-        }
-    }
-
     private var legacyTVButton: some View {
         Button(action: action) {
-            buttonLabel
-                .foregroundStyle(buttonForeground)
-                .frame(
-                    width: TVDetailActionButtonLayout.controlSize.width,
-                    height: TVDetailActionButtonLayout.controlSize.height
-                )
-                .background { buttonBackground }
+            completeControlSurface {
+                buttonLabel
+                    .foregroundStyle(buttonForeground)
+                    .frame(
+                        width: TVDetailActionButtonLayout.controlSize.width,
+                        height: TVDetailActionButtonLayout.controlSize.height
+                    )
+            }
                 .contentShape(Capsule(style: .continuous))
         }
         .focused(focusedAction, equals: focusValue)
@@ -3945,27 +4035,40 @@ private struct HeroSecondaryButton: View {
     }
 
     @ViewBuilder
-    private var buttonBackground: some View {
+    private func completeControlSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if isFocused {
-            Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.96))
+            content()
+                .background {
+                    Capsule(style: .continuous).fill(Color.white.opacity(0.96))
+                }
         } else if reduceTransparency {
-            Capsule(style: .continuous)
-                .fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background {
+                    Capsule(style: .continuous).fill(ReelFinTheme.editorialOpaqueFallback)
+                }
                 .overlay {
                     Capsule(style: .continuous)
                         .stroke(Color.white.opacity(0.30), lineWidth: 1)
                 }
+        } else if #available(tvOS 26.0, *) {
+            content()
+                .glassEffect(
+                    Glass.regular
+                        .tint(Color.white.opacity(isActive ? 0.045 : 0.032))
+                        .interactive(),
+                    in: .capsule
+                )
         } else {
-            Color.clear.reelFinGlassCapsule(
-                interactive: true,
-                tint: backgroundTint,
-                stroke: .clear,
-                strokeWidth: 0,
-                shadowOpacity: 0.10,
-                shadowRadius: 10,
-                shadowYOffset: 5
-            )
+            content()
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            Capsule(style: .continuous).fill(backgroundTint)
+                        }
+                }
         }
     }
 

@@ -65,7 +65,13 @@ struct EditorialMediaIdentityView: View {
         }
         .frame(maxWidth: identityMaxWidth, alignment: contentAlignment)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(item.name)
+        .accessibilityLabel(
+            EditorialMediaIdentityAccessibility.label(
+                itemName: fallbackTitle,
+                kicker: kicker,
+                metadata: metadata
+            )
+        )
         .accessibilityAddTraits(.isHeader)
         .task(id: logoRequest) {
             await loadLogo(for: logoRequest)

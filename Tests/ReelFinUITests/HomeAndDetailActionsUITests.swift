@@ -114,11 +114,11 @@ final class HomeAndDetailActionsUITests: XCTestCase {
 
         let carousel = app.scrollViews["detail_ios_top_carousel"].firstMatch
         XCTAssertTrue(carousel.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Continue Series"].waitForExistence(timeout: 5))
+        XCTAssertTrue(detailIdentity(containing: "Continue Series", in: app).waitForExistence(timeout: 5))
 
         carousel.swipeLeft()
 
-        XCTAssertTrue(app.staticTexts["Resume Movie"].waitForExistence(timeout: 8))
+        XCTAssertTrue(detailIdentity(containing: "Resume Movie", in: app).waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["detail_more_button"].exists)
         capture(name: "detail-adjacent-neighbor")
     }
@@ -235,6 +235,12 @@ final class HomeAndDetailActionsUITests: XCTestCase {
         }
 
         return (element.value as? String) == expectedValue
+    }
+
+    private func detailIdentity(containing title: String, in app: XCUIApplication) -> XCUIElement {
+        app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", title)
+        ).firstMatch
     }
 
     private func capture(name: String) {
