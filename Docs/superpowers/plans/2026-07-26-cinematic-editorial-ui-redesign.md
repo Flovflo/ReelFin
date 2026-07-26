@@ -458,34 +458,60 @@ Run `xcodegen generate` before the builds, execute the two platform builds seque
 
 - [ ] **Step 1: Add deterministic failing overlap tests**
 
-Enhance the API/repository stubs with continuations. Add tests proving:
+Convert the API and repository doubles to actor-backed, continuation-controlled gates that can deliberately ignore cancellation. Record complete query snapshots and expose count waiters/resume methods so the tests never sleep. Add these exact overlap cases:
 
-1. a slow query A cannot overwrite completed query B;
-2. a filter/sort change is accepted while old pagination is blocked;
-3. canceling/debouncing search does not clear valid cached results;
-4. `isLoadingPage` describes only the current generation.
+1. `testLatestCriteriaWinsWhenOlderRemoteFetchFinishesLast`: block remote A, submit and finish B, then finish A; only coherent B criteria/results may publish.
+2. `testFilterAndSortReloadStartsWhilePreviousPaginationIsSuspended`: block A page 1, submit new filter/sort B, prove B page 0 starts immediately, then finish stale A without append or page-state damage.
+3. `testCancelIntentPreservesLastCommittedCachedSearchResults`: publish owned cached search results, cancel while remote is blocked, then release stale work; committed cache stays visible.
+4. `testIsLoadingPageTracksOnlyCurrentCriteriaGeneration`: an old pagination completion must not clear the loading owner of current B.
 
-Drive the view model through a single `submitIntent(_:)` or `reload(criteria:)` API rather than sleeping in tests.
+Drive the model through a synchronous, model-owned submission API that returns its owned `Task` so tests can await exact completion. Preserve immediate test-double behavior when no gate is configured and keep the existing aggregation/playback-quality tests.
 
 - [ ] **Step 2: Confirm RED**
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
-  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
   -only-testing:PlaybackEngineTests/LibraryViewModelTests
 ```
 
 - [ ] **Step 3: Implement owned generation/task semantics**
 
-Snapshot search/filter/sort into an immutable `LibraryCriteria`. Increment a generation for each new criteria intent, cancel the previous owned task, and validate generation after every repository/API suspension before publishing. Pagination is separately owned but invalidated by a new criteria generation. Build queries exclusively from the captured criteria, never mutable properties after an await.
+Add immutable `LibraryCriteria: Equatable, Sendable` containing the trimmed search query, filter, and sort mode. Make `SortMode` sendable. Add separate owned state for criteria and pagination: a criteria generation, pagination request ID, active criteria, `criteriaTask`, `paginationTask`, and a loading owner token. A synchronous criteria submission must:
+
+1. capture all mutable UI criteria before suspension;
+2. increment the generation;
+3. cancel and replace both owned tasks and invalidate pagination/loading ownership;
+4. reset page/end markers without clearing the last committed items;
+5. start and return the new owned task.
+
+Pagination captures generation, criteria, request ID, and page synchronously; it is rejected only for current-generation criteria loading, nonempty search, last page, or an existing current pagination task. A new criteria intent must still start while old pagination is suspended.
+
+Pass captured criteria/tokens through cache, query, view-resolution, remote, merge, sort, and persistence helpers. After **every** repository/API suspension—including cached views, remote views, saving views, item fetches, searches, and upserts—require both `!Task.isCancelled` and matching ownership before publishing or starting another dependency call. Cancellation alone is insufficient because transports and test continuations may ignore it. Build and sort only from captured criteria, never mutable properties after an `await`. Clear loading state only when the completing task still owns its token; log only errors that still belong to the active intent.
+
+Preserve cached-first painting and all existing semantics: local search then remote merge for nonempty search; cached library query then remote replacement for empty search; 120/48 page sizes, view-ID scoping, pagination numbering, deduplication, playback-quality preference, and disabled pagination during search. Keep `LibraryViewModel` on `MainActor`; do not add detached tasks or broaden actor isolation.
 
 - [ ] **Step 4: Remove unowned view Tasks**
 
-Replace the three `.onChange` closures that launch anonymous Tasks with one cancelable `@State` search debounce task plus synchronous view-model intent submission. Cancel it on disappearance. Filter and sort submit immediately.
+Add a dedicated `@State` search-debounce task; do not reuse artwork/playback `warmupTask`. Initial load submits one owned criteria intent. Search changes cancel the prior debounce, sleep 250 ms in `do/catch`, then submit the latest full criteria synchronously. Filter or sort changes cancel any pending debounce and submit immediately so delayed search cannot undo the newer choice. Pagination visibility submits through the model-owned pagination API instead of creating an anonymous view task. On disappearance, cancel/nil the debounce and call the model cancellation API while preserving existing warmup/focus cancellation. Returning to Library resubmits current criteria while already committed items can paint immediately.
 
-- [ ] **Step 5: Make Library tests GREEN**
+- [ ] **Step 5: Make Library tests GREEN and verify both platform branches**
 
-Run Step 2. Preserve existing deduplication and playback-quality preference assertions.
+Run Step 2, then regenerate and build iOS/tvOS sequentially:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodegen generate
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.5'
+git diff --check
+```
+
+Record the latest-wins ownership/cancellation work in `PLANS.md` and `OPTIMIZATION_AUDIT.md`.
 
 ---
 
