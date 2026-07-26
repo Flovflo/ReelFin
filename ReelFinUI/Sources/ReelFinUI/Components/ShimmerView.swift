@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 enum ShimmerAnimationBranch: String, Hashable, Identifiable {
     case `static`
@@ -8,6 +9,10 @@ enum ShimmerAnimationBranch: String, Hashable, Identifiable {
 }
 
 enum ShimmerAnimationPolicy {
+    static func animationEnabled(for profile: ArtworkRequestProfile) -> Bool {
+        profile == .heroBackdropLow
+    }
+
     static func branch(animationEnabled: Bool, reduceMotion: Bool) -> ShimmerAnimationBranch {
         animationEnabled && !reduceMotion ? .animated : .static
     }
@@ -18,7 +23,7 @@ public struct ShimmerView: View {
 
     private let animationEnabled: Bool
 
-    public init(animationEnabled: Bool = true) {
+    public init(animationEnabled: Bool = false) {
         self.animationEnabled = animationEnabled
     }
 

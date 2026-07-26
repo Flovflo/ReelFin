@@ -47,6 +47,36 @@ final class DefaultImagePipelineTests: XCTestCase {
         XCTAssertEqual(BlockingImageURLProtocol.requestCount, 1)
     }
 
+    func testRegistryDemotesPrefetchAfterVisibleConsumerReleases() async throws {
+        let registry = ImageTaskRegistry()
+        let url = URL(string: "https://example.com/artwork")!
+        let prefetchConsumer = ImageRequestConsumerID()
+        let visibleConsumer = ImageRequestConsumerID()
+        let imageTask = Task<UIImage, Error> { UIImage() }
+
+        _ = try await registry.existingOrRegisterTask(
+            for: url,
+            consumer: prefetchConsumer,
+            priority: .prefetch,
+            makeTask: { imageTask }
+        )
+        _ = try await registry.existingOrRegisterTask(
+            for: url,
+            consumer: visibleConsumer,
+            priority: .visible,
+            makeTask: { imageTask }
+        )
+
+        let promotedPriority = await registry.effectivePriority(for: url, fallback: .prefetch)
+        XCTAssertEqual(promotedPriority, .visible)
+
+        await registry.release(url: url, consumer: visibleConsumer)
+
+        let demotedPriority = await registry.effectivePriority(for: url, fallback: .visible)
+        XCTAssertEqual(demotedPriority, .prefetch)
+        await registry.release(url: url, consumer: prefetchConsumer)
+    }
+
     func testPersistsDiskCacheWithoutSensitiveQueryItems() async throws {
         let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let cache = try LRUDiskCache(directoryURL: cacheDir)

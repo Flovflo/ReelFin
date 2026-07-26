@@ -13,6 +13,7 @@ public struct CachedRemoteImage: View {
     private let quality: Int
     private let contentMode: CachedRemoteImageContentMode
     private let onImageLoaded: (() -> Void)?
+    private let placeholderAnimationEnabled: Bool
 
     @StateObject private var loader: CachedRemoteImageLoader
 
@@ -29,6 +30,9 @@ public struct CachedRemoteImage: View {
         quality = request.profile.quality
         self.contentMode = contentMode
         self.onImageLoaded = onImageLoaded
+        placeholderAnimationEnabled = ShimmerAnimationPolicy.animationEnabled(
+            for: request.profile
+        )
         _loader = StateObject(
             wrappedValue: CachedRemoteImageLoader(apiClient: apiClient, imagePipeline: imagePipeline)
         )
@@ -40,6 +44,7 @@ public struct CachedRemoteImage: View {
         width: Int,
         quality: Int = 82,
         contentMode: CachedRemoteImageContentMode = .fill,
+        placeholderAnimationEnabled: Bool = false,
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         onImageLoaded: (() -> Void)? = nil
@@ -50,6 +55,7 @@ public struct CachedRemoteImage: View {
         self.quality = quality
         self.contentMode = contentMode
         self.onImageLoaded = onImageLoaded
+        self.placeholderAnimationEnabled = placeholderAnimationEnabled
         _loader = StateObject(
             wrappedValue: CachedRemoteImageLoader(apiClient: apiClient, imagePipeline: imagePipeline)
         )
@@ -63,7 +69,7 @@ public struct CachedRemoteImage: View {
                     .modifier(RemoteImageScalingModifier(contentMode: contentMode))
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
             } else {
-                ShimmerView()
+                ShimmerView(animationEnabled: placeholderAnimationEnabled)
                     .overlay {
                         Image(systemName: "film")
                             .font(.system(size: 24, weight: .semibold))

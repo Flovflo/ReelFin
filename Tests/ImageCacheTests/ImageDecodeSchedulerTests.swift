@@ -4,6 +4,53 @@ import UIKit
 import XCTest
 
 final class ImageDecodeSchedulerTests: XCTestCase {
+    func testVisibleDecodeJumpsAheadOfQueuedPrefetchDecode() async throws {
+        let probe = BlockingDecodeProbe()
+        let scheduler = ImageDecodeScheduler(maxConcurrentOperationCount: 1) { data, _ in
+            let id = Int(data[0])
+            if id == 3 {
+                probe.recordImmediateBody(id: id)
+            } else {
+                probe.run(id: id)
+            }
+            return UIImage()
+        }
+        let runningPrefetch = Task {
+            try await scheduler.decode(
+                data: Data([1]),
+                maxPixelSize: 320,
+                priority: .prefetch
+            )
+        }
+        await probe.waitUntilStarted(count: 1)
+
+        let queuedPrefetch = Task {
+            try await scheduler.decode(
+                data: Data([2]),
+                maxPixelSize: 320,
+                priority: .prefetch
+            )
+        }
+        await waitUntilOperationCount(2, scheduler: scheduler)
+        let visible = Task {
+            try await scheduler.decode(
+                data: Data([3]),
+                maxPixelSize: 320,
+                priority: .visible
+            )
+        }
+        await waitUntilOperationCount(3, scheduler: scheduler)
+
+        probe.release(id: 1)
+        await probe.waitUntilStarted(count: 2)
+        XCTAssertEqual(Array(probe.startedIDs.prefix(2)), [1, 3])
+
+        probe.releaseAll()
+        _ = try await runningPrefetch.value
+        _ = try await visible.value
+        _ = try await queuedPrefetch.value
+    }
+
     func testRunsAtMostTwoBodiesAndAdmitsOneForOne() async throws {
         let probe = BlockingDecodeProbe()
         let scheduler = ImageDecodeScheduler { data, _ in
@@ -11,7 +58,13 @@ final class ImageDecodeSchedulerTests: XCTestCase {
             return UIImage()
         }
         let tasks = (1 ... 5).map { id in
-            Task { try await scheduler.decode(data: Data([UInt8(id)]), maxPixelSize: 320) }
+            Task {
+                try await scheduler.decode(
+                    data: Data([UInt8(id)]),
+                    maxPixelSize: 320,
+                    priority: .prefetch
+                )
+            }
         }
 
         await probe.waitUntilStarted(count: 2)
@@ -36,11 +89,17 @@ final class ImageDecodeSchedulerTests: XCTestCase {
             probe.run(id: Int(data[0]))
             return UIImage()
         }
-        let first = Task { try await scheduler.decode(data: Data([1]), maxPixelSize: 320) }
-        let second = Task { try await scheduler.decode(data: Data([2]), maxPixelSize: 320) }
+        let first = Task {
+            try await scheduler.decode(data: Data([1]), maxPixelSize: 320, priority: .prefetch)
+        }
+        let second = Task {
+            try await scheduler.decode(data: Data([2]), maxPixelSize: 320, priority: .prefetch)
+        }
         await probe.waitUntilStarted(count: 2)
 
-        let waiting = Task { try await scheduler.decode(data: Data([3]), maxPixelSize: 320) }
+        let waiting = Task {
+            try await scheduler.decode(data: Data([3]), maxPixelSize: 320, priority: .prefetch)
+        }
         await waitUntilOperationCount(3, scheduler: scheduler)
         waiting.cancel()
         probe.releaseAll()
@@ -62,7 +121,9 @@ final class ImageDecodeSchedulerTests: XCTestCase {
             probe.run(id: Int(data[0]))
             return UIImage()
         }
-        let task = Task { try await scheduler.decode(data: Data([1]), maxPixelSize: 320) }
+        let task = Task {
+            try await scheduler.decode(data: Data([1]), maxPixelSize: 320, priority: .prefetch)
+        }
         await probe.waitUntilStarted(count: 1)
 
         task.cancel()
@@ -89,7 +150,11 @@ final class ImageDecodeSchedulerTests: XCTestCase {
             withUnsafeCurrentTask { currentTask in
                 currentTask?.cancel()
             }
-            return try await scheduler.decode(data: Data([1]), maxPixelSize: 320)
+            return try await scheduler.decode(
+                data: Data([1]),
+                maxPixelSize: 320,
+                priority: .prefetch
+            )
         }
 
         do {
@@ -122,11 +187,17 @@ final class ImageDecodeSchedulerTests: XCTestCase {
             probe.run(id: id)
             return UIImage()
         }
-        let second = Task { try await scheduler.decode(data: Data([2]), maxPixelSize: 320) }
+        let second = Task {
+            try await scheduler.decode(data: Data([2]), maxPixelSize: 320, priority: .prefetch)
+        }
         await probe.waitUntilStarted(count: 1)
-        let first = Task { try await scheduler.decode(data: Data([1]), maxPixelSize: 320) }
+        let first = Task {
+            try await scheduler.decode(data: Data([1]), maxPixelSize: 320, priority: .prefetch)
+        }
         await probe.waitUntilStarted(count: 2)
-        let third = Task { try await scheduler.decode(data: Data([3]), maxPixelSize: 320) }
+        let third = Task {
+            try await scheduler.decode(data: Data([3]), maxPixelSize: 320, priority: .prefetch)
+        }
 
         await probe.waitUntilStarted(count: 3)
         XCTAssertEqual(probe.maximumActiveCount, 2)

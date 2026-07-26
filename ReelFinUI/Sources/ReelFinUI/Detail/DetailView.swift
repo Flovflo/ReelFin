@@ -1901,37 +1901,64 @@ private struct IOSDetailCompactHeader: View {
         let metrics = IOSDetailStageMetrics(
             presentation: scrollPresentationStore.presentation
         )
+        let opaqueStatusBandHeight = IOSDetailCompactHeaderLayout.opaqueStatusBandHeight(
+            safeAreaTop: safeAreaTop
+        )
 
         VStack(spacing: 0) {
-            ZStack {
-                if reduceTransparency {
-                    ReelFinTheme.editorialOpaqueFallback
-                        .opacity(metrics.headerBlurOpacity)
-                } else {
+            if reduceTransparency {
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(ReelFinTheme.editorialOpaqueFallback)
+                        .frame(height: opaqueStatusBandHeight)
+
+                    LinearGradient(
+                        colors: [
+                            ReelFinTheme.editorialOpaqueFallback,
+                            ReelFinTheme.editorialOpaqueFallback.opacity(0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: IOSDetailCompactHeaderLayout.fadeHeight)
+                }
+                .opacity(
+                    EditorialOpaqueHeaderPolicy.opacity(
+                        revealProgress: metrics.topInsetProgress,
+                        activationThreshold: 1.0 / CGFloat(IOSDetailCarouselLayout.chromeStepCount)
+                    )
+                )
+                .frame(
+                    height: opaqueStatusBandHeight + IOSDetailCompactHeaderLayout.fadeHeight
+                )
+                .accessibilityIdentifier("detail_ios_blur_header")
+                .allowsHitTesting(false)
+            } else {
+                ZStack {
                     TransparentBlurView(style: .systemUltraThinMaterial)
                         .opacity(metrics.headerBlurOpacity)
-                }
 
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(metrics.headerShadeOpacity),
-                        Color.black.opacity(metrics.headerShadeOpacity * 0.62),
-                        .clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                    LinearGradient(
+                        colors: [
+                            Color.black.opacity(metrics.headerShadeOpacity),
+                            Color.black.opacity(metrics.headerShadeOpacity * 0.62),
+                            .clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+                .mask {
+                    LinearGradient(
+                        colors: [.black, .black, .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+                .frame(height: safeAreaTop + 78)
+                .accessibilityIdentifier("detail_ios_blur_header")
+                .allowsHitTesting(false)
             }
-            .mask {
-                LinearGradient(
-                    colors: [.black, .black, .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-            .frame(height: safeAreaTop + 78)
-            .accessibilityIdentifier("detail_ios_blur_header")
-            .allowsHitTesting(false)
 
             Spacer(minLength: 0)
         }

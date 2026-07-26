@@ -20,6 +20,14 @@ struct IOSDetailScrollPresentation: Equatable {
     }
 }
 
+enum IOSDetailCompactHeaderLayout {
+    static let fadeHeight: CGFloat = 14
+
+    static func opaqueStatusBandHeight(safeAreaTop: CGFloat) -> CGFloat {
+        max(safeAreaTop, 0)
+    }
+}
+
 enum IOSDetailCarouselLayout {
     static let verticalScrollLockThreshold: CGFloat = 0.01
     static let heroStepCount = 32

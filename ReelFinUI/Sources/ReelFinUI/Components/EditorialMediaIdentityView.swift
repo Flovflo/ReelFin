@@ -72,6 +72,9 @@ struct EditorialMediaIdentityView: View {
                 metadata: metadata
             )
         )
+        .accessibilityIdentifier(
+            EditorialMediaIdentityAccessibility.identifier(itemID: item.id)
+        )
         .accessibilityAddTraits(.isHeader)
         .task(id: logoRequest) {
             await loadLogo(for: logoRequest)

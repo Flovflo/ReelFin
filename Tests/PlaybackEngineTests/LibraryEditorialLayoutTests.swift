@@ -46,6 +46,41 @@ final class LibraryEditorialLayoutTests: XCTestCase {
         XCTAssertEqual(LibraryHeaderPresentation.compactRevealThreshold, 0.75)
     }
 
+    func testReduceTransparencyFallbackIsFullyOpaqueOnlyWhenCompactControlsActivate() {
+        XCTAssertEqual(
+            EditorialOpaqueHeaderPolicy.opacity(
+                revealProgress: 17.0 / 24.0,
+                activationThreshold: LibraryHeaderPresentation.compactRevealThreshold
+            ),
+            0
+        )
+        XCTAssertEqual(
+            EditorialOpaqueHeaderPolicy.opacity(
+                revealProgress: 18.0 / 24.0,
+                activationThreshold: LibraryHeaderPresentation.compactRevealThreshold
+            ),
+            1
+        )
+        XCTAssertEqual(
+            EditorialOpaqueHeaderPolicy.opacity(
+                revealProgress: 1,
+                activationThreshold: LibraryHeaderPresentation.compactRevealThreshold
+            ),
+            1
+        )
+    }
+
+    func testStickyHeaderKeepsActiveControlBandOpaqueBeforeFadingBelowIt() throws {
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Components/StickyBlurHeader.swift"
+        )
+
+        XCTAssertTrue(source.contains("opaqueFallbackRevealThreshold"))
+        XCTAssertTrue(source.contains("frame(height: headerHeight)"))
+        XCTAssertTrue(source.contains("EditorialOpaqueHeaderPolicy.opacity"))
+        XCTAssertFalse(source.contains(".fill(ReelFinTheme.editorialOpaqueFallback)\n                .mask { blurMask }"))
+    }
+
     func testAlwaysVisibleStickyHeaderDoesNotRequestScrollTracking() {
         XCTAssertFalse(StickyBlurHeaderVisibility.always.requiresScrollTracking)
         XCTAssertTrue(

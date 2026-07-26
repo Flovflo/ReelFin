@@ -283,10 +283,8 @@ public struct HeroCarouselView: View {
     private func tvBackdrop(size: CGSize) -> some View {
         let item = items[safe: currentIndex] ?? items[0]
         CachedRemoteImage(
-            itemID: item.id,
-            type: .backdrop,
-            width: backdropImageWidth(for: size),
-            quality: 90,
+            request: ArtworkRequest.make(for: item, role: .heroHigh),
+            contentMode: .fill,
             apiClient: apiClient,
             imagePipeline: imagePipeline
         )
@@ -565,10 +563,8 @@ public struct HeroCarouselView: View {
 
     private func backdropImage(for item: MediaItem, size: CGSize) -> some View {
         CachedRemoteImage(
-            itemID: item.id,
-            type: .backdrop,
-            width: backdropImageWidth(for: size),
-            quality: 85,
+            request: ArtworkRequest.make(for: item, role: .heroHigh),
+            contentMode: .fill,
             apiClient: apiClient,
             imagePipeline: imagePipeline
         )
@@ -609,15 +605,20 @@ public struct HeroCarouselView: View {
                 Button {
                     (onPlay ?? onTap)(item)
                 } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "play.fill")
-                        Text(primaryActionTitle(for: item))
+                    heroPlaySurface {
+                        HStack(spacing: 10) {
+                            Image(systemName: "play.fill")
+                            Text(primaryActionTitle(for: item))
+                        }
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .padding(.horizontal, 28)
+                        .frame(minHeight: 58)
+                        .foregroundStyle(
+                            reduceTransparency
+                                ? Color.black
+                                : ReelFinTheme.editorialPrimaryText
+                        )
                     }
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .padding(.horizontal, 28)
-                    .frame(minHeight: 58)
-                    .foregroundStyle(reduceTransparency ? Color.black : ReelFinTheme.editorialPrimaryText)
-                    .background { heroPlayBackground }
                     .contentShape(Capsule(style: .continuous))
                 }
                 .buttonStyle(EditorialHeroPressStyle())
@@ -657,12 +658,13 @@ public struct HeroCarouselView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .bold))
-                .frame(width: 58, height: 58)
-                .foregroundStyle(ReelFinTheme.editorialPrimaryText)
-                .background { heroCircleBackground(isActive: isActive) }
-                .contentShape(Circle())
+            heroCircleSurface(isActive: isActive) {
+                Image(systemName: symbol)
+                    .font(.system(size: 22, weight: .bold))
+                    .frame(width: 58, height: 58)
+                    .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+            }
+            .contentShape(Circle())
                 .shadow(color: .black.opacity(0.16), radius: 12, x: 0, y: 6)
         }
         .buttonStyle(EditorialHeroPressStyle())
@@ -672,12 +674,17 @@ public struct HeroCarouselView: View {
     }
 
     @ViewBuilder
-    private var heroPlayBackground: some View {
+    private func heroPlaySurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if reduceTransparency {
-            Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.96))
+            content()
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.96))
+                }
         } else {
-            Color.clear
+            content()
                 .glassEffect(
                     Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
                     in: .capsule
@@ -690,15 +697,20 @@ public struct HeroCarouselView: View {
     }
 
     @ViewBuilder
-    private func heroCircleBackground(isActive: Bool) -> some View {
+    private func heroCircleSurface<Content: View>(
+        isActive: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         if reduceTransparency {
-            Circle()
-                .fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background {
+                    Circle().fill(ReelFinTheme.editorialOpaqueFallback)
+                }
                 .overlay {
                     Circle().stroke(Color.white.opacity(isActive ? 0.24 : 0.14), lineWidth: 1)
                 }
         } else {
-            Color.clear
+            content()
                 .glassEffect(
                     Glass.regular
                         .tint(isActive ? ReelFinTheme.editorialAccent.opacity(0.16) : ReelFinTheme.editorialGlassTint)
@@ -808,11 +820,6 @@ public struct HeroCarouselView: View {
         #endif
     }
 
-    private func backdropImageWidth(for size: CGSize) -> Int {
-        let requestedWidth = Int((size.width * displayScale).rounded(.up))
-        return min(max(requestedWidth, 720), 2200)
-    }
-
     private func proxySafeWidth(_ width: CGFloat) -> CGFloat {
         max(width, 0)
     }
@@ -849,19 +856,20 @@ private struct TVHeroCapsuleButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .bold))
+            actionSurface {
+                HStack(spacing: 12) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 20, weight: .bold))
 
-                Text(title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.86)
+                    Text(title)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.86)
+                }
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .foregroundStyle(actionForeground)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 16)
             }
-            .font(.system(size: 22, weight: .semibold, design: .rounded))
-            .foregroundStyle(actionForeground)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 16)
-            .background { backgroundView }
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(TVNoChromeButtonStyle())
@@ -876,20 +884,28 @@ private struct TVHeroCapsuleButton: View {
     }
 
     @ViewBuilder
-    private var backgroundView: some View {
+    private func actionSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         switch EditorialGlassRole.actionCluster.presentation(
             reduceTransparency: reduceTransparency
         ) {
         case .opaque:
-            Capsule(style: .continuous)
-                .fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(ReelFinTheme.editorialOpaqueFallback)
+                }
                 .overlay {
                     Capsule(style: .continuous)
                         .stroke(Color.white.opacity(isFocused ? 0.26 : 0.14), lineWidth: 1)
                 }
         case .interactiveGlass:
-            Capsule(style: .continuous)
-                .fill(isFocused ? Color.white.opacity(0.08) : .clear)
+            content()
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(isFocused ? Color.white.opacity(0.08) : .clear)
+                }
                 .glassEffect(
                     Glass.regular.tint(
                         isFocused
@@ -904,7 +920,7 @@ private struct TVHeroCapsuleButton: View {
                         .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
                 }
         case .passiveGlass:
-            Capsule(style: .continuous)
+            content()
                 .glassEffect(
                     Glass.regular.tint(ReelFinTheme.editorialGlassTint),
                     in: .capsule

@@ -121,8 +121,11 @@ public actor DefaultSyncEngine: SyncEngineProtocol {
     }
 
     private func buildPrefetchRequests(feed: HomeFeed, limit: Int) -> [ArtworkRequest] {
-        var requests = feed.featured.map {
-            ArtworkRequest.make(for: $0, role: .heroLow)
+        var requests = feed.featured.flatMap { item in
+            [
+                ArtworkRequest.make(for: item, role: .heroLow),
+                ArtworkRequest.make(for: item, role: .heroHigh)
+            ]
         }
 
         for row in feed.rows {

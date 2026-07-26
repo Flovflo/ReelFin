@@ -2,6 +2,62 @@
 import XCTest
 
 final class EditorialBrowseVisualSystemTests: XCTestCase {
+    func testHomeHeroGlassUsesCompleteControlSurfaces() throws {
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Components/HeroCarouselView.swift"
+        )
+        let home = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift"
+        )
+
+        XCTAssertTrue(source.contains("heroPlaySurface"))
+        XCTAssertTrue(source.contains("heroCircleSurface"))
+        XCTAssertTrue(source.contains("actionSurface"))
+        XCTAssertTrue(home.contains("sectionChevronSurface"))
+        XCTAssertFalse(source.contains(".background { heroPlayBackground }"))
+        XCTAssertFalse(source.contains(".background { heroCircleBackground"))
+        XCTAssertFalse(source.contains("private var heroPlayBackground"))
+        XCTAssertFalse(source.contains(".background { backgroundView }"))
+        XCTAssertFalse(home.contains(".background { sectionChevronBackground }"))
+    }
+
+    func testVisibleHomeArtworkUsesCanonicalPrefetchedRoles() throws {
+        let hero = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Components/HeroCarouselView.swift"
+        )
+        let home = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift"
+        )
+
+        XCTAssertTrue(hero.contains("ArtworkRequest.make(for: item, role: .heroHigh)"))
+        XCTAssertTrue(home.contains("ArtworkRequest.make(for: item, role: .landscapeRail)"))
+        XCTAssertTrue(home.contains("ArtworkRequest.make(for: item, role: .heroHigh)"))
+    }
+
+    func testHomeOpaqueHeaderActivatesWithItsVisibleChrome() throws {
+        XCTAssertEqual(HomeEditorialPresentationPolicy.stickyChromeRevealThreshold, 0.82)
+        XCTAssertEqual(
+            EditorialOpaqueHeaderPolicy.opacity(
+                revealProgress: 0.81,
+                activationThreshold: HomeEditorialPresentationPolicy.stickyChromeRevealThreshold
+            ),
+            0
+        )
+        XCTAssertEqual(
+            EditorialOpaqueHeaderPolicy.opacity(
+                revealProgress: 0.82,
+                activationThreshold: HomeEditorialPresentationPolicy.stickyChromeRevealThreshold
+            ),
+            1
+        )
+
+        let home = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift"
+        )
+        XCTAssertTrue(home.contains("opaqueFallbackRevealThreshold: HomeEditorialPresentationPolicy.stickyChromeRevealThreshold"))
+        XCTAssertTrue(home.contains("progress - HomeEditorialPresentationPolicy.stickyChromeRevealThreshold"))
+    }
+
     func testHeroRotationRequiresActiveUnassistedIdleMotion() {
         XCTAssertTrue(HeroRotationPolicy.allowsAutomaticAdvance(
             sceneIsActive: true,
@@ -108,6 +164,24 @@ final class EditorialBrowseVisualSystemTests: XCTestCase {
                 metadata: "  "
             ),
             "Sample Movie"
+        )
+    }
+
+    func testEditorialIdentityAccessibilityIdentifierTracksSelectedMedia() {
+        XCTAssertEqual(
+            EditorialMediaIdentityAccessibility.identifier(itemID: "cw-movie-1"),
+            "editorial_media_identity_cw-movie-1"
+        )
+    }
+
+    private func sourceText(at path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: root.appendingPathComponent(path),
+            encoding: .utf8
         )
     }
 }

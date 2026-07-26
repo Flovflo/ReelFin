@@ -63,12 +63,17 @@ final class DefaultSyncEngineHomeFeedTests: XCTestCase {
         try await waitUntil { await prefetcher.batches.count == 1 }
 
         let requests = await prefetcher.batches[0]
-        XCTAssertEqual(requests.map(\.itemID), ["featured", "series", "next", "catalog"])
+        let expectedFeaturedRequests = [
+            ArtworkRequest.make(for: featured, role: .heroLow),
+            ArtworkRequest.make(for: featured, role: .heroHigh)
+        ]
+        XCTAssertEqual(Array(requests.prefix(2)), expectedFeaturedRequests)
+        XCTAssertEqual(requests.map(\.itemID), ["featured", "featured", "series", "next", "catalog"])
         XCTAssertEqual(
             requests.map(\.profile),
-            [.heroBackdropLow, .landscapeRail, .landscapeRail, .posterRow]
+            [.heroBackdropLow, .heroBackdropHigh, .landscapeRail, .landscapeRail, .posterRow]
         )
-        XCTAssertEqual(requests.map(\.type), [.backdrop, .backdrop, .primary, .primary])
+        XCTAssertEqual(requests.map(\.type), [.backdrop, .backdrop, .backdrop, .primary, .primary])
     }
 
     func testStartingNewPrefetchCancelsPreviousPrefetchTask() async throws {

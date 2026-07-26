@@ -15,6 +15,70 @@ final class ImagePrefetchConcurrencyTests: XCTestCase {
         super.tearDown()
     }
 
+    func testTransportReservesCapacityForVisibleRequestsBeyondPrefetchWindow() {
+        XCTAssertEqual(DefaultImagePipeline.maximumConcurrentPrefetches, 4)
+        XCTAssertEqual(DefaultImagePipeline.maximumConnectionsPerHost, 6)
+        XCTAssertGreaterThanOrEqual(
+            DefaultImagePipeline.maximumConnectionsPerHost
+                - DefaultImagePipeline.maximumConcurrentPrefetches,
+            2
+        )
+    }
+
+    func testConcurrentPrefetchBatchesShareOneGlobalWindowAndVisibleRequestBypassesIt() async throws {
+        let (pipeline, session) = try makePipeline()
+        let firstBatch = makeURLs(count: 4, namespace: "first")
+        let secondBatch = makeURLs(count: 4, namespace: "second")
+        let visibleURL = makeURLs(count: 1, namespace: "visible")[0]
+
+        let firstTask = Task { await pipeline.prefetch(urls: firstBatch) }
+        let secondTask = Task { await pipeline.prefetch(urls: secondBatch) }
+
+        try await waitUntilPrefetchAdmission(
+            pipeline,
+            activeCount: 4,
+            waitingCount: 4
+        )
+        await BlockingPrefetchURLProtocol.waitUntilStarted(count: 4)
+        XCTAssertEqual(
+            BlockingPrefetchURLProtocol.startedURLs.count,
+            DefaultImagePipeline.maximumConcurrentPrefetches
+        )
+
+        let visibleTask = Task { try await pipeline.image(for: visibleURL) }
+        await BlockingPrefetchURLProtocol.waitUntilStarted(count: 5)
+        XCTAssertEqual(BlockingPrefetchURLProtocol.startedURLs.last, visibleURL)
+
+        BlockingPrefetchURLProtocol.complete(url: visibleURL, with: Self.samplePNGData)
+        _ = try await visibleTask.value
+
+        firstTask.cancel()
+        secondTask.cancel()
+        await firstTask.value
+        await secondTask.value
+        let drainedSnapshot = pipeline.prefetchAdmissionSnapshot
+        XCTAssertEqual(drainedSnapshot.activeCount, 0)
+        XCTAssertEqual(drainedSnapshot.waitingCount, 0)
+        session.finishTasksAndInvalidate()
+    }
+
+    private func waitUntilPrefetchAdmission(
+        _ pipeline: DefaultImagePipeline,
+        activeCount: Int,
+        waitingCount: Int,
+        timeout: TimeInterval = 2
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let snapshot = pipeline.prefetchAdmissionSnapshot
+            if snapshot.activeCount == activeCount, snapshot.waitingCount == waitingCount {
+                return
+            }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        XCTFail("Timed out waiting for the shared prefetch admission window")
+    }
+
     func testExactlyFourRequestsStartBeforeACompletionAndOneCompletionAdmitsOne() async throws {
         let (pipeline, session) = try makePipeline()
         let urls = makeURLs(count: 6)
@@ -148,9 +212,9 @@ final class ImagePrefetchConcurrencyTests: XCTestCase {
         return (pipeline, session)
     }
 
-    private func makeURLs(count: Int) -> [URL] {
+    private func makeURLs(count: Int, namespace: String = "host") -> [URL] {
         (0 ..< count).map { index in
-            URL(string: "https://host-\(index).prefetch.test/image.png")!
+            URL(string: "https://\(namespace)-\(index).prefetch.test/image.png")!
         }
     }
 

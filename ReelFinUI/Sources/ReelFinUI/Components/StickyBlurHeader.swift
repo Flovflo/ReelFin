@@ -67,6 +67,7 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
     private let statusBarBlurOpacity: Double
     private let contentTopInset: CGFloat?
     private let visibility: StickyBlurHeaderVisibility
+    private let opaqueFallbackRevealThreshold: CGFloat
     private let refreshAction: (() async -> Void)?
     private let header: (CGFloat) -> Header
     private let content: () -> Content
@@ -87,6 +88,7 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
         statusBarBlurOpacity: Double = 0,
         contentTopInset: CGFloat? = nil,
         visibility: StickyBlurHeaderVisibility = .always,
+        opaqueFallbackRevealThreshold: CGFloat = 0,
         refreshAction: (() async -> Void)? = nil,
         @ViewBuilder header: @escaping (CGFloat) -> Header,
         @ViewBuilder content: @escaping () -> Content
@@ -98,6 +100,7 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
         self.statusBarBlurOpacity = statusBarBlurOpacity
         self.contentTopInset = contentTopInset
         self.visibility = visibility
+        self.opaqueFallbackRevealThreshold = opaqueFallbackRevealThreshold
         self.refreshAction = refreshAction
         self.header = header
         self.content = content
@@ -201,13 +204,30 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
         )
 
         if reduceTransparency {
-            Rectangle()
-                .fill(ReelFinTheme.editorialOpaqueFallback)
-                .mask { blurMask }
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(ReelFinTheme.editorialOpaqueFallback)
+                    .frame(height: headerHeight)
+
+                LinearGradient(
+                    colors: [
+                        ReelFinTheme.editorialOpaqueFallback,
+                        ReelFinTheme.editorialOpaqueFallback.opacity(0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: fadeExtension)
+            }
                 .frame(height: totalHeight)
                 .ignoresSafeArea(edges: .top)
                 .allowsHitTesting(false)
-                .opacity(headerEffectOpacity)
+                .opacity(
+                    EditorialOpaqueHeaderPolicy.opacity(
+                        revealProgress: headerRevealProgress,
+                        activationThreshold: opaqueFallbackRevealThreshold
+                    )
+                )
         } else {
             if statusBarBlurOpacity > 0 {
                 let topBandMask = LinearGradient(

@@ -653,10 +653,8 @@ private struct ImmersiveHomeRowCard: View {
     @ViewBuilder
     private var artwork: some View {
         let image = CachedRemoteImage(
-            itemID: imageItemID,
-            type: .backdrop,
-            width: Int(cardWidth * 2),
-            quality: 86,
+            request: ArtworkRequest.make(for: item, role: .landscapeRail),
+            contentMode: .fill,
             apiClient: apiClient,
             imagePipeline: imagePipeline
         )
@@ -664,10 +662,6 @@ private struct ImmersiveHomeRowCard: View {
         .clipped()
 
         image
-    }
-
-    private var imageItemID: String {
-        item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
     }
 
     private var primaryTitle: String {
@@ -822,12 +816,13 @@ public struct SectionRow: View {
                 Button {
                     onOpenSection?()
                 } label: {
-                    Image(systemName: "chevron.right")
-                        .font(sectionChevronFont)
-                        .foregroundStyle(sectionChevronColor)
-                        .frame(width: 34, height: 34)
-                        .background { sectionChevronBackground }
-                        .contentShape(Circle())
+                    sectionChevronSurface {
+                        Image(systemName: "chevron.right")
+                            .font(sectionChevronFont)
+                            .foregroundStyle(sectionChevronColor)
+                            .frame(width: 34, height: 34)
+                    }
+                    .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open \(title)")
@@ -1032,20 +1027,23 @@ public struct SectionRow: View {
     }
 
     @ViewBuilder
-    private var sectionChevronBackground: some View {
+    private func sectionChevronSurface<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         switch EditorialGlassRole.compactControl.presentation(
             reduceTransparency: reduceTransparency
         ) {
         case .interactiveGlass:
-            Color.clear
+            content()
                 .glassEffect(
                     Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
                     in: .circle
                 )
         case .opaque:
-            Circle().fill(ReelFinTheme.editorialOpaqueFallback)
+            content()
+                .background { Circle().fill(ReelFinTheme.editorialOpaqueFallback) }
         case .passiveGlass:
-            Color.clear
+            content()
                 .glassEffect(
                     Glass.regular.tint(ReelFinTheme.editorialGlassTint),
                     in: .circle
@@ -1363,6 +1361,7 @@ struct HomeView: View {
             statusBarBlurOpacity: 0.52,
             contentTopInset: 0,
             visibility: .revealOnScroll(distance: 124, minimumEffectOpacity: 0.02),
+            opaqueFallbackRevealThreshold: HomeEditorialPresentationPolicy.stickyChromeRevealThreshold,
             refreshAction: {
                 await viewModel.manualRefresh()
             }
@@ -1623,7 +1622,13 @@ struct HomeView: View {
     }
 
     private func homeHeaderOpacity(for progress: CGFloat) -> CGFloat {
-        let easedProgress = max(0, min((progress - 0.82) / 0.14, 1))
+        let easedProgress = max(
+            0,
+            min(
+                (progress - HomeEditorialPresentationPolicy.stickyChromeRevealThreshold) / 0.14,
+                1
+            )
+        )
         return easedProgress * easedProgress
     }
 
@@ -2716,10 +2721,8 @@ struct TVDetailOpeningArtworkView: View {
                 Color.black
 
                 CachedRemoteImage(
-                    itemID: imageItemID,
-                    type: .backdrop,
-                    width: Int(max(proxy.size.width, 1)),
-                    quality: 90,
+                    request: ArtworkRequest.make(for: item, role: .heroHigh),
+                    contentMode: .fill,
                     apiClient: apiClient,
                     imagePipeline: imagePipeline
                 )
@@ -2740,12 +2743,6 @@ struct TVDetailOpeningArtworkView: View {
         .ignoresSafeArea()
     }
 
-    private var imageItemID: String {
-        if item.mediaType == .episode, let parentID = item.parentID {
-            return parentID
-        }
-        return item.id
-    }
 }
 
 struct TVInlineDetailArtworkDestinationModifier: ViewModifier {

@@ -5,7 +5,7 @@ import UIKit
 actor ImageTaskRegistry {
     private struct Entry {
         var task: Task<UIImage, Error>
-        var consumers: Set<ImageRequestConsumerID>
+        var consumers: [ImageRequestConsumerID: ImageLoadPriority]
     }
 
     private var entries: [URL: Entry] = [:]
@@ -13,24 +13,38 @@ actor ImageTaskRegistry {
     func existingOrRegisterTask(
         for url: URL,
         consumer consumerID: ImageRequestConsumerID,
+        priority: ImageLoadPriority,
         makeTask: () -> Task<UIImage, Error>
     ) throws -> (task: Task<UIImage, Error>, isNew: Bool) {
         try Task.checkCancellation()
 
         if var existing = entries[url] {
-            existing.consumers.insert(consumerID)
+            existing.consumers[consumerID] = max(
+                existing.consumers[consumerID] ?? priority,
+                priority
+            )
             entries[url] = existing
             return (existing.task, false)
         }
 
         let task = makeTask()
-        entries[url] = Entry(task: task, consumers: [consumerID])
+        entries[url] = Entry(
+            task: task,
+            consumers: [consumerID: priority]
+        )
         return (task, true)
+    }
+
+    func effectivePriority(
+        for url: URL,
+        fallback: ImageLoadPriority
+    ) -> ImageLoadPriority {
+        entries[url]?.consumers.values.max() ?? fallback
     }
 
     func release(url: URL, consumer consumerID: ImageRequestConsumerID) {
         guard var entry = entries[url] else { return }
-        entry.consumers.remove(consumerID)
+        entry.consumers[consumerID] = nil
         if entry.consumers.isEmpty {
             entry.task.cancel()
             entries[url] = nil
@@ -40,7 +54,7 @@ actor ImageTaskRegistry {
     }
 
     func hasConsumer(_ consumerID: ImageRequestConsumerID, for url: URL) -> Bool {
-        entries[url]?.consumers.contains(consumerID) == true
+        entries[url]?.consumers[consumerID] != nil
     }
 
     func cancel(url: URL) {
@@ -94,9 +108,87 @@ private final class ImageConsumerWaitGate: @unchecked Sendable {
     }
 }
 
+private final class ImagePrefetchAdmissionController: @unchecked Sendable {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    private let limit: Int
+    private let lock = NSLock()
+    private var activeCount = 0
+    private var waiters = [Waiter]()
+
+    init(limit: Int) {
+        self.limit = max(limit, 1)
+    }
+
+    var snapshot: (activeCount: Int, waitingCount: Int) {
+        lock.withLock { (activeCount, waiters.count) }
+    }
+
+    func perform(_ operation: @escaping @Sendable () async -> Void) async {
+        let waiterID = UUID()
+        guard await acquire(waiterID: waiterID) else { return }
+        defer { release() }
+
+        guard !Task.isCancelled else { return }
+        await operation()
+    }
+
+    private func acquire(waiterID: UUID) async -> Bool {
+        guard !Task.isCancelled else { return false }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let immediateResult: Bool? = lock.withLock {
+                    guard !Task.isCancelled else { return false }
+                    guard activeCount >= limit else {
+                        activeCount += 1
+                        return true
+                    }
+                    waiters.append(Waiter(id: waiterID, continuation: continuation))
+                    return nil
+                }
+                if let immediateResult {
+                    continuation.resume(returning: immediateResult)
+                }
+            }
+        } onCancel: {
+            self.cancel(waiterID: waiterID)
+        }
+    }
+
+    private func cancel(waiterID: UUID) {
+        let continuation: CheckedContinuation<Bool, Never>? = lock.withLock {
+            guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else {
+                return nil
+            }
+            return waiters.remove(at: index).continuation
+        }
+        continuation?.resume(returning: false)
+    }
+
+    private func release() {
+        let continuation: CheckedContinuation<Bool, Never>? = lock.withLock {
+            if waiters.isEmpty {
+                activeCount = max(activeCount - 1, 0)
+                return nil
+            }
+            return waiters.removeFirst().continuation
+        }
+        continuation?.resume(returning: true)
+    }
+}
+
 public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     static let maximumConcurrentPrefetches = 4
     static let maximumPrefetchURLs = 24
+    static let maximumConnectionsPerHost = 6
+
+    var prefetchAdmissionSnapshot: (activeCount: Int, waitingCount: Int) {
+        prefetchAdmission.snapshot
+    }
 
     private let memoryCache = NSCache<NSURL, UIImage>()
     private let diskCache: LRUDiskCache
@@ -104,6 +196,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     private let tokenStore: TokenStoreProtocol
     private let registry = ImageTaskRegistry()
     private let decodeScheduler = ImageDecodeScheduler()
+    private let prefetchAdmission: ImagePrefetchAdmissionController
 
     public init(
         diskCache: LRUDiskCache? = nil,
@@ -114,6 +207,9 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         self.diskCache = diskCache ?? Self.makeDiskCache()
         self.urlSession = urlSession ?? Self.makeImageSession()
         self.tokenStore = tokenStore
+        prefetchAdmission = ImagePrefetchAdmissionController(
+            limit: Self.maximumConcurrentPrefetches
+        )
         memoryCache.countLimit = memoryCapacity
         memoryCache.totalCostLimit = 130 * 1_024 * 1_024
     }
@@ -126,7 +222,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 30
-        configuration.httpMaximumConnectionsPerHost = 4
+        configuration.httpMaximumConnectionsPerHost = maximumConnectionsPerHost
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration)
     }
@@ -152,10 +248,22 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     }
 
     public func image(for url: URL) async throws -> UIImage {
-        try await image(for: url, consumer: ImageRequestConsumerID())
+        try await image(
+            for: url,
+            consumer: ImageRequestConsumerID(),
+            priority: .visible
+        )
     }
 
     public func image(for url: URL, consumer consumerID: ImageRequestConsumerID) async throws -> UIImage {
+        try await image(for: url, consumer: consumerID, priority: .visible)
+    }
+
+    private func image(
+        for url: URL,
+        consumer consumerID: ImageRequestConsumerID,
+        priority: ImageLoadPriority
+    ) async throws -> UIImage {
         try Task.checkCancellation()
         let interval = SignpostInterval(signposter: Signpost.imageLoading, name: "image_request")
 
@@ -166,10 +274,21 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
         let tracker = ImageLoadTracker()
         let cacheKey = url.reelfinCacheKey
-        let registered = try await registry.existingOrRegisterTask(for: url, consumer: consumerID) {
-            Task {
+        let registered = try await registry.existingOrRegisterTask(
+            for: url,
+            consumer: consumerID,
+            priority: priority
+        ) {
+            Task(priority: priority.taskPriority) {
                 if let diskData = await self.diskCache.data(forKey: cacheKey),
-                   let image = try await self.decodeImage(data: diskData, for: url) {
+                   let image = try await self.decodeImage(
+                       data: diskData,
+                       for: url,
+                       priority: await self.registry.effectivePriority(
+                           for: url,
+                           fallback: priority
+                       )
+                   ) {
                     tracker.source = "disk_hit"
                     self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
                     return image
@@ -177,7 +296,14 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
                 let data = try await self.fetchImageData(url: url)
 
-                guard let image = try await self.decodeImage(data: data, for: url) else {
+                guard let image = try await self.decodeImage(
+                    data: data,
+                    for: url,
+                    priority: await self.registry.effectivePriority(
+                        for: url,
+                        fallback: priority
+                    )
+                ) else {
                     throw AppError.decoding("Invalid image payload.")
                 }
 
@@ -284,7 +410,14 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
                 }
                 guard group.addTaskUnlessCancelled(operation: {
                     guard !Task.isCancelled else { return }
-                    _ = try? await self.image(for: url)
+                    await self.prefetchAdmission.perform {
+                        guard !Task.isCancelled else { return }
+                        _ = try? await self.image(
+                            for: url,
+                            consumer: ImageRequestConsumerID(),
+                            priority: .prefetch
+                        )
+                    }
                 }) else {
                     group.cancelAll()
                     return
@@ -299,7 +432,14 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
                 guard let url = iterator.next() else { continue }
                 guard group.addTaskUnlessCancelled(operation: {
                     guard !Task.isCancelled else { return }
-                    _ = try? await self.image(for: url)
+                    await self.prefetchAdmission.perform {
+                        guard !Task.isCancelled else { return }
+                        _ = try? await self.image(
+                            for: url,
+                            consumer: ImageRequestConsumerID(),
+                            priority: .prefetch
+                        )
+                    }
                 }) else {
                     group.cancelAll()
                     return
@@ -322,9 +462,17 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
     }
 
-    private func decodeImage(data: Data, for url: URL) async throws -> UIImage? {
+    private func decodeImage(
+        data: Data,
+        for url: URL,
+        priority: ImageLoadPriority = .visible
+    ) async throws -> UIImage? {
         let maxPixelSize = max(requestedPixelSize(for: url), 320)
-        return try await decodeScheduler.decode(data: data, maxPixelSize: maxPixelSize)
+        return try await decodeScheduler.decode(
+            data: data,
+            maxPixelSize: maxPixelSize,
+            priority: priority
+        )
     }
 
     private func requestedPixelSize(for url: URL) -> Int {

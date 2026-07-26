@@ -2,6 +2,42 @@ import Foundation
 import ImageIO
 import UIKit
 
+enum ImageLoadPriority: Int, Comparable, Sendable {
+    case prefetch
+    case visible
+
+    static func < (lhs: ImageLoadPriority, rhs: ImageLoadPriority) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    var operationQueuePriority: Operation.QueuePriority {
+        switch self {
+        case .prefetch:
+            return .veryLow
+        case .visible:
+            return .veryHigh
+        }
+    }
+
+    var qualityOfService: QualityOfService {
+        switch self {
+        case .prefetch:
+            return .utility
+        case .visible:
+            return .userInitiated
+        }
+    }
+
+    var taskPriority: TaskPriority {
+        switch self {
+        case .prefetch:
+            return .utility
+        case .visible:
+            return .userInitiated
+        }
+    }
+}
+
 final class ImageDecodeScheduler: @unchecked Sendable {
     typealias DecodeBody = @Sendable (Data, Int) -> UIImage?
 
@@ -12,18 +48,25 @@ final class ImageDecodeScheduler: @unchecked Sendable {
         queue.operationCount
     }
 
-    init(decodeBody: @escaping DecodeBody = { data, maxPixelSize in
-        ImageDecodeScheduler.decodeImage(data: data, maxPixelSize: maxPixelSize)
-    }) {
+    init(
+        maxConcurrentOperationCount: Int = 2,
+        decodeBody: @escaping DecodeBody = { data, maxPixelSize in
+            ImageDecodeScheduler.decodeImage(data: data, maxPixelSize: maxPixelSize)
+        }
+    ) {
         let queue = OperationQueue()
         queue.name = "com.reelfin.image-decode"
         queue.qualityOfService = .utility
-        queue.maxConcurrentOperationCount = 2
+        queue.maxConcurrentOperationCount = max(maxConcurrentOperationCount, 1)
         self.queue = queue
         self.decodeBody = decodeBody
     }
 
-    func decode(data: Data, maxPixelSize: Int) async throws -> UIImage? {
+    func decode(
+        data: Data,
+        maxPixelSize: Int,
+        priority: ImageLoadPriority = .visible
+    ) async throws -> UIImage? {
         let handle = DecodeOperationHandle()
         let image = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -32,6 +75,8 @@ final class ImageDecodeScheduler: @unchecked Sendable {
                     maxPixelSize: maxPixelSize,
                     decodeBody: decodeBody
                 )
+                operation.queuePriority = priority.operationQueuePriority
+                operation.qualityOfService = priority.qualityOfService
                 operation.completionBlock = { [weak operation] in
                     continuation.resume(returning: operation?.decodedImage)
                 }

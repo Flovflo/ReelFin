@@ -64,6 +64,19 @@ final class ArtworkRequestTests: XCTestCase {
         }
     }
 
+    func testEpisodeLandscapeArtworkUsesParentSeriesBackdropWithoutEpisodeBackdropTag() {
+        let episode = MediaItem(
+            id: "episode-1",
+            name: "Episode",
+            mediaType: .episode,
+            parentID: "series-1"
+        )
+
+        XCTAssertEqual(ArtworkRequest.make(for: episode, role: .landscapeRail).type, .backdrop)
+        XCTAssertEqual(ArtworkRequest.make(for: episode, role: .heroLow).type, .backdrop)
+        XCTAssertEqual(ArtworkRequest.make(for: episode, role: .heroHigh).type, .backdrop)
+    }
+
     func testEpisodeArtworkFallsBackToEpisodeIdentityWithoutParent() {
         let episode = MediaItem(id: "episode-1", name: "Episode", mediaType: .episode)
 

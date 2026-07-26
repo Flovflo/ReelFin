@@ -8,6 +8,18 @@ enum EditorialGlassPresentation: Equatable {
     case opaque
 }
 
+enum EditorialOpaqueHeaderPolicy {
+    static func opacity(
+        revealProgress: CGFloat,
+        activationThreshold: CGFloat
+    ) -> Double {
+        guard revealProgress.isFinite, activationThreshold.isFinite else { return 0 }
+        let progress = min(max(revealProgress, 0), 1)
+        let threshold = min(max(activationThreshold, 0), 1)
+        return progress > 0 && progress >= threshold ? 1 : 0
+    }
+}
+
 enum EditorialGlassRole {
     case navigation
     case actionCluster
@@ -64,6 +76,10 @@ enum TVDetailPrimaryAction: CaseIterable, Hashable {
 }
 
 enum EditorialMediaIdentityAccessibility {
+    static func identifier(itemID: String) -> String {
+        "editorial_media_identity_\(itemID)"
+    }
+
     static func label(
         itemName: String,
         kicker: String?,
@@ -169,6 +185,7 @@ enum HomeEditorialPresentationPolicy {
     static let inactiveIndicatorWidth: CGFloat = 8
     static let focusedShadowRadius: CGFloat = 34
     static let focusedShadowYOffset: CGFloat = 18
+    static let stickyChromeRevealThreshold: CGFloat = 0.82
 
     static func focusedMediaGlass(
         isFocused: Bool,

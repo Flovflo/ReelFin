@@ -56,6 +56,9 @@ public enum ArtworkRequestRole: CaseIterable, Sendable {
     fileprivate func imageType(for item: MediaItem) -> JellyfinImageType {
         switch self {
         case .landscapeRail, .heroLow, .heroHigh:
+            if item.mediaType == .episode, item.parentID != nil {
+                return .backdrop
+            }
             return item.backdropTag == nil ? .primary : .backdrop
         case .logo:
             return .logo

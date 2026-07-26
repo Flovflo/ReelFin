@@ -192,7 +192,8 @@ struct LibraryView: View {
             visibility: .revealOnScroll(
                 distance: LibraryHeaderPresentation.revealDistance,
                 minimumEffectOpacity: 0
-            )
+            ),
+            opaqueFallbackRevealThreshold: LibraryHeaderPresentation.compactRevealThreshold
         ) { quantizedRevealProgress in
             let presentation = LibraryHeaderPresentation.resolve(
                 quantizedRevealProgress: quantizedRevealProgress

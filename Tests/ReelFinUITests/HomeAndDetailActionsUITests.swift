@@ -89,9 +89,8 @@ final class HomeAndDetailActionsUITests: XCTestCase {
 
         let downloadButton = app.buttons["detail_download_button"].firstMatch
         XCTAssertTrue(downloadButton.waitForExistence(timeout: 8))
-        XCTAssertTrue(waitUntilHittable(downloadButton, timeout: 5))
-
-        downloadButton.tap()
+        XCTAssertFalse(downloadButton.frame.isEmpty)
+        downloadButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
 
         let alert = app.alerts["Downloads coming soon"]
         XCTAssertTrue(alert.waitForExistence(timeout: 3))

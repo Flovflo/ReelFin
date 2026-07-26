@@ -3,6 +3,38 @@ import XCTest
 @testable import ReelFinUI
 
 final class IOSDetailCarouselLayoutTests: XCTestCase {
+    func testReduceTransparencyDetailHeaderSwitchesToFullyOpaqueAtFirstChromeStep() {
+        XCTAssertEqual(
+            EditorialOpaqueHeaderPolicy.opacity(
+                revealProgress: 0,
+                activationThreshold: 1.0 / CGFloat(IOSDetailCarouselLayout.chromeStepCount)
+            ),
+            0
+        )
+        XCTAssertEqual(
+            EditorialOpaqueHeaderPolicy.opacity(
+                revealProgress: 1.0 / CGFloat(IOSDetailCarouselLayout.chromeStepCount),
+                activationThreshold: 1.0 / CGFloat(IOSDetailCarouselLayout.chromeStepCount)
+            ),
+            1
+        )
+    }
+
+    func testDetailOpaqueFallbackStopsBeforeTheHeroControls() throws {
+        XCTAssertEqual(
+            IOSDetailCompactHeaderLayout.opaqueStatusBandHeight(safeAreaTop: 59),
+            59
+        )
+
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Detail/DetailView.swift"
+        )
+
+        XCTAssertTrue(source.contains("EditorialOpaqueHeaderPolicy.opacity"))
+        XCTAssertTrue(source.contains("opaqueStatusBandHeight"))
+        XCTAssertFalse(source.contains("safeAreaTop + 64"))
+    }
+
     func testCompactLayoutUsesTrueCenteredInset() {
         let availableWidth: CGFloat = 393
         let cardWidth = IOSDetailCarouselLayout.cardWidth(
@@ -168,5 +200,16 @@ final class IOSDetailCarouselLayoutTests: XCTestCase {
         XCTAssertEqual(IOSDetailCarouselLayout.selectedShadowYOffset, 24)
         XCTAssertEqual(IOSDetailCarouselLayout.previewShadowRadius, 18)
         XCTAssertEqual(IOSDetailCarouselLayout.previewShadowYOffset, 12)
+    }
+
+    private func sourceText(at path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: root.appendingPathComponent(path),
+            encoding: .utf8
+        )
     }
 }

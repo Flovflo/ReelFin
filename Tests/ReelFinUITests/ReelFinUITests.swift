@@ -307,9 +307,11 @@ final class AppStoreScreenshotTests: XCTestCase {
         XCTAssertTrue(resumeMovie.waitForExistence(timeout: 12))
         resumeMovie.tap()
 
-        let movieMetadata = app.staticTexts["Movie · Adventure"].firstMatch
-        XCTAssertTrue(movieMetadata.waitForExistence(timeout: 8))
-        XCTAssertTrue(waitUntilHittable(movieMetadata, timeout: 5))
+        let selectedIdentity = app.descendants(matching: .any)[
+            "editorial_media_identity_cw-movie-1"
+        ].firstMatch
+        XCTAssertTrue(selectedIdentity.waitForExistence(timeout: 8))
+        XCTAssertEqual(selectedIdentity.label, "Movie, Resume Movie, Adventure")
 
         let resumeButton = app.buttons["Resume"].firstMatch
         XCTAssertTrue(resumeButton.exists)
