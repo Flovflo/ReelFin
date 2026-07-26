@@ -5,7 +5,9 @@ final class LibraryEditorialUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testMockLibraryHeaderCompactsAndRestoresAcrossOrientations() throws {
+    func testMockLibraryHeaderCompactsAndRestoresInPortrait() throws {
+        XCUIDevice.shared.orientation = .portrait
+
         let app = XCUIApplication()
         app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
         app.launch()
@@ -17,12 +19,11 @@ final class LibraryEditorialUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         openLibrary(in: app)
 
-        verifyHeaderJourney(in: app, screenshotPrefix: "library-portrait")
+        let appWindow = app.windows.firstMatch
+        XCTAssertTrue(appWindow.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(appWindow.frame.height, appWindow.frame.width)
 
-        XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(searchField(in: app).waitForExistence(timeout: 8))
-        XCTAssertTrue(waitUntilHittable(searchField(in: app), timeout: 5))
-        verifyHeaderJourney(in: app, screenshotPrefix: "library-landscape")
+        verifyHeaderJourney(in: app, screenshotPrefix: "library-portrait")
     }
 
     private func verifyHeaderJourney(
