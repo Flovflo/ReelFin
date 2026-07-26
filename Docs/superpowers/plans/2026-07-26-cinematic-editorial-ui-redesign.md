@@ -150,24 +150,42 @@ Centralize only repeated literals; do not create a generic design-system abstrac
 
 **Files:**
 
-- Modify: `Shared/Sources/Shared/ArtworkRequestProfile.swift`
-- Create: `ReelFinUI/Sources/ReelFinUI/Components/ArtworkVariantResolver.swift`
+- Create: `Shared/Sources/Shared/ArtworkRequest.swift`
+- Modify: `Shared/Sources/Shared/Protocols.swift`
+- Create: `ImageCache/Sources/ImageCache/DefaultArtworkPrefetcher.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Components/CachedRemoteImage.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/Components/PosterCardView.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/ReelFinDependencies.swift`
+- Modify: `ReelFinApp/App/AppContainer.swift`
+- Modify: `ReelFinApp/AppTV/TVAppBootstrap.swift`
+- Modify: `ReelFinUI/Sources/ReelFinUI/PreviewMocks.swift`
+- Modify: `SyncEngine/Sources/SyncEngine/DefaultSyncEngine.swift`
+- Modify: `JellyfinAPI/Sources/JellyfinAPI/JellyfinAPIClient.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift`
 - Modify: `ReelFinUI/Sources/ReelFinUI/Detail/DetailViewModel.swift`
-- Create: `Tests/PlaybackEngineTests/ArtworkVariantResolverTests.swift`
+- Create: `Tests/PlaybackEngineTests/ArtworkRequestTests.swift`
+- Create: `Tests/ImageCacheTests/DefaultArtworkPrefetcherTests.swift`
+- Modify: `Tests/PlaybackEngineTests/DefaultSyncEngineHomeFeedTests.swift`
+- Modify: ReelFinDependencies construction in `Tests/PlaybackEngineTests/*`
 
-- [ ] **Step 1: Write failing canonicalization tests**
+- [ ] **Step 1: Write failing canonical request tests**
 
-Test that each visible role produces the same type, normalized width, and quality for display and prefetch, including poster, landscape, logo, preview, low hero, and high hero. Include the episode-to-series hero identity rule.
+Add public Sendable value roles in Shared and test exact identity/type/profile mapping. Poster grid/row use Primary; landscape and hero use Backdrop when `backdropTag` exists and Primary otherwise; episode artwork uses `parentID ?? id`; logo stays on the displayed item. The same value must be usable by a visible `CachedRemoteImage` and speculative prefetch.
 
 ```swift
-func testVisibleAndPrefetchDescriptorsMatchForEveryArtworkRole() {
-    for role in ArtworkVariantRole.allCases {
-        let visible = ArtworkVariantResolver.descriptor(item: item, role: role, purpose: .visible)
-        let speculative = ArtworkVariantResolver.descriptor(item: item, role: role, purpose: .prefetch)
-        XCTAssertEqual(visible, speculative)
+func testEveryArtworkRoleUsesItsCanonicalProfile() {
+    for role in ArtworkRequestRole.allCases {
+        XCTAssertEqual(
+            ArtworkRequest.make(for: item, role: role).profile,
+            role.profile
+        )
     }
+}
+
+func testEpisodeLandscapeRequestUsesSeriesIdentity() {
+    let request = ArtworkRequest.make(for: episode, role: .landscapeRail)
+    XCTAssertEqual(request.itemID, episode.parentID)
 }
 ```
 
@@ -176,41 +194,76 @@ func testVisibleAndPrefetchDescriptorsMatchForEveryArtworkRole() {
 ```bash
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
   -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
-  -only-testing:PlaybackEngineTests/ArtworkVariantResolverTests
+  -only-testing:PlaybackEngineTests/ArtworkRequestTests
 ```
 
-- [ ] **Step 3: Implement descriptors and resolver**
+- [ ] **Step 3: Implement the canonical request value and bridge**
 
-Add a `detailPreview` profile (width 720, quality 76) and a Sendable descriptor:
+Create these exact public interfaces in Shared:
 
 ```swift
-struct ArtworkVariantDescriptor: Hashable, Sendable {
-    let itemID: String
-    let imageType: JellyfinImageType
-    let profile: ArtworkRequestProfile
+public struct ArtworkRequest: Hashable, Sendable {
+    public let itemID: String
+    public let type: JellyfinImageType
+    public let profile: ArtworkRequestProfile
+
+    public static func make(for item: MediaItem, role: ArtworkRequestRole) -> ArtworkRequest
 }
 
-enum ArtworkVariantRole: CaseIterable, Sendable {
-    case posterGrid, posterRow, landscapeRail, detailPreview, heroLow, heroHigh, logo
+public enum ArtworkRequestRole: CaseIterable, Sendable {
+    case posterGrid, posterRow, landscapeRail, heroLow, heroHigh, logo, avatar
+
+    public var profile: ArtworkRequestProfile { get }
+}
+
+public protocol ArtworkURLProviding: AnyObject, Sendable {
+    func imageURL(for request: ArtworkRequest) async -> URL?
+}
+
+public protocol ArtworkPrefetching: AnyObject, Sendable {
+    func prefetch(_ requests: [ArtworkRequest]) async
 }
 ```
 
-The resolver decides item identity and image type once; a helper asynchronously turns descriptors into URLs with `apiClient.imageURL(...)`.
+Make `JellyfinAPIClientProtocol` inherit `ArtworkURLProviding`; provide the bridge implementation in its extension by forwarding the request's profile width/quality to the existing URL method. Existing API mocks must not need a second URL implementation.
 
-- [ ] **Step 4: Replace direct API byte prefetch at UI call sites**
+Add `CachedRemoteImage.init(request:...)` and keep the old initializer temporarily for unchanged call sites. Change `PosterCardArtworkView` to use `.posterRow`, `.posterGrid`, or `.landscapeRail` through `ArtworkRequest.make`; delete its raw 360/400 image literals.
 
-In Home, Library, and Detail warmups, resolve canonical descriptors, then call `dependencies.imagePipeline.prefetch(urls:)`. Own each prefetch with the screen's existing cancelable warmup task. Keep `JellyfinAPIClientProtocol.prefetchImages` for compatibility in this iteration, but remove ReelFinUI call sites so separate `URLSession` fetch-and-discard work is no longer on browse paths.
+- [ ] **Step 4: Write RED tests for the authenticated prefetch adapter**
 
-- [ ] **Step 5: Verify GREEN and no UI call sites remain**
+`DefaultArtworkPrefetcherTests` must prove that requests are resolved through `ArtworkURLProviding`, URLs are de-duplicated in first-seen order, cancellation stops URL resolution and prevents pipeline start, and one batch reaches `ImagePipelineProtocol.prefetch(urls:)`. Extend the existing image-pipeline authentication coverage so prefetch ultimately produces `X-Emby-Token`, not an API-session fetch-and-discard.
+
+- [ ] **Step 5: Implement and wire one prefetch path**
+
+Implement `DefaultArtworkPrefetcher` as an actor in ImageCache. It resolves requests sequentially with cancellation checks, de-duplicates resolved URLs while preserving order, then invokes the image pipeline once.
+
+Add a required `artworkPrefetcher: any ArtworkPrefetching` dependency to `ReelFinDependencies`. Construct one shared production instance from the API client and image pipeline in iOS/tvOS containers, inject it into SyncEngine and ReelFinDependencies, and provide explicit test/preview doubles at every initializer call site. Do not add an optional/no-op production fallback.
+
+Change `DefaultSyncEngine` to accept `ArtworkPrefetching` instead of `ImagePipelineProtocol`. Build canonical request values: Continue Watching and Next Up use `.landscapeRail`; catalog rows use `.posterRow`; featured items use `.heroLow`. Store one cancelable `prefetchTask`, cancel it before replacing it, and use structured `Task(priority:)`, not `Task.detached`.
+
+Replace the four ReelFinUI `apiClient.prefetchImages` call sites with canonical requests sent to `dependencies.artworkPrefetcher`. Home/Library Detail-entry warmup uses `.heroHigh`; related/similar items use `.posterRow`; Library focus may batch `.posterGrid` plus `.heroHigh`. Keep each call inside its existing owned/cancelable warmup scope.
+
+Delete `prefetchImages(for:)` from `JellyfinAPIClientProtocol`, its default extension, and `JellyfinAPIClient`. Extra same-named methods in unrelated test doubles may remain but no production call site may use them.
+
+- [ ] **Step 6: Make canonical/prefetch/Sync tests GREEN**
+
+Add Sync tests that inspect captured `ArtworkRequest` values and prove row-role mapping and latest prefetch-task replacement. Run:
 
 ```bash
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
   -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
-  -only-testing:PlaybackEngineTests/ArtworkVariantResolverTests
-rg -n 'apiClient\.prefetchImages' ReelFinUI/Sources/ReelFinUI
+  -only-testing:PlaybackEngineTests/ArtworkRequestTests \
+  -only-testing:PlaybackEngineTests/DefaultSyncEngineHomeFeedTests \
+  -only-testing:ImageCacheTests/DefaultArtworkPrefetcherTests \
+  -only-testing:ImageCacheTests/DefaultImagePipelineTests
+rg -n 'prefetchImages\(' ReelFinUI SyncEngine JellyfinAPI Shared
 ```
 
-Expected: test passes and `rg` has no matches.
+Expected: tests pass and `rg` has no production matches.
+
+- [ ] **Step 7: Regenerate and build both app targets**
+
+Run XcodeGen, then build iOS and tvOS sequentially (or with distinct DerivedData paths). Both targets must compile because Shared/ImageCache/ReelFinDependencies changes are cross-platform.
 
 ---
 
