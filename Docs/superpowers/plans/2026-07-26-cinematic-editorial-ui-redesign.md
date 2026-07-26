@@ -282,7 +282,7 @@ Run XcodeGen, then build iOS and tvOS sequentially (or with distinct DerivedData
 - Create: `Tests/PlaybackEngineTests/CachedRemoteImageLoaderTests.swift`
 - Create: `Tests/PlaybackEngineTests/ShimmerAnimationPolicyTests.swift`
 
-- [ ] **Step 1: Add failing request-generation and loader race tests**
+- [x] **Step 1: Add failing request-generation and loader race tests**
 
 Test `CachedRemoteImageRequestState` and a `@MainActor` loader without hosting SwiftUI. Use controlled continuations to suspend each await. Prove an old URL resolution cannot attach after a newer generation starts; old cached/primary/fallback results cannot publish; invalidation cancels the attached URL; cancellation prevents publication; and an old generation finishing cannot clear a newer URL.
 
@@ -298,37 +298,37 @@ func testOldCachedLookupCannotPublishAfterNewGenerationStarts() async {
 }
 ```
 
-- [ ] **Step 2: Implement generation ownership and guard every suspension**
+- [x] **Step 2: Implement generation ownership and guard every suspension**
 
 Add `CachedRemoteImageRequestToken`, cancellation value, and request state with `begin`, `owns`, `attach`, `finish`, and `invalidate`. `begin` advances a wrapping generation and returns cancellation for the previous token. `finish` and `invalidate` never clear newer state.
 
 Move asynchronous load work into `CachedRemoteImageLoader`. Preserve both Task 2 `CachedRemoteImage` initializers. Check cancellation and token ownership immediately after: main URL resolution, cache lookup, main download, fallback URL resolution, and fallback download; also guard before logging or starting fallback. Publication and callback go through one guarded method. `onDisappear` invalidates first, then cancels the captured URL/consumer. A defer uses only token-local URL/consumer values.
 
-- [ ] **Step 3: Confirm the loader suite GREEN**
+- [x] **Step 3: Confirm the loader suite GREEN**
 
 Run `PlaybackEngineTests/CachedRemoteImageLoaderTests`; all continuation-driven races must complete without sleeps.
 
-- [ ] **Step 4: Add RED tests for a fixed four-request prefetch window**
+- [x] **Step 4: Add RED tests for a fixed four-request prefetch window**
 
 Use a blocking URLProtocol with explicit start/completion signals and distinct hosts. Test: exactly four start before completion; completing one admits exactly one; cancelling the parent never admits waiting URLs; duplicate URLs consume one slot; candidates remain capped at 24.
 
-- [ ] **Step 5: Implement stable bounded prefetch**
+- [x] **Step 5: Implement stable bounded prefetch**
 
 Use internal constants `maximumConcurrentPrefetches = 4` and `maximumPrefetchURLs = 24`. Stable-deduplicate first, keep unadmitted URLs only in an iterator, seed at most four group children, and add one URL per completion. On cancellation call `group.cancelAll()` and return without admitting another URL. Preserve registry deduplication, token headers, cache keys, memory accounting, and visible/focused work behavior.
 
-- [ ] **Step 6: Add RED tests for a fixed two-operation decode scheduler**
+- [x] **Step 6: Add RED tests for a fixed two-operation decode scheduler**
 
 Test maximum two active bodies, one-for-one admission, cancellation before start, cancellation while running, cancellation before operation installation, invalid payload, and permit release. Tests may block only dedicated OperationQueue threads, never Swift cooperative-executor threads.
 
-- [ ] **Step 7: Implement `ImageDecodeScheduler` with OperationQueue**
+- [x] **Step 7: Implement `ImageDecodeScheduler` with OperationQueue**
 
 Use `OperationQueue` named `com.reelfin.image-decode`, quality `.utility`, and `maxConcurrentOperationCount = 2`. A synchronous `DecodeOperation` owns the ImageIO body. Resume its continuation only from `completionBlock`; cancellation only cancels the installed/soon-to-be-installed operation through a locked handle. Reject a cancelled result after continuation. Keep the current ImageIO thumbnail options and requested pixel sizing. `cachedImage(for:)` remains nonthrowing and returns nil on decode cancellation; disk/network task paths propagate cancellation.
 
-- [ ] **Step 8: Add RED shimmer policy tests, then split static/animated branches**
+- [x] **Step 8: Add RED shimmer policy tests, then split static/animated branches**
 
 Add `ShimmerAnimationPolicy.branch(animationEnabled:reduceMotion:)`. Public `ShimmerView.init(animationEnabled: Bool = true)` remains source-compatible. `AnimatedShimmerView` alone owns phase/repeatForever; `StaticShimmerView` owns none. Select distinct branch types/IDs so changing Reduce Motion destroys the running animation. tvOS stays static.
 
-- [ ] **Step 9: Run the complete affected gates and both builds**
+- [x] **Step 9: Run the complete affected gates and both builds**
 
 ```bash
 xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
