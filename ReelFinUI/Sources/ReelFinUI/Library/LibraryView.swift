@@ -1,6 +1,18 @@
 import Shared
 import SwiftUI
 
+enum LibraryHeaderPresentation: Equatable {
+    case expanded
+    case compact
+
+    static let revealDistance: CGFloat = 160
+    static let compactRevealThreshold: CGFloat = 18.0 / 24.0
+
+    static func resolve(quantizedRevealProgress: CGFloat) -> Self {
+        quantizedRevealProgress >= compactRevealThreshold ? .compact : .expanded
+    }
+}
+
 #if os(tvOS)
 private enum TVLibraryWarmupScope {
     static let focus = "library.focus"
@@ -11,6 +23,7 @@ struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reelFinDisplayDensity) private var displayDensity
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var accessibilityReduceTransparency
     @Namespace private var posterNamespace
 #if os(tvOS)
     @FocusState private var focusedControl: TVLibraryControlFocus?
@@ -113,7 +126,8 @@ struct LibraryView: View {
         GeometryReader { proxy in
             libraryContent(
                 topRowItemIDs: [],
-                posterGridLayout: iosPosterGridLayout(containerWidth: proxy.size.width)
+                posterGridLayout: iosPosterGridLayout(containerWidth: proxy.size.width),
+                safeAreaTopInset: proxy.safeAreaInsets.top
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
@@ -122,11 +136,12 @@ struct LibraryView: View {
 
     private func libraryContent(
         topRowItemIDs: Set<String>,
-        posterGridLayout: PosterGridLayout? = nil
+        posterGridLayout: PosterGridLayout? = nil,
+        safeAreaTopInset: CGFloat = 0
     ) -> some View {
 #if os(tvOS)
         VStack(spacing: 14) {
-            topBar
+            tvTopBar
 
             libraryScrollContent(topRowItemIDs: topRowItemIDs)
             .focusSection()
@@ -136,22 +151,39 @@ struct LibraryView: View {
             maxBlurRadius: 12,
             fadeExtension: 88,
             tintOpacityTop: 0.48,
-            tintOpacityMiddle: 0.18
-        ) { _ in
-            iosTopBar
-                .padding(.top, stickyHeaderTopPadding)
-                .padding(.bottom, 14)
-                .accessibilityIdentifier("library_sticky_blur_header")
-        } content: {
-            libraryGridContent(
-                topRowItemIDs: topRowItemIDs,
-                gridColumns: posterGridLayout?.gridItems,
-                cardWidth: posterGridLayout?.cardWidth
+            tintOpacityMiddle: 0.18,
+            statusBarBlurOpacity: 0.42,
+            contentTopInset: 0,
+            visibility: .revealOnScroll(
+                distance: LibraryHeaderPresentation.revealDistance,
+                minimumEffectOpacity: 0
             )
+        ) { quantizedRevealProgress in
+            let presentation = LibraryHeaderPresentation.resolve(
+                quantizedRevealProgress: quantizedRevealProgress
+            )
+            let isCompact = presentation == .compact
+
+            iosCompactHeader(safeAreaTopInset: safeAreaTopInset)
+                .opacity(isCompact ? 1 : 0)
+                .allowsHitTesting(isCompact)
+                .accessibilityHidden(!isCompact)
+        } content: {
+            VStack(spacing: 0) {
+                iosExpandedHeader(safeAreaTopInset: safeAreaTopInset)
+
+                libraryGridContent(
+                    topRowItemIDs: topRowItemIDs,
+                    gridColumns: posterGridLayout?.gridItems,
+                    cardWidth: posterGridLayout?.cardWidth
+                )
+            }
         }
+        .ignoresSafeArea(edges: .top)
 #endif
     }
 
+#if os(tvOS)
     private func libraryScrollContent(topRowItemIDs: Set<String>) -> some View {
         ScrollView(showsIndicators: false) {
             libraryGridContent(topRowItemIDs: topRowItemIDs)
@@ -165,6 +197,7 @@ struct LibraryView: View {
             for: .scrollContent
         )
     }
+#endif
 
     private func libraryGridContent(
         topRowItemIDs: Set<String>,
@@ -240,15 +273,6 @@ struct LibraryView: View {
         }
     }
 
-    @ViewBuilder
-    private var topBar: some View {
-#if os(tvOS)
-        tvTopBar
-#else
-        iosTopBar
-#endif
-    }
-
 #if os(tvOS)
     private var tvTopBar: some View {
         TVLibraryControlBar(
@@ -262,150 +286,214 @@ struct LibraryView: View {
     }
 #endif
 
-    // MARK: - iOS top bar: full search bar + filter chips
+#if os(iOS)
+    // MARK: - iOS editorial Library header
 
-    private var iosTopBar: some View {
-        VStack(spacing: 10) {
-            HStack {
+    private func iosExpandedHeader(safeAreaTopInset: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("YOUR JELLYFIN COLLECTION")
+                    .font(.caption.weight(.bold))
+                    .tracking(1.8)
+                    .foregroundStyle(ReelFinTheme.editorialAccent)
+
                 Text("Library")
-                    .reelFinTitleStyle()
-                Spacer()
+                    .font(.largeTitle.weight(.heavy))
+                    .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("library_expanded_header")
 
-                Menu {
-                    Picker("Sort", selection: $viewModel.sortMode) {
-                        ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .foregroundStyle(.white.opacity(0.98))
-                        .background {
-                            libraryCircleBackground()
-                        }
-                }
+                Text(libraryResultContext)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(ReelFinTheme.editorialSecondaryText)
+                    .contentTransition(.numericText())
+                    .accessibilityIdentifier("library_result_context")
             }
 
-            HStack(spacing: 10) {
-                filterChip(title: "Movies", filter: .movie)
-                filterChip(title: "Shows", filter: .series)
-                Spacer()
-            }
+            iosSearchField
+
+            iosControlCluster(compact: false)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, safeAreaTopInset + expandedHeaderTopSpacing)
+        .padding(.bottom, 30)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func iosCompactHeader(safeAreaTopInset: CGFloat) -> some View {
+        HStack(spacing: 10) {
+            Text("Library")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("library_sticky_blur_header")
+
+            Spacer(minLength: 4)
+
+            iosControlCluster(compact: true)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, safeAreaTopInset + 6)
+        .padding(.bottom, 10)
+        .frame(height: safeAreaTopInset + 72, alignment: .bottom)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var iosSearchField: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "magnifyingglass")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(ReelFinTheme.editorialSecondaryText)
+                .accessibilityHidden(true)
 
             TextField(
                 "",
                 text: $viewModel.searchQuery,
                 prompt: Text("Search your library")
-                    .font(.system(size: 17, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(ReelFinTheme.editorialSecondaryText)
             )
-#if os(iOS)
-                .textInputAutocapitalization(.never)
-#endif
-                .autocorrectionDisabled(true)
-                .font(.system(size: 17, weight: .medium, design: .rounded))
-                .padding(.horizontal, 16)
-                .frame(height: 52)
-                .foregroundStyle(.white.opacity(0.98))
-                .background {
-                    librarySearchBackground()
-                }
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled(true)
+            .submitLabel(.search)
+            .font(.body.weight(.medium))
+            .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+            .accessibilityIdentifier("library_search_field")
         }
-        .padding(.horizontal, horizontalPadding)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 54)
+        .background { librarySearchBackground }
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func filterChip(title: String, filter: MediaType) -> some View {
+    private func iosControlCluster(compact: Bool) -> some View {
+        glassGroup(spacing: compact ? 8 : 10) {
+            HStack(spacing: compact ? 8 : 10) {
+                filterChip(title: "Movies", filter: .movie, compact: compact)
+                filterChip(title: "Shows", filter: .series, compact: compact)
+                sortControl(compact: compact)
+            }
+        }
+    }
+
+    private func filterChip(
+        title: String,
+        filter: MediaType,
+        compact: Bool
+    ) -> some View {
         let isActive = viewModel.selectedFilter == filter
 
         return Button {
             viewModel.selectedFilter = filter
         } label: {
             Text(title)
-                .font(.system(size: chipFontSize, weight: .bold, design: .rounded))
-                .frame(minWidth: 82)
-                .padding(.horizontal, chipHPad)
-                .padding(.vertical, chipVPad)
-                .foregroundStyle(isActive ? Color.black.opacity(0.92) : Color.white.opacity(0.98))
-                .shadow(color: .black.opacity(isActive ? 0.10 : 0.24), radius: isActive ? 1 : 2, y: 1)
-                .background {
-                    libraryFilterBackground(isActive: isActive)
-                }
+                .font(.subheadline.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .frame(minWidth: compact ? 54 : 72)
+                .padding(.horizontal, compact ? 8 : 12)
+                .padding(.vertical, compact ? 9 : 11)
+                .foregroundStyle(libraryControlForeground(isActive: isActive))
+                .background { libraryControlBackground(isActive: isActive) }
+                .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
-    @ViewBuilder
-    private func libraryCircleBackground() -> some View {
-        if #available(iOS 26.0, tvOS 26.0, *) {
-            Circle()
-                .fill(Color.white.opacity(0.10))
-                .overlay {
-                    Circle().stroke(Color.white.opacity(0.18), lineWidth: 1)
+    private func sortControl(compact: Bool) -> some View {
+        Menu {
+            Picker("Sort", selection: $viewModel.sortMode) {
+                ForEach(LibraryViewModel.SortMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue).tag(mode)
                 }
-                .glassEffect(.clear.interactive(), in: .circle)
-                .shadow(color: .black.opacity(0.14), radius: 12, x: 0, y: 5)
-        } else {
-            Color.clear.reelFinGlassCircle(
-                interactive: true,
-                tint: Color.black.opacity(0.22),
-                stroke: Color.white.opacity(0.14),
-                shadowOpacity: 0.14,
-                shadowRadius: 12,
-                shadowYOffset: 5
-            )
+            }
+        } label: {
+            HStack(spacing: compact ? 5 : 7) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.caption.weight(.bold))
+
+                Text(sortModeDisplayTitle)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+            }
+            .font(.subheadline.weight(.bold))
+            .frame(minWidth: compact ? 62 : 86)
+            .padding(.horizontal, compact ? 8 : 12)
+            .padding(.vertical, compact ? 9 : 11)
+            .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+            .background { libraryControlBackground(isActive: false) }
+            .contentShape(Capsule(style: .continuous))
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("library_sort_control")
+    }
+
+    private func libraryControlForeground(isActive: Bool) -> Color {
+        if accessibilityReduceTransparency {
+            return ReelFinTheme.editorialPrimaryText
+        }
+        return isActive ? Color.black.opacity(0.92) : ReelFinTheme.editorialPrimaryText
     }
 
     @ViewBuilder
-    private func librarySearchBackground() -> some View {
-        if #available(iOS 26.0, tvOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.08))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                }
-                .glassEffect(.clear.interactive(), in: .rect(cornerRadius: 18))
-                .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 6)
-        } else {
-            Color.clear.reelFinGlassRoundedRect(
-                cornerRadius: 18,
-                interactive: true,
-                tint: Color.black.opacity(0.22),
-                stroke: Color.white.opacity(0.14),
-                shadowOpacity: 0.14,
-                shadowRadius: 14,
-                shadowYOffset: 6
-            )
-        }
-    }
+    private func libraryControlBackground(isActive: Bool) -> some View {
+        let shape = Capsule(style: .continuous)
 
-    @ViewBuilder
-    private func libraryFilterBackground(isActive: Bool) -> some View {
-        if #available(iOS 26.0, tvOS 26.0, *) {
-            Capsule(style: .continuous)
-                .fill(isActive ? Color.white.opacity(0.90) : Color.white.opacity(0.10))
-                .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(
-                            isActive ? Color.white.opacity(0.28) : Color.white.opacity(0.16),
-                            lineWidth: 1
+        switch EditorialGlassRole.compactControl.presentation(
+            reduceTransparency: accessibilityReduceTransparency
+        ) {
+        case .interactiveGlass:
+            shape
+                .fill(isActive ? Color.white.opacity(0.78) : Color.white.opacity(0.04))
+                .glassEffect(
+                    Glass.regular
+                        .tint(
+                            isActive
+                                ? Color.white.opacity(0.56)
+                                : ReelFinTheme.editorialGlassTint
                         )
+                        .interactive(),
+                    in: .capsule
+                )
+                .overlay {
+                    shape.stroke(
+                        Color.white.opacity(isActive ? 0.30 : 0.16),
+                        lineWidth: 1
+                    )
                 }
-                .glassEffect(.clear.interactive(), in: .capsule)
-                .shadow(color: .black.opacity(isActive ? 0.08 : 0.10), radius: isActive ? 10 : 8, x: 0, y: 4)
-        } else {
-            Color.clear.reelFinGlassCapsule(
-                interactive: true,
-                tint: isActive ? Color.white.opacity(0.22) : Color.black.opacity(0.22),
-                stroke: Color.white.opacity(isActive ? 0.20 : 0.14),
-                shadowOpacity: isActive ? 0.15 : 0.10,
-                shadowRadius: isActive ? 12 : 8,
-                shadowYOffset: 4
-            )
+        case .opaque:
+            shape
+                .fill(ReelFinTheme.editorialOpaqueFallback)
+                .overlay {
+                    shape.stroke(
+                        Color.white.opacity(isActive ? 0.46 : 0.30),
+                        lineWidth: 1.2
+                    )
+                }
+        case .passiveGlass:
+            shape
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint),
+                    in: .capsule
+                )
         }
+    }
+
+    private var librarySearchBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        return shape
+            .fill(
+                accessibilityReduceTransparency
+                    ? ReelFinTheme.editorialOpaqueFallback
+                    : Color.white.opacity(0.075)
+            )
+            .overlay {
+                shape.stroke(
+                    Color.white.opacity(accessibilityReduceTransparency ? 0.30 : 0.14),
+                    lineWidth: accessibilityReduceTransparency ? 1.2 : 1
+                )
+            }
     }
 
     @ViewBuilder
@@ -413,16 +501,47 @@ struct LibraryView: View {
         spacing: CGFloat,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        if #available(iOS 26.0, tvOS 26.0, *) {
+        if #available(iOS 26.0, *) {
             GlassEffectContainer(spacing: spacing, content: content)
         } else {
             content()
         }
     }
 
-    private var stickyHeaderTopPadding: CGFloat {
-        horizontalSizeClass == .compact ? 8 : 12
+    private var libraryResultContext: String {
+        let trimmedQuery = viewModel.searchQuery.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let count = viewModel.items.count
+
+        if count == 0 {
+            if viewModel.isLoadingPage {
+                return trimmedQuery.isEmpty ? "Loading titles" : "Searching for \(trimmedQuery)"
+            }
+            return trimmedQuery.isEmpty
+                ? "No \(selectedFilterDisplayTitle.lowercased()) loaded"
+                : "No results loaded for \(trimmedQuery)"
+        }
+
+        let countLabel = "\(count) \(count == 1 ? "title" : "titles") loaded"
+        let context = trimmedQuery.isEmpty
+            ? "\(countLabel) · \(selectedFilterDisplayTitle)"
+            : "\(countLabel) for \(trimmedQuery)"
+        return viewModel.isLoadingPage ? "\(context) · Updating" : context
     }
+
+    private var selectedFilterDisplayTitle: String {
+        viewModel.selectedFilter == .series ? "Shows" : "Movies"
+    }
+
+    private var sortModeDisplayTitle: String {
+        viewModel.sortMode == .recent ? "Recent" : "A–Z"
+    }
+
+    private var expandedHeaderTopSpacing: CGFloat {
+        horizontalSizeClass == .compact ? 24 : 34
+    }
+#endif
 
     private var columns: [GridItem] {
 #if os(tvOS)
@@ -464,30 +583,6 @@ struct LibraryView: View {
                 displayDensity: displayDensity
             )
         )
-    }
-
-    private var chipFontSize: CGFloat {
-#if os(tvOS)
-        return 18
-#else
-        return displayDensity.scaledTextSize(15)
-#endif
-    }
-
-    private var chipHPad: CGFloat {
-#if os(tvOS)
-        return 20
-#else
-        return displayDensity.scaledSpacing(14)
-#endif
-    }
-
-    private var chipVPad: CGFloat {
-#if os(tvOS)
-        return 12
-#else
-        return displayDensity.scaledSpacing(9)
-#endif
     }
 
     private func handleFocusedItem(_ item: MediaItem) {

@@ -129,6 +129,21 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(reserve, 34 + ((240 * 1.09 - 240) / 2))
     }
 
+    func testFullHDLibraryGridKeepsSixItemsInTheFirstRow() {
+        let layout = TVAdaptiveGridFocusLayout(
+            containerWidth: 1_920,
+            horizontalPadding: 56,
+            minimumItemWidth: 240,
+            interItemSpacing: 32
+        )
+
+        XCTAssertEqual(layout.columnCount, 6)
+        for index in 0 ... 5 {
+            XCTAssertTrue(layout.isInFirstRow(index: index))
+        }
+        XCTAssertFalse(layout.isInFirstRow(index: 6))
+    }
+
     func testTVTopNavigationKeepsSearchInAnIndependentGlassSurface() {
         XCTAssertEqual(TVTopNavigationLayout.primaryDestinations, [.watchNow, .library])
         XCTAssertEqual(TVTopNavigationLayout.isolatedDestination, .search)

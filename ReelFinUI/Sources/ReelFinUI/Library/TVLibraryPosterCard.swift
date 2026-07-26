@@ -1,9 +1,15 @@
+enum TVLibraryActivationPolicy {
+    static func activate(_ action: () -> Void) {
+        action()
+    }
+}
+
 #if os(tvOS)
 import Shared
 import SwiftUI
 
 struct TVLibraryPosterCard: View {
-    @State private var isActivating = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     let item: MediaItem
     let dependencies: ReelFinDependencies
@@ -15,40 +21,62 @@ struct TVLibraryPosterCard: View {
     let onSelect: (MediaItem) -> Void
 
     var body: some View {
-        Button(action: handleActivation) {
-            VStack(alignment: .leading, spacing: ReelFinTheme.tvCardMetadataSpacing) {
-                PosterCardArtworkView(
-                    item: item,
-                    apiClient: dependencies.apiClient,
-                    imagePipeline: dependencies.imagePipeline,
-                    layoutStyle: .grid,
-                    namespace: namespace,
-                    transitionSourceID: transitionSourceID
-                )
-                .clipShape(surfaceShape)
+        Button {
+            TVLibraryActivationPolicy.activate {
+                onSelect(item)
+            }
+        } label: {
+            ZStack {
+                restingSurface
 
-                PosterCardMetadataView(
-                    item: item,
-                    layoutStyle: .grid,
-                    titleLineLimit: 2
-                )
-                .padding(.horizontal, 10)
-                .padding(.bottom, 2)
-                .opacity(isFocused ? 1 : 0.74)
+                if focusedPresentation == .opaque {
+                    surfaceShape.fill(ReelFinTheme.editorialOpaqueFallback)
+                }
+
+                VStack(alignment: .leading, spacing: ReelFinTheme.tvCardMetadataSpacing) {
+                    PosterCardArtworkView(
+                        item: item,
+                        apiClient: dependencies.apiClient,
+                        imagePipeline: dependencies.imagePipeline,
+                        layoutStyle: .grid,
+                        namespace: namespace,
+                        transitionSourceID: transitionSourceID
+                    )
+                    .clipShape(surfaceShape)
+                    .opacity(focusedPresentation == .opaque ? 0.82 : 1)
+
+                    PosterCardMetadataView(
+                        item: item,
+                        layoutStyle: .grid,
+                        titleLineLimit: 2
+                    )
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 2)
+                    .opacity(isFocused ? 1 : 0.74)
+                }
+
+                focusSurface
+                    .allowsHitTesting(false)
             }
             .frame(width: cardContentWidth, alignment: .leading)
-            .background { focusSurface }
+            .overlay {
+                surfaceShape
+                    .stroke(
+                        ReelFinTheme.editorialFocusedRim,
+                        lineWidth: TVFocusGeometry.focusedStrokeWidth
+                    )
+                    .opacity(isFocused ? 1 : 0)
+            }
             .clipShape(surfaceShape)
             .contentShape(surfaceShape)
         }
-        .buttonStyle(TVNoChromeButtonStyle())
+        .buttonStyle(TVLibraryPosterPressStyle())
         .tvMotionFocus(.libraryPoster, isFocused: isFocused)
-        .scaleEffect(isActivating ? TVFocusGeometry.libraryActivationScale : 1)
         .shadow(
-            color: .black.opacity(isFocused ? TVFocusGeometry.focusedShadowOpacity : 0.16),
-            radius: isFocused ? TVFocusGeometry.focusedShadowRadius : 28,
+            color: .black.opacity(isFocused ? TVFocusGeometry.focusedShadowOpacity : 0),
+            radius: TVFocusGeometry.focusedShadowRadius,
             x: 0,
-            y: isFocused ? TVFocusGeometry.focusedShadowY : 16
+            y: TVFocusGeometry.focusedShadowY
         )
         .onMoveCommand(perform: handleMoveCommand)
         .focusEffectDisabled(true)
@@ -59,52 +87,45 @@ struct TVLibraryPosterCard: View {
             guard focused else { return }
             onFocus(item)
         }
-        .animation(.easeOut(duration: 0.12), value: isActivating)
+    }
+
+    private var focusedPresentation: EditorialGlassPresentation? {
+        guard isFocused else { return nil }
+        return EditorialGlassRole.focusedMedia.presentation(
+            reduceTransparency: reduceTransparency
+        )
     }
 
     @ViewBuilder
     private var focusSurface: some View {
-        if #available(tvOS 26.0, *) {
-            // Liquid Glass ONLY on the focused cell: interactive glass is a live backdrop-sampling
-            // layer, and one per visible grid cell made whole library pages heavy. Resting cells
-            // get a cheap fill + stroke that reads identically from the couch.
-            if isFocused {
+        if let focusedPresentation {
+            switch focusedPresentation {
+            case .passiveGlass:
                 Color.clear
                     .glassEffect(
-                        Glass.regular
-                            .tint(Color.white.opacity(0.18)),
+                        Glass.regular.tint(ReelFinTheme.editorialGlassTint),
                         in: .rect(cornerRadius: surfaceCornerRadius)
                     )
-                    .overlay {
-                        surfaceShape
-                            .stroke(surfaceStroke, lineWidth: TVFocusGeometry.focusedStrokeWidth)
-                    }
-            } else {
-                surfaceShape
-                    .fill(Color.white.opacity(0.05))
-                    .overlay {
-                        surfaceShape
-                            .stroke(surfaceStroke, lineWidth: 0.9)
-                    }
+            case .opaque:
+                Color.clear
+            case .interactiveGlass:
+                Color.clear
+                    .glassEffect(
+                        Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
+                        in: .rect(cornerRadius: surfaceCornerRadius)
+                    )
             }
         } else {
-            Color.clear.tvCardSurface(focused: isFocused, cornerRadius: surfaceCornerRadius)
+            Color.clear
         }
+    }
+
+    private var restingSurface: some View {
+        surfaceShape.fill(Color.white.opacity(0.04))
     }
 
     private var surfaceShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: surfaceCornerRadius, style: .continuous)
-    }
-
-    private var surfaceStroke: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(isFocused ? TVFocusGeometry.focusedStrokeOpacity : 0.14),
-                Color.white.opacity(isFocused ? 0.12 : 0.04)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
     }
 
     private var cardContentWidth: CGFloat {
@@ -119,18 +140,23 @@ struct TVLibraryPosterCard: View {
         guard direction == .up else { return }
         onMoveUp?()
     }
+}
 
-    private func handleActivation() {
-        guard !isActivating else { return }
-        withAnimation(.easeOut(duration: 0.10)) {
-            isActivating = true
-        }
+private struct TVLibraryPosterPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 105_000_000)
-            onSelect(item)
-            isActivating = false
-        }
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(
+                configuration.isPressed && !reduceMotion
+                    ? TVFocusGeometry.libraryActivationScale
+                    : 1
+            )
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .animation(
+                EditorialMotion.buttonPressAnimation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 #endif

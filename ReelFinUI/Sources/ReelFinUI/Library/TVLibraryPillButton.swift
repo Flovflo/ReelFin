@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TVLibraryPillButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @FocusState private var isFocused: Bool
 
     let title: String
@@ -19,19 +20,63 @@ struct TVLibraryPillButton: View {
     }
 
     private var labelColor: Color {
-        isHighlighted ? Color.black.opacity(0.92) : Color.white.opacity(0.94)
+        if controlPresentation == .opaque {
+            return ReelFinTheme.editorialPrimaryText
+        }
+        return isHighlighted ? Color.black.opacity(0.92) : Color.white.opacity(0.94)
     }
 
     @ViewBuilder
     private var highlightBackground: some View {
-        Color.clear.reelFinGlassCapsule(
-            interactive: true,
-            tint: backgroundTint,
-            stroke: borderColor,
-            strokeWidth: isFocused ? 1.2 : 1,
-            shadowOpacity: isFocused ? 0.22 : 0.12,
-            shadowRadius: isFocused ? 16 : 10,
-            shadowYOffset: isFocused ? 9 : 5
+        switch controlPresentation {
+        case .interactiveGlass:
+            Color.clear
+                .glassEffect(
+                    Glass.regular.tint(backgroundTint).interactive(),
+                    in: .capsule
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(borderColor, lineWidth: isFocused ? 1.2 : 1)
+                }
+                .shadow(
+                    color: .black.opacity(isFocused ? 0.22 : 0.12),
+                    radius: isFocused ? 16 : 10,
+                    x: 0,
+                    y: isFocused ? 9 : 5
+                )
+        case .opaque:
+            Capsule(style: .continuous)
+                .fill(ReelFinTheme.editorialOpaqueFallback)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(
+                            Color.white.opacity(isHighlighted ? 0.44 : 0.28),
+                            lineWidth: isFocused ? 1.4 : 1.2
+                        )
+                }
+                .shadow(
+                    color: .black.opacity(isFocused ? 0.22 : 0.12),
+                    radius: isFocused ? 16 : 10,
+                    x: 0,
+                    y: isFocused ? 9 : 5
+                )
+        case .passiveGlass:
+            Color.clear
+                .glassEffect(
+                    Glass.regular.tint(backgroundTint),
+                    in: .capsule
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(borderColor, lineWidth: isFocused ? 1.2 : 1)
+                }
+        }
+    }
+
+    private var controlPresentation: EditorialGlassPresentation {
+        EditorialGlassRole.compactControl.presentation(
+            reduceTransparency: reduceTransparency
         )
     }
 
@@ -47,9 +92,9 @@ struct TVLibraryPillButton: View {
             return Color.white.opacity(0.88)
         }
         if isFocused {
-            return Color.white.opacity(0.32)
+            return Color.white.opacity(0.38)
         }
-        return Color.white.opacity(0.05)
+        return ReelFinTheme.editorialGlassTint
     }
 
     private var borderColor: Color {

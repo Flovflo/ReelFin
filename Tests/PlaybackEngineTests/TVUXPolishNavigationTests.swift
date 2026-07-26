@@ -221,4 +221,31 @@ final class TVUXPolishNavigationTests: XCTestCase {
         XCTAssertTrue(home.contains("guard let targetID = homeFocusHandoff.consume(request) else { return }"))
         XCTAssertTrue(home.contains("homeFocusHandoffTask?.cancel()"))
     }
+
+    func testLibraryKeepsTopRowFocusRouteAndExactDetailReturnProvenance() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let library = try String(
+            contentsOf: root.appendingPathComponent(
+                "ReelFinUI/Sources/ReelFinUI/Library/LibraryView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(library.contains(".focused($focusedLibraryItemID, equals: item.id)"))
+        XCTAssertTrue(
+            library.contains(
+                "onMoveUp: topRowItemIDs.contains(item.id) ? focusPreferredControlBar : nil"
+            )
+        )
+        XCTAssertTrue(
+            library.contains(
+                "transitionSourceID: LibraryCardTransitionSource.id(itemID: item.id)"
+            )
+        )
+        XCTAssertTrue(library.contains("savedSelectedPosterID = item.id"))
+        XCTAssertTrue(library.contains("focusedLibraryItemID = returnPosterID"))
+    }
 }

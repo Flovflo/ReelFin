@@ -36,25 +36,14 @@ struct TVLibraryControlBar: View {
         .focusSection()
     }
 
+    @ViewBuilder
     private var controls: some View {
-        HStack(spacing: 14) {
+        if #available(tvOS 26.0, *) {
+            GlassEffectContainer(spacing: 14) {
+                controlRow
+            }
+        } else {
             controlRow
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(railBackground)
-                .overlay(railStroke)
-                .shadow(color: .black.opacity(0.22), radius: 20, x: 0, y: 10)
-
-            TVLibraryPillButton(
-                title: sortMode.displayTitle,
-                systemImage: "arrow.up.arrow.down",
-                isSelected: false,
-                topNavigationDestination: .library,
-                allowsTopNavigationRedirect: allowsTopNavigationRedirect,
-                focusedControl: focusedControl,
-                focusID: .sort,
-                action: onSortToggle
-            )
         }
     }
 
@@ -80,27 +69,18 @@ struct TVLibraryControlBar: View {
             ) {
                 onFilterChange(.series)
             }
-        }
-    }
 
-    private var railBackground: some View {
-        Group {
-            if #available(tvOS 26.0, *) {
-                Color.clear
-                    .glassEffect(
-                        Glass.regular.tint(Color.white.opacity(0.12)),
-                        in: .capsule
-                    )
-            } else {
-                Capsule(style: .continuous)
-                    .fill(Color.white.opacity(0.10))
-            }
+            TVLibraryPillButton(
+                title: sortMode.displayTitle,
+                systemImage: "arrow.up.arrow.down",
+                isSelected: false,
+                topNavigationDestination: .library,
+                allowsTopNavigationRedirect: allowsTopNavigationRedirect,
+                focusedControl: focusedControl,
+                focusID: .sort,
+                action: onSortToggle
+            )
         }
-    }
-
-    private var railStroke: some View {
-        Capsule(style: .continuous)
-            .stroke(Color.white.opacity(0.10), lineWidth: 1)
     }
 }
 

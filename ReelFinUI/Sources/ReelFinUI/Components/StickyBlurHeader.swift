@@ -11,9 +11,50 @@ private struct HeaderHeightKey: PreferenceKey {
     }
 }
 
+struct StickyBlurHeaderScrollPresentation: Equatable {
+    let step: Int
+    let bucketCount: Int
+
+    var progress: CGFloat {
+        CGFloat(step) / CGFloat(bucketCount)
+    }
+
+    static func resolve(
+        offset: CGFloat,
+        revealDistance: CGFloat,
+        bucketCount: Int = 24
+    ) -> Self {
+        let resolvedBucketCount = max(bucketCount, 1)
+        guard revealDistance.isFinite, revealDistance > 0 else {
+            return Self(step: resolvedBucketCount, bucketCount: resolvedBucketCount)
+        }
+
+        let finiteOffset = offset.isFinite ? offset : 0
+        let rawProgress = min(max(finiteOffset / revealDistance, 0), 1)
+        let step = Int(
+            (rawProgress * CGFloat(resolvedBucketCount)).rounded(.down)
+        )
+        return Self(
+            step: min(max(step, 0), resolvedBucketCount),
+            bucketCount: resolvedBucketCount
+        )
+    }
+}
+
 enum StickyBlurHeaderVisibility {
     case always
     case revealOnScroll(distance: CGFloat, minimumEffectOpacity: CGFloat)
+}
+
+extension StickyBlurHeaderVisibility {
+    var requiresScrollTracking: Bool {
+        switch self {
+        case .always:
+            return false
+        case .revealOnScroll:
+            return true
+        }
+    }
 }
 
 /// Local fork kept intentionally close to dominikmartn/ProgressiveBlurHeader,
@@ -31,8 +72,12 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
     private let content: () -> Content
 
     @State private var headerHeight: CGFloat = 76
-    @State private var scrollOffset: CGFloat = 0
+    @State private var scrollPresentation = StickyBlurHeaderScrollPresentation.resolve(
+        offset: 0,
+        revealDistance: 1
+    )
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     init(
         maxBlurRadius: CGFloat = 5,
@@ -63,19 +108,107 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
             scrollLayer
 
             let totalHeight = headerHeight + fadeExtension
-            let blurMask = LinearGradient(
-                stops: [
-                    .init(color: .black, location: 0),
-                    .init(color: .black.opacity(0.94), location: 0.08),
-                    .init(color: .black.opacity(0.68), location: 0.22),
-                    .init(color: .black.opacity(0.28), location: 0.42),
-                    .init(color: .black.opacity(0.10), location: 0.62),
-                    .init(color: .clear, location: 0.86),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            headerBackdrop(totalHeight: totalHeight)
 
+            header(headerRevealProgress)
+                .overlay {
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: HeaderHeightKey.self,
+                            value: geo.size.height
+                        )
+                    }
+                }
+        }
+        .onPreferenceChange(HeaderHeightKey.self) { headerHeight = $0 }
+    }
+
+    @ViewBuilder
+    private var scrollLayer: some View {
+        let baseScrollView = baseScrollLayer
+
+        if visibility.requiresScrollTracking {
+            switch visibility {
+            case .always:
+                baseScrollView
+            case let .revealOnScroll(distance, _):
+                baseScrollView
+                    .onScrollGeometryChange(
+                        for: StickyBlurHeaderScrollPresentation.self
+                    ) { geometry in
+                        StickyBlurHeaderScrollPresentation.resolve(
+                            offset: max(
+                                0,
+                                geometry.contentOffset.y + geometry.contentInsets.top
+                            ),
+                            revealDistance: distance
+                        )
+                    } action: { _, newValue in
+                        guard newValue != scrollPresentation else { return }
+                        scrollPresentation = newValue
+                    }
+            }
+        } else {
+            baseScrollView
+        }
+    }
+
+    @ViewBuilder
+    private var baseScrollLayer: some View {
+        let baseScrollView = ScrollView {
+            content()
+        }
+        .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Color.clear.frame(height: contentTopInset ?? headerHeight)
+        }
+
+        if let refreshAction {
+            if contentTopInset == 0 {
+                baseScrollView
+                    .refreshable {
+                        await refreshAction()
+                    }
+                    .ignoresSafeArea(edges: .top)
+            } else {
+                baseScrollView.refreshable {
+                    await refreshAction()
+                }
+            }
+        } else {
+            if contentTopInset == 0 {
+                baseScrollView
+                    .ignoresSafeArea(edges: .top)
+            } else {
+                baseScrollView
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func headerBackdrop(totalHeight: CGFloat) -> some View {
+        let blurMask = LinearGradient(
+            stops: [
+                .init(color: .black, location: 0),
+                .init(color: .black.opacity(0.94), location: 0.08),
+                .init(color: .black.opacity(0.68), location: 0.22),
+                .init(color: .black.opacity(0.28), location: 0.42),
+                .init(color: .black.opacity(0.10), location: 0.62),
+                .init(color: .clear, location: 0.86),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+
+        if reduceTransparency {
+            Rectangle()
+                .fill(ReelFinTheme.editorialOpaqueFallback)
+                .mask { blurMask }
+                .frame(height: totalHeight)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
+                .opacity(headerEffectOpacity)
+        } else {
             if statusBarBlurOpacity > 0 {
                 let topBandMask = LinearGradient(
                     stops: [
@@ -103,8 +236,14 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
                 .overlay {
                     LinearGradient(
                         stops: [
-                            .init(color: fadeTint.opacity(statusBarBlurOpacity * 0.52), location: 0),
-                            .init(color: fadeTint.opacity(statusBarBlurOpacity * 0.28), location: 0.40),
+                            .init(
+                                color: fadeTint.opacity(statusBarBlurOpacity * 0.52),
+                                location: 0
+                            ),
+                            .init(
+                                color: fadeTint.opacity(statusBarBlurOpacity * 0.28),
+                                location: 0.40
+                            ),
                             .init(color: fadeTint.opacity(0), location: 1),
                         ],
                         startPoint: .top,
@@ -129,75 +268,35 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
                 direction: .blurredTopClearBottom
             )
             .mask { blurMask }
-                .overlay {
-                    LinearGradient(
-                        stops: [
-                            .init(color: fadeTint.opacity(tintOpacityTop), location: 0),
-                            .init(color: fadeTint.opacity(tintOpacityTop * 0.92), location: 0.08),
-                            .init(
-                                color: fadeTint.opacity((tintOpacityTop + tintOpacityMiddle) * 0.58),
-                                location: 0.24
+            .overlay {
+                LinearGradient(
+                    stops: [
+                        .init(color: fadeTint.opacity(tintOpacityTop), location: 0),
+                        .init(
+                            color: fadeTint.opacity(tintOpacityTop * 0.92),
+                            location: 0.08
+                        ),
+                        .init(
+                            color: fadeTint.opacity(
+                                (tintOpacityTop + tintOpacityMiddle) * 0.58
                             ),
-                            .init(color: fadeTint.opacity(tintOpacityMiddle), location: 0.42),
-                            .init(color: fadeTint.opacity(tintOpacityMiddle * 0.42), location: 0.60),
-                            .init(color: fadeTint.opacity(0), location: 0.82),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+                            location: 0.24
+                        ),
+                        .init(color: fadeTint.opacity(tintOpacityMiddle), location: 0.42),
+                        .init(
+                            color: fadeTint.opacity(tintOpacityMiddle * 0.42),
+                            location: 0.60
+                        ),
+                        .init(color: fadeTint.opacity(0), location: 0.82),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             }
             .frame(height: totalHeight)
             .ignoresSafeArea(edges: .top)
             .allowsHitTesting(false)
             .opacity(headerEffectOpacity)
-
-            header(headerRevealProgress)
-                .overlay {
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: HeaderHeightKey.self,
-                            value: geo.size.height
-                        )
-                    }
-                }
-        }
-        .onPreferenceChange(HeaderHeightKey.self) { headerHeight = $0 }
-    }
-
-    @ViewBuilder
-    private var scrollLayer: some View {
-        let baseScrollView = ScrollView {
-            content()
-        }
-        .scrollIndicators(.hidden)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Color.clear.frame(height: contentTopInset ?? headerHeight)
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            max(0, geometry.contentOffset.y + geometry.contentInsets.top)
-        } action: { _, newValue in
-            scrollOffset = newValue
-        }
-
-        if let refreshAction {
-            if contentTopInset == 0 {
-                baseScrollView
-                    .refreshable {
-                        await refreshAction()
-                    }
-                    .ignoresSafeArea(edges: .top)
-            } else {
-                baseScrollView.refreshable {
-                    await refreshAction()
-                }
-            }
-        } else {
-            if contentTopInset == 0 {
-                baseScrollView
-                    .ignoresSafeArea(edges: .top)
-            } else {
-                baseScrollView
-            }
         }
     }
 
@@ -209,9 +308,8 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
         switch visibility {
         case .always:
             return 1
-        case let .revealOnScroll(distance, _):
-            guard distance > 0 else { return 1 }
-            return min(max(scrollOffset / distance, 0), 1)
+        case .revealOnScroll:
+            return scrollPresentation.progress
         }
     }
 
