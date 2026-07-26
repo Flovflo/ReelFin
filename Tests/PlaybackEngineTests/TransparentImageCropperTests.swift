@@ -66,6 +66,26 @@ final class TransparentImageCropperTests: XCTestCase {
         XCTAssertNil(TransparentImageCropper.readableLogoImage(from: image))
     }
 
+    func testReadableLogoCropPreservesSemitransparentEdgePixels() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let image = UIGraphicsImageRenderer(
+            size: CGSize(width: 100, height: 60),
+            format: format
+        ).image { context in
+            context.cgContext.setFillColor(UIColor.white.withAlphaComponent(16.0 / 255.0).cgColor)
+            context.cgContext.fill(CGRect(x: 20, y: 16, width: 60, height: 24))
+            context.cgContext.setFillColor(UIColor.white.cgColor)
+            context.cgContext.fill(CGRect(x: 30, y: 20, width: 40, height: 16))
+        }
+
+        let cropped = try XCTUnwrap(TransparentImageCropper.readableLogoImage(from: image))
+
+        XCTAssertEqual(cropped.size.width, 60, accuracy: 0.001)
+        XCTAssertEqual(cropped.size.height, 24, accuracy: 0.001)
+    }
+
     private func transparentImageWithOpaqueRect(canvasSize: CGSize, opaqueRect: CGRect) -> UIImage {
         transparentImageWithOpaqueRect(canvasSize: canvasSize, opaqueRect: opaqueRect, color: .white)
     }

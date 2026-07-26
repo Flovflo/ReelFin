@@ -305,6 +305,7 @@
 		505976061D8BC73A4C5FE206 /* PlaybackEngineTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B6AEA6DA46F05EB596E337B9 /* PlaybackEngineTV.framework */; };
 		5093CFF533F9F42204578ECF /* HTTPChunkedRangeReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2B564B0DE1ACE1D79EEED7F /* HTTPChunkedRangeReader.swift */; };
 		50A14D47EA578F01C7FE33C4 /* MatroskaModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0174CE22742D66286BC4FFB2 /* MatroskaModels.swift */; };
+		50C20229F62F715C8EF7D324 /* LogoCropScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4388526F53067DBE9BB3D763 /* LogoCropScheduler.swift */; };
 		50E296220EA85A72102D34EE /* PlaybackDecisionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F46167E03AF4E373161BF10 /* PlaybackDecisionEngine.swift */; };
 		51AE748350839112A7082CC4 /* CacheResourceLoaderDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95CBEC6A640866D2FCCCC3A3 /* CacheResourceLoaderDelegate.swift */; };
 		51F21F55C9464A824E8B3B19 /* NullMetadataRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD6ED4D4AB09FFDCAB5EB872 /* NullMetadataRepository.swift */; };
@@ -607,6 +608,7 @@
 		A864334F84FA7FA9D5F6C76A /* HomeSectionLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4211C572F1CD97F422E103E6 /* HomeSectionLibraryView.swift */; };
 		A8C0783FA4D45314CF5FBBBD /* TVLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FC72FE53D56B09DED51FB97 /* TVLoginView.swift */; };
 		A90457BBF1DC6F68894723EB /* PlaybackHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC1CBC15B44B3FC2CB013C75 /* PlaybackHealthMonitor.swift */; };
+		A94CD215A317038FF623EC14 /* LogoCropScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4388526F53067DBE9BB3D763 /* LogoCropScheduler.swift */; };
 		A9AB9E6C1EFF20D3EE4BF53B /* SharedTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A6CD00B2E7BEF6765C51F19F /* SharedTV.framework */; };
 		AA33D80EE814A5E4255C0859 /* TVOnboardingContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30105DE0640A21BAE8AA7B9C /* TVOnboardingContent.swift */; };
 		AA4CFBF8A350BB97B32FEFA0 /* NativeSubtitleOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F0DDD07F09EC1BA9173134D /* NativeSubtitleOverlayView.swift */; };
@@ -722,6 +724,7 @@
 		CAAA7B5CA987D1101C6512C2 /* MacRootDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C358917AE01C0F9ED8EF15 /* MacRootDestination.swift */; };
 		CAD384DF3FEEE8769C181C5D /* RepackagerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4273F2D9C70001B6A2F1D9E /* RepackagerProtocol.swift */; };
 		CAF2B0645571E0B9C5FB89D5 /* SubtitleTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD402EC802E70386A463644D /* SubtitleTypes.swift */; };
+		CB2BE0A1D792DAA34F4F297E /* LogoCropSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E24D87D5F3956AD8AF5EBF73 /* LogoCropSchedulerTests.swift */; };
 		CB48CBC199845A76F6DDE041 /* ConnectionMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30CBD74A129AFE8C1393284 /* ConnectionMonitorTests.swift */; };
 		CB9AAFBC4B42EFDD380F8143 /* EpisodeFileInfoSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39CB2B4EBFCCDC4B04C1347 /* EpisodeFileInfoSummary.swift */; };
 		CC058F95AC78412121076405 /* NativeMediaCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 29F4B154E6BF3FC29DD245CF /* NativeMediaCore.framework */; };
@@ -1589,6 +1592,7 @@
 		4217E5366C34EDD6CFC3FC0F /* PlaybackMediaCachePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackMediaCachePolicyTests.swift; sourceTree = "<group>"; };
 		423061893D83BA407DCA4E7F /* ReelFinDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinDependencies.swift; sourceTree = "<group>"; };
 		43129DBA46FA26DF329BF90A /* PlaybackSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSessionController.swift; sourceTree = "<group>"; };
+		4388526F53067DBE9BB3D763 /* LogoCropScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoCropScheduler.swift; sourceTree = "<group>"; };
 		43B61DC916BBE48C488EC64A /* HLSVariantSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSVariantSelectorTests.swift; sourceTree = "<group>"; };
 		441F8CB987FE202919D1C6D1 /* PlaybackServerNetworkBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackServerNetworkBaseline.swift; sourceTree = "<group>"; };
 		44BCF68DFB8A04F6A3D3FE8D /* NativePlayerPlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerPlaybackController.swift; sourceTree = "<group>"; };
@@ -1893,6 +1897,7 @@
 		DF8BFAE38CD4269729EAF2EE /* TVAppBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVAppBootstrap.swift; sourceTree = "<group>"; };
 		DFCE3B582F6BD7B017D1F1CA /* TVSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVSearchView.swift; sourceTree = "<group>"; };
 		E19B6B7B2695306E28E748F0 /* MacRootShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootShellView.swift; sourceTree = "<group>"; };
+		E24D87D5F3956AD8AF5EBF73 /* LogoCropSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoCropSchedulerTests.swift; sourceTree = "<group>"; };
 		E2E7F2CE71B091CEFAB661AE /* PlaybackCoordinatorContainerPrefTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinatorContainerPrefTests.swift; sourceTree = "<group>"; };
 		E37D141BB74C29D6BE6AEC81 /* AnnexBNALUnitParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnexBNALUnitParser.swift; sourceTree = "<group>"; };
 		E561A643296E577EACA7C983 /* IOSDetailSynopsisLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSDetailSynopsisLayout.swift; sourceTree = "<group>"; };
@@ -2203,6 +2208,7 @@
 				099E99C93EFE70B4A41020AD /* LibraryViewModelTests.swift */,
 				6EA07AD8E5B3DB564AC09414 /* LocalMediaGatewayRoutePolicyTests.swift */,
 				A66ADC5A0A2281F2DF04628F /* LocalMediaGatewayServerTests.swift */,
+				E24D87D5F3956AD8AF5EBF73 /* LogoCropSchedulerTests.swift */,
 				F735B3500EC5A2A6E8ECA1E7 /* MediaGatewayCacheKeyTests.swift */,
 				B01CD533C24FFF4232FC9560 /* MediaGatewayIndexTests.swift */,
 				22DA2888E23D22CCE3820E14 /* MediaGatewayStoreTests.swift */,
@@ -2669,6 +2675,7 @@
 				494437190B761932A9CBBD32 /* CinematicBackdropView.swift */,
 				587B98FF091CBEA3190AE0C8 /* EditorialMediaIdentityView.swift */,
 				87845ECDB05ACF3E08A8616B /* HeroCarouselView.swift */,
+				4388526F53067DBE9BB3D763 /* LogoCropScheduler.swift */,
 				F1A4DFEEC2DEF8B88131E08A /* PosterCardView.swift */,
 				1178F490712C59598B44CF6B /* ShimmerView.swift */,
 				744670C4D75ADFD4448D854D /* StickyBlurHeader.swift */,
@@ -4029,6 +4036,7 @@
 				4A8E256D5F890A45F045F8FC /* LibraryViewModel.swift in Sources */,
 				FDA8463211001F336498468E /* LoginView.swift in Sources */,
 				7CC7F77D77845442040B7D72 /* LoginViewModel.swift in Sources */,
+				A94CD215A317038FF623EC14 /* LogoCropScheduler.swift in Sources */,
 				7DF3CB55BAA2B43105A38C2A /* MacDestinationDetailView.swift in Sources */,
 				428F4BE82B2D91BB8E1EBD0D /* MacRootCommandCenter.swift in Sources */,
 				CAAA7B5CA987D1101C6512C2 /* MacRootDestination.swift in Sources */,
@@ -4232,6 +4240,7 @@
 				F92D55F4D99A0DD084A48278 /* LocalHLSServerTests.swift in Sources */,
 				6091694CC52E19A20AF30B32 /* LocalMediaGatewayRoutePolicyTests.swift in Sources */,
 				A53A12121902095A945B73A1 /* LocalMediaGatewayServerTests.swift in Sources */,
+				CB2BE0A1D792DAA34F4F297E /* LogoCropSchedulerTests.swift in Sources */,
 				C951A655C1854BE8EECFFD2A /* MP4AudioSampleEntryTests.swift in Sources */,
 				31560F81C162C5D7610458EF /* MP4DemuxerTests.swift in Sources */,
 				68D3064C4381667B197DDA3C /* MP4PlaybackFixture.swift in Sources */,
@@ -4344,6 +4353,7 @@
 				F4202E229EB0B43D507F2027 /* LibraryViewModel.swift in Sources */,
 				3BE0498061619C34A3DF8D5F /* LoginView.swift in Sources */,
 				81C9483C21E19F58BB7915FB /* LoginViewModel.swift in Sources */,
+				50C20229F62F715C8EF7D324 /* LogoCropScheduler.swift in Sources */,
 				D3732117A31FA8A828B3FBAF /* MacDestinationDetailView.swift in Sources */,
 				C9EFCEF58B76C9C19DEB185D /* MacRootCommandCenter.swift in Sources */,
 				F287B93C236407AF2C5A4BEF /* MacRootDestination.swift in Sources */,

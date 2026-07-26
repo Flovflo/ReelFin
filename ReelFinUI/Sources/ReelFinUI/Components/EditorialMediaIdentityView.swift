@@ -144,7 +144,7 @@ struct EditorialMediaIdentityView: View {
 
         if let cached = await imagePipeline.cachedImage(for: url) {
             guard !Task.isCancelled else { return }
-            let readable = await readableLogo(from: cached)
+            guard let readable = try? await LogoCropScheduler.shared.crop(cached) else { return }
             guard !Task.isCancelled else { return }
             publish(readable, for: request.itemID)
             return
@@ -152,7 +152,7 @@ struct EditorialMediaIdentityView: View {
         guard !Task.isCancelled else { return }
 
         if url.scheme == "mock-image" {
-            let readable = TransparentImageCropper.readableLogoImage(from: mockLogoImage())
+            guard let readable = try? await LogoCropScheduler.shared.crop(mockLogoImage()) else { return }
             guard !Task.isCancelled else { return }
             publish(readable, for: request.itemID)
             return
@@ -167,18 +167,12 @@ struct EditorialMediaIdentityView: View {
             }
             imagePipeline.cancel(url: url, consumer: consumerID)
             guard !Task.isCancelled else { return }
-            let readable = await readableLogo(from: downloaded)
+            guard let readable = try? await LogoCropScheduler.shared.crop(downloaded) else { return }
             guard !Task.isCancelled else { return }
             publish(readable, for: request.itemID)
         } catch {
             imagePipeline.cancel(url: url, consumer: consumerID)
         }
-    }
-
-    private func readableLogo(from image: UIImage) async -> UIImage? {
-        await Task.detached(priority: .utility) {
-            TransparentImageCropper.readableLogoImage(from: image)
-        }.value
     }
 
     private func publish(_ image: UIImage?, for itemID: String) {
