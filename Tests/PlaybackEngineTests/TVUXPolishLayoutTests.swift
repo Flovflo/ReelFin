@@ -84,6 +84,38 @@ final class TVUXPolishLayoutTests: XCTestCase {
         XCTAssertEqual(TVFocusAnimationMetrics.reducedMotionDuration, 0.18)
     }
 
+    func testHomeFocusedMediaGlassIsFocusOnlyAndTransparencyAware() {
+        XCTAssertNil(HomeEditorialPresentationPolicy.focusedMediaGlass(
+            isFocused: false,
+            reduceTransparency: false
+        ))
+        XCTAssertNil(HomeEditorialPresentationPolicy.focusedMediaGlass(
+            isFocused: false,
+            reduceTransparency: true
+        ))
+        XCTAssertEqual(
+            HomeEditorialPresentationPolicy.focusedMediaGlass(
+                isFocused: true,
+                reduceTransparency: false
+            ),
+            .passiveGlass
+        )
+        XCTAssertEqual(
+            HomeEditorialPresentationPolicy.focusedMediaGlass(
+                isFocused: true,
+                reduceTransparency: true
+            ),
+            .opaque
+        )
+    }
+
+    func testHomeFocusedMediaShadowUsesFixedEditorialGeometry() {
+        XCTAssertEqual(HomeEditorialPresentationPolicy.activeIndicatorWidth, 24)
+        XCTAssertEqual(HomeEditorialPresentationPolicy.inactiveIndicatorWidth, 8)
+        XCTAssertEqual(HomeEditorialPresentationPolicy.focusedShadowRadius, 34)
+        XCTAssertEqual(HomeEditorialPresentationPolicy.focusedShadowYOffset, 18)
+    }
+
     func testReduceMotionDoesNotRaiseNavigationRoleAboveItsNormalScale() {
         XCTAssertEqual(TVFocusGeometry.scale(for: .navItem, reduceMotion: true), 1.0)
     }

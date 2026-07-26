@@ -32,6 +32,11 @@ enum DetailArtworkRole: Equatable {
     case preview
 }
 
+enum HeroPageChangeOrigin: Equatable {
+    case automatic
+    case direct
+}
+
 enum HeroRotationPolicy {
     static func allowsAutomaticAdvance(
         sceneIsActive: Bool,
@@ -52,6 +57,44 @@ enum HeroRotationPolicy {
             return nil
         }
         return (currentIndex + 1) % itemCount
+    }
+
+    static func allowsHaptic(for origin: HeroPageChangeOrigin) -> Bool {
+        origin == .direct
+    }
+}
+
+enum CinematicBackdropLayerPolicy {
+    enum Source: Equatable {
+        case item
+        case fallback
+        case none
+    }
+
+    static let artworkLayerCount = 2
+
+    static func source(hasItem: Bool, hasFallbackItem: Bool) -> Source {
+        if hasItem {
+            return .item
+        }
+        return hasFallbackItem ? .fallback : .none
+    }
+}
+
+enum HomeEditorialPresentationPolicy {
+    static let activeIndicatorWidth: CGFloat = 24
+    static let inactiveIndicatorWidth: CGFloat = 8
+    static let focusedShadowRadius: CGFloat = 34
+    static let focusedShadowYOffset: CGFloat = 18
+
+    static func focusedMediaGlass(
+        isFocused: Bool,
+        reduceTransparency: Bool
+    ) -> EditorialGlassPresentation? {
+        guard isFocused else { return nil }
+        return EditorialGlassRole.focusedMedia.presentation(
+            reduceTransparency: reduceTransparency
+        )
     }
 }
 

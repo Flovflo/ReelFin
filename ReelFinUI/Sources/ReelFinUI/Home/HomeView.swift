@@ -163,6 +163,8 @@ private struct TVCardButton: View {
 }
 
 private struct TVHomeShelfCard: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     let item: MediaItem
     let kind: HomeSectionKind
     let ranking: Int?
@@ -181,6 +183,10 @@ private struct TVHomeShelfCard: View {
         let activationPhase = isActivating && !usesNativeZoomTransition
 
         ZStack(alignment: .bottomLeading) {
+            if focusedPresentation == .opaque {
+                cardShape.fill(ReelFinTheme.editorialOpaqueFallback)
+            }
+
             PosterCardArtworkView(
                 item: item,
                 apiClient: apiClient,
@@ -194,6 +200,10 @@ private struct TVHomeShelfCard: View {
                 showsProgressOverlay: !usesTVContinueWatchingStyle,
                 showsTopTrailingBadges: false
             )
+            .opacity(focusedPresentation == .opaque ? 0.82 : 1)
+
+            focusSurface
+                .allowsHitTesting(false)
 
             LinearGradient(
                 stops: gradientStops,
@@ -205,32 +215,54 @@ private struct TVHomeShelfCard: View {
             defaultOverlay
         }
         .frame(width: cardWidth, height: cardHeight)
-        .background { focusSurface }
         .overlay {
-            cardShape
-                .stroke(
-                    Color.white.opacity(isFocused ? 0.18 : 0.08),
-                    lineWidth: isFocused ? 1.2 : 0.9
-                )
+            if isFocused {
+                cardShape
+                    .stroke(ReelFinTheme.editorialFocusedRim, lineWidth: 1.2)
+            }
         }
         .clipShape(cardShape)
         .contentShape(cardShape)
+        .shadow(
+            color: .black.opacity(isFocused ? TVFocusGeometry.focusedShadowOpacity : 0),
+            radius: isFocused ? HomeEditorialPresentationPolicy.focusedShadowRadius : 0,
+            x: 0,
+            y: isFocused ? HomeEditorialPresentationPolicy.focusedShadowYOffset : 0
+        )
         .tvMotionFocus(focusRole, isFocused: isFocused)
         .scaleEffect(activationPhase ? 1.075 : 1, anchor: .center)
         .animation(.easeOut(duration: 0.12), value: isActivating)
         .accessibilityElement(children: .combine)
     }
 
+    private var focusedPresentation: EditorialGlassPresentation? {
+        HomeEditorialPresentationPolicy.focusedMediaGlass(
+            isFocused: isFocused,
+            reduceTransparency: reduceTransparency
+        )
+    }
+
     @ViewBuilder
     private var focusSurface: some View {
-        if #available(tvOS 26.0, *), isFocused {
-            Color.clear
-                .glassEffect(
-                    Glass.regular.tint(Color.white.opacity(0.18)),
-                    in: .rect(cornerRadius: layoutStyle == .landscape ? 30 : 26)
-                )
+        if let presentation = focusedPresentation {
+            switch presentation {
+            case .passiveGlass:
+                Color.clear
+                    .glassEffect(
+                        Glass.regular.tint(ReelFinTheme.editorialGlassTint),
+                        in: .rect(cornerRadius: layoutStyle == .landscape ? 30 : 26)
+                    )
+            case .opaque:
+                Color.clear
+            case .interactiveGlass:
+                Color.clear
+                    .glassEffect(
+                        Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
+                        in: .rect(cornerRadius: layoutStyle == .landscape ? 30 : 26)
+                    )
+            }
         } else {
-            cardShape.fill(Color.white.opacity(0.03))
+            Color.clear
         }
     }
 
@@ -570,14 +602,12 @@ private struct ImmersiveHomeRowCard: View {
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 0) {
-                ImmersiveRowArtworkTitleView(
-                    itemID: imageItemID,
+                EditorialMediaIdentityView(
+                    style: .landscapeRail,
+                    item: item,
                     fallbackTitle: primaryTitle,
                     apiClient: apiClient,
-                    imagePipeline: imagePipeline,
-                    maxWidth: titleMaxWidth,
-                    maxHeight: titleMaxHeight,
-                    fallbackFontSize: titleFontSize
+                    imagePipeline: imagePipeline
                 )
                 .padding(.top, titleTopPadding)
                 .padding(.horizontal, contentHorizontalPadding)
@@ -681,10 +711,6 @@ private struct ImmersiveHomeRowCard: View {
         cardWidth * (9.0 / 16.0)
     }
 
-    private var titleFontSize: CGFloat {
-        displayDensity.scaledTextSize(horizontalSizeClass == .compact ? 22 : 28)
-    }
-
     private var metadataFontSize: CGFloat {
         displayDensity.scaledTextSize(horizontalSizeClass == .compact ? 15 : 18)
     }
@@ -705,115 +731,6 @@ private struct ImmersiveHomeRowCard: View {
         displayDensity.scaledSpacing(horizontalSizeClass == .compact ? 18 : 24)
     }
 
-    private var titleMaxWidth: CGFloat {
-        displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 190 : 250)
-    }
-
-    private var titleMaxHeight: CGFloat {
-        displayDensity.scaledVisualSize(horizontalSizeClass == .compact ? 44 : 58)
-    }
-}
-
-private struct ImmersiveRowArtworkTitleView: View {
-    let itemID: String
-    let fallbackTitle: String
-    let apiClient: any JellyfinAPIClientProtocol
-    let imagePipeline: any ImagePipelineProtocol
-    let maxWidth: CGFloat
-    let maxHeight: CGFloat
-    let fallbackFontSize: CGFloat
-
-    @State private var logoImage: UIImage?
-
-    var body: some View {
-        Group {
-            if let logoImage {
-                Image(uiImage: logoImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: maxWidth, maxHeight: maxHeight, alignment: .leading)
-                    .shadow(color: .black.opacity(0.30), radius: 8, x: 0, y: 4)
-                    .transition(.opacity)
-            } else {
-                Text(fallbackTitle.uppercased())
-                    .font(.system(size: fallbackFontSize, weight: .heavy, design: .rounded))
-                    .tracking(fallbackTracking)
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.78)
-                    .frame(maxWidth: maxWidth, alignment: .leading)
-                    .shadow(color: .black.opacity(0.28), radius: 6, x: 0, y: 3)
-            }
-        }
-        .task(id: itemID) {
-            await loadLogo()
-        }
-    }
-
-    private func loadLogo() async {
-        logoImage = nil
-
-        guard let url = await apiClient.imageURL(
-            for: itemID,
-            type: .logo,
-            width: ArtworkRequestProfile.logo.width,
-            quality: ArtworkRequestProfile.logo.quality
-        ) else {
-            return
-        }
-
-        // Mock screenshot mode serves opaque placeholder images for logo requests.
-        // Generate a clean text-based wordmark for mock screenshots so the card
-        // keeps the same composition as the production UI.
-        if url.scheme == "mock-image" {
-            logoImage = mockLogoImage()
-            return
-        }
-
-        if let cached = await imagePipeline.cachedImage(for: url) {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                logoImage = cached
-            }
-            return
-        }
-
-        do {
-            let downloaded = try await imagePipeline.image(for: url)
-            withAnimation(.easeInOut(duration: 0.18)) {
-                logoImage = downloaded
-            }
-        } catch {
-            return
-        }
-    }
-
-    private var fallbackTracking: CGFloat {
-        fallbackTitle.count <= 8 ? 5 : 1.4
-    }
-
-    private func mockLogoImage() -> UIImage {
-        let size = CGSize(width: max(maxWidth * 2.6, 260), height: max(maxHeight * 2.4, 100))
-        let renderer = UIGraphicsImageRenderer(size: size)
-
-        return renderer.image { _ in
-            let text = fallbackTitle.uppercased() as NSString
-            let style = NSMutableParagraphStyle()
-            style.alignment = .left
-            style.lineBreakMode = .byTruncatingTail
-
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: fallbackFontSize * 1.4, weight: .heavy),
-                .foregroundColor: UIColor.white,
-                .paragraphStyle: style,
-                .kern: fallbackTracking
-            ]
-
-            text.draw(
-                in: CGRect(x: 0, y: 0, width: size.width, height: size.height),
-                withAttributes: attributes
-            )
-        }
-    }
 }
 
 private struct ImmersiveRowProgressTrack: View {
@@ -839,6 +756,7 @@ private struct ImmersiveRowProgressTrack: View {
 public struct SectionRow: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reelFinDisplayDensity) private var displayDensity
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private let title: String
     private let items: [MediaItem]
@@ -908,6 +826,7 @@ public struct SectionRow: View {
                         .font(sectionChevronFont)
                         .foregroundStyle(sectionChevronColor)
                         .frame(width: 34, height: 34)
+                        .background { sectionChevronBackground }
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -1110,6 +1029,28 @@ public struct SectionRow: View {
         #else
         return usesImmersiveLandscapeRowStyle ? .white.opacity(0.7) : .white.opacity(0.4)
         #endif
+    }
+
+    @ViewBuilder
+    private var sectionChevronBackground: some View {
+        switch EditorialGlassRole.compactControl.presentation(
+            reduceTransparency: reduceTransparency
+        ) {
+        case .interactiveGlass:
+            Color.clear
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
+                    in: .circle
+                )
+        case .opaque:
+            Circle().fill(ReelFinTheme.editorialOpaqueFallback)
+        case .passiveGlass:
+            Color.clear
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint),
+                    in: .circle
+                )
+        }
     }
 }
 

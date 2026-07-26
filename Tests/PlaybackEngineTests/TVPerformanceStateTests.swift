@@ -1,3 +1,4 @@
+@testable import ReelFinUI
 import Shared
 import XCTest
 
@@ -7,6 +8,22 @@ final class TVPerformanceStateTests: XCTestCase {
         XCTAssertEqual(ArtworkRequestProfile.heroBackdropLow.quality, 68)
         XCTAssertEqual(ArtworkRequestProfile.heroBackdropHigh.width, 1_920)
         XCTAssertEqual(ArtworkRequestProfile.heroBackdropHigh.quality, 82)
+    }
+
+    func testCinematicBackdropUsesOneSourceAndExactlyTwoArtworkLayers() {
+        XCTAssertEqual(
+            CinematicBackdropLayerPolicy.source(hasItem: true, hasFallbackItem: true),
+            .item
+        )
+        XCTAssertEqual(
+            CinematicBackdropLayerPolicy.source(hasItem: false, hasFallbackItem: true),
+            .fallback
+        )
+        XCTAssertEqual(
+            CinematicBackdropLayerPolicy.source(hasItem: false, hasFallbackItem: false),
+            .none
+        )
+        XCTAssertEqual(CinematicBackdropLayerPolicy.artworkLayerCount, 2)
     }
 
     func testHeroPagingPolicyKeepsNearestNeighbors() {

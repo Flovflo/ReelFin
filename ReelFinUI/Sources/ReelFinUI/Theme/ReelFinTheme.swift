@@ -345,7 +345,7 @@ private struct TVMotionFocusModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isFocused ? TVFocusGeometry.scale(for: role, reduceMotion: reduceMotion) : 1)
+            .scaleEffect(isFocused ? EditorialMotion.focusScale(role: role, reduceMotion: reduceMotion) : 1)
             .opacity(isFocused ? role.focusedOpacity : (isSelected ? role.selectedOpacity : role.restingOpacity))
             .animation(TVMotion.focusAnimation(reduceMotion: reduceMotion), value: isFocused)
             .animation(TVMotion.focusAnimation(reduceMotion: reduceMotion), value: isSelected)

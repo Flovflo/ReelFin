@@ -18,13 +18,8 @@ struct CinematicBackdropView: View {
             ZStack {
                 baseGradient
 
-                if let fallbackItem, fallbackItem.id != item?.id {
-                    backdropLayer(for: fallbackItem, size: proxy.size)
-                        .opacity(0.9)
-                }
-
-                if let item {
-                    backdropLayer(for: item, size: proxy.size)
+                if let displayedItem {
+                    backdropLayer(for: displayedItem, size: proxy.size)
                 }
 
                 overlayWash
@@ -61,10 +56,7 @@ struct CinematicBackdropView: View {
     private func backdropLayer(for item: MediaItem, size: CGSize) -> some View {
         ZStack {
             CachedRemoteImage(
-                itemID: backdropItemID(for: item),
-                type: imageType(for: item),
-                width: preferredWidth(for: size, multiplier: 1.2),
-                quality: 62,
+                request: ArtworkRequest.make(for: item, role: .heroLow),
                 contentMode: .fill,
                 apiClient: apiClient,
                 imagePipeline: imagePipeline
@@ -76,24 +68,7 @@ struct CinematicBackdropView: View {
             .opacity(blurOpacity + 0.08)
 
             CachedRemoteImage(
-                itemID: backdropItemID(for: item),
-                type: imageType(for: item),
-                width: preferredWidth(for: size, multiplier: 1.35),
-                quality: 54,
-                contentMode: .fill,
-                apiClient: apiClient,
-                imagePipeline: imagePipeline
-            )
-            .frame(width: size.width * 1.62, height: size.height * 1.24)
-            .scaleEffect(x: 1.22, y: 1.14, anchor: .center)
-            .blur(radius: 62)
-            .opacity(0.28)
-
-            CachedRemoteImage(
-                itemID: backdropItemID(for: item),
-                type: imageType(for: item),
-                width: preferredWidth(for: size, multiplier: 1.05),
-                quality: 82,
+                request: ArtworkRequest.make(for: item, role: .heroHigh),
                 contentMode: .fill,
                 apiClient: apiClient,
                 imagePipeline: imagePipeline,
@@ -117,10 +92,6 @@ struct CinematicBackdropView: View {
         }
         .frame(width: size.width, height: size.height)
         .clipped()
-        // Rasterise the three composited blur layers into a single Metal texture so
-        // the GPU doesn't re-blend them on every frame. Only redrawn when the item
-        // (and therefore the image task IDs) actually change.
-        .drawingGroup()
     }
 
     private var overlayWash: some View {
@@ -159,30 +130,20 @@ struct CinematicBackdropView: View {
                 endPoint: .bottom
             )
 
-            Rectangle()
-                .fill(.ultraThinMaterial.opacity(0.18))
-                .mask {
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.6), .black],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
         }
     }
 
-    private func preferredWidth(for size: CGSize, multiplier: CGFloat) -> Int {
-        min(Int((max(size.width, 1) * multiplier).rounded(.up)), 2_200)
-    }
-
-    private func backdropItemID(for item: MediaItem) -> String {
-        if item.mediaType == .episode, let parentID = item.parentID {
-            return parentID
+    private var displayedItem: MediaItem? {
+        switch CinematicBackdropLayerPolicy.source(
+            hasItem: item != nil,
+            hasFallbackItem: fallbackItem != nil
+        ) {
+        case .item:
+            return item
+        case .fallback:
+            return fallbackItem
+        case .none:
+            return nil
         }
-        return item.id
-    }
-
-    private func imageType(for item: MediaItem) -> JellyfinImageType {
-        item.backdropTag == nil ? .primary : .backdrop
     }
 }

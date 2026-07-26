@@ -48,6 +48,11 @@ final class EditorialBrowseVisualSystemTests: XCTestCase {
         XCTAssertNil(HeroRotationPolicy.nextIndex(currentIndex: 3, itemCount: 3))
     }
 
+    func testHeroHapticsAreReservedForDirectPageChanges() {
+        XCTAssertFalse(HeroRotationPolicy.allowsHaptic(for: .automatic))
+        XCTAssertTrue(HeroRotationPolicy.allowsHaptic(for: .direct))
+    }
+
     func testEditorialMotionAndGlassFallbacksAreAccessible() {
         XCTAssertEqual(EditorialMotion.heroPageDuration(reduceMotion: false), 0.21)
         XCTAssertEqual(EditorialMotion.heroPageDuration(reduceMotion: true), 0.18)

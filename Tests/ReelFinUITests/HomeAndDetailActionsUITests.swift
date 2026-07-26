@@ -21,6 +21,21 @@ final class HomeAndDetailActionsUITests: XCTestCase {
         XCTAssertEqual(watchlistButton.label, "Unlike")
     }
 
+    func testMockHomeFeaturedMoreButtonOpensDetail() throws {
+        let app = launchMockApp()
+
+        let moreButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "home_featured_more_button_")
+        ).firstMatch
+        XCTAssertTrue(moreButton.waitForExistence(timeout: 12))
+        XCTAssertTrue(waitUntilHittable(moreButton, timeout: 5))
+
+        moreButton.tap()
+
+        XCTAssertTrue(app.buttons["Back"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["detail_primary_play_button"].exists)
+    }
+
     func testMockDetailHeroButtonsToggleWatchedAndLikedState() throws {
         let app = launchMockApp()
 
@@ -83,10 +98,39 @@ final class HomeAndDetailActionsUITests: XCTestCase {
 
     private func launchMockApp() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        app.launchArguments += [
+            "-reelfin-mock-mode",
+            "-reelfin-screenshot-mode",
+        ]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        XCTAssertTrue(establishHomeRoot(in: app))
         return app
+    }
+
+    private func establishHomeRoot(in app: XCUIApplication) -> Bool {
+        // NavigationStack can restore one or more mock Detail destinations between isolated
+        // UI-test runs. Unwind until an existing Home-only control proves the root is active.
+        let homeMarker = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "home_featured_watchlist_button_")
+        ).firstMatch
+        let backButton = app.buttons["Back"].firstMatch
+        let homeTab = app.buttons["Home"].firstMatch
+        let deadline = Date().addingTimeInterval(12)
+
+        while Date() < deadline {
+            if homeMarker.exists {
+                return true
+            }
+            if backButton.exists, backButton.isHittable {
+                backButton.tap()
+            } else if homeTab.exists, !homeTab.isSelected, homeTab.isHittable {
+                homeTab.tap()
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        return homeMarker.exists
     }
 
     private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {

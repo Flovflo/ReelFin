@@ -8,6 +8,7 @@ public struct HeroCarouselView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let items: [MediaItem]
     private let apiClient: JellyfinAPIClientProtocol
@@ -25,6 +26,12 @@ public struct HeroCarouselView: View {
 
     @State private var currentIndex = 0
     #if os(iOS)
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.scenePhase) private var scenePhase
+
+    @GestureState private var isUserInteracting = false
+    @State private var directPageHapticTrigger = 0
     private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
     #endif
 
@@ -80,7 +87,7 @@ public struct HeroCarouselView: View {
             ZStack(alignment: .bottom) {
                 TabView(selection: Binding(
                     get: { currentIndex },
-                    set: { currentIndex = $0 }
+                    set: { selectPageDirectly($0) }
                 )) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         iosHeroCard(for: item, size: proxy.size)
@@ -93,6 +100,7 @@ public struct HeroCarouselView: View {
                 .frame(width: proxy.size.width, height: heroHeight)
                 .ignoresSafeArea(edges: .top)
                 .clipped()
+                .simultaneousGesture(heroInteractionGesture)
 
                 if items.count > 1 {
                     pageControl
@@ -101,15 +109,10 @@ public struct HeroCarouselView: View {
             .frame(width: proxy.size.width, height: heroHeight, alignment: .bottom)
         }
         .frame(height: heroHeight)
-        #if os(iOS)
         .onReceive(timer) { _ in
-            if items.count > 1 {
-                withAnimation(TVMotion.heroPageAnimation) {
-                    currentIndex = (currentIndex + 1) % items.count
-                }
-            }
+            advanceAutomaticallyIfAllowed()
         }
-        #endif
+        .sensoryFeedback(.selection, trigger: directPageHapticTrigger)
         .onAppear {
             syncSelectionFromBinding()
             if let currentItem = items[safe: currentIndex] ?? items.first {
@@ -141,12 +144,7 @@ public struct HeroCarouselView: View {
             .accessibilityLabel(item.name)
             .accessibilityAddTraits(.isButton)
 
-            iosHeroTextOverlay(for: item, size: size)
-                .allowsHitTesting(false)
-
-            heroActionButtons(for: item, immersive: false)
-                .padding(.horizontal, horizontalPadding)
-                .padding(.bottom, 60)
+            iosHeroContentOverlay(for: item, size: size)
         }
         .frame(width: size.width, height: heroHeight)
         .clipped()
@@ -174,27 +172,61 @@ public struct HeroCarouselView: View {
         }
     }
 
-    private func iosHeroTextOverlay(for item: MediaItem, size: CGSize) -> some View {
-        VStack(alignment: .center, spacing: 12) {
-            Text(item.name)
-                .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 32 : 44, weight: .heavy, design: .rounded))
-                .textCase(.uppercase)
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.6)
-                .shadow(color: .black.opacity(0.5), radius: 4)
-                .accessibilityAddTraits(.isHeader)
+    private func iosHeroContentOverlay(for item: MediaItem, size: CGSize) -> some View {
+        VStack(alignment: .center, spacing: 18) {
+            EditorialMediaIdentityView(
+                style: .iosHero,
+                item: item,
+                fallbackTitle: item.name,
+                kicker: "Featured",
+                metadata: heroMetadataText(for: item),
+                apiClient: apiClient,
+                imagePipeline: imagePipeline
+            )
+            .allowsHitTesting(false)
 
-            Text(heroMetadataText(for: item))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.8))
-                .multilineTextAlignment(.center)
-                .lineLimit(1)
+            heroActionButtons(for: item, immersive: false)
         }
         .padding(.horizontal, horizontalPadding)
-        .padding(.bottom, 146)
+        .padding(.bottom, 58)
         .frame(width: max(size.width - (horizontalPadding * 2), 0), alignment: .center)
+    }
+
+    private var heroInteractionGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($isUserInteracting) { _, isInteracting, _ in
+                isInteracting = true
+            }
+    }
+
+    private func selectPageDirectly(_ newIndex: Int) {
+        guard newIndex != currentIndex else { return }
+        currentIndex = newIndex
+        if HeroRotationPolicy.allowsHaptic(for: .direct) {
+            directPageHapticTrigger &+= 1
+        }
+    }
+
+    private func advanceAutomaticallyIfAllowed() {
+        guard HeroRotationPolicy.allowsAutomaticAdvance(
+            sceneIsActive: scenePhase == .active,
+            isUserInteracting: isUserInteracting,
+            reduceMotion: reduceMotion,
+            voiceOverEnabled: voiceOverEnabled,
+            itemCount: items.count
+        ) else {
+            return
+        }
+        guard let nextIndex = HeroRotationPolicy.nextIndex(
+            currentIndex: currentIndex,
+            itemCount: items.count
+        ) else {
+            return
+        }
+
+        withAnimation(.easeInOut(duration: EditorialMotion.heroPageDuration(reduceMotion: reduceMotion))) {
+            currentIndex = nextIndex
+        }
     }
     #endif
 
@@ -319,7 +351,7 @@ public struct HeroCarouselView: View {
             Spacer()
 
             VStack(alignment: .leading, spacing: 14) {
-                // Promo badge (glass capsule)
+                // Promo badge (static tonal capsule)
                 if let badge = promoBadge(for: item) {
                     Text(badge)
                         .font(.system(size: 18, weight: .semibold))
@@ -329,9 +361,11 @@ public struct HeroCarouselView: View {
                         .background(promoBadgeBackground)
                 }
 
-                // Title – try logo image, fall back to large text
-                TVHeroTitleView(
+                // Shared logo-first identity with an immediate text fallback.
+                EditorialMediaIdentityView(
+                    style: .tvHero,
                     item: item,
+                    fallbackTitle: item.name,
                     apiClient: apiClient,
                     imagePipeline: imagePipeline
                 )
@@ -412,7 +446,7 @@ public struct HeroCarouselView: View {
                 Text(runtime)
             }
 
-            // Quality badges – glass capsules
+            // Quality badges – static tonal capsules
             ForEach(featureBadges(for: item), id: \.self) { badge in
                 tvQualityBadge(badge)
             }
@@ -432,46 +466,38 @@ public struct HeroCarouselView: View {
 
     @ViewBuilder
     private var promoBadgeBackground: some View {
-        if #available(tvOS 26.0, *) {
-            Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.05))
-                .glassEffect(
-                    Glass.regular.tint(Color.white.opacity(0.08)),
-                    in: .capsule
-                )
-        } else {
-            Capsule(style: .continuous)
-                .fill(.ultraThinMaterial)
-        }
+        Capsule(style: .continuous)
+            .fill(Color.black.opacity(0.36))
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            }
     }
 
     @ViewBuilder
     private var qualityBadgeBackground: some View {
-        if #available(tvOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.white.opacity(0.05))
-                .glassEffect(
-                    Glass.regular.tint(Color.white.opacity(0.08)),
-                    in: .rect(cornerRadius: 6)
-                )
-        } else {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.ultraThinMaterial)
-        }
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.black.opacity(0.34))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            }
     }
 
     // MARK: Action Buttons
 
     @ViewBuilder
     private func tvActionButtons(for item: MediaItem) -> some View {
-        TVHeroCapsuleButton(
-            title: primaryActionTitle(for: item),
-            systemImage: "play.fill",
-            focusedItemID: tvFocusedItemID,
-            focusID: tvPrimaryActionFocusID,
-            onMoveCommand: handleMoveCommand,
-            action: { (onPlay ?? onTap)(item) }
-        )
+        GlassEffectContainer(spacing: 12) {
+            TVHeroCapsuleButton(
+                title: primaryActionTitle(for: item),
+                systemImage: "play.fill",
+                focusedItemID: tvFocusedItemID,
+                focusID: tvPrimaryActionFocusID,
+                onMoveCommand: handleMoveCommand,
+                action: { (onPlay ?? onTap)(item) }
+            )
+        }
     }
 
     // MARK: Page Control
@@ -555,9 +581,21 @@ public struct HeroCarouselView: View {
         HStack(spacing: 6) {
             ForEach(0..<items.count, id: \.self) { dotIndex in
                 Capsule()
-                    .fill(currentIndex == dotIndex ? Color.white : Color.white.opacity(0.34))
-                    .frame(width: currentIndex == dotIndex ? 24 : 8, height: 8)
-                    .animation(.snappy(duration: 0.2), value: currentIndex)
+                    .fill(
+                        currentIndex == dotIndex
+                            ? ReelFinTheme.editorialAccent
+                            : Color.white.opacity(0.34)
+                    )
+                    .frame(
+                        width: currentIndex == dotIndex
+                            ? HomeEditorialPresentationPolicy.activeIndicatorWidth
+                            : HomeEditorialPresentationPolicy.inactiveIndicatorWidth,
+                        height: 8
+                    )
+                    .animation(
+                        .easeInOut(duration: EditorialMotion.heroPageDuration(reduceMotion: reduceMotion)),
+                        value: currentIndex
+                    )
             }
         }
         .padding(.bottom, pageControlBottomPadding)
@@ -566,33 +604,45 @@ public struct HeroCarouselView: View {
     #if os(iOS)
     @ViewBuilder
     private func heroActionButtons(for item: MediaItem, immersive: Bool) -> some View {
-        HStack(spacing: 12) {
-            Button {
-                (onPlay ?? onTap)(item)
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "play.fill")
-                    Text(primaryActionTitle(for: item))
+        GlassEffectContainer(spacing: 12) {
+            HStack(spacing: 12) {
+                Button {
+                    (onPlay ?? onTap)(item)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "play.fill")
+                        Text(primaryActionTitle(for: item))
+                    }
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .padding(.horizontal, 28)
+                    .frame(minHeight: 58)
+                    .foregroundStyle(reduceTransparency ? Color.black : ReelFinTheme.editorialPrimaryText)
+                    .background { heroPlayBackground }
+                    .contentShape(Capsule(style: .continuous))
                 }
-                .font(.system(size: 20, weight: .bold, design: .rounded))
-                .padding(.horizontal, 32)
-                .padding(.vertical, 14)
-                .foregroundStyle(.black)
-                .background(Color.white, in: Capsule())
-                .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
-            }
-            .buttonStyle(.plain)
-            .sensoryFeedback(.impact(weight: .light), trigger: currentIndex)
+                .buttonStyle(EditorialHeroPressStyle())
+                .accessibilityIdentifier("home_featured_play_button_\(item.id)")
 
-            if let onToggleWatchlist {
+                if let onToggleWatchlist {
+                    heroCircleButton(
+                        symbol: item.isFavorite ? "heart.fill" : "heart",
+                        accessibilityLabel: item.isFavorite ? "Unlike" : "Like",
+                        accessibilityIdentifier: "home_featured_watchlist_button_\(item.id)",
+                        accessibilityValue: item.isFavorite ? "liked" : "not_liked",
+                        isActive: item.isFavorite
+                    ) {
+                        onToggleWatchlist(item)
+                    }
+                }
+
                 heroCircleButton(
-                    symbol: item.isFavorite ? "heart.fill" : "heart",
-                    accessibilityLabel: item.isFavorite ? "Unlike" : "Like",
-                    accessibilityIdentifier: "home_featured_watchlist_button_\(item.id)",
-                    accessibilityValue: item.isFavorite ? "liked" : "not_liked",
-                    isActive: item.isFavorite
+                    symbol: "ellipsis",
+                    accessibilityLabel: "More",
+                    accessibilityIdentifier: "home_featured_more_button_\(item.id)",
+                    accessibilityValue: "",
+                    isActive: false
                 ) {
-                    onToggleWatchlist(item)
+                    onTap(item)
                 }
             }
         }
@@ -608,20 +658,57 @@ public struct HeroCarouselView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 24, weight: .bold))
-                .frame(width: 62, height: 62)
-                .foregroundStyle(.white)
-                .background((isActive ? Color.white.opacity(0.18) : Color.white.opacity(0.12)), in: Circle())
-                .overlay {
-                    Circle()
-                        .stroke(Color.white.opacity(isActive ? 0.18 : 0.1), lineWidth: 1)
-                }
+                .font(.system(size: 22, weight: .bold))
+                .frame(width: 58, height: 58)
+                .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+                .background { heroCircleBackground(isActive: isActive) }
+                .contentShape(Circle())
                 .shadow(color: .black.opacity(0.16), radius: 12, x: 0, y: 6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(EditorialHeroPressStyle())
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier)
         .accessibilityValue(accessibilityValue)
+    }
+
+    @ViewBuilder
+    private var heroPlayBackground: some View {
+        if reduceTransparency {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.96))
+        } else {
+            Color.clear
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint).interactive(),
+                    in: .capsule
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func heroCircleBackground(isActive: Bool) -> some View {
+        if reduceTransparency {
+            Circle()
+                .fill(ReelFinTheme.editorialOpaqueFallback)
+                .overlay {
+                    Circle().stroke(Color.white.opacity(isActive ? 0.24 : 0.14), lineWidth: 1)
+                }
+        } else {
+            Color.clear
+                .glassEffect(
+                    Glass.regular
+                        .tint(isActive ? ReelFinTheme.editorialAccent.opacity(0.16) : ReelFinTheme.editorialGlassTint)
+                        .interactive(),
+                    in: .circle
+                )
+                .overlay {
+                    Circle().stroke(Color.white.opacity(isActive ? 0.22 : 0.12), lineWidth: 1)
+                }
+        }
     }
     #endif
 
@@ -731,9 +818,26 @@ public struct HeroCarouselView: View {
     }
 }
 
+#if os(iOS)
+private struct EditorialHeroPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .opacity(configuration.isPressed ? 0.84 : 1)
+            .animation(
+                EditorialMotion.buttonPressAnimation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
+    }
+}
+#endif
+
 #if os(tvOS)
 private struct TVHeroCapsuleButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @FocusState private var isFocused: Bool
 
     let title: String
@@ -754,7 +858,7 @@ private struct TVHeroCapsuleButton: View {
                     .minimumScaleFactor(0.86)
             }
             .font(.system(size: 22, weight: .semibold, design: .rounded))
-            .foregroundStyle(isFocused ? Color.black.opacity(0.92) : .white)
+            .foregroundStyle(actionForeground)
             .padding(.horizontal, 28)
             .padding(.vertical, 16)
             .background { backgroundView }
@@ -773,12 +877,25 @@ private struct TVHeroCapsuleButton: View {
 
     @ViewBuilder
     private var backgroundView: some View {
-        if #available(tvOS 26.0, *) {
+        switch EditorialGlassRole.actionCluster.presentation(
+            reduceTransparency: reduceTransparency
+        ) {
+        case .opaque:
+            Capsule(style: .continuous)
+                .fill(ReelFinTheme.editorialOpaqueFallback)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(isFocused ? 0.26 : 0.14), lineWidth: 1)
+                }
+        case .interactiveGlass:
             Capsule(style: .continuous)
                 .fill(isFocused ? Color.white.opacity(0.08) : .clear)
                 .glassEffect(
-                    Glass.regular
-                        .tint(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.10))
+                    Glass.regular.tint(
+                        isFocused
+                            ? ReelFinTheme.editorialAccent.opacity(0.16)
+                            : ReelFinTheme.editorialGlassTint
+                    )
                         .interactive(),
                     in: .capsule
                 )
@@ -786,14 +903,23 @@ private struct TVHeroCapsuleButton: View {
                     Capsule(style: .continuous)
                         .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
                 }
-        } else {
+        case .passiveGlass:
             Capsule(style: .continuous)
-                .fill(isFocused ? .white : Color.white.opacity(0.10))
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint),
+                    in: .capsule
+                )
                 .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+                    Capsule(style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 1)
                 }
         }
+    }
+
+    private var actionForeground: Color {
+        if reduceTransparency {
+            return ReelFinTheme.editorialPrimaryText
+        }
+        return isFocused ? Color.black.opacity(0.92) : ReelFinTheme.editorialPrimaryText
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
@@ -833,72 +959,6 @@ private struct TVHeroInlineDetailSourceModifier: ViewModifier {
             content.matchedGeometryEffect(id: "poster-\(itemID)", in: namespace, isSource: true)
         } else {
             content
-        }
-    }
-}
-#endif
-
-// ──────────────────────────────────────────────
-// MARK: - tvOS Hero Title (Logo image → text fallback)
-// ──────────────────────────────────────────────
-
-#if os(tvOS)
-/// Attempts to load a transparent logo image from Jellyfin.
-/// Falls back to a large bold text title if unavailable.
-private struct TVHeroTitleView: View {
-    let item: MediaItem
-    let apiClient: JellyfinAPIClientProtocol
-    let imagePipeline: ImagePipelineProtocol
-
-    @State private var logoImage: UIImage?
-    @State private var logoFailed = false
-
-    var body: some View {
-        Group {
-            if let logo = logoImage {
-                Image(uiImage: logo)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 540, maxHeight: 120, alignment: .leading)
-                    .shadow(color: .black.opacity(0.6), radius: 12, x: 0, y: 4)
-                    .transition(.opacity)
-            } else {
-                Text(item.name)
-                    .font(.system(size: 68, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.55)
-                    .shadow(color: .black.opacity(0.6), radius: 16, x: 0, y: 6)
-                    .accessibilityAddTraits(.isHeader)
-            }
-        }
-        .task(id: item.id) {
-            await loadLogo()
-        }
-    }
-
-    private func loadLogo() async {
-        logoImage = nil
-        logoFailed = false
-
-        guard let url = await apiClient.imageURL(
-            for: item.id, type: .logo, width: 800, quality: 90
-        ) else {
-            logoFailed = true
-            return
-        }
-
-        // Try cache first
-        if let cached = await imagePipeline.cachedImage(for: url) {
-            withAnimation(TVMotion.titleLoadAnimation) { logoImage = cached }
-            return
-        }
-
-        do {
-            let downloaded = try await imagePipeline.image(for: url)
-            withAnimation(TVMotion.titleLoadAnimation) { logoImage = downloaded }
-        } catch {
-            logoFailed = true
         }
     }
 }
