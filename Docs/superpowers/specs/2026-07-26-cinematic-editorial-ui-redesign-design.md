@@ -1,7 +1,7 @@
 # ReelFin Cinematic Editorial UI Redesign
 
 - **Date:** 2026-07-26
-- **Status:** Approved for implementation
+- **Status:** Implemented and validated
 - **Platforms:** iOS 26+ and tvOS 26+
 - **Scope:** Home, Library/Search, Detail, shared browse motion, Liquid Glass control surfaces, and artwork delivery
 
@@ -391,3 +391,13 @@ Simulator timings are comparative evidence, not a claim about physical-device th
 - Reduce Motion and Reduce Transparency produce polished fallbacks.
 - The configured iOS and tvOS simulator builds, tests, UI journeys, and final regression gates complete without release-blocking failures.
 - `PLANS.md` and `OPTIMIZATION_AUDIT.md` contain the final performance and validation evidence.
+
+## Final Validation - 2026-07-27
+
+The approved Cinematic Editorial Glass+ direction is implemented across Home, Library/Search, and Detail on iOS and tvOS. Glass is attached to complete native control surfaces; resting media grids remain material-free; Reduce Transparency swaps live sampling for opaque, stroked surfaces; and Reduce Motion removes continuous or unnecessary transitions without changing navigation.
+
+The exact final source passed the complete iOS scheme on iPhone 17/iOS 26.5 with 1,148 successes, zero failures, 11 explicit skips, and zero runtime warnings. The complete tvOS scheme on Apple TV 4K (3rd generation)/tvOS 26.5 passed 51/51 with zero skips, failures, or runtime warnings after the simulator's private authenticated session was restored. This includes ten live Apple TV journeys covering immediate focus, exact Home/Library return, repeated Continue/Restart, player controls, and real Skip Intro completion.
+
+Artwork delivery is canonical, authenticated, cancellation-aware, and bounded: four speculative admissions, 24 candidates, six per-host image connections, and two decode operations. Visible consumers can promote shared requests and releasing them recalculates priority. Cached cells cannot publish stale generations, low/high hero warmup is explicit, and only the low hero placeholder may animate. Live screenshots also confirmed that valid server WebP artwork is decoded and displayed; sparse fixture metadata accounts for remaining static placeholders.
+
+No comparative performance delta is claimed. Xcode beta's SwiftUI and Animation Hitches templates were unsupported on the installed simulator runtime, and Time Profiler did not finalize a usable trace. The retained evidence therefore consists of warning-free result bundles, signposts, deterministic concurrency/render-budget tests, simulator screenshots, and source-level bounded-work policies. Optional player-driver diagnostics separately exposed server HLS HTTP 500 responses and simulator-observed sequential HDR and isolated SampleBuffer render-marker limitations; original-stream probes, isolated HDR, the four complete iOS live smokes, and the complete tvOS live suite passed.
