@@ -153,6 +153,25 @@ final class CachedRemoteImageLoaderTests: XCTestCase {
         XCTAssertEqual(callbackCount, 0)
     }
 
+    func testKnownMissingDescriptorClearsPreviouslyPublishedImage() async {
+        let harness = ControlledImageLoadHarness()
+        let loader = makeLoader(harness: harness)
+        let image = makeImage(color: .red)
+
+        await completeCachedLoad(
+            descriptor: Self.descriptorA,
+            url: Self.urlA,
+            image: image,
+            loader: loader,
+            harness: harness
+        )
+        XCTAssertTrue(loader.image === image)
+
+        loader.clear(for: Self.descriptorB)
+
+        XCTAssertNil(loader.image)
+    }
+
     func testTaskCancellationPreventsPublication() async {
         let harness = ControlledImageLoadHarness()
         let loader = makeLoader(harness: harness)

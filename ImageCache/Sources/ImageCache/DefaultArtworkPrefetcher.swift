@@ -19,6 +19,7 @@ public actor DefaultArtworkPrefetcher: ArtworkPrefetching {
 
         for request in requests {
             guard !Task.isCancelled else { return }
+            guard !request.isKnownMissing else { continue }
             let url = await urlProvider.imageURL(for: request)
             guard !Task.isCancelled else { return }
             guard let url, seenURLs.insert(url).inserted else { continue }

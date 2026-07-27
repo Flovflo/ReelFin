@@ -21,6 +21,7 @@ struct EditorialMediaIdentityView: View {
     let metadata: String?
     let apiClient: any JellyfinAPIClientProtocol
     let imagePipeline: any ImagePipelineProtocol
+    let loadsRemoteLogo: Bool
 
     @State private var logoImage: UIImage?
     @State private var logoItemID: String?
@@ -32,7 +33,8 @@ struct EditorialMediaIdentityView: View {
         kicker: String? = nil,
         metadata: String? = nil,
         apiClient: any JellyfinAPIClientProtocol,
-        imagePipeline: any ImagePipelineProtocol
+        imagePipeline: any ImagePipelineProtocol,
+        loadsRemoteLogo: Bool = true
     ) {
         self.style = style
         self.item = item
@@ -41,6 +43,7 @@ struct EditorialMediaIdentityView: View {
         self.metadata = metadata
         self.apiClient = apiClient
         self.imagePipeline = imagePipeline
+        self.loadsRemoteLogo = loadsRemoteLogo
     }
 
     var body: some View {
@@ -76,7 +79,12 @@ struct EditorialMediaIdentityView: View {
             EditorialMediaIdentityAccessibility.identifier(itemID: item.id)
         )
         .accessibilityAddTraits(.isHeader)
-        .task(id: logoRequest) {
+        .task(id: logoLoadTaskID) {
+            guard loadsRemoteLogo else {
+                logoImage = nil
+                logoItemID = nil
+                return
+            }
             await loadLogo(for: logoRequest)
         }
     }
@@ -141,6 +149,10 @@ struct EditorialMediaIdentityView: View {
 
     private var logoRequest: ArtworkRequest {
         ArtworkRequest.make(for: item, role: .logo)
+    }
+
+    private var logoLoadTaskID: String {
+        "\(item.id)-\(loadsRemoteLogo)"
     }
 
     private func loadLogo(for request: ArtworkRequest) async {

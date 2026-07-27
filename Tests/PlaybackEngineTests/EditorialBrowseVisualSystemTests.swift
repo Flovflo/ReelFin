@@ -109,6 +109,33 @@ final class EditorialBrowseVisualSystemTests: XCTestCase {
         XCTAssertTrue(HeroRotationPolicy.allowsHaptic(for: .direct))
     }
 
+    func testHeroArtworkLoadsOnlyForActivePageAndStagesHighResolution() {
+        XCTAssertEqual(
+            HeroArtworkLoadingPolicy.layers(
+                pageIndex: 0,
+                currentIndex: 0,
+                lowResolutionReady: false
+            ),
+            [.lowResolution, .logo]
+        )
+        XCTAssertEqual(
+            HeroArtworkLoadingPolicy.layers(
+                pageIndex: 0,
+                currentIndex: 0,
+                lowResolutionReady: true
+            ),
+            [.lowResolution, .highResolution, .logo]
+        )
+        XCTAssertEqual(
+            HeroArtworkLoadingPolicy.layers(
+                pageIndex: 1,
+                currentIndex: 0,
+                lowResolutionReady: true
+            ),
+            []
+        )
+    }
+
     func testEditorialMotionAndGlassFallbacksAreAccessible() {
         XCTAssertEqual(EditorialMotion.heroPageDuration(reduceMotion: false), 0.21)
         XCTAssertEqual(EditorialMotion.heroPageDuration(reduceMotion: true), 0.18)

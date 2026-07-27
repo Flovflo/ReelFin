@@ -14,6 +14,8 @@ public struct CachedRemoteImage: View {
     private let contentMode: CachedRemoteImageContentMode
     private let onImageLoaded: (() -> Void)?
     private let placeholderAnimationEnabled: Bool
+    private let showsPlaceholder: Bool
+    private let isKnownMissing: Bool
 
     @StateObject private var loader: CachedRemoteImageLoader
 
@@ -22,6 +24,7 @@ public struct CachedRemoteImage: View {
         contentMode: CachedRemoteImageContentMode = .fill,
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
+        showsPlaceholder: Bool = true,
         onImageLoaded: (() -> Void)? = nil
     ) {
         itemID = request.itemID
@@ -30,9 +33,11 @@ public struct CachedRemoteImage: View {
         quality = request.profile.quality
         self.contentMode = contentMode
         self.onImageLoaded = onImageLoaded
-        placeholderAnimationEnabled = ShimmerAnimationPolicy.animationEnabled(
+        isKnownMissing = request.isKnownMissing
+        placeholderAnimationEnabled = !request.isKnownMissing && ShimmerAnimationPolicy.animationEnabled(
             for: request.profile
         )
+        self.showsPlaceholder = showsPlaceholder
         _loader = StateObject(
             wrappedValue: CachedRemoteImageLoader(apiClient: apiClient, imagePipeline: imagePipeline)
         )
@@ -45,6 +50,7 @@ public struct CachedRemoteImage: View {
         quality: Int = 82,
         contentMode: CachedRemoteImageContentMode = .fill,
         placeholderAnimationEnabled: Bool = false,
+        showsPlaceholder: Bool = true,
         apiClient: JellyfinAPIClientProtocol,
         imagePipeline: ImagePipelineProtocol,
         onImageLoaded: (() -> Void)? = nil
@@ -56,6 +62,8 @@ public struct CachedRemoteImage: View {
         self.contentMode = contentMode
         self.onImageLoaded = onImageLoaded
         self.placeholderAnimationEnabled = placeholderAnimationEnabled
+        self.showsPlaceholder = showsPlaceholder
+        isKnownMissing = false
         _loader = StateObject(
             wrappedValue: CachedRemoteImageLoader(apiClient: apiClient, imagePipeline: imagePipeline)
         )
@@ -68,17 +76,23 @@ public struct CachedRemoteImage: View {
                     .resizable()
                     .modifier(RemoteImageScalingModifier(contentMode: contentMode))
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
-            } else {
+            } else if showsPlaceholder {
                 ShimmerView(animationEnabled: placeholderAnimationEnabled)
                     .overlay {
                         Image(systemName: "film")
                             .font(.system(size: 24, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.3))
                     }
+            } else {
+                Color.clear
             }
         }
         .clipped()
         .task(id: requestIdentity) {
+            guard !isKnownMissing else {
+                loader.clear(for: descriptor)
+                return
+            }
             await loader.load(descriptor: descriptor, onImageLoaded: onImageLoaded)
         }
         .onDisappear {

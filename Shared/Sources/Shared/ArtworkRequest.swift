@@ -4,11 +4,18 @@ public struct ArtworkRequest: Hashable, Sendable {
     public let itemID: String
     public let type: JellyfinImageType
     public let profile: ArtworkRequestProfile
+    public let isKnownMissing: Bool
 
-    private init(itemID: String, type: JellyfinImageType, profile: ArtworkRequestProfile) {
+    private init(
+        itemID: String,
+        type: JellyfinImageType,
+        profile: ArtworkRequestProfile,
+        isKnownMissing: Bool
+    ) {
         self.itemID = itemID
         self.type = type
         self.profile = profile
+        self.isKnownMissing = isKnownMissing
     }
 
     public static func make(for item: MediaItem, role: ArtworkRequestRole) -> ArtworkRequest {
@@ -21,7 +28,12 @@ public struct ArtworkRequest: Hashable, Sendable {
             itemID = item.id
         }
 
-        return ArtworkRequest(itemID: itemID, type: role.imageType(for: item), profile: role.profile)
+        return ArtworkRequest(
+            itemID: itemID,
+            type: role.imageType(for: item),
+            profile: role.profile,
+            isKnownMissing: role.isKnownMissing(for: item)
+        )
     }
 }
 
@@ -65,5 +77,17 @@ public enum ArtworkRequestRole: CaseIterable, Sendable {
         case .posterGrid, .posterRow, .avatar:
             return .primary
         }
+    }
+
+    fileprivate func isKnownMissing(for item: MediaItem) -> Bool {
+        guard self != .logo else { return false }
+
+        // Episode requests target their owning series. The episode DTO does not carry the
+        // series backdrop tag, so absence cannot be treated as authoritative there.
+        if item.mediaType == .episode, item.parentID != nil {
+            return false
+        }
+
+        return item.posterTag == nil && item.backdropTag == nil
     }
 }

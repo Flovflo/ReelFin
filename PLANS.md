@@ -381,6 +381,19 @@
   - the regression test controls enrichment completion with a continuation and contains no timing sleep or retry
 - Validation: the deterministic RED lost 3 paginated items and current favorite state; after the fix the regression passed `100/100` iterations without retry, both Home view-model test classes passed `16/16`, isolated XcodeGen generation succeeded, and the iOS `ReelFin` simulator build passed.
 
+### M35
+- Status: completed
+- Objective: make iOS Home artwork arrive progressively without letting offscreen heroes or known-missing server art compete with visible content.
+- Scope: canonical artwork availability, Home hero scheduling, authenticated image prefetch, cached image publication
+- Acceptance:
+  - only the selected iOS hero may load remote artwork or logo content
+  - the selected hero requests `.heroLow` first and adds `.heroHigh` only after the low-resolution image is published
+  - the high-resolution upgrade keeps the low-resolution image visible instead of covering it with a second placeholder
+  - metadata-confirmed missing artwork never resolves an image URL, starts transport, or enters speculative prefetch
+  - reused image loaders clear stale published content when the next canonical request is known missing
+  - tvOS rendering, focus, playback, authenticated transport, cache keys, and native player routing remain unchanged
+- Validation: deterministic RED/GREEN coverage passed for hero scheduling, artwork availability, prefetch filtering, stale-image clearing, cancellation, and canonical request roles; an authenticated clean-launch CFNetwork capture reduced visible artwork requests from `10` to `4` (`-60%`), while the prefetch regression proves known-missing requests are filtered before URL resolution; `xcodegen generate`, iOS/tvOS builds, the complete iOS scheme (`1,163` tests, `0` failures, `11` explicit skips), and the complete tvOS scheme (`51/51`, including `10` live player journeys) passed on the configured 26.5 simulators.
+
 ## Validation Commands
 
 ```bash

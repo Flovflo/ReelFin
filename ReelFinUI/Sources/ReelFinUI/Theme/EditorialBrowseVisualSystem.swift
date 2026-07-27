@@ -163,6 +163,29 @@ enum HeroRotationPolicy {
     }
 }
 
+enum HeroArtworkLoadingLayer: Equatable {
+    case lowResolution
+    case highResolution
+    case logo
+}
+
+enum HeroArtworkLoadingPolicy {
+    static func layers(
+        pageIndex: Int,
+        currentIndex: Int,
+        lowResolutionReady: Bool
+    ) -> [HeroArtworkLoadingLayer] {
+        guard pageIndex >= 0, currentIndex >= 0, pageIndex == currentIndex else {
+            return []
+        }
+
+        if lowResolutionReady {
+            return [.lowResolution, .highResolution, .logo]
+        }
+        return [.lowResolution, .logo]
+    }
+}
+
 enum CinematicBackdropLayerPolicy {
     enum Source: Equatable {
         case item

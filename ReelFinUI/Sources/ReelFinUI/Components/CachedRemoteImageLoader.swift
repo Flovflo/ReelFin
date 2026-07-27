@@ -149,6 +149,13 @@ final class CachedRemoteImageLoader: ObservableObject {
         cancel(cancellation)
     }
 
+    func clear(for descriptor: CachedRemoteImageDescriptor) {
+        let cancellation = request.invalidate()
+        cancel(cancellation)
+        request.contentKey = descriptor.contentKey
+        image = nil
+    }
+
     private func isActive(_ token: CachedRemoteImageRequestToken) -> Bool {
         !Task.isCancelled && request.owns(token)
     }

@@ -6,10 +6,10 @@ import XCTest
 
 final class DefaultArtworkPrefetcherTests: XCTestCase {
     func testResolvesRequestsDeduplicatesURLsInFirstSeenOrderAndStartsOnePipelineBatch() async {
-        let firstItem = MediaItem(id: "first", name: "First")
-        let duplicateItem = MediaItem(id: "duplicate", name: "Duplicate")
-        let missingItem = MediaItem(id: "missing", name: "Missing")
-        let lastItem = MediaItem(id: "last", name: "Last")
+        let firstItem = MediaItem(id: "first", name: "First", posterTag: "first")
+        let duplicateItem = MediaItem(id: "duplicate", name: "Duplicate", posterTag: "duplicate")
+        let missingItem = MediaItem(id: "missing", name: "Missing", posterTag: "missing")
+        let lastItem = MediaItem(id: "last", name: "Last", posterTag: "last")
         let requests = [firstItem, duplicateItem, missingItem, lastItem]
             .map { ArtworkRequest.make(for: $0, role: .posterRow) }
         let firstURL = URL(string: "https://example.com/first")!
@@ -28,13 +28,35 @@ final class DefaultArtworkPrefetcherTests: XCTestCase {
         XCTAssertEqual(batches, [[firstURL, lastURL]])
     }
 
+    func testSkipsRequestsWhoseMetadataConfirmsArtworkIsMissing() async {
+        let unavailable = ArtworkRequest.make(
+            for: MediaItem(id: "missing", name: "Missing"),
+            role: .posterRow
+        )
+        let available = ArtworkRequest.make(
+            for: MediaItem(id: "available", name: "Available", posterTag: "primary"),
+            role: .posterRow
+        )
+        let availableURL = URL(string: "https://example.com/available")!
+        let provider = RecordingArtworkURLProvider(resolvedURLs: [availableURL])
+        let pipeline = RecordingImagePipeline()
+        let prefetcher = DefaultArtworkPrefetcher(urlProvider: provider, imagePipeline: pipeline)
+
+        await prefetcher.prefetch([unavailable, available])
+
+        let resolvedRequests = await provider.capturedRequests
+        let batches = await pipeline.prefetchBatches
+        XCTAssertEqual(resolvedRequests, [available])
+        XCTAssertEqual(batches, [[availableURL]])
+    }
+
     func testCancellationDuringURLResolutionStopsResolutionAndPreventsPipelineStart() async throws {
         let provider = BlockingArtworkURLProvider()
         let pipeline = RecordingImagePipeline()
         let prefetcher = DefaultArtworkPrefetcher(urlProvider: provider, imagePipeline: pipeline)
         let requests = [
-            MediaItem(id: "first", name: "First"),
-            MediaItem(id: "second", name: "Second")
+            MediaItem(id: "first", name: "First", posterTag: "first"),
+            MediaItem(id: "second", name: "Second", posterTag: "second")
         ].map { ArtworkRequest.make(for: $0, role: .posterRow) }
 
         let task = Task {

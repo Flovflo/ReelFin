@@ -96,4 +96,27 @@ final class ArtworkRequestTests: XCTestCase {
         XCTAssertEqual(request.type, .logo)
         XCTAssertEqual(request.profile, .logo)
     }
+
+    func testKnownMissingArtworkDoesNotSchedulePointlessNetworkLoads() {
+        let missingMovie = MediaItem(id: "missing", name: "Missing")
+        XCTAssertTrue(ArtworkRequest.make(for: missingMovie, role: .posterRow).isKnownMissing)
+        XCTAssertTrue(ArtworkRequest.make(for: missingMovie, role: .heroLow).isKnownMissing)
+
+        let primaryOnlyMovie = MediaItem(
+            id: "primary",
+            name: "Primary",
+            posterTag: "primary-tag"
+        )
+        XCTAssertFalse(ArtworkRequest.make(for: primaryOnlyMovie, role: .posterRow).isKnownMissing)
+        XCTAssertFalse(ArtworkRequest.make(for: primaryOnlyMovie, role: .heroLow).isKnownMissing)
+
+        let episodeWithSeries = MediaItem(
+            id: "episode",
+            name: "Episode",
+            mediaType: .episode,
+            parentID: "series"
+        )
+        XCTAssertFalse(ArtworkRequest.make(for: episodeWithSeries, role: .landscapeRail).isKnownMissing)
+        XCTAssertFalse(ArtworkRequest.make(for: missingMovie, role: .logo).isKnownMissing)
+    }
 }

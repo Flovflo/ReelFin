@@ -32,6 +32,7 @@ public struct HeroCarouselView: View {
 
     @GestureState private var isUserInteracting = false
     @State private var directPageHapticTrigger = 0
+    @State private var lowResolutionHeroIDs = Set<String>()
     private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
     #endif
 
@@ -90,7 +91,7 @@ public struct HeroCarouselView: View {
                     set: { selectPageDirectly($0) }
                 )) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        iosHeroCard(for: item, size: proxy.size)
+                        iosHeroCard(for: item, index: index, size: proxy.size)
                             .tag(index)
                             .clipped()
                             .containerRelativeFrame(.horizontal)
@@ -131,12 +132,18 @@ public struct HeroCarouselView: View {
         }
     }
 
-    private func iosHeroCard(for item: MediaItem, size: CGSize) -> some View {
-        ZStack(alignment: .bottom) {
+    private func iosHeroCard(for item: MediaItem, index: Int, size: CGSize) -> some View {
+        let artworkLayers = HeroArtworkLoadingPolicy.layers(
+            pageIndex: index,
+            currentIndex: currentIndex,
+            lowResolutionReady: lowResolutionHeroIDs.contains(item.id)
+        )
+
+        return ZStack(alignment: .bottom) {
             Button {
                 onTap(item)
             } label: {
-                iosHeroBackdrop(for: item, size: size)
+                iosHeroBackdrop(for: item, size: size, artworkLayers: artworkLayers)
                     .frame(width: proxySafeWidth(size.width), height: heroHeight)
                     .contentShape(Rectangle())
             }
@@ -144,17 +151,21 @@ public struct HeroCarouselView: View {
             .accessibilityLabel(item.name)
             .accessibilityAddTraits(.isButton)
 
-            iosHeroContentOverlay(for: item, size: size)
+            iosHeroContentOverlay(for: item, size: size, artworkLayers: artworkLayers)
         }
         .frame(width: size.width, height: heroHeight)
         .clipped()
     }
 
-    private func iosHeroBackdrop(for item: MediaItem, size: CGSize) -> some View {
+    private func iosHeroBackdrop(
+        for item: MediaItem,
+        size: CGSize,
+        artworkLayers: [HeroArtworkLoadingLayer]
+    ) -> some View {
         ZStack(alignment: .bottom) {
             Color.black
 
-            backdropImage(for: item, size: size)
+            backdropImage(for: item, size: size, artworkLayers: artworkLayers)
 
             Rectangle()
                 .fill(
@@ -172,7 +183,11 @@ public struct HeroCarouselView: View {
         }
     }
 
-    private func iosHeroContentOverlay(for item: MediaItem, size: CGSize) -> some View {
+    private func iosHeroContentOverlay(
+        for item: MediaItem,
+        size: CGSize,
+        artworkLayers: [HeroArtworkLoadingLayer]
+    ) -> some View {
         VStack(alignment: .center, spacing: 18) {
             EditorialMediaIdentityView(
                 style: .iosHero,
@@ -181,7 +196,8 @@ public struct HeroCarouselView: View {
                 kicker: "Featured",
                 metadata: heroMetadataText(for: item),
                 apiClient: apiClient,
-                imagePipeline: imagePipeline
+                imagePipeline: imagePipeline,
+                loadsRemoteLogo: artworkLayers.contains(.logo)
             )
             .allowsHitTesting(false)
 
@@ -561,17 +577,45 @@ public struct HeroCarouselView: View {
     // MARK: - Shared helpers
     // ──────────────────────────────────────────────
 
-    private func backdropImage(for item: MediaItem, size: CGSize) -> some View {
-        CachedRemoteImage(
-            request: ArtworkRequest.make(for: item, role: .heroHigh),
-            contentMode: .fill,
-            apiClient: apiClient,
-            imagePipeline: imagePipeline
-        )
+    #if os(iOS)
+    @ViewBuilder
+    private func backdropImage(
+        for item: MediaItem,
+        size: CGSize,
+        artworkLayers: [HeroArtworkLoadingLayer]
+    ) -> some View {
+        Group {
+            if artworkLayers.contains(.lowResolution) {
+                ZStack {
+                    CachedRemoteImage(
+                        request: ArtworkRequest.make(for: item, role: .heroLow),
+                        contentMode: .fill,
+                        apiClient: apiClient,
+                        imagePipeline: imagePipeline,
+                        onImageLoaded: {
+                            lowResolutionHeroIDs.insert(item.id)
+                        }
+                    )
+
+                    if artworkLayers.contains(.highResolution) {
+                        CachedRemoteImage(
+                            request: ArtworkRequest.make(for: item, role: .heroHigh),
+                            contentMode: .fill,
+                            apiClient: apiClient,
+                            imagePipeline: imagePipeline,
+                            showsPlaceholder: false
+                        )
+                    }
+                }
+            } else {
+                Color.clear
+            }
+        }
         .frame(width: size.width, height: heroHeight)
         .clipped()
         .modifier(MatchedCardModifier(itemID: transitionID(for: item), namespace: transitionNamespace))
     }
+    #endif
 
     private var pageControl: some View {
         HStack(spacing: 6) {
