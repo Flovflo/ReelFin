@@ -8,6 +8,7 @@ final class DefaultImagePipelineTests: XCTestCase {
     override func tearDown() {
         BlockingImageURLProtocol.reset()
         AuthenticatedImageURLProtocol.reset()
+        MissingImageURLProtocol.reset()
         super.tearDown()
     }
 
@@ -127,6 +128,29 @@ final class DefaultImagePipelineTests: XCTestCase {
         XCTAssertEqual(AuthenticatedImageURLProtocol.lastTokenHeader, "prefetch-token")
     }
 
+    func testRepeated404UsesSessionNegativeCacheInsteadOfRefetching() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = try LRUDiskCache(directoryURL: cacheDir)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MissingImageURLProtocol.self]
+        let pipeline = DefaultImagePipeline(
+            diskCache: cache,
+            urlSession: URLSession(configuration: configuration)
+        )
+        let url = URL(string: "https://example.com/Items/missing/Images/Primary")!
+
+        for _ in 0 ..< 2 {
+            do {
+                _ = try await pipeline.image(for: url)
+                XCTFail("Expected missing artwork to fail")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("404"))
+            }
+        }
+
+        XCTAssertEqual(MissingImageURLProtocol.requestCount, 1)
+    }
+
     private func makeBlockingSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BlockingImageURLProtocol.self]
@@ -159,6 +183,43 @@ final class DefaultImagePipelineTests: XCTestCase {
         }
         return image.pngData()!
     }()
+}
+
+private final class MissingImageURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var requestCountStorage = 0
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "example.com" && request.url?.path.contains("/missing/") == true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        Self.lock.withLock {
+            Self.requestCountStorage += 1
+        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 404,
+            httpVersion: "HTTP/1.1",
+            headerFields: nil
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    static func reset() {
+        lock.withLock { requestCountStorage = 0 }
+    }
+
+    static var requestCount: Int {
+        lock.withLock { requestCountStorage }
+    }
 }
 
 private final class AuthenticatedImageURLProtocol: URLProtocol {

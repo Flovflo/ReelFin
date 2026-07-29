@@ -70,7 +70,7 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
     private let opaqueFallbackRevealThreshold: CGFloat
     private let refreshAction: (() async -> Void)?
     private let header: (CGFloat) -> Header
-    private let content: () -> Content
+    private let content: (CGFloat) -> Content
 
     @State private var headerHeight: CGFloat = 76
     @State private var scrollPresentation = StickyBlurHeaderScrollPresentation.resolve(
@@ -91,7 +91,7 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
         opaqueFallbackRevealThreshold: CGFloat = 0,
         refreshAction: (() async -> Void)? = nil,
         @ViewBuilder header: @escaping (CGFloat) -> Header,
-        @ViewBuilder content: @escaping () -> Content
+        @ViewBuilder content: @escaping (CGFloat) -> Content
     ) {
         self.maxBlurRadius = maxBlurRadius
         self.fadeExtension = fadeExtension
@@ -159,7 +159,7 @@ struct StickyBlurHeader<Header: View, Content: View>: View {
     @ViewBuilder
     private var baseScrollLayer: some View {
         let baseScrollView = ScrollView {
-            content()
+            content(headerRevealProgress)
         }
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .top, spacing: 0) {

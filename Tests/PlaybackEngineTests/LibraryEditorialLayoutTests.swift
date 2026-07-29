@@ -46,6 +46,33 @@ final class LibraryEditorialLayoutTests: XCTestCase {
         XCTAssertEqual(LibraryHeaderPresentation.compactRevealThreshold, 0.75)
     }
 
+    func testLibraryHeaderCrossfadeNeverShowsTwoFullyOpaqueControlClusters() {
+        let expanded = LibraryHeaderTransition.resolve(revealProgress: 0)
+        let midpoint = LibraryHeaderTransition.resolve(revealProgress: 0.70)
+        let compact = LibraryHeaderTransition.resolve(revealProgress: 1)
+
+        XCTAssertEqual(expanded.expandedControlsOpacity, 1)
+        XCTAssertEqual(expanded.compactHeaderOpacity, 0)
+        XCTAssertEqual(midpoint.expandedControlsOpacity, 0.5, accuracy: 0.001)
+        XCTAssertEqual(midpoint.compactHeaderOpacity, 0.5, accuracy: 0.001)
+        XCTAssertEqual(compact.expandedControlsOpacity, 0)
+        XCTAssertEqual(compact.compactHeaderOpacity, 1)
+
+        for step in 0 ... 24 {
+            let state = LibraryHeaderTransition.resolve(
+                revealProgress: CGFloat(step) / 24
+            )
+            XCTAssertEqual(
+                state.expandedControlsOpacity + state.compactHeaderOpacity,
+                1,
+                accuracy: 0.001
+            )
+            XCTAssertFalse(
+                state.expandedControlsAreInteractive && state.compactHeaderIsInteractive
+            )
+        }
+    }
+
     func testReduceTransparencyFallbackIsFullyOpaqueOnlyWhenCompactControlsActivate() {
         XCTAssertEqual(
             EditorialOpaqueHeaderPolicy.opacity(

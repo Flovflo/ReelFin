@@ -4,18 +4,18 @@ public struct ArtworkRequest: Hashable, Sendable {
     public let itemID: String
     public let type: JellyfinImageType
     public let profile: ArtworkRequestProfile
-    public let isKnownMissing: Bool
+    public let allowsSpeculativePrefetch: Bool
 
     private init(
         itemID: String,
         type: JellyfinImageType,
         profile: ArtworkRequestProfile,
-        isKnownMissing: Bool
+        allowsSpeculativePrefetch: Bool
     ) {
         self.itemID = itemID
         self.type = type
         self.profile = profile
-        self.isKnownMissing = isKnownMissing
+        self.allowsSpeculativePrefetch = allowsSpeculativePrefetch
     }
 
     public static func make(for item: MediaItem, role: ArtworkRequestRole) -> ArtworkRequest {
@@ -32,7 +32,7 @@ public struct ArtworkRequest: Hashable, Sendable {
             itemID: itemID,
             type: role.imageType(for: item),
             profile: role.profile,
-            isKnownMissing: role.isKnownMissing(for: item)
+            allowsSpeculativePrefetch: role.allowsSpeculativePrefetch(for: item)
         )
     }
 }
@@ -79,15 +79,15 @@ public enum ArtworkRequestRole: CaseIterable, Sendable {
         }
     }
 
-    fileprivate func isKnownMissing(for item: MediaItem) -> Bool {
-        guard self != .logo else { return false }
+    fileprivate func allowsSpeculativePrefetch(for item: MediaItem) -> Bool {
+        guard self != .logo else { return true }
 
-        // Episode requests target their owning series. The episode DTO does not carry the
-        // series backdrop tag, so absence cannot be treated as authoritative there.
+        // Episode requests target their owning series, whose tags are not carried by lightweight
+        // episode DTOs. Visible artwork requests are never suppressed by this metadata hint.
         if item.mediaType == .episode, item.parentID != nil {
-            return false
+            return true
         }
 
-        return item.posterTag == nil && item.backdropTag == nil
+        return item.posterTag != nil || item.backdropTag != nil
     }
 }

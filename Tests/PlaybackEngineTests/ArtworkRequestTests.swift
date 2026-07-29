@@ -97,18 +97,26 @@ final class ArtworkRequestTests: XCTestCase {
         XCTAssertEqual(request.profile, .logo)
     }
 
-    func testKnownMissingArtworkDoesNotSchedulePointlessNetworkLoads() {
-        let missingMovie = MediaItem(id: "missing", name: "Missing")
-        XCTAssertTrue(ArtworkRequest.make(for: missingMovie, role: .posterRow).isKnownMissing)
-        XCTAssertTrue(ArtworkRequest.make(for: missingMovie, role: .heroLow).isKnownMissing)
+    func testMissingImageTagsDisableSpeculativePrefetchOnly() {
+        let taglessMovie = MediaItem(id: "tagless", name: "Tagless")
+        XCTAssertFalse(
+            ArtworkRequest.make(for: taglessMovie, role: .posterRow).allowsSpeculativePrefetch
+        )
+        XCTAssertFalse(
+            ArtworkRequest.make(for: taglessMovie, role: .heroLow).allowsSpeculativePrefetch
+        )
 
         let primaryOnlyMovie = MediaItem(
             id: "primary",
             name: "Primary",
             posterTag: "primary-tag"
         )
-        XCTAssertFalse(ArtworkRequest.make(for: primaryOnlyMovie, role: .posterRow).isKnownMissing)
-        XCTAssertFalse(ArtworkRequest.make(for: primaryOnlyMovie, role: .heroLow).isKnownMissing)
+        XCTAssertTrue(
+            ArtworkRequest.make(for: primaryOnlyMovie, role: .posterRow).allowsSpeculativePrefetch
+        )
+        XCTAssertTrue(
+            ArtworkRequest.make(for: primaryOnlyMovie, role: .heroLow).allowsSpeculativePrefetch
+        )
 
         let episodeWithSeries = MediaItem(
             id: "episode",
@@ -116,7 +124,11 @@ final class ArtworkRequestTests: XCTestCase {
             mediaType: .episode,
             parentID: "series"
         )
-        XCTAssertFalse(ArtworkRequest.make(for: episodeWithSeries, role: .landscapeRail).isKnownMissing)
-        XCTAssertFalse(ArtworkRequest.make(for: missingMovie, role: .logo).isKnownMissing)
+        XCTAssertTrue(
+            ArtworkRequest.make(for: episodeWithSeries, role: .landscapeRail).allowsSpeculativePrefetch
+        )
+        XCTAssertTrue(
+            ArtworkRequest.make(for: taglessMovie, role: .logo).allowsSpeculativePrefetch
+        )
     }
 }

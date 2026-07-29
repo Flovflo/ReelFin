@@ -129,6 +129,28 @@ final class CachedRemoteImageLoaderTests: XCTestCase {
         XCTAssertEqual(firstCallbackCount, 0)
     }
 
+    func testFinalDownloadFailurePublishesMissingArtworkState() async {
+        let harness = ControlledImageLoadHarness()
+        let loader = makeLoader(harness: harness)
+        let fallbackDescriptor = Self.descriptorA.replacing(type: .backdrop)
+
+        let task = Task { @MainActor in
+            await loader.load(descriptor: Self.descriptorA)
+        }
+        await attachAndSuspendCache(taskDescriptor: Self.descriptorA, url: Self.urlA, harness: harness)
+        await harness.resumeCacheLookup(for: Self.urlA, with: nil)
+        await harness.waitUntilDownloadIsSuspended(for: Self.urlA)
+        await harness.resumeDownload(for: Self.urlA, with: .failure(TestImageError.failed))
+        await harness.waitUntilResolutionIsSuspended(for: fallbackDescriptor)
+        await harness.resumeResolution(for: fallbackDescriptor, with: Self.fallbackURLA)
+        await harness.waitUntilDownloadIsSuspended(for: Self.fallbackURLA)
+        await harness.resumeDownload(for: Self.fallbackURLA, with: .failure(TestImageError.failed))
+        await task.value
+
+        XCTAssertNil(loader.image)
+        XCTAssertTrue(loader.hasFailed)
+    }
+
     func testInvalidationCancelsAttachedURLAndPreventsPublication() async {
         let harness = ControlledImageLoadHarness()
         let loader = makeLoader(harness: harness)

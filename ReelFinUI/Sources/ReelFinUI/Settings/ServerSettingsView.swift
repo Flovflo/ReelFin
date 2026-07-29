@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ServerSettingsView: View {
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceTransparency) private var accessibilityReduceTransparency
     @AppStorage(ReelFinDisplayDensity.storageKey) private var displayDensityRawValue = ReelFinDisplayDensity.standard.rawValue
     @StateObject private var viewModel: ServerSettingsViewModel
     private let metadata = AppMetadata.current
@@ -257,6 +258,16 @@ struct ServerSettingsView: View {
             iosStatusSection
 
             Section {
+                settingsOverviewCard
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            } header: {
+                Text("At a Glance")
+            } footer: {
+                Text("Your active connection, playback path, and library layout in one place.")
+            }
+
+            Section {
                 LabeledContent("User", value: viewModel.displayUsername)
                 LabeledContent("Status", value: viewModel.connectionStatusLabel)
 
@@ -419,6 +430,8 @@ struct ServerSettingsView: View {
                 Text("About")
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(ReelFinTheme.pageGradient.ignoresSafeArea())
         .navigationTitle("Settings")
         #if targetEnvironment(macCatalyst)
         .navigationBarTitleDisplayMode(.inline)
@@ -428,6 +441,103 @@ struct ServerSettingsView: View {
         .accessibilityIdentifier("settings_screen")
         .task {
             await viewModel.refreshEpisodeReleaseNotificationsState()
+        }
+    }
+
+    private var settingsOverviewCard: some View {
+        VStack(spacing: 0) {
+            settingsOverviewRow(
+                symbol: "network",
+                title: "Connection",
+                value: "\(viewModel.connectionStatusLabel) · \(viewModel.displayServerHost)"
+            )
+
+            settingsOverviewDivider
+
+            settingsOverviewRow(
+                symbol: "play.rectangle.on.rectangle",
+                title: "Playback",
+                value: "\(viewModel.nativePlayerSettingsMode.settingsLabel) · \(viewModel.preferredQuality.settingsLabel)"
+            )
+
+            settingsOverviewDivider
+
+            settingsOverviewRow(
+                symbol: "rectangle.grid.2x2",
+                title: "Library",
+                value: viewModel.homeCustomizationSummary
+            )
+
+            settingsOverviewDivider
+
+            settingsOverviewRow(
+                symbol: "externaldrive",
+                title: "Media Cache",
+                value: viewModel.mediaCacheMode.settingsLabel
+            )
+        }
+        .padding(.horizontal, 16)
+        .background { settingsOverviewBackground }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings_overview_card")
+    }
+
+    private func settingsOverviewRow(
+        symbol: String,
+        title: String,
+        value: String
+    ) -> some View {
+        HStack(spacing: 13) {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(ReelFinTheme.editorialAccent)
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(ReelFinTheme.editorialPrimaryText)
+
+                Text(value)
+                    .font(.footnote)
+                    .foregroundStyle(ReelFinTheme.editorialSecondaryText)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 13)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var settingsOverviewDivider: some View {
+        Divider()
+            .overlay(Color.white.opacity(0.12))
+            .padding(.leading, 41)
+    }
+
+    @ViewBuilder
+    private var settingsOverviewBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+
+        if accessibilityReduceTransparency {
+            shape
+                .fill(ReelFinTheme.editorialOpaqueFallback)
+                .overlay { shape.stroke(Color.white.opacity(0.18), lineWidth: 1) }
+        } else if #available(iOS 26.0, *) {
+            shape
+                .fill(Color.white.opacity(0.035))
+                .glassEffect(
+                    Glass.regular.tint(ReelFinTheme.editorialGlassTint),
+                    in: .rect(cornerRadius: 24)
+                )
+                .overlay { shape.stroke(Color.white.opacity(0.12), lineWidth: 1) }
+        } else {
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay { shape.stroke(Color.white.opacity(0.12), lineWidth: 1) }
         }
     }
 

@@ -63,6 +63,28 @@ actor ImageTaskRegistry {
     }
 }
 
+private actor MissingImageResponseCache {
+    private let timeToLive: TimeInterval
+    private var expirationByURL = [URL: Date]()
+
+    init(timeToLive: TimeInterval = 5 * 60) {
+        self.timeToLive = timeToLive
+    }
+
+    func contains(_ url: URL, now: Date = Date()) -> Bool {
+        guard let expiration = expirationByURL[url] else { return false }
+        guard expiration > now else {
+            expirationByURL[url] = nil
+            return false
+        }
+        return true
+    }
+
+    func insert(_ url: URL, now: Date = Date()) {
+        expirationByURL[url] = now.addingTimeInterval(timeToLive)
+    }
+}
+
 private final class ImageLoadTracker: @unchecked Sendable {
     var source: StaticString = "loaded"
 }
@@ -195,6 +217,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     private let urlSession: URLSession
     private let tokenStore: TokenStoreProtocol
     private let registry = ImageTaskRegistry()
+    private let missingResponses = MissingImageResponseCache()
     private let decodeScheduler = ImageDecodeScheduler()
     private let prefetchAdmission: ImagePrefetchAdmissionController
 
@@ -345,6 +368,10 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     }
 
     private func fetchImageData(url: URL) async throws -> Data {
+        if await missingResponses.contains(url) {
+            throw AppError.network("Image request failed (cached 404)")
+        }
+
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
         request.setValue("image/*", forHTTPHeaderField: "Accept")
@@ -362,6 +389,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
 
         if httpResponse.statusCode == 404 {
+            await missingResponses.insert(url)
             throw AppError.network("Image request failed (404)")
         }
 

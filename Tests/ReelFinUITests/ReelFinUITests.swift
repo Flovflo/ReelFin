@@ -296,6 +296,20 @@ final class AppStoreScreenshotTests: XCTestCase {
         XCTAssertTrue(blurHeader.exists)
     }
 
+    func testMockSettingsShowsUsefulOverview() throws {
+        let app = XCUIApplication()
+        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        openSection(named: "Settings", in: app)
+
+        XCTAssertTrue(app.staticTexts["At a Glance"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Connection"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Playback"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Library"].firstMatch.exists)
+    }
+
     func testMockDetailOpensCarouselOnSelectedContextItem() throws {
         let app = XCUIApplication()
         app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]

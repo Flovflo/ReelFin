@@ -82,6 +82,43 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         )
     }
 
+    func testExistingSessionArtworkSearchAndSettingsSmoke() throws {
+        let app = XCUIApplication()
+        configureLivePlaybackLaunchEnvironment(app)
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        try ensureAuthenticated(in: app)
+
+        let searchTab = app.tabBars.buttons["Search"].firstMatch
+        XCTAssertTrue(searchTab.waitForExistence(timeout: 8))
+        searchTab.tap()
+
+        let searchField = app.textFields["library_search_field"].firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 8))
+        searchField.tap()
+        searchField.typeText("Silo")
+
+        let result = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        ).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 12))
+        captureScreenshot(of: app, name: "live-library-artwork")
+
+        let keyboardSearch = app.keyboards.buttons["Search"].firstMatch
+        if keyboardSearch.exists {
+            keyboardSearch.tap()
+        } else {
+            app.keyboards.buttons["Return"].firstMatch.tap()
+        }
+
+        let settingsTab = app.tabBars.buttons["Settings"].firstMatch
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 8))
+        settingsTab.tap()
+        XCTAssertTrue(app.staticTexts["At a Glance"].firstMatch.waitForExistence(timeout: 8))
+        captureScreenshot(of: app, name: "live-settings-overview")
+    }
+
     func testLiveLoginAndStartPlayback() throws {
         let credentials = try requireLiveCredentials()
         let app = XCUIApplication()

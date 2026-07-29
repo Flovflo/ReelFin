@@ -15,7 +15,6 @@ public struct CachedRemoteImage: View {
     private let onImageLoaded: (() -> Void)?
     private let placeholderAnimationEnabled: Bool
     private let showsPlaceholder: Bool
-    private let isKnownMissing: Bool
 
     @StateObject private var loader: CachedRemoteImageLoader
 
@@ -33,8 +32,7 @@ public struct CachedRemoteImage: View {
         quality = request.profile.quality
         self.contentMode = contentMode
         self.onImageLoaded = onImageLoaded
-        isKnownMissing = request.isKnownMissing
-        placeholderAnimationEnabled = !request.isKnownMissing && ShimmerAnimationPolicy.animationEnabled(
+        placeholderAnimationEnabled = ShimmerAnimationPolicy.animationEnabled(
             for: request.profile
         )
         self.showsPlaceholder = showsPlaceholder
@@ -63,7 +61,6 @@ public struct CachedRemoteImage: View {
         self.onImageLoaded = onImageLoaded
         self.placeholderAnimationEnabled = placeholderAnimationEnabled
         self.showsPlaceholder = showsPlaceholder
-        isKnownMissing = false
         _loader = StateObject(
             wrappedValue: CachedRemoteImageLoader(apiClient: apiClient, imagePipeline: imagePipeline)
         )
@@ -76,6 +73,9 @@ public struct CachedRemoteImage: View {
                     .resizable()
                     .modifier(RemoteImageScalingModifier(contentMode: contentMode))
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+            } else if loader.hasFailed, showsPlaceholder {
+                MissingArtworkView(seed: itemID)
+                    .transition(.opacity.animation(.easeOut(duration: 0.16)))
             } else if showsPlaceholder {
                 ShimmerView(animationEnabled: placeholderAnimationEnabled)
                     .overlay {
@@ -89,10 +89,6 @@ public struct CachedRemoteImage: View {
         }
         .clipped()
         .task(id: requestIdentity) {
-            guard !isKnownMissing else {
-                loader.clear(for: descriptor)
-                return
-            }
             await loader.load(descriptor: descriptor, onImageLoaded: onImageLoaded)
         }
         .onDisappear {
@@ -115,5 +111,48 @@ public struct CachedRemoteImage: View {
 
     private var normalizedWidth: Int {
         type.normalizedImageWidth(width)
+    }
+}
+
+private struct MissingArtworkView: View {
+    let seed: String
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(hue: hue, saturation: 0.28, brightness: 0.22),
+                    Color(hue: shiftedHue, saturation: 0.18, brightness: 0.09),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [.white.opacity(0.11), .clear],
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: 260
+            )
+
+            Image(systemName: "film.stack")
+                .font(.system(size: 25, weight: .medium))
+                .foregroundStyle(.white.opacity(0.42))
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var hue: Double {
+        Double(stableSeed % 360) / 360
+    }
+
+    private var shiftedHue: Double {
+        (hue + 0.08).truncatingRemainder(dividingBy: 1)
+    }
+
+    private var stableSeed: UInt64 {
+        seed.utf8.reduce(5381) { partial, byte in
+            ((partial << 5) &+ partial) &+ UInt64(byte)
+        }
     }
 }

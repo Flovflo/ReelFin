@@ -1372,7 +1372,7 @@ struct HomeView: View {
                 .padding(.top, stickyHeaderTopPadding)
                 .padding(.bottom, 12)
                 .accessibilityIdentifier("home_sticky_blur_header")
-        } content: {
+        } content: { _ in
             homeScrollSections(visibleRows: visibleRows)
         }
         .background(ReelFinTheme.pageGradient.ignoresSafeArea())

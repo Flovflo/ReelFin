@@ -28,9 +28,9 @@ final class DefaultArtworkPrefetcherTests: XCTestCase {
         XCTAssertEqual(batches, [[firstURL, lastURL]])
     }
 
-    func testSkipsRequestsWhoseMetadataConfirmsArtworkIsMissing() async {
-        let unavailable = ArtworkRequest.make(
-            for: MediaItem(id: "missing", name: "Missing"),
+    func testSkipsTaglessRequestsDuringSpeculativePrefetch() async {
+        let tagless = ArtworkRequest.make(
+            for: MediaItem(id: "tagless", name: "Tagless"),
             role: .posterRow
         )
         let available = ArtworkRequest.make(
@@ -42,7 +42,7 @@ final class DefaultArtworkPrefetcherTests: XCTestCase {
         let pipeline = RecordingImagePipeline()
         let prefetcher = DefaultArtworkPrefetcher(urlProvider: provider, imagePipeline: pipeline)
 
-        await prefetcher.prefetch([unavailable, available])
+        await prefetcher.prefetch([tagless, available])
 
         let resolvedRequests = await provider.capturedRequests
         let batches = await pipeline.prefetchBatches

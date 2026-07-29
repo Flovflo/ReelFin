@@ -13,6 +13,36 @@ enum LibraryHeaderPresentation: Equatable {
     }
 }
 
+struct LibraryHeaderTransition: Equatable {
+    let expandedControlsOpacity: CGFloat
+    let compactHeaderOpacity: CGFloat
+    let expandedControlsAreInteractive: Bool
+    let compactHeaderIsInteractive: Bool
+
+    private static let transitionStart: CGFloat = 0.56
+    private static let transitionEnd: CGFloat = 0.84
+
+    static func resolve(revealProgress: CGFloat) -> Self {
+        let finiteProgress = revealProgress.isFinite ? revealProgress : 0
+        let normalized = min(
+            max(
+                (finiteProgress - transitionStart) / (transitionEnd - transitionStart),
+                0
+            ),
+            1
+        )
+        let eased = normalized * normalized * (3 - (2 * normalized))
+        let compactIsPrimary = eased >= 0.5
+
+        return Self(
+            expandedControlsOpacity: 1 - eased,
+            compactHeaderOpacity: eased,
+            expandedControlsAreInteractive: !compactIsPrimary,
+            compactHeaderIsInteractive: compactIsPrimary
+        )
+    }
+}
+
 enum LibraryResultContext {
     static func resolve(visibleItemCount: Int, isUpdating: Bool) -> String {
         let count = max(visibleItemCount, 0)
@@ -195,18 +225,26 @@ struct LibraryView: View {
             ),
             opaqueFallbackRevealThreshold: LibraryHeaderPresentation.compactRevealThreshold
         ) { quantizedRevealProgress in
-            let presentation = LibraryHeaderPresentation.resolve(
-                quantizedRevealProgress: quantizedRevealProgress
+            let transition = LibraryHeaderTransition.resolve(
+                revealProgress: quantizedRevealProgress
             )
-            let isCompact = presentation == .compact
 
             iosCompactHeader(safeAreaTopInset: safeAreaTopInset)
-                .opacity(isCompact ? 1 : 0)
-                .allowsHitTesting(isCompact)
-                .accessibilityHidden(!isCompact)
-        } content: {
+                .opacity(transition.compactHeaderOpacity)
+                .offset(y: (1 - transition.compactHeaderOpacity) * -8)
+                .scaleEffect(0.98 + (0.02 * transition.compactHeaderOpacity))
+                .allowsHitTesting(transition.compactHeaderIsInteractive)
+                .accessibilityHidden(!transition.compactHeaderIsInteractive)
+        } content: { quantizedRevealProgress in
+            let transition = LibraryHeaderTransition.resolve(
+                revealProgress: quantizedRevealProgress
+            )
+
             VStack(spacing: 0) {
-                iosExpandedHeader(safeAreaTopInset: safeAreaTopInset)
+                iosExpandedHeader(
+                    safeAreaTopInset: safeAreaTopInset,
+                    transition: transition
+                )
 
                 libraryGridContent(
                     topRowItemIDs: topRowItemIDs,
@@ -325,7 +363,10 @@ struct LibraryView: View {
 #if os(iOS)
     // MARK: - iOS editorial Library header
 
-    private func iosExpandedHeader(safeAreaTopInset: CGFloat) -> some View {
+    private func iosExpandedHeader(
+        safeAreaTopInset: CGFloat,
+        transition: LibraryHeaderTransition
+    ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
                 Text("YOUR JELLYFIN COLLECTION")
@@ -349,6 +390,11 @@ struct LibraryView: View {
             iosSearchField
 
             iosControlCluster(compact: false)
+                .opacity(transition.expandedControlsOpacity)
+                .offset(y: (1 - transition.expandedControlsOpacity) * -6)
+                .scaleEffect(0.98 + (0.02 * transition.expandedControlsOpacity))
+                .allowsHitTesting(transition.expandedControlsAreInteractive)
+                .accessibilityHidden(!transition.expandedControlsAreInteractive)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.top, safeAreaTopInset + expandedHeaderTopSpacing)

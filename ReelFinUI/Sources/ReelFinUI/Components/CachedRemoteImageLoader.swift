@@ -24,6 +24,7 @@ final class CachedRemoteImageLoader: ObservableObject {
     typealias Canceller = (URL, ImageRequestConsumerID) -> Void
 
     @Published private(set) var image: UIImage?
+    @Published private(set) var hasFailed = false
 
     private let resolveURL: URLResolver
     private let cachedImage: CacheLookup
@@ -78,6 +79,7 @@ final class CachedRemoteImageLoader: ObservableObject {
             image = nil
             request.contentKey = descriptor.contentKey
         }
+        hasFailed = false
 
         let start = request.begin()
         cancel(start.cancellation)
@@ -92,7 +94,10 @@ final class CachedRemoteImageLoader: ObservableObject {
 
         let resolvedURL = await resolveURL(descriptor)
         guard isActive(token) else { return }
-        guard let url = resolvedURL else { return }
+        guard let url = resolvedURL else {
+            publishFailure(token: token)
+            return
+        }
         cancel(request.attach(url, to: token))
         attachedURL = url
 
@@ -111,19 +116,23 @@ final class CachedRemoteImageLoader: ObservableObject {
             return
         } catch {
             guard isActive(token) else { return }
-            if CachedRemoteImage.shouldIgnoreImageError(error) {
-                return
-            }
+            let shouldSuppressLog = CachedRemoteImage.shouldIgnoreImageError(error)
 
             guard let fallbackType = CachedRemoteImage.fallbackType(for: descriptor.type) else {
-                log(error: error, url: url, token: token)
+                if !shouldSuppressLog {
+                    log(error: error, url: url, token: token)
+                }
+                publishFailure(token: token)
                 return
             }
             let fallbackDescriptor = descriptor.replacing(type: fallbackType)
             let resolvedFallbackURL = await resolveURL(fallbackDescriptor)
             guard isActive(token) else { return }
             guard let fallbackURL = resolvedFallbackURL else {
-                log(error: error, url: url, token: token)
+                if !shouldSuppressLog {
+                    log(error: error, url: url, token: token)
+                }
+                publishFailure(token: token)
                 return
             }
             cancel(request.attach(fallbackURL, to: token))
@@ -138,8 +147,9 @@ final class CachedRemoteImageLoader: ObservableObject {
             } catch {
                 guard isActive(token) else { return }
                 if !CachedRemoteImage.shouldIgnoreImageError(error) {
-                    log(error: error, url: url, token: token)
+                    log(error: error, url: fallbackURL, token: token)
                 }
+                publishFailure(token: token)
             }
         }
     }
@@ -154,6 +164,7 @@ final class CachedRemoteImageLoader: ObservableObject {
         cancel(cancellation)
         request.contentKey = descriptor.contentKey
         image = nil
+        hasFailed = false
     }
 
     private func isActive(_ token: CachedRemoteImageRequestToken) -> Bool {
@@ -167,7 +178,14 @@ final class CachedRemoteImageLoader: ObservableObject {
     ) {
         guard isActive(token) else { return }
         self.image = image
+        hasFailed = false
         onImageLoaded?()
+    }
+
+    private func publishFailure(token: CachedRemoteImageRequestToken) {
+        guard isActive(token) else { return }
+        image = nil
+        hasFailed = true
     }
 
     private func cancel(_ cancellation: CachedRemoteImageCancellation?) {
