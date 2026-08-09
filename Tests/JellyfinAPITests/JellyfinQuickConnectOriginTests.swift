@@ -24,9 +24,24 @@ final class JellyfinQuickConnectOriginTests: XCTestCase {
         XCTAssertEqual(
             destinations,
             [
-                QuickConnectRequestDestination(host: "b.example", path: "/jellyfin/QuickConnect/Initiate"),
-                QuickConnectRequestDestination(host: "b.example", path: "/jellyfin/QuickConnect/Connect"),
-                QuickConnectRequestDestination(host: "b.example", path: "/jellyfin/Users/AuthenticateWithQuickConnect")
+                QuickConnectRequestDestination(
+                    scheme: "https",
+                    host: "b.example",
+                    port: nil,
+                    path: "/jellyfin/QuickConnect/Initiate"
+                ),
+                QuickConnectRequestDestination(
+                    scheme: "https",
+                    host: "b.example",
+                    port: nil,
+                    path: "/jellyfin/QuickConnect/Connect"
+                ),
+                QuickConnectRequestDestination(
+                    scheme: "https",
+                    host: "b.example",
+                    port: nil,
+                    path: "/jellyfin/Users/AuthenticateWithQuickConnect"
+                )
             ]
         )
     }
@@ -158,6 +173,87 @@ final class JellyfinQuickConnectOriginTests: XCTestCase {
         XCTAssertEqual(destinations.last?.path, "/jellyfin/QuickConnect/Connect")
     }
 
+    func testInvalidNewerInitiationStillRejectsLateOlderResponse() async throws {
+        let gate = QuickConnectRequestGate()
+        let fixture = makeQuickConnectFixture(
+            persistedServerURL: URL(string: "https://a.example/old")!,
+            requestHandler: { request in
+                await gate.blockUntilReleased()
+                return quickConnectHTTPResponse(
+                    for: request,
+                    body: #"{"Code":"OLD1","Secret":"old-synthetic-secret","Authenticated":false}"#
+                )
+            }
+        )
+
+        let oldInitiation = Task {
+            try await fixture.client.initiateQuickConnect(
+                serverURL: URL(string: "https://first.example/jellyfin")!
+            )
+        }
+        await gate.waitUntilBlocked()
+
+        do {
+            _ = try await fixture.client.initiateQuickConnect(
+                serverURL: URL(string: "https://second.example/jellyfin?ambiguous=true")!
+            )
+            XCTFail("Expected the newer ambiguous origin to be rejected")
+        } catch AppError.invalidServerURL {
+            // Expected: the call is invalid, but it still owns the newest generation.
+        }
+        await gate.release()
+
+        do {
+            _ = try await oldInitiation.value
+            XCTFail("Expected the older response to lose to the newer invalid call")
+        } catch AppError.unauthenticated {
+            // Expected: generation ownership is reserved at method entry.
+        }
+    }
+
+    func testCancelledInitiationCannotInstallPendingHandshake() async throws {
+        let gate = QuickConnectRequestGate()
+        let recorder = QuickConnectRequestRecorder()
+        let fixture = makeQuickConnectFixture(
+            persistedServerURL: URL(string: "https://a.example/old")!,
+            requestHandler: { request in
+                await recorder.record(request)
+                await gate.blockUntilReleased()
+                return quickConnectHTTPResponse(
+                    for: request,
+                    body: #"{"Code":"C123","Secret":"cancelled-synthetic-secret","Authenticated":false}"#
+                )
+            }
+        )
+
+        let initiation = Task {
+            try await fixture.client.initiateQuickConnect(
+                serverURL: URL(string: "https://b.example/jellyfin")!
+            )
+        }
+        await gate.waitUntilBlocked()
+        initiation.cancel()
+        await gate.release()
+
+        do {
+            _ = try await initiation.value
+            XCTFail("Expected cancelled initiation to throw CancellationError")
+        } catch is CancellationError {
+            // Expected: cancellation is revalidated before installing pending state.
+        } catch {
+            XCTFail("Expected CancellationError, got \(type(of: error))")
+        }
+
+        do {
+            _ = try await fixture.client.pollQuickConnect(secret: "cancelled-synthetic-secret")
+            XCTFail("Expected cancelled initiation to leave no pollable handshake")
+        } catch AppError.unauthenticated {
+            // Expected: the cancelled initiation never installed pending state.
+        }
+        let destinations = await recorder.destinations
+        XCTAssertEqual(destinations.count, 1)
+    }
+
     func testLateConnectResponseCannotExchangeOrPersistAfterNewInitiation() async throws {
         let gate = QuickConnectRequestGate()
         let recorder = QuickConnectRequestRecorder()
@@ -257,6 +353,58 @@ final class JellyfinQuickConnectOriginTests: XCTestCase {
         XCTAssertEqual(fixture.tokenStore.storedToken, oldSession.token)
     }
 
+    func testCancelledExchangeCannotCommitAuthenticationState() async throws {
+        let gate = QuickConnectRequestGate()
+        let oldServerURL = URL(string: "https://a.example/old")!
+        let oldSession = UserSession(userID: "user-a", username: "User A", token: "token-a")
+        let fixture = makeQuickConnectFixture(
+            persistedServerURL: oldServerURL,
+            persistedSession: oldSession,
+            persistedToken: oldSession.token,
+            requestHandler: { request in
+                if request.url?.path.hasSuffix("/QuickConnect/Initiate") == true {
+                    return quickConnectHTTPResponse(
+                        for: request,
+                        body: #"{"Code":"C123","Secret":"cancelled-synthetic-secret","Authenticated":false}"#
+                    )
+                }
+                if request.url?.path.hasSuffix("/QuickConnect/Connect") == true {
+                    return quickConnectHTTPResponse(for: request, body: #"{"Authenticated":true}"#)
+                }
+                await gate.blockUntilReleased()
+                return quickConnectHTTPResponse(
+                    for: request,
+                    body: #"{"User":{"Id":"cancelled-user","Name":"Cancelled User"},"AccessToken":"cancelled-token"}"#
+                )
+            }
+        )
+
+        let state = try await fixture.client.initiateQuickConnect(
+            serverURL: URL(string: "https://b.example/jellyfin")!
+        )
+        let poll = Task { try await fixture.client.pollQuickConnect(secret: state.secret) }
+        await gate.waitUntilBlocked()
+        poll.cancel()
+        await gate.release()
+
+        do {
+            _ = try await poll.value
+            XCTFail("Expected cancelled exchange to throw CancellationError")
+        } catch is CancellationError {
+            // Expected: cancellation is revalidated before authentication commit.
+        } catch {
+            XCTFail("Expected CancellationError, got \(type(of: error))")
+        }
+
+        let currentConfiguration = await fixture.client.currentConfiguration()
+        let currentSession = await fixture.client.currentSession()
+        XCTAssertEqual(currentConfiguration?.serverURL, oldServerURL)
+        XCTAssertEqual(currentSession, oldSession)
+        XCTAssertEqual(fixture.settings.serverConfiguration?.serverURL, oldServerURL)
+        XCTAssertEqual(fixture.settings.lastSession, oldSession)
+        XCTAssertEqual(fixture.tokenStore.storedToken, oldSession.token)
+    }
+
     func testSignOutInvalidatesPendingHandshake() async throws {
         let recorder = QuickConnectRequestRecorder()
         let fixture = makeQuickConnectFixture(
@@ -295,13 +443,54 @@ final class JellyfinQuickConnectOriginTests: XCTestCase {
         XCTAssertEqual(
             destinations,
             [
-                QuickConnectRequestDestination(host: "b.example", path: "/jellyfin/QuickConnect/Initiate"),
-                QuickConnectRequestDestination(host: "b.example", path: "/jellyfin/QuickConnect/Connect"),
-                QuickConnectRequestDestination(host: "b.example", path: "/jellyfin/Users/AuthenticateWithQuickConnect")
+                QuickConnectRequestDestination(
+                    scheme: "https",
+                    host: "b.example",
+                    port: nil,
+                    path: "/jellyfin/QuickConnect/Initiate"
+                ),
+                QuickConnectRequestDestination(
+                    scheme: "https",
+                    host: "b.example",
+                    port: nil,
+                    path: "/jellyfin/QuickConnect/Connect"
+                ),
+                QuickConnectRequestDestination(
+                    scheme: "https",
+                    host: "b.example",
+                    port: nil,
+                    path: "/jellyfin/Users/AuthenticateWithQuickConnect"
+                )
             ]
         )
         let currentConfiguration = await fixture.client.currentConfiguration()
         XCTAssertEqual(currentConfiguration?.serverURL.absoluteString, "https://b.example/jellyfin")
+    }
+
+    func testInitiationRejectsRelativeOrEncodedSeparatorPathSegmentsBeforeNetworkIO() async throws {
+        let recorder = QuickConnectRequestRecorder()
+        let fixture = makeQuickConnectFixture(
+            persistedServerURL: URL(string: "https://a.example/old")!,
+            recorder: recorder
+        )
+        let ambiguousPaths = [
+            URL(string: "https://b.example/jellyfin/./nested")!,
+            URL(string: "https://b.example/jellyfin/../admin")!,
+            URL(string: "https://b.example/jellyfin/%2Fadmin")!,
+            URL(string: "https://b.example/jellyfin/%5Cadmin")!
+        ]
+
+        for origin in ambiguousPaths {
+            do {
+                _ = try await fixture.client.initiateQuickConnect(serverURL: origin)
+                XCTFail("Expected ambiguous base-path segments to be rejected")
+            } catch AppError.invalidServerURL {
+                // Expected: stored origin identity must match the path actually requested.
+            }
+        }
+
+        let destinations = await recorder.destinations
+        XCTAssertEqual(destinations.count, 0)
     }
 
     func testInitiationRejectsAmbiguousOrUnsupportedOriginsBeforeNetworkIO() async throws {
@@ -329,6 +518,69 @@ final class JellyfinQuickConnectOriginTests: XCTestCase {
         let destinations = await recorder.destinations
         XCTAssertEqual(destinations.count, 0)
     }
+
+    func testUnauthenticatedCurrentPollDoesNotMutateAuthenticationState() async throws {
+        let oldServerURL = URL(string: "https://a.example/old")!
+        let oldSession = UserSession(userID: "user-a", username: "User A", token: "token-a")
+        let fixture = makeQuickConnectFixture(
+            persistedServerURL: oldServerURL,
+            persistedSession: oldSession,
+            persistedToken: oldSession.token,
+            requestHandler: { request in
+                if request.url?.path.hasSuffix("/QuickConnect/Initiate") == true {
+                    return quickConnectHTTPResponse(
+                        for: request,
+                        body: #"{"Code":"P123","Secret":"pending-synthetic-secret","Authenticated":false}"#
+                    )
+                }
+                return quickConnectHTTPResponse(for: request, body: #"{"Authenticated":false}"#)
+            }
+        )
+
+        let state = try await fixture.client.initiateQuickConnect(
+            serverURL: URL(string: "https://b.example/jellyfin")!
+        )
+        let session = try await fixture.client.pollQuickConnect(secret: state.secret)
+
+        XCTAssertNil(session)
+        let currentConfiguration = await fixture.client.currentConfiguration()
+        let currentSession = await fixture.client.currentSession()
+        XCTAssertEqual(currentConfiguration?.serverURL, oldServerURL)
+        XCTAssertEqual(currentSession, oldSession)
+        XCTAssertEqual(fixture.settings.serverConfiguration?.serverURL, oldServerURL)
+        XCTAssertEqual(fixture.settings.lastSession, oldSession)
+        XCTAssertEqual(fixture.tokenStore.storedToken, oldSession.token)
+    }
+
+    func testTokenSaveFailureLeavesAllAuthenticationStateUnchanged() async throws {
+        let oldServerURL = URL(string: "https://a.example/old")!
+        let oldSession = UserSession(userID: "user-a", username: "User A", token: "token-a")
+        let fixture = makeQuickConnectFixture(
+            persistedServerURL: oldServerURL,
+            persistedSession: oldSession,
+            persistedToken: oldSession.token,
+            failOnTokenSave: true,
+            recorder: QuickConnectRequestRecorder()
+        )
+
+        let state = try await fixture.client.initiateQuickConnect(
+            serverURL: URL(string: "https://b.example/jellyfin")!
+        )
+        do {
+            _ = try await fixture.client.pollQuickConnect(secret: state.secret)
+            XCTFail("Expected token persistence failure")
+        } catch QuickConnectTokenStoreError.saveRejected {
+            // Expected: no other authentication state commits before token persistence succeeds.
+        }
+
+        let currentConfiguration = await fixture.client.currentConfiguration()
+        let currentSession = await fixture.client.currentSession()
+        XCTAssertEqual(currentConfiguration?.serverURL, oldServerURL)
+        XCTAssertEqual(currentSession, oldSession)
+        XCTAssertEqual(fixture.settings.serverConfiguration?.serverURL, oldServerURL)
+        XCTAssertEqual(fixture.settings.lastSession, oldSession)
+        XCTAssertEqual(fixture.tokenStore.storedToken, oldSession.token)
+    }
 }
 
 private struct QuickConnectTestFixture {
@@ -341,12 +593,14 @@ private func makeQuickConnectFixture(
     persistedServerURL: URL,
     persistedSession: UserSession? = nil,
     persistedToken: String? = nil,
+    failOnTokenSave: Bool = false,
     recorder: QuickConnectRequestRecorder
 ) -> QuickConnectTestFixture {
     makeQuickConnectFixture(
         persistedServerURL: persistedServerURL,
         persistedSession: persistedSession,
         persistedToken: persistedToken,
+        failOnTokenSave: failOnTokenSave,
         requestHandler: { request in
             await recorder.record(request)
             return try standardQuickConnectResponse(for: request)
@@ -358,6 +612,7 @@ private func makeQuickConnectFixture(
     persistedServerURL: URL,
     persistedSession: UserSession? = nil,
     persistedToken: String? = nil,
+    failOnTokenSave: Bool = false,
     requestHandler: @escaping @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) -> QuickConnectTestFixture {
     let configuration = URLSessionConfiguration.ephemeral
@@ -368,7 +623,7 @@ private func makeQuickConnectFixture(
         serverConfiguration: ServerConfiguration(serverURL: persistedServerURL),
         lastSession: persistedSession
     )
-    let tokenStore = QuickConnectTokenStore(storedToken: persistedToken)
+    let tokenStore = QuickConnectTokenStore(storedToken: persistedToken, failOnSave: failOnTokenSave)
     let client = JellyfinAPIClient(
         tokenStore: tokenStore,
         settingsStore: settings,
@@ -408,7 +663,9 @@ private func quickConnectHTTPResponse(
 }
 
 private struct QuickConnectRequestDestination: Equatable, Sendable {
+    let scheme: String?
     let host: String?
+    let port: Int?
     let path: String
 }
 
@@ -418,7 +675,9 @@ private actor QuickConnectRequestRecorder {
     func record(_ request: URLRequest) {
         destinations.append(
             QuickConnectRequestDestination(
+                scheme: request.url?.scheme,
                 host: request.url?.host,
+                port: request.url?.port,
                 path: request.url?.path ?? ""
             )
         )
@@ -514,14 +773,23 @@ private final class QuickConnectSettingsStore: SettingsStoreProtocol, @unchecked
     }
 }
 
+private enum QuickConnectTokenStoreError: Error {
+    case saveRejected
+}
+
 private final class QuickConnectTokenStore: TokenStoreProtocol, @unchecked Sendable {
     var storedToken: String?
+    private let failOnSave: Bool
 
-    init(storedToken: String?) {
+    init(storedToken: String?, failOnSave: Bool = false) {
         self.storedToken = storedToken
+        self.failOnSave = failOnSave
     }
 
     func saveToken(_ token: String) throws {
+        if failOnSave {
+            throw QuickConnectTokenStoreError.saveRejected
+        }
         storedToken = token
     }
 

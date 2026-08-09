@@ -209,9 +209,9 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     // MARK: - Quick Connect
 
     public func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState {
-        let normalizedServerURL = try normalizedQuickConnectServerURL(serverURL)
         invalidatePendingQuickConnect()
         let generation = quickConnectGeneration
+        let normalizedServerURL = try normalizedQuickConnectServerURL(serverURL)
 
         let url = try buildURL(baseURL: normalizedServerURL, path: "QuickConnect/Initiate", query: [])
         var request = URLRequest(url: url)
@@ -219,11 +219,19 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
         request.timeoutInterval = 10
-        let data = try await send(request, dedupe: false)
+        let data: Data
+        do {
+            data = try await send(request, dedupe: false)
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
+        try Task.checkCancellation()
         guard generation == quickConnectGeneration else {
             throw AppError.unauthenticated
         }
         let dto = try decoder.decode(QuickConnectInitiateResponseDTO.self, from: data)
+        try Task.checkCancellation()
         pendingQuickConnect = PendingQuickConnect(
             generation: generation,
             normalizedServerURL: normalizedServerURL,
@@ -250,19 +258,34 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
         req.timeoutInterval = 10
-        let data = try await send(req, dedupe: false)
+        let data: Data
+        do {
+            data = try await send(req, dedupe: false)
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
+        try Task.checkCancellation()
         try requireCurrentQuickConnect(pending)
         let dto = try decoder.decode(QuickConnectAuthResponseDTO.self, from: data)
         guard dto.authenticated else {
             return nil
         }
+        try Task.checkCancellation()
         let exchangeBody = QuickConnectAuthRequestDTO(secret: pending.secret)
-        let sessionDTO: AuthenticateResponseDTO = try await requestWithBaseURL(
-            baseURL: pending.normalizedServerURL,
-            path: "Users/AuthenticateWithQuickConnect",
-            method: "POST",
-            body: exchangeBody
-        )
+        let sessionDTO: AuthenticateResponseDTO
+        do {
+            sessionDTO = try await requestWithBaseURL(
+                baseURL: pending.normalizedServerURL,
+                path: "Users/AuthenticateWithQuickConnect",
+                method: "POST",
+                body: exchangeBody
+            )
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
+        try Task.checkCancellation()
         try requireCurrentQuickConnect(pending)
 
         let session = UserSession(userID: sessionDTO.user.id, username: sessionDTO.user.name, token: sessionDTO.accessToken)
@@ -270,6 +293,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             serverURL: pending.normalizedServerURL
         )
 
+        try Task.checkCancellation()
         try tokenStore.saveToken(sessionDTO.accessToken)
         configuration = authenticatedConfiguration
         settingsStore.serverConfiguration = authenticatedConfiguration
@@ -331,6 +355,20 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         }
 
         var basePath = components.percentEncodedPath
+        let pathSegments = basePath.split(separator: "/", omittingEmptySubsequences: false)
+        for encodedSegment in pathSegments {
+            guard let decodedSegment = String(encodedSegment).removingPercentEncoding else {
+                throw AppError.invalidServerURL
+            }
+            guard
+                decodedSegment != ".",
+                decodedSegment != "..",
+                !decodedSegment.contains("/"),
+                !decodedSegment.contains("\\")
+            else {
+                throw AppError.invalidServerURL
+            }
+        }
         while basePath.hasSuffix("/") {
             basePath.removeLast()
         }
