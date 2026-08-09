@@ -104,10 +104,21 @@ public actor LocalMediaGatewaySession {
         case .openEnded(let offset):
             return try await streamResponse(offset: offset, requestedLength: nil)
         case .bounded(let range) where range.length > Self.implicitRangeLength:
-            guard range.offset >= 0, range.length > 0 else {
+            let totalLength = try await size()
+            guard let totalLength,
+                  let resolved = LocalMediaGatewayRequestedRange.bounded(range).resolve(totalLength: totalLength),
+                  let requestedLength = Int(exactly: resolved.length) else {
                 throw MediaAccessError.invalidRange(range)
             }
-            return try await streamResponse(offset: range.offset, requestedLength: range.length)
+            return try await streamResponse(offset: resolved.start, requestedLength: requestedLength)
+        case .suffix(let length) where length > Self.implicitRangeLength:
+            let totalLength = try await size()
+            guard let totalLength,
+                  let resolved = LocalMediaGatewayRequestedRange.suffix(length: length).resolve(totalLength: totalLength),
+                  let requestedLength = Int(exactly: resolved.length) else {
+                throw MediaAccessError.invalidRange(ByteRange(offset: 0, length: 0))
+            }
+            return try await streamResponse(offset: resolved.start, requestedLength: requestedLength)
         default:
             return nil
         }
@@ -295,26 +306,23 @@ public actor LocalMediaGatewaySession {
     private func resolveRange(_ requestedRange: LocalMediaGatewayRequestedRange?) async throws -> ByteRange {
         switch requestedRange {
         case .bounded(let range):
-            guard range.offset >= 0, range.length > 0 else {
-                throw MediaAccessError.invalidRange(range)
-            }
             let totalLength = try await size()
-            if let totalLength, range.offset >= totalLength {
+            guard let totalLength,
+                  let resolved = LocalMediaGatewayRequestedRange.bounded(range).resolve(totalLength: totalLength),
+                  let length = Int(exactly: resolved.length) else {
                 throw MediaAccessError.invalidRange(range)
             }
-            return try clampedRange(offset: range.offset, requestedLength: range.length, totalLength: totalLength)
+            return ByteRange(offset: resolved.start, length: length)
         case .openEnded(let offset):
             return try await boundedImplicitRange(offset: offset)
         case .suffix(let length):
             let totalLength = try await size()
-            guard let totalLength else {
-                return ByteRange(offset: 0, length: min(length, Self.implicitRangeLength))
-            }
-            let boundedLength = min(length, Self.implicitRangeLength, Int(totalLength))
-            guard boundedLength > 0 else {
+            guard let totalLength,
+                  let resolved = LocalMediaGatewayRequestedRange.suffix(length: length).resolve(totalLength: totalLength),
+                  let resolvedLength = Int(exactly: resolved.length) else {
                 throw MediaAccessError.invalidRange(ByteRange(offset: 0, length: 0))
             }
-            return ByteRange(offset: max(0, totalLength - Int64(boundedLength)), length: boundedLength)
+            return ByteRange(offset: resolved.start, length: resolvedLength)
         case .none:
             return try await boundedImplicitRange(offset: 0)
         }

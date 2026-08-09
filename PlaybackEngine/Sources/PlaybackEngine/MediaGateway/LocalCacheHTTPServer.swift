@@ -28,8 +28,8 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     // downloader → 17.5s startup on a deep resume.
     private let remoteURL: URL
     private let headers: [String: String]
-    /// Shared, process-lived (see `MediaOriginTransport.onDemand`): reusing the connection and the
-    /// H3-broken learning across plays is what makes the FIRST on-demand fetch of a play fast.
+    /// Shared, process-lived (see `MediaOriginTransport.onDemand`): the bounded reader installs a
+    /// task-specific delegate while preserving H3-broken learning and pooled H2/TLS connections.
     private let onDemandSession = MediaOriginTransport.onDemand
 
     private let queue = DispatchQueue(label: "reelfin.local-cache-http", attributes: .concurrent)
@@ -119,9 +119,8 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         // Cancelling the connection unblocks its parked `receive` → the handle Task exits its loop.
         for connection in conns { connection.cancel() }
         for task in tasks { task.cancel() }
-        // The on-demand session is the process-shared MediaOriginTransport.onDemand — deliberately
-        // NOT invalidated here (its whole point is to outlive plays); its in-flight requests for
-        // this serve just complete or time out into a closed socket.
+        // The process-shared origin session deliberately outlives this local server. Each bounded
+        // reader still cancels its own task when the serve is cancelled or its window is complete.
         // Capture the downloader value (NOT self) so this escaping Task is safe to spawn from deinit.
         let downloader = self.downloader
         Task { await downloader.stop() }
@@ -139,7 +138,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         lock.unlock()
         for connection in conns { connection.cancel() }
         for task in tasks { task.cancel() }
-        // onDemandSession is the process-shared transport — never invalidated (see stop()).
+        // onDemandSession is process-shared and is intentionally not invalidated here.
         let downloader = self.downloader
         Task { await downloader.stop() }
     }
@@ -229,8 +228,16 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         // cache), then a BOUNDED wait on the background probe. AVPlayer's very first byte request
         // rode the full ladder before — the black-screen minutes when the origin was flaky.
         var (total, resolvedType) = await downloader.knownContentInfo()
-        if total == nil, let probeStart = initialOffset(for: request.range) {
-            if let primed = await fetchRangeOnDemandDetailed(from: probeStart, length: serveChunk) {
+        if total == nil {
+            let unresolvedOffset = initialOffset(for: request.range)
+            let probeStart = unresolvedOffset.flatMap {
+                checkedInclusiveEnd(from: $0, length: serveChunk) == nil ? nil : $0
+            } ?? 0
+            var primed = await fetchRangeOnDemandDetailed(from: probeStart, length: serveChunk)
+            if primed == nil, probeStart != 0 {
+                primed = await fetchRangeOnDemandDetailed(from: 0, length: serveChunk)
+            }
+            if let primed {
                 if let discovered = primed.total {
                     await downloader.adoptContentInfo(total: discovered, contentType: primed.contentType)
                     total = discovered
@@ -264,21 +271,26 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
             return false
         }
 
-        let (start, end) = byteRange(for: request.range, total: total)
-        guard start >= 0, start < total, end > start else {
+        let resolvedRange: LocalMediaGatewayResolvedRange?
+        if let requestedRange = request.range {
+            resolvedRange = requestedRange.resolve(totalLength: total)
+        } else {
+            resolvedRange = LocalMediaGatewayResolvedRange(start: 0, endExclusive: total)
+        }
+        guard let resolvedRange else {
             await trySend(LocalMediaGatewayHTTPResponse.rangeNotSatisfiable(totalLength: total), over: connection)
             return false
         }
 
         let header = LocalMediaGatewayHTTPResponse.partialHeaders(
-            range: ByteRange(offset: start, length: Int(end - start)),
+            range: resolvedRange,
             totalLength: total,
             contentType: contentType,
             keepAlive: true
         )
         guard await trySend(header, over: connection) else { return false }
 
-        return await streamBody(from: start, to: end, over: connection)
+        return await streamBody(from: resolvedRange.start, to: resolvedRange.endExclusive, over: connection)
     }
 
     /// Streams `[start, end)` from the cache, waiting for the downloader to fill any gap. Mirrors the
@@ -364,14 +376,25 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     /// file's TOTAL length — so the very first serve can adopt content info from the same request
     /// that fetched its first bytes, instead of waiting on the dedicated probe.
     private func fetchRangeOnDemandDetailed(from: Int64, length: Int) async -> (data: Data, total: Int64?, contentType: String?)? {
-        guard length > 0 else { return nil }
+        guard let endInclusive = checkedInclusiveEnd(from: from, length: length) else { return nil }
         var request = URLRequest(url: PlaybackAuthenticatedRequestURL.forInternalURLSession(remoteURL, headers: headers))
         request.httpMethod = "GET"
-        request.setValue("bytes=\(from)-\(from + Int64(length) - 1)", forHTTPHeaderField: "Range")
+        request.setValue("bytes=\(from)-\(endInclusive)", forHTTPHeaderField: "Range")
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         do {
-            let (data, response) = try await onDemandSession.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 206 || http.statusCode == 200, !data.isEmpty else {
+            let (data, http) = try await HTTPChunkedRangeReader.collect(
+                request: request,
+                session: onDemandSession,
+                maxLength: length,
+                responseValidator: { response in
+                    Self.acceptsOnDemandResponse(
+                        response,
+                        requestedStart: from,
+                        requestedEndInclusive: endInclusive
+                    )
+                }
+            )
+            guard !data.isEmpty else {
                 return nil
             }
             try? await store.write(range: ByteRange(offset: from, length: data.count), data: data, key: key)
@@ -385,6 +408,50 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         }
     }
 
+    /// Rejects a mismatched origin response before URLSession delivers any body bytes. A 206 may
+    /// advertise a larger interval than our internal fetch window, but it must start at the byte we
+    /// requested and cover the window (or end at the checked resource EOF). The reader cancels after
+    /// exactly `length` bytes.
+    private static func acceptsOnDemandResponse(
+        _ response: HTTPURLResponse,
+        requestedStart: Int64,
+        requestedEndInclusive: Int64
+    ) -> Bool {
+        if response.statusCode == 200 { return requestedStart == 0 }
+        guard response.statusCode == 206,
+              let raw = response.value(forHTTPHeaderField: "Content-Range"),
+              let space = raw.firstIndex(of: " "),
+              raw[..<space].lowercased() == "bytes",
+              let slash = raw.lastIndex(of: "/"),
+              space < slash,
+              let dash = raw[raw.index(after: space)..<slash].firstIndex(of: "-"),
+              let start = Int64(raw[raw.index(after: space)..<dash]),
+              let end = Int64(raw[raw.index(after: dash)..<slash]),
+              start == requestedStart,
+              end >= start else {
+            return false
+        }
+        let totalToken = raw[raw.index(after: slash)...]
+        let total = Int64(totalToken)
+        guard totalToken == "*" || total != nil else { return false }
+        if let total {
+            guard total > end else { return false }
+        }
+        if end >= requestedEndInclusive { return true }
+        guard let total else { return false }
+        let (lastResourceByte, underflow) = total.subtractingReportingOverflow(1)
+        return !underflow && end == lastResourceByte
+    }
+
+    private func checkedInclusiveEnd(from: Int64, length: Int) -> Int64? {
+        guard from >= 0, length > 0, let semanticLength = Int64(exactly: length) else { return nil }
+        let (distance, subtractionOverflow) = semanticLength.subtractingReportingOverflow(1)
+        guard !subtractionOverflow else { return nil }
+        let (endInclusive, additionOverflow) = from.addingReportingOverflow(distance)
+        guard !additionOverflow else { return nil }
+        return endInclusive
+    }
+
     /// First byte offset a request needs, when it is knowable WITHOUT the file's total length
     /// (a suffix range needs the total first — rare from AVPlayer, handled by the probe path).
     private func initialOffset(for range: LocalMediaGatewayRequestedRange?) -> Int64? {
@@ -393,19 +460,6 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         case .openEnded(let offset): return offset
         case .suffix: return nil
         case nil: return 0
-        }
-    }
-
-    private func byteRange(for range: LocalMediaGatewayRequestedRange?, total: Int64) -> (Int64, Int64) {
-        switch range {
-        case .bounded(let requested):
-            return (requested.offset, min(total, requested.offset + Int64(requested.length)))
-        case .openEnded(let offset):
-            return (offset, total)
-        case .suffix(let length):
-            return (max(0, total - Int64(length)), total)
-        case nil:
-            return (0, total)
         }
     }
 

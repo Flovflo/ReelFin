@@ -319,6 +319,208 @@ final class PlaybackDropResilienceTests: XCTestCase {
             "The downloader must have adopted the total length from the first serve's Content-Range.")
     }
 
+    @MainActor
+    func testColdCacheProxyRejectsInt64MaxOpenRangeWithoutOverflow() async throws {
+        let data = Data((0..<64).map(UInt8.init))
+        let server = ThrottledDropHTTPServer(
+            payload: data,
+            contentType: "video/mp4",
+            throttleBytesPerSec: 50_000_000
+        )
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CacheProxyHostileRange.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDirectory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 64 * 1_024, maxBytes: 1 * 1_024 * 1_024)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "original",
+            userID: "user",
+            serverID: "server",
+            itemID: "hostile-range",
+            sourceID: "source",
+            routeURL: origin
+        )
+        let downloader = OriginDownloader(
+            remoteURL: origin,
+            headers: [:],
+            key: key,
+            store: store,
+            overrideContentType: "video/mp4",
+            sessionConfiguration: .ephemeral
+        )
+        let proxy = LocalCacheHTTPServer(
+            store: store,
+            downloader: downloader,
+            key: key,
+            remoteURL: origin,
+            headers: [:],
+            overrideMIMEType: "video/mp4"
+        )
+        let localURL = try proxy.start()
+        defer { proxy.stop(reason: "hostile_range_test_end") }
+
+        var request = URLRequest(url: localURL)
+        request.setValue("bytes=9223372036854775807-", forHTTPHeaderField: "Range")
+        request.timeoutInterval = 5
+        let (received, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+        let http = try XCTUnwrap(response as? HTTPURLResponse)
+
+        XCTAssertEqual(http.statusCode, 416)
+        XCTAssertEqual(http.value(forHTTPHeaderField: "Content-Range"), "bytes */64")
+        XCTAssertEqual(received, Data())
+    }
+
+    @MainActor
+    func testColdCacheProxyDoesNotMapIgnoredRangeBodyToNonzeroOffset() async throws {
+        let serveWindow = 4 * 1_024 * 1_024
+        let bodyLength = 12 * 1_024 * 1_024
+        var data = Data(repeating: 0xA5, count: bodyLength)
+        for index in 0..<8 { data[index] = UInt8(index) }
+        let server = ThrottledDropHTTPServer(
+            payload: data,
+            contentType: "video/mp4",
+            throttleBytesPerSec: 50_000_000,
+            ignoresRangeRequests: true
+        )
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CacheProxyIgnoredRange.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDirectory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 64 * 1_024, maxBytes: 32 * 1_024 * 1_024)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "original",
+            userID: "user",
+            serverID: "server",
+            itemID: "ignored-range",
+            sourceID: "source",
+            routeURL: origin
+        )
+        let downloader = OriginDownloader(
+            remoteURL: origin,
+            headers: [:],
+            key: key,
+            store: store,
+            overrideContentType: "video/mp4",
+            sessionConfiguration: .ephemeral
+        )
+        let proxy = LocalCacheHTTPServer(
+            store: store,
+            downloader: downloader,
+            key: key,
+            remoteURL: origin,
+            headers: [:],
+            overrideMIMEType: "video/mp4"
+        )
+        let localURL = try proxy.start()
+        defer { proxy.stop(reason: "ignored_range_test_end") }
+
+        var request = URLRequest(url: localURL)
+        request.setValue("bytes=4-7", forHTTPHeaderField: "Range")
+        request.timeoutInterval = 5
+        let (received, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+        let http = try XCTUnwrap(response as? HTTPURLResponse)
+
+        XCTAssertEqual(http.statusCode, 206)
+        XCTAssertEqual(http.value(forHTTPHeaderField: "Content-Range"), "bytes 4-7/\(bodyLength)")
+        XCTAssertEqual(
+            Array(received),
+            [4, 5, 6, 7],
+            "A 200 body that starts at origin offset zero must never be cached or served as bytes 4-7."
+        )
+        XCTAssertEqual(server.connectionCount, 2, "The rejected nonzero 200 must fall back to one safe zero-offset probe.")
+        XCTAssertLessThanOrEqual(
+            server.totalServedBytes,
+            serveWindow + 4 * 32 * 1_024,
+            "Header rejection may leave only a few transport chunks in flight; the zero-offset fallback must stop at 4 MiB."
+        )
+        let cachedEnd = try await store.contiguousEnd(from: 0, key: key)
+        XCTAssertEqual(cachedEnd, Int64(serveWindow))
+    }
+
+    @MainActor
+    func testColdCacheProxyBoundsOversized206ToInternalFetchWindow() async throws {
+        let serveWindow = 4 * 1_024 * 1_024
+        let bodyLength = 12 * 1_024 * 1_024
+        var data = Data(repeating: 0xA5, count: bodyLength)
+        for index in 0..<8 { data[index] = UInt8(index) }
+        let server = ThrottledDropHTTPServer(
+            payload: data,
+            contentType: "video/mp4",
+            throttleBytesPerSec: 50_000_000,
+            oversizesRangeResponses: true
+        )
+        let port = try server.start()
+        defer { server.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(port)/clip.mp4")!
+
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CacheProxyOversizedRange.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDirectory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 64 * 1_024, maxBytes: 32 * 1_024 * 1_024)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "original",
+            userID: "user",
+            serverID: "server",
+            itemID: "oversized-range",
+            sourceID: "source",
+            routeURL: origin
+        )
+        let downloader = OriginDownloader(
+            remoteURL: origin,
+            headers: [:],
+            key: key,
+            store: store,
+            overrideContentType: "video/mp4",
+            sessionConfiguration: .ephemeral
+        )
+        let proxy = LocalCacheHTTPServer(
+            store: store,
+            downloader: downloader,
+            key: key,
+            remoteURL: origin,
+            headers: [:],
+            overrideMIMEType: "video/mp4"
+        )
+        let localURL = try proxy.start()
+        defer { proxy.stop(reason: "oversized_range_test_end") }
+
+        var request = URLRequest(url: localURL)
+        request.setValue("bytes=4-7", forHTTPHeaderField: "Range")
+        request.timeoutInterval = 5
+        let (received, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+        let http = try XCTUnwrap(response as? HTTPURLResponse)
+
+        XCTAssertEqual(http.statusCode, 206)
+        XCTAssertEqual(http.value(forHTTPHeaderField: "Content-Range"), "bytes 4-7/\(bodyLength)")
+        XCTAssertEqual(Array(received), [4, 5, 6, 7])
+        XCTAssertEqual(server.connectionCount, 1)
+        XCTAssertLessThanOrEqual(
+            server.totalServedBytes,
+            serveWindow + 32 * 1_024,
+            "An oversized 206 must be cancelled once the 4 MiB internal fetch window is full."
+        )
+        let cachedEnd = try await store.contiguousEnd(from: 4, key: key)
+        XCTAssertEqual(cachedEnd, Int64(4 + serveWindow))
+    }
+
     /// Reproduces the on-device deep RESUME the toy test missed: playback starts deep in the file
     /// (seek) with a small ahead-budget (a finite cache vs a file much larger than it, like the
     /// 11.7 GB original). v1 waited on the windowed downloader to crawl to the seek point → slow
@@ -1498,6 +1700,8 @@ final class PlaybackDropResilienceTests: XCTestCase {
         private let throttleBytesPerSec: Double
         private let dropMode: DropMode
         private let keepAlive: Bool
+        private let ignoresRangeRequests: Bool
+        private let oversizesRangeResponses: Bool
         private let queue = DispatchQueue(label: "reelfin.droptest.http")
         private var listener: NWListener?
         private let lock = NSLock()
@@ -1510,13 +1714,17 @@ final class PlaybackDropResilienceTests: XCTestCase {
             contentType: String,
             throttleBytesPerSec: Double,
             dropMode: DropMode = .freeze,
-            keepAlive: Bool = false
+            keepAlive: Bool = false,
+            ignoresRangeRequests: Bool = false,
+            oversizesRangeResponses: Bool = false
         ) {
             self.payload = payload
             self.contentType = contentType
             self.throttleBytesPerSec = throttleBytesPerSec
             self.dropMode = dropMode
             self.keepAlive = keepAlive
+            self.ignoresRangeRequests = ignoresRangeRequests
+            self.oversizesRangeResponses = oversizesRangeResponses
         }
 
         func armDrops(_ windows: [(start: Date, end: Date)]) { lock.lock(); drops = windows; lock.unlock() }
@@ -1574,12 +1782,14 @@ final class PlaybackDropResilienceTests: XCTestCase {
             var start = 0
             var end = total - 1
             var status = "200 OK"
-            if let rangeLine = header.split(separator: "\r\n").first(where: { $0.lowercased().hasPrefix("range:") }),
+            if !ignoresRangeRequests,
+               let rangeLine = header.split(separator: "\r\n").first(where: { $0.lowercased().hasPrefix("range:") }),
                let eq = rangeLine.firstIndex(of: "=") {
                 let spec = rangeLine[rangeLine.index(after: eq)...].trimmingCharacters(in: .whitespaces)
                 let parts = spec.split(separator: "-", omittingEmptySubsequences: false)
                 if let s = Int(parts.first ?? "") { start = s }
                 if parts.count > 1, let e = Int(parts[1]) { end = e }
+                if oversizesRangeResponses { end = total - 1 }
                 status = "206 Partial Content"
             }
             start = max(0, min(start, total - 1))
