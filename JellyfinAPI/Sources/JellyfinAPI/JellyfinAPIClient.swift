@@ -110,6 +110,13 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
     private var configuration: ServerConfiguration?
     private var activeSession: UserSession?
+    private struct PendingQuickConnect: Equatable {
+        let generation: UInt64
+        let normalizedServerURL: URL
+        let secret: String
+    }
+    private var quickConnectGeneration: UInt64 = 0
+    private var pendingQuickConnect: PendingQuickConnect?
 
     public init(
         tokenStore: TokenStoreProtocol = KeychainTokenStore(),
@@ -183,6 +190,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func signOut() async {
+        invalidatePendingQuickConnect()
         activeSession = nil
         settingsStore.lastSession = nil
         try? tokenStore.clearToken()
@@ -201,32 +209,41 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     // MARK: - Quick Connect
 
     public func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState {
-        let url = try buildURL(baseURL: serverURL, path: "QuickConnect/Initiate", query: [])
+        let normalizedServerURL = try normalizedQuickConnectServerURL(serverURL)
+        invalidatePendingQuickConnect()
+        let generation = quickConnectGeneration
+
+        let url = try buildURL(baseURL: normalizedServerURL, path: "QuickConnect/Initiate", query: [])
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
         request.timeoutInterval = 10
         let data = try await send(request, dedupe: false)
-        let dto = try decoder.decode(QuickConnectInitiateResponseDTO.self, from: data)
-        // Persist the server URL so pollQuickConnect can reach it without requiring a separate configure() call
-        if configuration == nil {
-            configuration = ServerConfiguration(serverURL: serverURL)
-            settingsStore.serverConfiguration = configuration
+        guard generation == quickConnectGeneration else {
+            throw AppError.unauthenticated
         }
+        let dto = try decoder.decode(QuickConnectInitiateResponseDTO.self, from: data)
+        pendingQuickConnect = PendingQuickConnect(
+            generation: generation,
+            normalizedServerURL: normalizedServerURL,
+            secret: dto.secret
+        )
         return QuickConnectState(code: dto.code, secret: dto.secret)
     }
 
     public func pollQuickConnect(secret: String) async throws -> UserSession? {
-        // serverURL is taken from configuration if available, or derived from the stored server config.
-        // This is called only after initiateQuickConnect which validates the URL.
-        guard let serverURL = configuration?.serverURL ?? settingsStore.serverConfiguration?.serverURL else {
-            throw AppError.invalidServerURL
+        guard
+            let pending = pendingQuickConnect,
+            pending.generation == quickConnectGeneration,
+            pending.secret == secret
+        else {
+            throw AppError.unauthenticated
         }
         let url = try buildURL(
-            baseURL: serverURL,
+            baseURL: pending.normalizedServerURL,
             path: "QuickConnect/Connect",
-            query: [URLQueryItem(name: "Secret", value: secret)]
+            query: [URLQueryItem(name: "Secret", value: pending.secret)]
         )
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
@@ -234,28 +251,95 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         req.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
         req.timeoutInterval = 10
         let data = try await send(req, dedupe: false)
+        try requireCurrentQuickConnect(pending)
         let dto = try decoder.decode(QuickConnectAuthResponseDTO.self, from: data)
         guard dto.authenticated else {
             return nil
         }
-        // Exchange the secret for a full user session via /Users/AuthenticateWithQuickConnect
-        let exchangeBody = QuickConnectAuthRequestDTO(secret: secret)
+        let exchangeBody = QuickConnectAuthRequestDTO(secret: pending.secret)
         let sessionDTO: AuthenticateResponseDTO = try await requestWithBaseURL(
-            baseURL: serverURL,
+            baseURL: pending.normalizedServerURL,
             path: "Users/AuthenticateWithQuickConnect",
             method: "POST",
             body: exchangeBody
         )
+        try requireCurrentQuickConnect(pending)
+
         let session = UserSession(userID: sessionDTO.user.id, username: sessionDTO.user.name, token: sessionDTO.accessToken)
-        activeSession = session
-        // Also persist configuration so subsequent API calls work
-        if configuration == nil {
-            configuration = ServerConfiguration(serverURL: serverURL)
-            settingsStore.serverConfiguration = configuration
-        }
-        settingsStore.lastSession = session
+        let authenticatedConfiguration = configurationForSuccessfulQuickConnect(
+            serverURL: pending.normalizedServerURL
+        )
+
         try tokenStore.saveToken(sessionDTO.accessToken)
+        configuration = authenticatedConfiguration
+        settingsStore.serverConfiguration = authenticatedConfiguration
+        activeSession = session
+        settingsStore.lastSession = session
+        invalidatePendingQuickConnect()
         return session
+    }
+
+    private func invalidatePendingQuickConnect() {
+        quickConnectGeneration &+= 1
+        pendingQuickConnect = nil
+    }
+
+    private func requireCurrentQuickConnect(_ pending: PendingQuickConnect) throws {
+        guard pendingQuickConnect == pending, quickConnectGeneration == pending.generation else {
+            throw AppError.unauthenticated
+        }
+    }
+
+    private func configurationForSuccessfulQuickConnect(serverURL: URL) -> ServerConfiguration {
+        guard
+            var existing = configuration,
+            (try? normalizedQuickConnectServerURL(existing.serverURL)) == serverURL
+        else {
+            return ServerConfiguration(serverURL: serverURL)
+        }
+
+        existing.serverURL = serverURL
+        return existing
+    }
+
+    private func normalizedQuickConnectServerURL(_ serverURL: URL) throws -> URL {
+        guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else {
+            throw AppError.invalidServerURL
+        }
+
+        guard
+            let rawScheme = components.scheme,
+            let rawHost = components.host,
+            !rawHost.isEmpty,
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil
+        else {
+            throw AppError.invalidServerURL
+        }
+
+        let scheme = rawScheme.lowercased()
+        guard scheme == "http" || scheme == "https" else {
+            throw AppError.invalidServerURL
+        }
+
+        components.scheme = scheme
+        components.host = rawHost.lowercased()
+        if (scheme == "https" && components.port == 443) || (scheme == "http" && components.port == 80) {
+            components.port = nil
+        }
+
+        var basePath = components.percentEncodedPath
+        while basePath.hasSuffix("/") {
+            basePath.removeLast()
+        }
+        components.percentEncodedPath = basePath
+
+        guard let normalizedURL = components.url else {
+            throw AppError.invalidServerURL
+        }
+        return normalizedURL
     }
 
     /// Sends a request using an explicit base URL (used before configuration is set).

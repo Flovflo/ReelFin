@@ -563,6 +563,7 @@
 		9D940ACBF98E3269814AD2DD /* onboarding-poster-5.webp in Resources */ = {isa = PBXBuildFile; fileRef = 03BCBCB3E15DAECF025A18DB /* onboarding-poster-5.webp */; };
 		9DAAD76BCD61D394936E1C9F /* AdaptiveLanePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16885A585BD7B77EED82B879 /* AdaptiveLanePolicy.swift */; };
 		9E31266E28A20464CD979BA1 /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010061F5B063C9A895488573 /* VideoDecoder.swift */; };
+		9EF9AC953EA9CD410D54296C /* JellyfinQuickConnectOriginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08244FF65ACF5CDFD2090DDF /* JellyfinQuickConnectOriginTests.swift */; };
 		9F98ADE4518077596E252548 /* SharedTV.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A6CD00B2E7BEF6765C51F19F /* SharedTV.framework */; };
 		9FE861A6B967CFA1F2C36BC9 /* TVLoginStageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34F59DEE07F54909C6283E9 /* TVLoginStageViews.swift */; };
 		A027B62E3A64DB7374EEE01F /* FMP4RepackagerFilteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9676C3B1A4A3A6ECF4BA02D /* FMP4RepackagerFilteringTests.swift */; };
@@ -1456,6 +1457,7 @@
 		04B4688E59279A866D421D0E /* LocalMediaGatewayHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalMediaGatewayHTTP.swift; sourceTree = "<group>"; };
 		055E48E0B61BC477B82D6A92 /* CapabilityEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityEngineTests.swift; sourceTree = "<group>"; };
 		05A6834BB4CCF900002AF7AF /* ErrorTracking.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorTracking.swift; sourceTree = "<group>"; };
+		08244FF65ACF5CDFD2090DDF /* JellyfinQuickConnectOriginTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JellyfinQuickConnectOriginTests.swift; sourceTree = "<group>"; };
 		082AD54A48D610316F4AE3CB /* WebVTTParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebVTTParser.swift; sourceTree = "<group>"; };
 		0882C2679F6381E03D8FFA8C /* DefaultEpisodeReleaseTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultEpisodeReleaseTracker.swift; sourceTree = "<group>"; };
 		08A483F2699C0AFD53718AE6 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
@@ -2568,6 +2570,7 @@
 				62C5B321051505611263B495 /* JellyfinImageURLTests.swift */,
 				9D673E6B988526C030AEDD6D /* JellyfinLibraryAggregationTests.swift */,
 				EE0BA95DB3523F946C2F332E /* JellyfinPlaybackReportingTests.swift */,
+				08244FF65ACF5CDFD2090DDF /* JellyfinQuickConnectOriginTests.swift */,
 				2706596C392DE97303EEF589 /* JellyfinTrickplayTests.swift */,
 				772F152F17A37E7C179F4F11 /* MediaDetailRepositoryTests.swift */,
 				C251052A4CE389B8FAD71013 /* SeriesLookupCacheTests.swift */,
@@ -4640,6 +4643,7 @@
 				2A04EFDA004ACEAE6C4186EA /* JellyfinImageURLTests.swift in Sources */,
 				DE165C48E1776893CE3DA037 /* JellyfinLibraryAggregationTests.swift in Sources */,
 				40DE6A4426C9963EF685542C /* JellyfinPlaybackReportingTests.swift in Sources */,
+				9EF9AC953EA9CD410D54296C /* JellyfinQuickConnectOriginTests.swift in Sources */,
 				2CF33FB303819186E2987BBE /* JellyfinTrickplayTests.swift in Sources */,
 				0AACCFCC8D21F88C26C37B45 /* MediaDetailRepositoryTests.swift in Sources */,
 				67D06B0DE1ADF851EC9067AB /* SeriesLookupCacheTests.swift in Sources */,
