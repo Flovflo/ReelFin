@@ -19,6 +19,20 @@ final class RootViewModel {
         self.dependencies = dependencies
     }
 
+    func runRootLifecycle() async {
+        let invalidations = dependencies.apiClient.sessionInvalidations
+        await bootstrap()
+
+        for await _ in invalidations {
+            guard !Task.isCancelled else { return }
+            guard await dependencies.apiClient.currentSession() == nil else { continue }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                didBootstrap = true
+                isAuthenticated = false
+            }
+        }
+    }
+
     func bootstrap() async {
         let session = await dependencies.apiClient.currentSession()
         let serverConfig = await dependencies.apiClient.currentConfiguration() ?? dependencies.settingsStore.serverConfiguration

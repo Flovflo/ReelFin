@@ -5,6 +5,8 @@ import SwiftUI
 import UIKit
 
 final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
+    let sessionInvalidations: AsyncStream<SessionInvalidationEvent>
+
     private var config: ServerConfiguration?
     private var session: UserSession?
     private let testConnectionOverride: (@Sendable (URL) async throws -> Void)?
@@ -16,12 +18,14 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
 
     init(
         authenticated: Bool = true,
+        sessionInvalidations: AsyncStream<SessionInvalidationEvent> = AsyncStream { $0.finish() },
         testConnectionOverride: (@Sendable (URL) async throws -> Void)? = nil,
         initiateQuickConnectOverride: (@Sendable (URL) async throws -> QuickConnectState)? = nil,
         pollQuickConnectOverride: (@Sendable (String) async throws -> UserSession?)? = nil
     ) {
         config = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
         session = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
+        self.sessionInvalidations = sessionInvalidations
         self.testConnectionOverride = testConnectionOverride
         self.initiateQuickConnectOverride = initiateQuickConnectOverride
         self.pollQuickConnectOverride = pollQuickConnectOverride
