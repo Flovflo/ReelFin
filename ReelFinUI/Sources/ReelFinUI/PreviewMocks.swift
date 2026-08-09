@@ -5,10 +5,15 @@ import SwiftUI
 import UIKit
 
 final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {
-    let sessionInvalidations: AsyncStream<SessionInvalidationEvent>
+    var sessionInvalidations: AsyncStream<SessionInvalidationEvent> {
+        sessionInvalidationsOverride?() ?? defaultSessionInvalidations
+    }
 
     private var config: ServerConfiguration?
     private var session: UserSession?
+    private let defaultSessionInvalidations: AsyncStream<SessionInvalidationEvent>
+    private let sessionInvalidationsOverride: (@Sendable () -> AsyncStream<SessionInvalidationEvent>)?
+    private let currentSessionOverride: (@Sendable () async -> UserSession?)?
     private let testConnectionOverride: (@Sendable (URL) async throws -> Void)?
     private let initiateQuickConnectOverride: (@Sendable (URL) async throws -> QuickConnectState)?
     private let pollQuickConnectOverride: (@Sendable (String) async throws -> UserSession?)?
@@ -19,13 +24,17 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     init(
         authenticated: Bool = true,
         sessionInvalidations: AsyncStream<SessionInvalidationEvent> = AsyncStream { $0.finish() },
+        sessionInvalidationsOverride: (@Sendable () -> AsyncStream<SessionInvalidationEvent>)? = nil,
+        currentSessionOverride: (@Sendable () async -> UserSession?)? = nil,
         testConnectionOverride: (@Sendable (URL) async throws -> Void)? = nil,
         initiateQuickConnectOverride: (@Sendable (URL) async throws -> QuickConnectState)? = nil,
         pollQuickConnectOverride: (@Sendable (String) async throws -> UserSession?)? = nil
     ) {
         config = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
         session = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
-        self.sessionInvalidations = sessionInvalidations
+        defaultSessionInvalidations = sessionInvalidations
+        self.sessionInvalidationsOverride = sessionInvalidationsOverride
+        self.currentSessionOverride = currentSessionOverride
         self.testConnectionOverride = testConnectionOverride
         self.initiateQuickConnectOverride = initiateQuickConnectOverride
         self.pollQuickConnectOverride = pollQuickConnectOverride
@@ -36,7 +45,10 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func currentSession() async -> UserSession? {
-        session
+        if let currentSessionOverride {
+            return await currentSessionOverride()
+        }
+        return session
     }
 
     func configure(server: ServerConfiguration) async throws {

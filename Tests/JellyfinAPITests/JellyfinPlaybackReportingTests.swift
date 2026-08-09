@@ -142,8 +142,9 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         }
         let client = makeUnauthorizedClient()
         let received = expectation(description: "Current session invalidation")
+        let events = client.sessionInvalidations
         let consumer = Task {
-            for await event in client.sessionInvalidations {
+            for await event in events {
                 XCTAssertEqual(event, .unauthorized)
                 received.fulfill()
                 return
@@ -240,8 +241,9 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
         let unexpected = expectation(description: "No session invalidation for stale unauthorized response")
         unexpected.isInverted = true
+        let events = client.sessionInvalidations
         let consumer = Task {
-            for await _ in client.sessionInvalidations {
+            for await _ in events {
                 unexpected.fulfill()
                 return
             }
@@ -297,8 +299,9 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
         let unexpected = expectation(description: "No session invalidation for public unauthorized response")
         unexpected.isInverted = true
+        let events = client.sessionInvalidations
         let consumer = Task {
-            for await _ in client.sessionInvalidations {
+            for await _ in events {
                 unexpected.fulfill()
                 return
             }

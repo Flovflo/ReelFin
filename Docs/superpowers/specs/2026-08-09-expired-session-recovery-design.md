@@ -29,7 +29,7 @@ Approved in conversation on August 9, 2026. This specification covers only the e
 
 The API boundary exposes a typed `AsyncStream<SessionInvalidationEvent>` through `JellyfinAPIClientProtocol`. The concrete client owns a private thread-safe broadcaster, and each read of `sessionInvalidations` creates an independently cancelable stream subscription. The actor emits an event only when an authenticated request invalidates the current session. A default protocol implementation returns an already-finished stream so existing focused fakes remain source-compatible unless a test needs to drive invalidation.
 
-`RootViewModel` gains one long-running async lifecycle method. It acquires a fresh subscription, bootstraps current state, then consumes that subscription. Each event marks bootstrap complete and sets `isAuthenticated` to `false` on the main actor. `ReelFinRootView` runs that method from its existing `.task`, so SwiftUI cancellation removes only that subscription when the root view disappears or is replaced. A recreated `.task` reads the property again and receives a new live subscription on the same API client.
+`RootViewModel` gains one long-running async lifecycle method. It acquires a fresh subscription, bootstraps current state, then consumes that subscription. Each accepted event marks bootstrap complete and sets `isAuthenticated` to `false` on the main actor. `ReelFinRootView` runs that method from `.task(id: ObjectIdentifier(viewModel))`. Replacing the root model therefore cancels the old lifecycle and starts a lifecycle bound to the replacement model, while ordinary disappearance cancels the current lifecycle. Either cancellation removes only that subscription; a recreated task reads the property again and receives a new live subscription on the same API client.
 
 This approach is preferred over `NotificationCenter` because the event stays typed and scoped to the injected API dependency, and over polling because invalidation is immediate and creates no background wakeups.
 
@@ -54,9 +54,9 @@ The broadcaster assigns each subscription an opaque process-local identifier and
 
 The root lifecycle method performs bootstrap before listening for events. The stream property is nonisolated and creates a buffered subscription synchronously, so an event cannot be lost between acquiring that subscription and entering iteration. The root captures a fresh stream before awaiting bootstrap, then consumes it afterward.
 
-When SwiftUI cancels the lifecycle because the root disappears, the stream's termination handler unregisters only that lifecycle subscriber. The client broadcaster remains live. If the root reappears with the same dependencies, the new `.task` calls `runRootLifecycle()` again, obtains a new subscription, and receives subsequent invalidations normally.
+When SwiftUI cancels the lifecycle because the root disappears or its `RootViewModel` identity changes, the stream's termination handler unregisters only that lifecycle subscriber. The client broadcaster remains live. If the root reappears with the same dependencies, or review mode replaces the root model, `.task(id:)` calls `runRootLifecycle()` for the current model, obtains a new subscription, and receives subsequent invalidations normally.
 
-Before hiding authenticated UI for an event, the root re-reads `currentSession()`. If a newer login completed after the event was emitted but before it was consumed, the root ignores the obsolete event. This second guard prevents stream-delivery scheduling from signing out a replacement session without putting token or user data in the event.
+Before hiding authenticated UI for an event, the root captures a main-actor authentication generation and re-reads `currentSession()`. After that actor hop it rechecks cancellation, requires the generation to be unchanged, and requires the returned session to be `nil`; there is no further suspension between those guards and the UI mutation. `completeLogin(_:)`, explicit sign-out intent, and an accepted invalidation advance the generation. Consequently, cancellation during the session lookup and a newer login completing during that lookup both make the old event inert. This complements the session check and prevents stream-delivery or actor-reentrancy scheduling from signing out a replacement session without putting token or user data in the event.
 
 When invalidated, the root does not recreate dependencies, clear cached metadata, or erase server configuration. SwiftUI replaces the authenticated shell with the existing login flow. A successful subsequent login calls the existing `completeLogin(_:)` path and restores authenticated UI state.
 
@@ -88,6 +88,9 @@ Tests follow strict red-green-refactor cycles.
 - Bootstrap still authenticates when both a session and server configuration exist.
 - Logged-out bootstrap still completes without a root spinner.
 - Canceling the lifecycle task stops its observation without disabling a later lifecycle subscription on the same client.
+- Replacing the root model cancels the old lifecycle and the replacement model receives invalidation through a fresh subscription.
+- Canceling a lifecycle while its session recheck is suspended prevents the resumed lookup from mutating root state.
+- Completing a replacement login while that recheck is suspended changes the authentication generation and prevents the old event from hiding the replacement session.
 - Completing a new login after invalidation restores authenticated state.
 
 ### Integration and release checks

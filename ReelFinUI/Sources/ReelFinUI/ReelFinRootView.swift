@@ -64,7 +64,7 @@ public struct ReelFinRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.reelFinDisplayDensity, displayDensity)
-        .task {
+        .task(id: ObjectIdentifier(viewModel)) {
             await viewModel.runRootLifecycle()
         }
     }

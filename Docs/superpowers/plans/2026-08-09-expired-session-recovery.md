@@ -4,7 +4,7 @@
 
 **Goal:** Replace the authenticated Home shell with the existing login flow as soon as the current Jellyfin session is invalidated by `401 Unauthorized`, without allowing stale requests or delayed events to hide a newer login.
 
-**Architecture:** `JellyfinAPIClient` exposes a token-free, re-subscribable `AsyncStream<SessionInvalidationEvent>` backed by a private thread-safe broadcaster and emits `.unauthorized` only for a current-token invalidation. `RootViewModel` owns one SwiftUI-scoped subscription per lifecycle run, rechecks the current session before changing UI state, and remains cancelable through the root view's existing `.task` without disabling later subscriptions.
+**Architecture:** `JellyfinAPIClient` exposes a token-free, re-subscribable `AsyncStream<SessionInvalidationEvent>` backed by a private thread-safe broadcaster and emits `.unauthorized` only for a current-token invalidation. `RootViewModel` owns one SwiftUI-scoped subscription per lifecycle run, rechecks cancellation, a main-actor authentication generation, and the current session before changing UI state, and remains cancelable through `.task(id: ObjectIdentifier(viewModel))` without disabling later subscriptions.
 
 **Tech Stack:** Swift 6, Swift Concurrency actors and `AsyncStream`, SwiftUI Observation, XCTest, XcodeGen, iOS/tvOS simulator builds.
 
@@ -25,8 +25,8 @@
 - `Shared/Sources/Shared/Protocols.swift`: owns the cross-module event type and protocol surface.
 - `JellyfinAPI/Sources/JellyfinAPI/JellyfinAPIClient.swift`: owns the re-subscribable event broadcaster and current-token invalidation emission.
 - `ReelFinUI/Sources/ReelFinUI/RootViewModel.swift`: owns bootstrap plus session-event consumption and root auth state.
-- `ReelFinUI/Sources/ReelFinUI/ReelFinRootView.swift`: scopes the lifecycle task to the root view.
-- `ReelFinUI/Sources/ReelFinUI/PreviewMocks.swift`: accepts an injected stream in the existing preview/test API double without adding test-only methods to production classes.
+- `ReelFinUI/Sources/ReelFinUI/ReelFinRootView.swift`: scopes the lifecycle task to the current root-model identity.
+- `ReelFinUI/Sources/ReelFinUI/PreviewMocks.swift`: accepts an injected stream or stream factory and a controllable session lookup in the existing preview/test API double without adding test-only methods to production classes.
 - `Tests/JellyfinAPITests/JellyfinPlaybackReportingTests.swift`: proves API invalidation and stale-request behavior.
 - `Tests/PlaybackEngineTests/RootViewModelAuthPersistenceTests.swift`: proves the user-visible root transition and delayed-event guard.
 
@@ -267,20 +267,32 @@ func runRootLifecycle() async {
     let invalidations = dependencies.apiClient.sessionInvalidations
     await bootstrap()
 
-    for await _ in invalidations {
-        guard !Task.isCancelled else { return }
-        guard await dependencies.apiClient.currentSession() == nil else { continue }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            didBootstrap = true
-            isAuthenticated = false
+        for await _ in invalidations {
+            guard !Task.isCancelled else { return }
+            let generation = authenticationGeneration
+            let session = await dependencies.apiClient.currentSession()
+            guard !Task.isCancelled else { return }
+            guard authenticationGeneration == generation, session == nil else { continue }
+            authenticationGeneration &+= 1
+            withAnimation(.easeInOut(duration: 0.2)) {
+                didBootstrap = true
+                isAuthenticated = false
         }
     }
 }
 ```
 
-Replace the root view task body with `await viewModel.runRootLifecycle()`.
+Bind the root view task to the model it mutates:
 
-Each `runRootLifecycle()` invocation reads `sessionInvalidations` once before bootstrap and therefore owns one buffered subscription. Canceling the SwiftUI `.task` unregisters only that subscription; if the root reappears with the same dependencies, the recreated task obtains a fresh live subscription from the client broadcaster.
+```swift
+.task(id: ObjectIdentifier(viewModel)) {
+    await viewModel.runRootLifecycle()
+}
+```
+
+Each `runRootLifecycle()` invocation reads `sessionInvalidations` once before bootstrap and therefore owns one buffered subscription. Canceling the SwiftUI task unregisters only that subscription; if the root reappears with the same dependencies, the recreated task obtains a fresh live subscription from the client broadcaster. Replacing `viewModel`, including review-mode entry or exit, changes the task identity so SwiftUI cancels the lifecycle attached to the old model and subscribes the replacement model.
+
+Before awaiting `currentSession()`, capture a local main-actor authentication generation. After the await, recheck `Task.isCancelled`, require the generation to remain unchanged, and require the returned session to be `nil`. Do not suspend again between those guards and the unauthenticated-state mutation. Advance the generation on `completeLogin(_:)`, explicit sign-out intent, and each accepted invalidation so a concurrent auth transition makes an older event inert.
 
 - [ ] **Step 5: Run the Home-zombie test and observe GREEN**
 
@@ -312,6 +324,10 @@ Add a bounded test-only helper using `ContinuousClock` (one-second deadline plus
 - [ ] **Step 7: Prove the guard test fails against the mutation, then restore**
 
 Temporarily remove the current-session recheck, run only the guard test, confirm failure, restore the guard, and rerun it to green.
+
+- [ ] **Step 7a: Prove lifecycle replacement and actor-hop races**
+
+Add bounded tests that cancel one lifecycle and start another on the same client, cancel while a controllable `currentSession()` lookup is suspended, and call `completeLogin(_:)` while that lookup is suspended. The replacement lifecycle must receive the next invalidation, while both stale suspended lookups must leave the current authenticated UI unchanged.
 
 - [ ] **Step 8: Run all root persistence tests**
 
