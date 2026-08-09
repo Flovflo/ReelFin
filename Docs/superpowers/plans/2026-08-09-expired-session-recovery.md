@@ -4,7 +4,7 @@
 
 **Goal:** Replace the authenticated Home shell with the existing login flow as soon as the current Jellyfin session is invalidated by `401 Unauthorized`, without allowing stale requests or delayed events to hide a newer login.
 
-**Architecture:** `JellyfinAPIClient` exposes a token-free `AsyncStream<SessionInvalidationEvent>` and emits `.unauthorized` only for a current-token invalidation. `RootViewModel` owns the SwiftUI-scoped consumer lifecycle, rechecks the current session before changing UI state, and remains cancelable through the root view's existing `.task`.
+**Architecture:** `JellyfinAPIClient` exposes a token-free, re-subscribable `AsyncStream<SessionInvalidationEvent>` backed by a private thread-safe broadcaster and emits `.unauthorized` only for a current-token invalidation. `RootViewModel` owns one SwiftUI-scoped subscription per lifecycle run, rechecks the current session before changing UI state, and remains cancelable through the root view's existing `.task` without disabling later subscriptions.
 
 **Tech Stack:** Swift 6, Swift Concurrency actors and `AsyncStream`, SwiftUI Observation, XCTest, XcodeGen, iOS/tvOS simulator builds.
 
@@ -23,7 +23,7 @@
 ## File Structure
 
 - `Shared/Sources/Shared/Protocols.swift`: owns the cross-module event type and protocol surface.
-- `JellyfinAPI/Sources/JellyfinAPI/JellyfinAPIClient.swift`: owns event creation and current-token invalidation emission.
+- `JellyfinAPI/Sources/JellyfinAPI/JellyfinAPIClient.swift`: owns the re-subscribable event broadcaster and current-token invalidation emission.
 - `ReelFinUI/Sources/ReelFinUI/RootViewModel.swift`: owns bootstrap plus session-event consumption and root auth state.
 - `ReelFinUI/Sources/ReelFinUI/ReelFinRootView.swift`: scopes the lifecycle task to the root view.
 - `ReelFinUI/Sources/ReelFinUI/PreviewMocks.swift`: accepts an injected stream in the existing preview/test API double without adding test-only methods to production classes.
@@ -108,16 +108,21 @@ public extension JellyfinAPIClientProtocol {
 
 The default finished stream preserves existing fakes that do not participate in root-session tests.
 
-- [ ] **Step 4: Implement current-session emission without an actor reentrancy race**
+- [ ] **Step 4: Implement re-subscribable current-session emission without an actor reentrancy race**
 
-Initialize a process-local stream on the actor:
+Keep the protocol property and make each concrete-client access return a new process-local subscription:
 
 ```swift
-public nonisolated let sessionInvalidations: AsyncStream<SessionInvalidationEvent>
-private let sessionInvalidationContinuation: AsyncStream<SessionInvalidationEvent>.Continuation
+public nonisolated var sessionInvalidations: AsyncStream<SessionInvalidationEvent> {
+    sessionInvalidationBroadcaster.subscribe()
+}
+
+private nonisolated let sessionInvalidationBroadcaster = SessionInvalidationBroadcaster()
 ```
 
-In `init`, create it with `AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))`. Refactor clearing into a helper that performs all state and persistence mutation synchronously on the actor, emits before its first `await`, then cancels deduplicated work:
+The private `SessionInvalidationBroadcaster` uses a lock-protected dictionary of continuations keyed by opaque UUIDs. `subscribe()` creates a stream with `.bufferingNewest(1)`, registers its continuation, and removes only that continuation from `onTermination`. `yield(_:)` snapshots continuations under the lock and yields after releasing the lock. Canceling one consumer must not finish the broadcaster or streams created by later property reads.
+
+Refactor clearing into a helper that performs all state and persistence mutation synchronously on the actor, broadcasts before its first `await`, then cancels deduplicated work:
 
 ```swift
 private func invalidateCurrentSessionAsUnauthorized() async {
@@ -125,7 +130,7 @@ private func invalidateCurrentSessionAsUnauthorized() async {
     activeSession = nil
     settingsStore.lastSession = nil
     try? tokenStore.clearToken()
-    sessionInvalidationContinuation.yield(.unauthorized)
+    sessionInvalidationBroadcaster.yield(.unauthorized)
     await deduplicator.cancelAll()
 }
 ```
@@ -161,7 +166,11 @@ Name the tests so they catch removal of the current-token guard and accidental i
 
 Temporarily remove the `activeSession?.token == requestToken` condition, run the stale test, and confirm the inverted expectation fails. Restore the condition immediately and rerun both negative tests to green.
 
-- [ ] **Step 8: Run the owning API test class**
+- [ ] **Step 8: Prove cancellation permits a later subscription**
+
+Add a focused test that starts and cancels a first `sessionInvalidations` consumer, awaits its completion, obtains a second stream from the same concrete client, then provokes a current-session `401`. The second consumer must receive `.unauthorized` within a one-second XCTest deadline. This catches replacement of the broadcaster with a single stored `AsyncStream`.
+
+- [ ] **Step 9: Run the owning API test class**
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild test \
@@ -172,7 +181,7 @@ DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild test \
 
 Expected: all tests in the class pass with zero failures.
 
-- [ ] **Step 9: Commit the API event unit**
+- [ ] **Step 10: Commit the API event unit**
 
 ```bash
 git add Shared/Sources/Shared/Protocols.swift \
@@ -270,6 +279,8 @@ func runRootLifecycle() async {
 ```
 
 Replace the root view task body with `await viewModel.runRootLifecycle()`.
+
+Each `runRootLifecycle()` invocation reads `sessionInvalidations` once before bootstrap and therefore owns one buffered subscription. Canceling the SwiftUI `.task` unregisters only that subscription; if the root reappears with the same dependencies, the recreated task obtains a fresh live subscription from the client broadcaster.
 
 - [ ] **Step 5: Run the Home-zombie test and observe GREEN**
 
@@ -376,4 +387,4 @@ Confirm no fixed sleep, polling, token-bearing event, unrelated playback change,
 
 - [ ] **Step 5: Record performance documentation only if required**
 
-This auth-state change does not add hot-path launch, sync, focus, playback, or artwork work beyond one suspended stream consumer. If review finds a measurable hot-path impact, document it in `PLANS.md` and `OPTIMIZATION_AUDIT.md`; otherwise leave both files unchanged and state why in the delivery report.
+This auth-state change does not add hot-path launch, sync, focus, playback, or artwork work beyond one suspended stream subscriber and lock operations limited to subscription, termination, and invalidation emission. If review finds a measurable hot-path impact, document it in `PLANS.md` and `OPTIMIZATION_AUDIT.md`; otherwise leave both files unchanged and state why in the delivery report.

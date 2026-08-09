@@ -27,9 +27,9 @@ Approved in conversation on August 9, 2026. This specification covers only the e
 
 ## Chosen Architecture
 
-The API boundary exposes a typed `AsyncStream<SessionInvalidationEvent>` through `JellyfinAPIClientProtocol`. The concrete actor owns the stream continuation and emits an event only when an authenticated request invalidates the current session. A default protocol implementation returns an already-finished stream so existing focused fakes remain source-compatible unless a test needs to drive invalidation.
+The API boundary exposes a typed `AsyncStream<SessionInvalidationEvent>` through `JellyfinAPIClientProtocol`. The concrete client owns a private thread-safe broadcaster, and each read of `sessionInvalidations` creates an independently cancelable stream subscription. The actor emits an event only when an authenticated request invalidates the current session. A default protocol implementation returns an already-finished stream so existing focused fakes remain source-compatible unless a test needs to drive invalidation.
 
-`RootViewModel` gains one long-running async lifecycle method. It bootstraps current state, then consumes the invalidation stream. Each event marks bootstrap complete and sets `isAuthenticated` to `false` on the main actor. `ReelFinRootView` runs that method from its existing `.task`, so SwiftUI cancellation automatically ends observation when the root view disappears or is replaced.
+`RootViewModel` gains one long-running async lifecycle method. It acquires a fresh subscription, bootstraps current state, then consumes that subscription. Each event marks bootstrap complete and sets `isAuthenticated` to `false` on the main actor. `ReelFinRootView` runs that method from its existing `.task`, so SwiftUI cancellation removes only that subscription when the root view disappears or is replaced. A recreated `.task` reads the property again and receives a new live subscription on the same API client.
 
 This approach is preferred over `NotificationCenter` because the event stays typed and scoped to the injected API dependency, and over polling because invalidation is immediate and creates no background wakeups.
 
@@ -46,11 +46,15 @@ The existing request-token comparison remains the authority for `401` races:
 3. The request for token A later returns `401`.
 4. Because the active token is B, the actor neither signs out nor emits an event.
 
-For a `401` belonging to the current token, the actor clears session persistence and Keychain state, cancels deduplicated work, and then emits one invalidation event.
+For a `401` belonging to the current token, the actor clears session persistence and Keychain state, synchronously broadcasts one invalidation event before its first `await`, and then cancels deduplicated work.
+
+The broadcaster assigns each subscription an opaque process-local identifier and stores only its continuation. `onTermination` removes that continuation under a lock. Broadcasting snapshots the current continuations under the lock and yields after releasing it, so subscriber termination cannot deadlock emission. Canceling or dropping one stream never finishes the broadcaster or any future stream, and no event payload or subscriber state contains credentials or server data.
 
 ## Root Lifecycle
 
-The root lifecycle method performs bootstrap before listening for events. The stream is nonisolated and created during API initialization, so an event cannot be lost between acquiring the stream and entering iteration. The root captures the stream before awaiting bootstrap, then consumes it afterward.
+The root lifecycle method performs bootstrap before listening for events. The stream property is nonisolated and creates a buffered subscription synchronously, so an event cannot be lost between acquiring that subscription and entering iteration. The root captures a fresh stream before awaiting bootstrap, then consumes it afterward.
+
+When SwiftUI cancels the lifecycle because the root disappears, the stream's termination handler unregisters only that lifecycle subscriber. The client broadcaster remains live. If the root reappears with the same dependencies, the new `.task` calls `runRootLifecycle()` again, obtains a new subscription, and receives subsequent invalidations normally.
 
 Before hiding authenticated UI for an event, the root re-reads `currentSession()`. If a newer login completed after the event was emitted but before it was consumed, the root ignores the obsolete event. This second guard prevents stream-delivery scheduling from signing out a replacement session without putting token or user data in the event.
 
@@ -61,7 +65,7 @@ Review demo mode remains isolated: its preview API uses the default finished str
 ## Error Handling and Privacy
 
 - Stream termination is a normal lifecycle condition and shows no error.
-- Cancellation exits observation promptly.
+- Cancellation exits observation promptly, unregisters only the canceled subscriber, and leaves future subscriptions available.
 - Unauthorized errors still propagate to the initiating feature so it can stop its own loading state.
 - No credential or media metadata enters the event or application logs.
 - The UI uses the existing login copy; this change adds no raw server error text.
@@ -73,6 +77,7 @@ Tests follow strict red-green-refactor cycles.
 ### API actor tests
 
 - A current-session `401` clears the session and yields exactly one `.unauthorized` event.
+- Canceling one consumer and subscribing again on the same client leaves the replacement consumer able to receive a later `.unauthorized` event.
 - A stale `401` arriving after a new authentication leaves the new session active and yields no event.
 - A public unauthenticated request returning `401` does not invalidate an existing session and yields no event.
 - Repeated sign-out while already signed out does not emit duplicate invalidations.
@@ -82,7 +87,7 @@ Tests follow strict red-green-refactor cycles.
 - An authenticated root consuming an invalidation event becomes unauthenticated without relaunch.
 - Bootstrap still authenticates when both a session and server configuration exist.
 - Logged-out bootstrap still completes without a root spinner.
-- Canceling the lifecycle task stops observation and does not retain the root model.
+- Canceling the lifecycle task stops its observation without disabling a later lifecycle subscription on the same client.
 - Completing a new login after invalidation restores authenticated state.
 
 ### Integration and release checks
@@ -94,6 +99,6 @@ Tests follow strict red-green-refactor cycles.
 
 ## Compatibility and Rollout
 
-The change adds no dependency and preserves the public behavior of existing API operations. Protocol fakes remain compatible through a default finished stream. The stream is process-local and does not alter persisted formats, App Store privacy declarations, Jellyfin server state, or playback reporting.
+The change adds no dependency and preserves the public behavior of existing API operations. Protocol fakes remain compatible through a default finished stream. Broadcaster identifiers and streams are process-local and do not alter persisted formats, App Store privacy declarations, Jellyfin server state, or playback reporting.
 
 The release is acceptable only when the focused red-green tests, complete simulator suites, real-server smoke tests, and release archive checks all pass. Simulator evidence validates routing and behavior but does not prove physical-device HDR or Dolby Vision rendering.

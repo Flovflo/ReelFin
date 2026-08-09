@@ -8,9 +8,51 @@ private struct HTTPStatusError: Error {
     let message: String
 }
 
+private final class SessionInvalidationBroadcaster: @unchecked Sendable {
+    private typealias Continuation = AsyncStream<SessionInvalidationEvent>.Continuation
+
+    private let lock = NSLock()
+    private var continuations: [UUID: Continuation] = [:]
+
+    func subscribe() -> AsyncStream<SessionInvalidationEvent> {
+        let identifier = UUID()
+        let subscription = AsyncStream<SessionInvalidationEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        subscription.continuation.onTermination = { [weak self] _ in
+            self?.removeContinuation(for: identifier)
+        }
+
+        lock.lock()
+        continuations[identifier] = subscription.continuation
+        lock.unlock()
+
+        return subscription.stream
+    }
+
+    func yield(_ event: SessionInvalidationEvent) {
+        lock.lock()
+        let subscribers = Array(continuations.values)
+        lock.unlock()
+
+        for continuation in subscribers {
+            continuation.yield(event)
+        }
+    }
+
+    private func removeContinuation(for identifier: UUID) {
+        lock.lock()
+        continuations[identifier] = nil
+        lock.unlock()
+    }
+}
+
 public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
-    public nonisolated let sessionInvalidations: AsyncStream<SessionInvalidationEvent>
-    private let sessionInvalidationContinuation: AsyncStream<SessionInvalidationEvent>.Continuation
+    public nonisolated var sessionInvalidations: AsyncStream<SessionInvalidationEvent> {
+        sessionInvalidationBroadcaster.subscribe()
+    }
+
+    private nonisolated let sessionInvalidationBroadcaster = SessionInvalidationBroadcaster()
 
     private enum ItemFields {
         static let trickplay = ["Trickplay"]
@@ -79,11 +121,6 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         deviceID: String? = nil,
         clientVersion: String? = nil
     ) {
-        let sessionInvalidationStream = AsyncStream<SessionInvalidationEvent>.makeStream(
-            bufferingPolicy: .bufferingNewest(1)
-        )
-        self.sessionInvalidations = sessionInvalidationStream.stream
-        self.sessionInvalidationContinuation = sessionInvalidationStream.continuation
         self.tokenStore = tokenStore
         self.settingsStore = settingsStore
         self.urlSession = session
@@ -157,7 +194,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         activeSession = nil
         settingsStore.lastSession = nil
         try? tokenStore.clearToken()
-        sessionInvalidationContinuation.yield(.unauthorized)
+        sessionInvalidationBroadcaster.yield(.unauthorized)
         await deduplicator.cancelAll()
     }
 
