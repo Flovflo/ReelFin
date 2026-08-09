@@ -9,6 +9,9 @@ private struct HTTPStatusError: Error {
 }
 
 public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
+    public nonisolated let sessionInvalidations: AsyncStream<SessionInvalidationEvent>
+    private let sessionInvalidationContinuation: AsyncStream<SessionInvalidationEvent>.Continuation
+
     private enum ItemFields {
         static let trickplay = ["Trickplay"]
         static let home = [
@@ -76,6 +79,11 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         deviceID: String? = nil,
         clientVersion: String? = nil
     ) {
+        let sessionInvalidationStream = AsyncStream<SessionInvalidationEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        self.sessionInvalidations = sessionInvalidationStream.stream
+        self.sessionInvalidationContinuation = sessionInvalidationStream.continuation
         self.tokenStore = tokenStore
         self.settingsStore = settingsStore
         self.urlSession = session
@@ -141,6 +149,15 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         activeSession = nil
         settingsStore.lastSession = nil
         try? tokenStore.clearToken()
+        await deduplicator.cancelAll()
+    }
+
+    private func invalidateCurrentSessionAsUnauthorized() async {
+        guard activeSession != nil else { return }
+        activeSession = nil
+        settingsStore.lastSession = nil
+        try? tokenStore.clearToken()
+        sessionInvalidationContinuation.yield(.unauthorized)
         await deduplicator.cancelAll()
     }
 
@@ -902,7 +919,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             data = try await send(request, dedupe: dedupe, retryPolicy: retryPolicy)
         } catch AppError.unauthenticated {
             if requiresAuth, activeSession?.token == requestToken {
-                await signOut()
+                await invalidateCurrentSessionAsUnauthorized()
             }
             throw AppError.unauthenticated
         }
