@@ -9,21 +9,41 @@ public struct MatroskaClusterParser: Sendable {
     public func parseCluster(
         data: Data,
         header: EBMLElementHeader,
+        elementOffset: Int,
         timecodeScale: Int64,
         trackDefaultDurations: [Int: CMTime] = [:]
     ) throws -> [MediaPacket] {
+        guard timecodeScale > 0 else {
+            throw EBMLError.invalidMatroska("TimecodeScale must be positive")
+        }
         var packets: [MediaPacket] = []
         var clusterTimecode: Int64 = 0
-        var offset = header.payloadOffset
-        while offset < payloadEnd(header) {
+        let clusterRange = try reader.payloadRange(
+            for: header,
+            elementOffset: elementOffset,
+            parentEnd: data.count,
+            dataCount: data.count
+        )
+        var offset = clusterRange.lowerBound
+        while offset < clusterRange.upperBound {
             let child = try reader.readHeader(data: data, offset: offset)
+            let childRange = try reader.payloadRange(
+                for: child,
+                elementOffset: offset,
+                parentEnd: clusterRange.upperBound,
+                dataCount: data.count
+            )
             if child.id == EBMLElementID.timecode {
-                clusterTimecode = Int64(try reader.readUInt(data: data, offset: child.payloadOffset, size: Int(child.size ?? 0)))
+                clusterTimecode = try reader.exactInt64(reader.readUInt(
+                    data: data,
+                    offset: childRange.lowerBound,
+                    size: childRange.count
+                ))
             } else if child.id == EBMLElementID.simpleBlock {
-                let blockData = Data(data[child.payloadOffset..<payloadEnd(child)])
+                let blockData = Data(data[childRange])
                 let blocks = try parseBlocks(blockData, explicitKeyframe: nil)
                 packets.append(
-                    contentsOf: makePackets(
+                    contentsOf: try makePackets(
                         from: blocks,
                         clusterTimecode: clusterTimecode,
                         timecodeScale: timecodeScale,
@@ -34,14 +54,14 @@ public struct MatroskaClusterParser: Sendable {
                 packets.append(
                     contentsOf: try parseBlockGroup(
                         data: data,
-                        header: child,
+                        payloadRange: childRange,
                         clusterTimecode: clusterTimecode,
                         timecodeScale: timecodeScale,
                         trackDefaultDurations: trackDefaultDurations
                     )
                 )
             }
-            offset = payloadEnd(child)
+            offset = childRange.upperBound
         }
         return packets
     }
@@ -55,9 +75,12 @@ public struct MatroskaClusterParser: Sendable {
 
     public func parseBlocks(_ data: Data, explicitKeyframe: Bool?) throws -> [MatroskaParsedBlock] {
         let track = try reader.readElementSize(data: data, offset: 0)
-        guard let trackNumber = track.value, data.count >= track.length + 3 else {
+        guard let trackNumber = track.value,
+              trackNumber >= 0,
+              data.count >= track.length + 3 else {
             throw EBMLError.invalidMatroska("malformed block header")
         }
+        let exactTrackNumber = try reader.exactInt(UInt64(trackNumber))
         let timeOffset = track.length
         let rawTime = UInt16(data[timeOffset]) << 8 | UInt16(data[timeOffset + 1])
         let flags = data[timeOffset + 2]
@@ -67,7 +90,7 @@ public struct MatroskaClusterParser: Sendable {
         let payloadOffset = timeOffset + 3
         return try payloads(from: data, offset: payloadOffset, lacing: lacing).map {
             MatroskaParsedBlock(
-                trackNumber: Int(trackNumber),
+                trackNumber: exactTrackNumber,
                 relativeTimecode: Int16(bitPattern: rawTime),
                 keyframe: keyframe,
                 invisible: invisible,
@@ -78,7 +101,7 @@ public struct MatroskaClusterParser: Sendable {
 
     private func parseBlockGroup(
         data: Data,
-        header: EBMLElementHeader,
+        payloadRange: Range<Int>,
         clusterTimecode: Int64,
         timecodeScale: Int64,
         trackDefaultDurations: [Int: CMTime]
@@ -86,22 +109,32 @@ public struct MatroskaClusterParser: Sendable {
         var blocks: [MatroskaParsedBlock] = []
         var hasReferenceBlock = false
         var blockDuration: CMTime?
-        var offset = header.payloadOffset
-        while offset < payloadEnd(header) {
+        var offset = payloadRange.lowerBound
+        while offset < payloadRange.upperBound {
             let child = try reader.readHeader(data: data, offset: offset)
+            let childRange = try reader.payloadRange(
+                for: child,
+                elementOffset: offset,
+                parentEnd: payloadRange.upperBound,
+                dataCount: data.count
+            )
             if child.id == EBMLElementID.block {
-                blocks = try parseBlocks(Data(data[child.payloadOffset..<payloadEnd(child)]), explicitKeyframe: nil)
+                blocks = try parseBlocks(Data(data[childRange]), explicitKeyframe: nil)
             } else if child.id == EBMLElementID.blockDuration {
                 let rawDuration = try reader.readUInt(
                     data: data,
-                    offset: child.payloadOffset,
-                    size: Int(child.size ?? 0)
+                    offset: childRange.lowerBound,
+                    size: childRange.count
                 )
-                blockDuration = CMTime(value: Int64(rawDuration) * timecodeScale, timescale: 1_000_000_000)
+                let duration = try reader.exactInt64(rawDuration)
+                blockDuration = CMTime(
+                    value: try reader.checkedMultiply(duration, timecodeScale),
+                    timescale: 1_000_000_000
+                )
             } else if child.id == EBMLElementID.referenceBlock {
                 hasReferenceBlock = true
             }
-            offset = payloadEnd(child)
+            offset = childRange.upperBound
         }
         guard !blocks.isEmpty else { return [] }
         let explicitDurations = blocks.first.map { block -> [Int: CMTime] in
@@ -115,7 +148,7 @@ public struct MatroskaClusterParser: Sendable {
             adjusted.keyframe = !hasReferenceBlock
             return adjusted
         }
-        return makePackets(
+        return try makePackets(
             from: keyedBlocks,
             clusterTimecode: clusterTimecode,
             timecodeScale: timecodeScale,
@@ -128,10 +161,14 @@ public struct MatroskaClusterParser: Sendable {
         clusterTimecode: Int64,
         timecodeScale: Int64,
         trackDefaultDurations: [Int: CMTime]
-    ) -> [MediaPacket] {
+    ) throws -> [MediaPacket] {
         var laceIndexesByTrack: [Int: Int32] = [:]
-        return blocks.map { block in
-            var packet = packet(from: block, clusterTimecode: clusterTimecode, timecodeScale: timecodeScale)
+        return try blocks.map { block in
+            var packet = try packet(
+                from: block,
+                clusterTimecode: clusterTimecode,
+                timecodeScale: timecodeScale
+            )
             guard let duration = trackDefaultDurations[block.trackNumber] else { return packet }
             let laceIndex = laceIndexesByTrack[block.trackNumber, default: 0]
             laceIndexesByTrack[block.trackNumber] = laceIndex + 1
@@ -201,14 +238,22 @@ public struct MatroskaClusterParser: Sendable {
         guard let firstSize = first.value, firstSize >= 0 else {
             throw EBMLError.invalidMatroska("invalid first EBML laced frame size")
         }
-        cursor += first.length
-        var previousSize = Int(firstSize)
+        cursor = try reader.checkedRange(
+            offset: cursor,
+            size: first.length,
+            parentEnd: data.count,
+            dataCount: data.count
+        ).upperBound
+        guard let exactFirstSize = Int(exactly: firstSize) else {
+            throw EBMLError.invalidMatroska("first EBML laced frame size is not representable")
+        }
+        var previousSize = exactFirstSize
         var frameSizes = [previousSize]
 
         for _ in 0..<(frameCount - 2) {
             let delta = try readSignedLaceSize(data, cursor: &cursor)
-            let nextSize = previousSize + delta
-            guard nextSize >= 0 else {
+            let (nextSize, overflow) = previousSize.addingReportingOverflow(delta)
+            guard !overflow, nextSize >= 0 else {
                 throw EBMLError.invalidMatroska("negative EBML laced frame size")
             }
             frameSizes.append(nextSize)
@@ -225,7 +270,14 @@ public struct MatroskaClusterParser: Sendable {
         frameCount: Int,
         hasFinalImplicitSize: Bool = true
     ) throws -> [Data] {
-        let explicitTotal = explicitSizes.reduce(0, +)
+        let explicitTotal = try explicitSizes.reduce(0) { total, size in
+            try reader.checkedRange(
+                offset: total,
+                size: size,
+                parentEnd: Int.max,
+                dataCount: Int.max
+            ).upperBound
+        }
         let remaining = data.count - payloadOffset
         guard remaining >= explicitTotal else {
             throw EBMLError.invalidMatroska("laced frame sizes exceed block payload")
@@ -238,16 +290,26 @@ public struct MatroskaClusterParser: Sendable {
         }
         var cursor = payloadOffset
         return try frameSizes.map { size in
-            guard size >= 0, cursor + size <= data.count else {
+            guard let range = try? reader.checkedRange(
+                offset: cursor,
+                size: size,
+                parentEnd: data.count,
+                dataCount: data.count
+            ) else {
                 throw EBMLError.invalidMatroska("laced frame extends past block payload")
             }
-            defer { cursor += size }
-            return Data(data[cursor..<cursor + size])
+            cursor = range.upperBound
+            return Data(data[range])
         }
     }
 
-    private func packet(from block: MatroskaParsedBlock, clusterTimecode: Int64, timecodeScale: Int64) -> MediaPacket {
-        let scaled = (clusterTimecode + Int64(block.relativeTimecode)) * timecodeScale
+    private func packet(
+        from block: MatroskaParsedBlock,
+        clusterTimecode: Int64,
+        timecodeScale: Int64
+    ) throws -> MediaPacket {
+        let timecode = try reader.checkedAdd(clusterTimecode, Int64(block.relativeTimecode))
+        let scaled = try reader.checkedMultiply(timecode, timecodeScale)
         let pts = CMTime(value: scaled, timescale: 1_000_000_000)
         return MediaPacket(
             trackID: block.trackNumber,
@@ -256,18 +318,17 @@ public struct MatroskaClusterParser: Sendable {
             data: block.payload
         )
     }
-
-
-    private func payloadEnd(_ header: EBMLElementHeader) -> Int {
-        header.payloadOffset + Int(header.size ?? 0)
-    }
-
     private func readSignedLaceSize(_ data: Data, cursor: inout Int) throws -> Int {
         let value = try reader.readElementSize(data: data, offset: cursor)
         guard let unsigned = value.value else {
             throw EBMLError.invalidMatroska("unknown-sized EBML lace delta")
         }
-        cursor += value.length
+        cursor = try reader.checkedRange(
+            offset: cursor,
+            size: value.length,
+            parentEnd: data.count,
+            dataCount: data.count
+        ).upperBound
         let bits = 7 * value.length
         let bias = (Int64(1) << Int64(bits - 1)) - 1
         return Int(unsigned - bias)

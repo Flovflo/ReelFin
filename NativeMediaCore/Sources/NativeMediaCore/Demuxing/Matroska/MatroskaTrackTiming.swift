@@ -13,14 +13,18 @@ public enum MatroskaTrackTiming {
 
     public static func defaultDuration(for track: MatroskaParsedTrack) -> CMTime? {
         if let defaultDuration = track.defaultDuration, defaultDuration > 0 {
-            return CMTime(value: Int64(defaultDuration), timescale: 1_000_000_000)
+            guard let exactDuration = Int64(exactly: defaultDuration) else { return nil }
+            return CMTime(value: exactDuration, timescale: 1_000_000_000)
         }
         guard track.type == .audio else { return nil }
         guard let frames = audioFramesPerPacket(codec: track.codec) else { return nil }
-        guard let sampleRate = track.audio?.sampleRate ?? defaultSampleRate(codec: track.codec), sampleRate > 0 else {
+        guard let sampleRate = track.audio?.sampleRate ?? defaultSampleRate(codec: track.codec),
+              sampleRate.isFinite,
+              let timeScale = CMTimeScale(exactly: sampleRate.rounded()),
+              timeScale > 0 else {
             return nil
         }
-        return CMTime(value: Int64(frames), timescale: CMTimeScale(sampleRate.rounded()))
+        return CMTime(value: Int64(frames), timescale: timeScale)
     }
 
     private static func audioFramesPerPacket(codec: String) -> Int? {

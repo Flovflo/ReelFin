@@ -122,23 +122,40 @@ public actor MatroskaDemuxer: MediaDemuxer {
     }
 
     private func loadCuesFromSeekHead(_ seekHead: [UInt32: UInt64]) async throws -> [MatroskaCuePoint] {
-        guard let relativeOffset = seekHead[EBMLElementID.cues] else { return [] }
-        let absoluteOffset = segmentPayloadOffset + Int64(relativeOffset)
+        guard let relativeOffset = seekHead[EBMLElementID.cues],
+              let exactRelativeOffset = Int64(exactly: relativeOffset) else {
+            return []
+        }
+        let (absoluteOffset, offsetOverflow) = segmentPayloadOffset.addingReportingOverflow(exactRelativeOffset)
+        guard !offsetOverflow, absoluteOffset >= 0 else { return [] }
         let headerData = try await source.read(range: ByteRange(offset: absoluteOffset, length: 16))
         guard !headerData.isEmpty else { return [] }
         let header = try reader.readHeader(data: headerData, offset: 0)
         guard header.id == EBMLElementID.cues,
-              let elementSize = header.size,
-              elementSize >= 0 else {
+              header.size != nil,
+              let logicalPayloadRange = try? reader.payloadRange(
+                for: header,
+                elementOffset: 0,
+                parentEnd: Int.max,
+                dataCount: Int.max
+              ) else {
             return []
         }
-        let totalSize = Int64(header.totalHeaderSize) + elementSize
+        let totalSize = Int64(logicalPayloadRange.upperBound)
         guard totalSize > 0, totalSize <= Int64(Self.maxCuesReadBytes) else { return [] }
+        let (elementEnd, endOverflow) = absoluteOffset.addingReportingOverflow(totalSize)
+        guard !endOverflow else { return [] }
+        if let segmentEndOffset, elementEnd > segmentEndOffset { return [] }
+        if let sourceSize = try await source.size(), elementEnd > sourceSize { return [] }
         let cuesData = try await source.read(range: ByteRange(offset: absoluteOffset, length: Int(totalSize)))
         let localHeader = try reader.readHeader(data: cuesData, offset: 0)
-        let payloadEnd = localHeader.payloadOffset + Int(localHeader.size ?? 0)
-        guard payloadEnd <= cuesData.count else { return [] }
-        return try MatroskaCueParser().parseCues(data: Data(cuesData[localHeader.payloadOffset..<payloadEnd]))
+        let payloadRange = try reader.payloadRange(
+            for: localHeader,
+            elementOffset: 0,
+            parentEnd: cuesData.count,
+            dataCount: cuesData.count
+        )
+        return try MatroskaCueParser().parseCues(data: Data(cuesData[payloadRange]))
     }
 
     private func loadedPacketsCover(_ time: CMTime) -> Bool {
@@ -185,9 +202,27 @@ public actor MatroskaDemuxer: MediaDemuxer {
         let mediaBytes = upperBound - lowerBound
         let estimateSeconds = max(0, time.seconds - Self.approximateSeekPrerollSeconds)
         let ratio = min(max(estimateSeconds / durationSeconds, 0), 1)
-        let estimatedOffset = lowerBound + Int64(Double(mediaBytes) * ratio)
-        let windowStart = max(lowerBound, estimatedOffset - Int64(Self.approximateSeekSearchBytesBefore))
-        let windowEnd = min(upperBound, estimatedOffset + Int64(Self.approximateSeekSearchBytesAfter))
+        let estimatedOffset: Int64
+        if ratio == 1 {
+            estimatedOffset = upperBound
+        } else {
+            let scaledBytes = (Double(mediaBytes) * ratio).rounded(.towardZero)
+            guard scaledBytes.isFinite,
+                  let byteDelta = Int64(exactly: scaledBytes) else {
+                return nil
+            }
+            let (candidate, overflow) = lowerBound.addingReportingOverflow(byteDelta)
+            guard !overflow else { return nil }
+            estimatedOffset = min(max(candidate, lowerBound), upperBound)
+        }
+        let (startCandidate, startOverflow) = estimatedOffset.subtractingReportingOverflow(
+            Int64(Self.approximateSeekSearchBytesBefore)
+        )
+        let windowStart = startOverflow ? lowerBound : max(lowerBound, startCandidate)
+        let (endCandidate, endOverflow) = estimatedOffset.addingReportingOverflow(
+            Int64(Self.approximateSeekSearchBytesAfter)
+        )
+        let windowEnd = endOverflow ? upperBound : min(upperBound, endCandidate)
         guard windowEnd > windowStart else { return nil }
         let data = try await source.read(range: ByteRange(offset: windowStart, length: Int(windowEnd - windowStart)))
         let candidates = clusterSeekCandidates(in: data, baseOffset: windowStart)
@@ -241,34 +276,53 @@ public actor MatroskaDemuxer: MediaDemuxer {
     private func clusterSeekCandidate(in data: Data, offset: Int, baseOffset: Int64) -> ClusterSeekCandidate? {
         guard let header = try? reader.readHeader(data: data, offset: offset),
               header.id == EBMLElementID.cluster,
-              let timeSeconds = clusterTimeSeconds(in: data, header: header) else {
+              let timeSeconds = clusterTimeSeconds(in: data, header: header, elementOffset: offset) else {
             return nil
         }
-        return ClusterSeekCandidate(offset: baseOffset + Int64(offset), timeSeconds: timeSeconds)
+        let (absoluteOffset, overflow) = baseOffset.addingReportingOverflow(Int64(offset))
+        guard !overflow else { return nil }
+        return ClusterSeekCandidate(offset: absoluteOffset, timeSeconds: timeSeconds)
     }
 
-    private func clusterTimeSeconds(in data: Data, header: EBMLElementHeader) -> Double? {
-        let payloadLimit = header.size.flatMap { size -> Int? in
-            guard size >= 0, let sizeInt = Int(exactly: size) else { return nil }
-            return header.payloadOffset + sizeInt
-        } ?? data.count
-        let scanLimit = min(data.count, payloadLimit, header.payloadOffset + 64 * 1024)
+    private func clusterTimeSeconds(
+        in data: Data,
+        header: EBMLElementHeader,
+        elementOffset: Int
+    ) -> Double? {
+        guard let payloadRange = try? reader.payloadRange(
+            for: header,
+            elementOffset: elementOffset,
+            parentEnd: Int.max,
+            dataCount: Int.max
+        ), let scanWindow = try? reader.checkedRange(
+            offset: header.payloadOffset,
+            size: 64 * 1024,
+            parentEnd: Int.max,
+            dataCount: Int.max
+        ) else {
+            return nil
+        }
+        let scanLimit = min(data.count, payloadRange.upperBound, scanWindow.upperBound)
         var offset = header.payloadOffset
         while offset < scanLimit {
             guard let child = try? reader.readHeader(data: data, offset: offset),
-                  let size = child.size,
-                  size >= 0,
-                  let sizeInt = Int(exactly: size) else {
+                  let childRange = try? reader.payloadRange(
+                    for: child,
+                    elementOffset: offset,
+                    parentEnd: scanLimit,
+                    dataCount: data.count
+                  ) else {
                 return nil
             }
-            let childEnd = child.payloadOffset + sizeInt
-            guard childEnd <= data.count, childEnd <= scanLimit else { return nil }
             if child.id == EBMLElementID.timecode,
-               let rawTimecode = try? reader.readUInt(data: data, offset: child.payloadOffset, size: sizeInt) {
+               let rawTimecode = try? reader.readUInt(
+                data: data,
+                offset: childRange.lowerBound,
+                size: childRange.count
+               ) {
                 return Double(rawTimecode) * Double(timecodeScale) / 1_000_000_000
             }
-            guard childEnd > offset else { return nil }
-            offset = childEnd
+            offset = childRange.upperBound
         }
         return nil
     }
@@ -286,18 +340,36 @@ public actor MatroskaDemuxer: MediaDemuxer {
 
     private func cueOffset(for time: CMTime) -> Int64? {
         guard !cuePoints.isEmpty else { return nil }
-        let targetTimecode = UInt64(max(0, time.seconds) * 1_000_000_000 / Double(timecodeScale))
-        return cuePoints
+        let seconds = time.seconds
+        guard seconds.isFinite, seconds >= 0, timecodeScale > 0 else { return nil }
+        let rawTargetTimecode = seconds * 1_000_000_000 / Double(timecodeScale)
+        guard rawTargetTimecode.isFinite,
+              rawTargetTimecode >= 0,
+              rawTargetTimecode < Double(UInt64.max) else {
+            return nil
+        }
+        let targetTimecode = UInt64(rawTargetTimecode)
+        let cue = cuePoints
             .filter { $0.timecode <= targetTimecode && $0.clusterPosition != nil }
-            .max { $0.timecode < $1.timecode }
-            .flatMap { $0.clusterPosition.map { segmentPayloadOffset + Int64($0) } }
+            .max(by: { $0.timecode < $1.timecode })
+        guard let relativeOffset = cue?.clusterPosition,
+              let exactRelativeOffset = Int64(exactly: relativeOffset) else {
+            return nil
+        }
+        let (absoluteOffset, overflow) = segmentPayloadOffset.addingReportingOverflow(exactRelativeOffset)
+        return overflow ? nil : absoluteOffset
     }
 
     private func loadMorePacketsIfNeeded() async throws {
         guard let startOffset = nextTopLevelOffset else { return }
         var offset = startOffset
         let sourceSize = try await source.size()
-        let hardEnd = segmentEndOffset ?? sourceSize
+        let hardEnd: Int64?
+        if let segmentEndOffset, let sourceSize {
+            hardEnd = min(segmentEndOffset, sourceSize)
+        } else {
+            hardEnd = segmentEndOffset ?? sourceSize
+        }
 
         while packets.count == packetIndex {
             if let hardEnd, offset >= hardEnd {
@@ -313,7 +385,20 @@ public actor MatroskaDemuxer: MediaDemuxer {
             guard let elementSize = header.size else {
                 throw EBMLError.invalidMatroska("Matroska top-level element at byte \(offset) has unknown size; streaming parser cannot skip it yet.")
             }
-            let totalSize = Int64(header.totalHeaderSize) + elementSize
+            guard elementSize >= 0 else { throw EBMLError.invalidElementSize }
+            let logicalPayloadRange = try reader.payloadRange(
+                for: header,
+                elementOffset: 0,
+                parentEnd: Int.max,
+                dataCount: Int.max
+            )
+            let totalSize = Int64(logicalPayloadRange.upperBound)
+            guard totalSize > 0 else { throw EBMLError.invalidElementSize }
+            let (elementEnd, endOverflow) = offset.addingReportingOverflow(totalSize)
+            guard !endOverflow else { throw EBMLError.invalidElementSize }
+            if let hardEnd, elementEnd > hardEnd {
+                throw EBMLError.invalidMatroska("Matroska top-level element exceeds its Segment bounds.")
+            }
             if header.id == EBMLElementID.cluster {
                 let clusterData = try await readCluster(offset: offset, totalSize: totalSize)
                 if let candidate = clusterSeekCandidate(in: clusterData, offset: 0, baseOffset: offset) {
@@ -323,12 +408,13 @@ public actor MatroskaDemuxer: MediaDemuxer {
                 let parsed = try clusterParser.parseCluster(
                     data: clusterData,
                     header: localHeader,
+                    elementOffset: 0,
                     timecodeScale: timecodeScale,
                     trackDefaultDurations: defaultDurations
                 )
                 packets.append(contentsOf: applyDefaultDurations(parsed))
             }
-            offset += totalSize
+            offset = elementEnd
             nextTopLevelOffset = offset
         }
     }
