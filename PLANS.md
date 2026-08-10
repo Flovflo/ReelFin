@@ -767,3 +767,11 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Keep valid codec-private data, Xiph/fixed/EBML lacing, BlockGroup duration, Cues/late SeekHead resume, multi-read cluster streaming, and approximate seek as mandatory regression controls. Mutation gates must cover parent containment, checked addition, nested unknown-size rejection, and available-data containment.
 - Require exact conversion for unsigned EBML integers before native signed storage, positive `TimecodeScale`, checked timestamp addition and multiplication, and finite, `CMTimeScale`-representable sampling frequencies. Retain a large-but-representable timestamp fixture alongside rejection cases.
 - Bound cue-less approximate-seek estimates at the advertised media end. Convert proportional offsets exactly and form the search margins with overflow-reporting arithmetic before clamping to the source interval, including sources that advertise `Int64.max` bytes.
+
+## Build 17 Playback URL Diagnostic Privacy - 2026-08-11
+
+- Make every public URL diagnostic a single allowlist projection: normalized HTTP(S) origin, nondefault port, a process-local keyed path correlation, sorted functional query names, and the total query-item count. Reject relative, file, unsupported-scheme, missing-host, and malformed inputs as `invalid-url`; never fall back to raw URL text.
+- Keep cache identity separate and byte-for-byte compatible. Diagnostic hardening must not change authenticated image-cache keys, HLS segment identities, URL selection, routing, requests, or playback behavior.
+- Route playlist URI reporting, unsupported asset errors, and native-route violations through the safe projection. Keep route enums and operational origin/port evidence while removing userinfo, raw paths, fragments, unknown query names, and all query values.
+- Replace the Matroska source filename and image-cache fallback filesystem paths with fixed operational categories. Media item/source/title prefix minimization and deep-evidence storage remain Task 7 scope.
+- Require hostile-input RED/GREEN coverage, stable/different correlation controls, raw-component mutations, an exact cache-key control, diagnostic sink scans, relevant playback/image regressions, project regeneration, and iOS/tvOS simulator builds before the scoped commit.

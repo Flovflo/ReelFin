@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
@@ -87,15 +88,8 @@ public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Senda
     }
 }
 
-public enum SensitiveURLSanitizer {
-    private static let sensitiveQueryNames: Set<String> = [
-        "api_key",
-        "apikey",
-        "x-emby-token",
-        "token",
-        "access_token"
-    ]
-    private static let compactLogQueryNames: Set<String> = [
+struct SensitiveURLLogProjector: Sendable {
+    private static let functionalQueryNames: Set<String> = [
         "allowaudiostreamcopy",
         "allowvideostreamcopy",
         "audiobitrate",
@@ -109,54 +103,109 @@ public enum SensitiveURLSanitizer {
         "videobitrate",
         "videocodec"
     ]
-    private static let redactionValue = "REDACTED"
+    private let pathCorrelationKey: SymmetricKey
+
+    init(keyData: Data) {
+        self.init(key: SymmetricKey(data: keyData))
+    }
+
+    fileprivate init(key: SymmetricKey) {
+        pathCorrelationKey = key
+    }
+
+    func logString(for url: URL) -> String {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let rawScheme = components.scheme,
+              let rawHost = components.host,
+              !rawHost.isEmpty
+        else {
+            return "invalid-url"
+        }
+
+        let scheme = rawScheme.lowercased()
+        guard scheme == "http" || scheme == "https" else {
+            return "invalid-url"
+        }
+
+        let host = rawHost.lowercased()
+        guard isSafeHost(host) else {
+            return "invalid-url"
+        }
+
+        let queryItems: [URLQueryItem]
+        if components.percentEncodedQuery != nil {
+            guard let parsedQueryItems = components.queryItems else {
+                return "invalid-url"
+            }
+            queryItems = parsedQueryItems
+        } else {
+            queryItems = []
+        }
+
+        let displayedHost: String
+        if host.contains(":"), !host.hasPrefix("[") {
+            displayedHost = "[\(host)]"
+        } else {
+            displayedHost = host
+        }
+
+        let defaultPort = scheme == "http" ? 80 : 443
+        let port = components.port.flatMap { $0 == defaultPort ? nil : ":\($0)" } ?? ""
+        let path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+        let correlation = pathCorrelation(for: path)
+        let queryNames = Set(queryItems.lazy.map { $0.name.lowercased() })
+            .intersection(Self.functionalQueryNames)
+            .sorted()
+        let queryNameList = queryNames.isEmpty ? "none" : queryNames.joined(separator: ",")
+
+        return "\(scheme)://\(displayedHost)\(port) path=\(correlation) queryNames=\(queryNameList) queryItems=\(queryItems.count)"
+    }
+
+    private func pathCorrelation(for path: String) -> String {
+        let authenticationCode = HMAC<SHA256>.authenticationCode(
+            for: Data(path.utf8),
+            using: pathCorrelationKey
+        )
+        return authenticationCode.prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func isSafeHost(_ host: String) -> Bool {
+        host.unicodeScalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 45, 46, 48 ... 57, 58, 65 ... 90, 91, 93, 97 ... 122:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
+public enum SensitiveURLSanitizer {
+    private static let sensitiveQueryNames: Set<String> = [
+        "api_key",
+        "apikey",
+        "x-emby-token",
+        "token",
+        "access_token"
+    ]
+    private static let logProjector = SensitiveURLLogProjector(
+        key: SymmetricKey(size: .bits256)
+    )
 
     public static func cacheKey(for url: URL) -> String {
-        sanitize(url, mode: .drop)
+        cacheIdentity(for: url)
     }
 
     public static func logString(for url: URL) -> String {
-        sanitize(url, mode: .redact)
+        logProjector.logString(for: url)
     }
 
     public static func compactLogString(for url: URL) -> String {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return sanitize(url, mode: .redact)
-        }
-
-        let scheme = components.scheme.map { "\($0)://" } ?? ""
-        let host = components.host ?? ""
-        let port = components.port.map { ":\($0)" } ?? ""
-        let path = components.path.isEmpty ? "/" : components.path
-        let base = "\(scheme)\(host)\(port)\(path)"
-        let queryItems = components.queryItems ?? []
-
-        guard !queryItems.isEmpty else { return base }
-
-        var displayed: [String] = []
-        var seenNames = Set<String>()
-        for item in queryItems {
-            let normalizedName = item.name.lowercased()
-            guard compactLogQueryNames.contains(normalizedName), !seenNames.contains(normalizedName) else {
-                continue
-            }
-
-            seenNames.insert(normalizedName)
-            let rawValue = sensitiveQueryNames.contains(normalizedName) ? redactionValue : compactValue(item.value)
-            displayed.append("\(normalizedName)=\(rawValue)")
-        }
-
-        if displayed.isEmpty {
-            return "\(base) [queryItems=\(queryItems.count)]"
-        }
-
-        let visible = Array(displayed.prefix(6))
-        let omittedCount = max(0, queryItems.count - visible.count)
-        let suffix = omittedCount > 0 ? " +\(omittedCount) params" : ""
-        return "\(base) [\(visible.joined(separator: ", "))\(suffix)]"
+        logProjector.logString(for: url)
     }
 
-    private static func sanitize(_ url: URL, mode: SanitizationMode) -> String {
+    private static func cacheIdentity(for url: URL) -> String {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return url.absoluteString
         }
@@ -164,32 +213,12 @@ public enum SensitiveURLSanitizer {
         if let queryItems = components.queryItems {
             let sanitizedItems = queryItems.compactMap { item -> URLQueryItem? in
                 let normalizedName = item.name.lowercased()
-                guard sensitiveQueryNames.contains(normalizedName) else {
-                    return item
-                }
-
-                switch mode {
-                case .drop:
-                    return nil
-                case .redact:
-                    return URLQueryItem(name: item.name, value: redactionValue)
-                }
+                return sensitiveQueryNames.contains(normalizedName) ? nil : item
             }
             components.queryItems = sanitizedItems.isEmpty ? nil : sanitizedItems
         }
 
         return components.string ?? url.absoluteString
-    }
-
-    private static func compactValue(_ value: String?) -> String {
-        guard let value, !value.isEmpty else { return "true" }
-        guard value.count > 32 else { return value }
-        return "\(value.prefix(29))..."
-    }
-
-    private enum SanitizationMode {
-        case drop
-        case redact
     }
 }
 

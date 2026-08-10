@@ -57,7 +57,7 @@ public actor MatroskaDemuxer: Demuxer {
             throw NativeBridgeError.demuxerFailed("Demuxer is already open.")
         }
         
-        AppLog.nativeBridge.notice("[NB-DIAG] demux.open.enter — source=\(self.plan.sourceURL.lastPathComponent, privacy: .public)")
+        AppLog.nativeBridge.notice("[NB-DIAG] demux.open.enter — source=matroska")
         
         // 1. Read EBML Header
         let networkStart = Date()

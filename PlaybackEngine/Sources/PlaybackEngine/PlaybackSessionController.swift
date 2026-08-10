@@ -8731,22 +8731,8 @@ public final class PlaybackSessionController {
 
     nonisolated static func redactedPlaylistURIForLog(_ uri: String?) -> String {
         guard let uri, !uri.isEmpty else { return "none" }
-        guard var components = URLComponents(string: uri),
-              let queryItems = components.queryItems,
-              !queryItems.isEmpty
-        else {
-            return uri
-        }
-
-        let sensitiveNames: Set<String> = [
-            "api_key", "apikey", "token", "access_token", "x-emby-token", "authorization"
-        ]
-        components.queryItems = queryItems.map { item in
-            sensitiveNames.contains(item.name.lowercased())
-                ? URLQueryItem(name: item.name, value: "REDACTED")
-                : item
-        }
-        return components.string ?? uri
+        guard let url = URL(string: uri) else { return "invalid-url" }
+        return url.reelfinLogString
     }
 
     nonisolated static func directPlayRecoverySelection(

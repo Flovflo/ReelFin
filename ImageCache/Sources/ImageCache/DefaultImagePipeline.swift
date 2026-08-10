@@ -92,13 +92,13 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
         let fallbackURL = fileManager.temporaryDirectory.appendingPathComponent("ReelFinImageCache", isDirectory: true)
         if let cache = try? LRUDiskCache(directoryURL: fallbackURL, fileManager: fileManager) {
-            AppLog.caching.error("Falling back to temporary directory for image cache at \(fallbackURL.path, privacy: .public)")
+            AppLog.caching.error("Image cache location fallback=temporary")
             return cache
         }
 
         let emergencyURL = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         if let cache = try? LRUDiskCache(directoryURL: emergencyURL, fileManager: fileManager) {
-            AppLog.caching.fault("Image cache initialization required emergency fallback at \(emergencyURL.path, privacy: .public)")
+            AppLog.caching.fault("Image cache location fallback=emergency")
             return cache
         }
 
