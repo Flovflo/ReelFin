@@ -56,7 +56,7 @@ public final class NativeBridgeResourceLoader: NSObject, AVAssetResourceLoaderDe
         let urlString = "\(Self.customScheme)://play/\(encodedItemID)"
         let url = URL(string: urlString) ?? URL(string: "\(Self.customScheme)://play/invalid-item")!
         if itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) == nil {
-            AppLog.nativeBridge.error("Failed to percent-encode item ID for resource loader: \(itemID, privacy: .public)")
+            AppLog.nativeBridge.error("Failed to percent-encode media correlation=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
         }
         
         let asset = AVURLAsset(url: url)

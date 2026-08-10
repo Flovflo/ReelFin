@@ -41,6 +41,7 @@ struct NativePlayerView: View {
     @State private var isViewActive = false
     @State private var lastDeepEvidenceLogDate: Date?
     @State private var lastDeepEvidencePlaybackTime: Double?
+    @State private var deepEvidenceSessionID = AppLogFormat.randomSessionIdentifier()
     @State private var accessibilityEvidence = PlayerAccessibilityEvidenceState()
     @State private var accessibilityEvidenceExpiryTask: Task<Void, Never>?
 #if os(tvOS)
@@ -793,11 +794,28 @@ struct NativePlayerView: View {
         let hdr = Self.value(named: "hdr", in: hdrLine) ?? "unknown"
         let dvProfile = Self.value(named: "dvProfile", in: hdrLine) ?? "none"
         PlayerDeepEvidenceSink.append(
-            "nativeplayer.deep.tick — item=\(AppLogFormat.shortIdentifier(item.id)) current=\(String(format: "%.3f", seconds)) delta=\(String(format: "%.3f", delta)) state=\(Self.value(named: "state", in: rows) ?? "unknown") videoPackets=\(videoPackets) audioPackets=\(audioPackets) audioSamples=\(audioSamples) audioRenderer=\(audioRenderer) droppedFrames=\(droppedFrames) audioUnderruns=\(audioUnderruns) audioRebuffers=\(audioRebuffers) avDriftMs=\(avDriftMs) hdr=\(hdr) dvProfile=\(dvProfile)"
+            event: .sampleBufferTick,
+            session: deepEvidenceSessionID,
+            media: AppLogFormat.correlationIdentifier(item.id, domain: .media),
+            fields: [
+                .currentSeconds: .decimal(seconds),
+                .deltaSeconds: .decimal(delta),
+                .state: .category(.normalized(Self.value(named: "state", in: rows))),
+                .videoPackets: .integer(Int64(videoPackets)),
+                .audioPackets: .integer(Int64(audioPackets)),
+                .audioSamples: .integer(Int64(audioSamples)),
+                .audioRenderer: .category(.normalized(audioRenderer)),
+                .droppedFrames: .integer(Int64(droppedFrames)),
+                .audioUnderruns: .integer(Int64(audioUnderruns)),
+                .audioRebuffers: .integer(Int64(audioRebuffers)),
+                .avDriftMilliseconds: .decimal(Double(avDriftMs) ?? 0),
+                .hdr: .category(.normalized(hdr)),
+                .dolbyVisionProfile: .integer(Int64(dvProfile) ?? 0),
+            ]
         )
 
         AppLog.playback.info(
-            "nativeplayer.deep.tick — item=\(AppLogFormat.shortIdentifier(item.id), privacy: .public) current=\(seconds, format: .fixed(precision: 3)) delta=\(delta, format: .fixed(precision: 3)) state=\(Self.value(named: "state", in: rows) ?? "unknown", privacy: .public) videoPackets=\(Self.intValue(named: "video", in: packetLine) ?? 0, privacy: .public) audioPackets=\(Self.intValue(named: "audio", in: packetLine) ?? 0, privacy: .public) audioSamples=\(Self.intValue(named: "rendered", in: audioLine) ?? 0, privacy: .public) audioRenderer=\(Self.value(named: "audioRendererBackend", in: rows) ?? "unknown", privacy: .public) droppedFrames=\(Self.intValue(named: "droppedFrames", in: rows) ?? 0, privacy: .public) audioUnderruns=\(Self.intValue(named: "audioUnderruns", in: underrunLine) ?? 0, privacy: .public) audioRebuffers=\(Self.intValue(named: "audioRebuffers", in: underrunLine) ?? 0, privacy: .public) avDriftMs=\(Self.value(named: "avDriftMs", in: driftLine) ?? "unknown", privacy: .public) hdr=\(Self.value(named: "hdr", in: hdrLine) ?? "unknown", privacy: .public) dvProfile=\(Self.value(named: "dvProfile", in: hdrLine) ?? "none", privacy: .public)"
+            "nativeplayer.deep.tick — session=\(self.deepEvidenceSessionID, privacy: .public) media=\(AppLogFormat.correlationIdentifier(self.item.id, domain: .media), privacy: .public) current=\(seconds, format: .fixed(precision: 3)) delta=\(delta, format: .fixed(precision: 3)) state=\(Self.value(named: "state", in: rows) ?? "unknown", privacy: .public) videoPackets=\(videoPackets, privacy: .public) audioPackets=\(audioPackets, privacy: .public) audioSamples=\(audioSamples, privacy: .public) audioRenderer=\(audioRenderer, privacy: .public) droppedFrames=\(droppedFrames, privacy: .public) audioUnderruns=\(audioUnderruns, privacy: .public) audioRebuffers=\(audioRebuffers, privacy: .public) avDriftMs=\(avDriftMs, privacy: .public) hdr=\(hdr, privacy: .public) dvProfile=\(dvProfile, privacy: .public)"
         )
     }
 

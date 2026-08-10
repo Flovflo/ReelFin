@@ -663,7 +663,7 @@ public final class CustomPlaybackEngine {
         if let warm = await prewarmer?.consume(itemID: itemID, startTimeTicks: startTimeTicks) {
             // Perceived-instant start: the detail view already resolved the source, started the
             // localhost session, and built (part of) the cushion — adopt the ready pipeline.
-            AppLog.playback.notice("customplayer.load.adopts_prewarm — item=\(itemID.prefix(8), privacy: .public)")
+            AppLog.playback.notice("customplayer.load.adopts_prewarm — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
             resolved = warm.resolved
             if resolved.requiresNativePlayback {
                 requestNativePlaybackHandoff(itemID: itemID)
@@ -684,7 +684,7 @@ public final class CustomPlaybackEngine {
                 if let warmResolved = prewarmer?.consumeResolvedOnly(itemID: itemID) {
                     // Focus-dwell resolution (tvOS): the PlaybackInfo round trip already happened
                     // while the user was hovering the card — the press pays only the session start.
-                    AppLog.playback.notice("customplayer.load.adopts_resolved_only — item=\(itemID.prefix(8), privacy: .public)")
+                    AppLog.playback.notice("customplayer.load.adopts_resolved_only — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
                     resolved = warmResolved
                 } else {
                     resolved = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks)
@@ -747,7 +747,7 @@ public final class CustomPlaybackEngine {
 
     private func requestNativePlaybackHandoff(itemID: String) {
         AppLog.playback.notice(
-            "customplayer.load.native_handoff — item=\(itemID.prefix(8), privacy: .public) quality=original"
+            "customplayer.load.native_handoff — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) quality=original"
         )
         loadTask = nil
         bufferingState = .idle
@@ -768,7 +768,7 @@ public final class CustomPlaybackEngine {
         autoPlay: Bool
     ) async {
         AppLog.playback.notice(
-            "customplayer.load.adaptive_lane — item=\(self.currentItemID?.prefix(8) ?? "-", privacy: .public)"
+            "customplayer.load.adaptive_lane — item=\(AppLogFormat.correlationIdentifier(self.currentItemID, domain: .media), privacy: .public)"
         )
         observeAudioSessionChanges()
         await activateInitialAudioSession()
@@ -1307,12 +1307,12 @@ public final class CustomPlaybackEngine {
             }
             let at = max(0, lastKnownTimeSeconds)
             guard let url = await adaptive.resolveAdaptiveFallback(itemID: itemID, startSeconds: at) else {
-                AppLog.playback.warning("customplayer.lane.sdr_unavailable — item=\(itemID.prefix(8), privacy: .public)")
+                AppLog.playback.warning("customplayer.lane.sdr_unavailable — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
                 laneState.lane = .original
                 return
             }
             AppLog.playback.warning(
-                "customplayer.lane.drop_to_sdr — item=\(itemID.prefix(8), privacy: .public) at=\(at, format: .fixed(precision: 1))"
+                "customplayer.lane.drop_to_sdr — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) at=\(at, format: .fixed(precision: 1))"
             )
             sdrTimelineOffsetSeconds = at
             lastTickSnapshot = nil
@@ -1367,7 +1367,7 @@ public final class CustomPlaybackEngine {
         switch suggestion.target {
         case let .seek(to: targetSeconds):
             AppLog.playback.notice(
-                "customplayer.skip.request — from=\(self.lastKnownTimeSeconds, format: .fixed(precision: 1)) target=\(targetSeconds, format: .fixed(precision: 1)) title=\(suggestion.title, privacy: .public)"
+                "customplayer.skip.request — from=\(self.lastKnownTimeSeconds, format: .fixed(precision: 1)) target=\(targetSeconds, format: .fixed(precision: 1)) kind=skip_suggestion"
             )
             seek(toSeconds: targetSeconds)
             activeSkipSuggestion = nil

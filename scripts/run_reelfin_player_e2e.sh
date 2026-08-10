@@ -251,7 +251,7 @@ collect_ios_deep_evidence_file() {
     return 0
   fi
 
-  local evidence_file="${container_path}/Documents/reelfin-player-deep-evidence.log"
+  local evidence_file="${container_path}/Library/Caches/ReelFin/Diagnostics/reelfin-player-deep-evidence.jsonl"
   if [[ ! -f "${evidence_file}" ]]; then
     echo "WARN player deep evidence file missing" >> "${output_file}"
     return 0
@@ -289,13 +289,13 @@ restore_live_ui_target_resume() {
 }
 
 write_live_ui_target_env() {
-  local target_item_id="$1"
+  local scenario="$1"
   local expect_custom_controls="$2"
   local open_target_directly="$3"
   local observe_seconds="$4"
   umask 077
   {
-    printf 'REELFIN_LIVE_UI_TARGET_ITEM_ID=%s\n' "${target_item_id}"
+    printf 'REELFIN_LIVE_UI_TARGET_SCENARIO=%s\n' "${scenario}"
     printf 'REELFIN_LIVE_UI_EXPECT_CUSTOM_CONTROLS=%s\n' "${expect_custom_controls}"
     printf 'REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY=%s\n' "${open_target_directly}"
     printf 'REELFIN_LIVE_UI_OBSERVE_SECONDS=%s\n' "${observe_seconds}"
@@ -306,8 +306,8 @@ write_live_ui_target_env() {
 
 clear_live_ui_target_env() {
   rm -f "${LIVE_UI_TARGET_ENV}" >/dev/null 2>&1 || true
-  unset REELFIN_LIVE_UI_TARGET_ITEM_ID
-  unset SIMCTL_CHILD_REELFIN_LIVE_UI_TARGET_ITEM_ID
+  unset REELFIN_LIVE_UI_TARGET_SCENARIO
+  unset SIMCTL_CHILD_REELFIN_LIVE_UI_TARGET_SCENARIO
   unset REELFIN_LIVE_UI_EXPECT_CUSTOM_CONTROLS
   unset SIMCTL_CHILD_REELFIN_LIVE_UI_EXPECT_CUSTOM_CONTROLS
   unset REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY
@@ -318,12 +318,11 @@ clear_live_ui_target_env() {
 
 run_live_ui_gate() {
   local label="$1"
-  local target_item_id="$2"
-  local log_suffix="$3"
-  local result_name="$4"
-  local expect_custom_controls="${5:-0}"
-  local open_target_directly="${6:-0}"
-  local observe_seconds="${7:-${REELFIN_LIVE_UI_OBSERVE_SECONDS}}"
+  local log_suffix="$2"
+  local result_name="$3"
+  local expect_custom_controls="${4:-0}"
+  local open_target_directly="${5:-0}"
+  local observe_seconds="${6:-${REELFIN_LIVE_UI_OBSERVE_SECONDS}}"
   local ui_runtime_log="${RUN_DIR}/ios-live-ui${log_suffix}-runtime.stream"
   local ui_xcode_log="${RUN_DIR}/xcodebuild-live-ui${log_suffix}.log"
   local ui_resume_log="${RUN_DIR}/live-ui${log_suffix}-resume-target.log"
@@ -331,12 +330,12 @@ run_live_ui_gate() {
 
   echo "Running live iOS UI smoke test (${label}, observe=${observe_seconds}s)..."
   python3 scripts/live_ui_resume_target.py prepare \
-    --item-id "${target_item_id}" \
+    --scenario "${label}" \
     --state-file "${ui_resume_state}" \
     | tee "${ui_resume_log}"
-  write_live_ui_target_env "${target_item_id}" "${expect_custom_controls}" "${open_target_directly}" "${observe_seconds}"
-  export REELFIN_LIVE_UI_TARGET_ITEM_ID="${target_item_id}"
-  export SIMCTL_CHILD_REELFIN_LIVE_UI_TARGET_ITEM_ID="${target_item_id}"
+  write_live_ui_target_env "${label}" "${expect_custom_controls}" "${open_target_directly}" "${observe_seconds}"
+  export REELFIN_LIVE_UI_TARGET_SCENARIO="${label}"
+  export SIMCTL_CHILD_REELFIN_LIVE_UI_TARGET_SCENARIO="${label}"
   export REELFIN_LIVE_UI_EXPECT_CUSTOM_CONTROLS="${expect_custom_controls}"
   export SIMCTL_CHILD_REELFIN_LIVE_UI_EXPECT_CUSTOM_CONTROLS="${expect_custom_controls}"
   export REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY="${open_target_directly}"
@@ -452,9 +451,9 @@ xcodebuild test \
 
 if [[ "${RUN_UI}" -eq 1 ]]; then
   echo
-  run_live_ui_gate "directplay-mp4" "${TEST_DIRECTPLAY_MP4_ITEM_ID}" "" "LiveUI" "0" "1" "${REELFIN_LIVE_UI_SMOKE_OBSERVE_SECONDS}"
-  run_live_ui_gate "directplay-hdr-dv-long" "${TEST_DOLBY_VISION_ITEM_ID}" "-hdr-dv-long" "LiveUI-hdr-dv-long" "0" "1" "${REELFIN_LIVE_UI_LONG_OBSERVE_SECONDS}"
-  run_live_ui_gate "samplebuffer-mkv" "${TEST_MKV_ITEM_ID}" "-samplebuffer" "LiveUI-samplebuffer" "1" "1" "${REELFIN_LIVE_UI_SMOKE_OBSERVE_SECONDS}"
+  run_live_ui_gate "directplay-mp4" "" "LiveUI" "0" "1" "${REELFIN_LIVE_UI_SMOKE_OBSERVE_SECONDS}"
+  run_live_ui_gate "directplay-hdr-dv-long" "-hdr-dv-long" "LiveUI-hdr-dv-long" "0" "1" "${REELFIN_LIVE_UI_LONG_OBSERVE_SECONDS}"
+  run_live_ui_gate "samplebuffer-mkv" "-samplebuffer" "LiveUI-samplebuffer" "1" "1" "${REELFIN_LIVE_UI_SMOKE_OBSERVE_SECONDS}"
 fi
 
 if [[ "${RUN_TVOS}" -eq 1 ]]; then
@@ -478,8 +477,8 @@ python3 scripts/assert_player_deep_playback_evidence.py \
   "${RUN_DIR}" \
   --min-observed-seconds "${REELFIN_DEEP_PLAYBACK_MIN_SECONDS:-20}" \
   --min-ticks "${REELFIN_DEEP_PLAYBACK_MIN_TICKS:-3}" \
-  --require-avplayer-item "${TEST_DIRECTPLAY_MP4_ITEM_ID}:${REELFIN_DEEP_PLAYBACK_MIN_SECONDS:-20}:${REELFIN_DEEP_PLAYBACK_MIN_TICKS:-3}:0:0" \
-  --require-avplayer-item "${TEST_DOLBY_VISION_ITEM_ID}:${REELFIN_DEEP_DIRECTPLAY_LONG_MIN_SECONDS}:${REELFIN_DEEP_PLAYBACK_MIN_TICKS:-3}:1:1" \
+  --require-avplayer-scenario "directplay-mp4:${REELFIN_DEEP_PLAYBACK_MIN_SECONDS:-20}:${REELFIN_DEEP_PLAYBACK_MIN_TICKS:-3}:0:0" \
+  --require-avplayer-scenario "directplay-hdr-dv-long:${REELFIN_DEEP_DIRECTPLAY_LONG_MIN_SECONDS}:${REELFIN_DEEP_PLAYBACK_MIN_TICKS:-3}:1:1" \
   --require-dv \
   --require-samplebuffer \
   | tee "${RUN_DIR}/deep-playback-evidence.log"

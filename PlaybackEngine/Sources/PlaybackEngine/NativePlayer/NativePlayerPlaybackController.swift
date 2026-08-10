@@ -96,7 +96,9 @@ public actor NativePlayerPlaybackController {
         nativeConfig: NativePlayerConfig,
         startTimeTicks: Int64?
     ) async throws -> NativePlayerPlaybackSnapshot {
-        AppLog.playback.notice("nativeplayer.original.resolve.start — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public)")
+        let evidenceSession = AppLogFormat.randomSessionIdentifier()
+        let mediaCorrelation = AppLogFormat.correlationIdentifier(itemID, domain: .media)
+        AppLog.playback.notice("nativeplayer.original.resolve.start — media=\(mediaCorrelation, privacy: .public)")
         stateMachine.apply(.beginResolve)
         let options = Self.originalPlaybackInfoOptions(
             nativeConfig: nativeConfig,
@@ -114,7 +116,7 @@ public actor NativePlayerPlaybackController {
             throw violation
         }
         AppLog.playback.notice(
-            "nativeplayer.original.resolve.ok — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) source=\(resolution.mediaSource.id, privacy: .public) selectedPath=\(resolution.selectedPath, privacy: .public)"
+            "nativeplayer.original.resolve.ok — media=\(mediaCorrelation, privacy: .public) source=\(AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source), privacy: .public) selectedPath=original_stream"
         )
         stateMachine.apply(.originalResolved)
         return try await prepareResolved(
@@ -122,7 +124,9 @@ public actor NativePlayerPlaybackController {
             configuration: configuration,
             session: session,
             nativeConfig: nativeConfig,
-            startTimeTicks: startTimeTicks
+            startTimeTicks: startTimeTicks,
+            itemID: itemID,
+            evidenceSession: evidenceSession
         )
     }
 
@@ -131,8 +135,12 @@ public actor NativePlayerPlaybackController {
         configuration: ServerConfiguration,
         session: UserSession,
         nativeConfig: NativePlayerConfig,
-        startTimeTicks: Int64?
+        startTimeTicks: Int64?,
+        itemID: String,
+        evidenceSession: String
     ) async throws -> NativePlayerPlaybackSnapshot {
+        let mediaCorrelation = AppLogFormat.correlationIdentifier(itemID, domain: .media)
+        let sourceCorrelation = AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source)
         let originalHeaders = authenticatedOriginalHeaders(resolution: resolution, session: session)
         let originalURL = authenticatedOriginalURL(resolution: resolution, headers: originalHeaders)
         let prefersDirectAppleSurface = nativeConfig.surfacePreference == .directPlayWhenPossible
@@ -155,7 +163,19 @@ public actor NativePlayerPlaybackController {
                 session: session
             )
             AppLog.playback.notice(
-                "nativeplayer.apple.route.selected — source=\(resolution.mediaSource.id, privacy: .public) route=directPlay avPlayerItem=true avPlayerViewController=true nativeProbe=false serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
+                "nativeplayer.apple.route.selected — source=\(sourceCorrelation, privacy: .public) route=directPlay avPlayerItem=true avPlayerViewController=true nativeProbe=false serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
+            )
+            PlayerDeepEvidenceSink.append(
+                event: .routeSelection,
+                session: evidenceSession,
+                media: mediaCorrelation,
+                source: sourceCorrelation,
+                fields: [
+                    .route: .category(.directPlay),
+                    .avPlayerItem: .boolean(true),
+                    .avPlayerViewController: .boolean(true),
+                    .serverTranscodeUsed: .boolean(resolution.serverTranscodeUsed),
+                ]
             )
             return NativePlayerPlaybackSnapshot(
                 overlayLines: appleNativeOverlayLines(for: resolution),
@@ -178,7 +198,7 @@ public actor NativePlayerPlaybackController {
                 ? "hdr_dv_requires_apple_surface"
                 : Self.appleNativeSurfaceRejectionReason(source: resolution.mediaSource, url: originalURL)
             AppLog.playback.warning(
-                "nativeplayer.apple.route.rejected — source=\(resolution.mediaSource.id, privacy: .public) fallback=coordinator reason=\(reason, privacy: .public)"
+                "nativeplayer.apple.route.rejected — source=\(sourceCorrelation, privacy: .public) fallback=coordinator reason=\(reason, privacy: .public)"
             )
             throw NativePlayerPreparationError.appleNativeContainerRequiresCoordinatorFallback(reason)
         }
@@ -193,13 +213,13 @@ public actor NativePlayerPlaybackController {
         let source = byteSource.source
         return try await withTemporaryByteSource(source) {
         AppLog.playback.notice(
-            "nativeplayer.byteSource.open — source=\(resolution.mediaSource.id, privacy: .public) type=\(byteSource.type, privacy: .public)"
+            "nativeplayer.byteSource.open — source=\(sourceCorrelation, privacy: .public) type=\(byteSource.type, privacy: .public)"
         )
         stateMachine.apply(.probeStarted)
-        AppLog.playback.notice("nativeplayer.probe.start — source=\(resolution.mediaSource.id, privacy: .public)")
+        AppLog.playback.notice("nativeplayer.probe.start — source=\(sourceCorrelation, privacy: .public)")
         let probe = try await probeService.probe(source: source, hint: resolution.mediaSource.container)
         AppLog.playback.notice(
-            "nativeplayer.probe.result — source=\(resolution.mediaSource.id, privacy: .public) format=\(probe.format.rawValue, privacy: .public) confidence=\(probe.confidence.rawValue, privacy: .public)"
+            "nativeplayer.probe.result — source=\(sourceCorrelation, privacy: .public) format=\(probe.format.rawValue, privacy: .public) confidence=\(probe.confidence.rawValue, privacy: .public)"
         )
         let metrics = await source.metrics()
         let demuxer: any MediaDemuxer
@@ -211,7 +231,7 @@ public actor NativePlayerPlaybackController {
                 enableExperimentalMKV: nativeConfig.enableExperimentalMKV
             ).makeDemuxer(format: probe.format, source: source, sourceURL: originalURL, sourceHeaders: originalHeaders)
             AppLog.playback.notice(
-                "nativeplayer.demuxer.selected — source=\(resolution.mediaSource.id, privacy: .public) demuxer=\(String(describing: type(of: demuxer)), privacy: .public)"
+                "nativeplayer.demuxer.selected — source=\(sourceCorrelation, privacy: .public) demuxer=\(String(describing: type(of: demuxer)), privacy: .public)"
             )
             stream = try await demuxer.open()
         } catch {
@@ -240,10 +260,19 @@ public actor NativePlayerPlaybackController {
             access: metrics
         )
         PlayerDeepEvidenceSink.append(
-            "nativeplayer.playbackPlan.created — source=\(resolution.mediaSource.id) canStart=\(plan.canStartLocalPlayback) demuxer=\(plan.demux.backend) video=\(plan.video?.backend ?? "none") audio=\(plan.audio?.backend ?? "none")"
+            event: .plan,
+            session: evidenceSession,
+            media: mediaCorrelation,
+            source: sourceCorrelation,
+            fields: [
+                .canStart: .boolean(plan.canStartLocalPlayback),
+                .demuxer: .category(.normalized(plan.demux.backend)),
+                .videoBackend: .category(.normalized(plan.video?.backend)),
+                .audioBackend: .category(.normalized(plan.audio?.backend)),
+            ]
         )
         AppLog.playback.notice(
-            "nativeplayer.playbackPlan.created — source=\(resolution.mediaSource.id, privacy: .public) canStart=\(plan.canStartLocalPlayback, privacy: .public) demuxer=\(plan.demux.backend, privacy: .public) video=\(plan.video?.backend ?? "none", privacy: .public) audio=\(plan.audio?.backend ?? "none", privacy: .public)"
+            "nativeplayer.playbackPlan.created — source=\(sourceCorrelation, privacy: .public) canStart=\(plan.canStartLocalPlayback, privacy: .public) demuxer=\(plan.demux.backend, privacy: .public) video=\(plan.video?.backend ?? "none", privacy: .public) audio=\(plan.audio?.backend ?? "none", privacy: .public)"
         )
         AppLog.playback.notice("nativeplayer.serverTranscodeUsed \(resolution.serverTranscodeUsed, privacy: .public)")
         if plan.canStartLocalPlayback {
@@ -282,7 +311,19 @@ public actor NativePlayerPlaybackController {
                 session: session
             )
             AppLog.playback.notice(
-                "nativeplayer.apple.route.selected — source=\(resolution.mediaSource.id, privacy: .public) route=directPlay avPlayerItem=true avPlayerViewController=true nativeProbe=true serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
+                "nativeplayer.apple.route.selected — source=\(sourceCorrelation, privacy: .public) route=directPlay avPlayerItem=true avPlayerViewController=true nativeProbe=true serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
+            )
+            PlayerDeepEvidenceSink.append(
+                event: .routeSelection,
+                session: evidenceSession,
+                media: mediaCorrelation,
+                source: sourceCorrelation,
+                fields: [
+                    .route: .category(.directPlay),
+                    .avPlayerItem: .boolean(true),
+                    .avPlayerViewController: .boolean(true),
+                    .serverTranscodeUsed: .boolean(resolution.serverTranscodeUsed),
+                ]
             )
             return NativePlayerPlaybackSnapshot(
                 overlayLines: diagnostics.overlayLines,
@@ -305,17 +346,26 @@ public actor NativePlayerPlaybackController {
         // dynamic range is driven by AVDisplayCriteria).
         if Self.sampleBufferShouldRejectHDR(for: resolution.mediaSource) {
             AppLog.playback.warning(
-                "nativeplayer.sampleBuffer.route.rejected_hdr — source=\(resolution.mediaSource.id, privacy: .public) fallback=coordinator reason=hdr_dv_unsupported_on_sample_buffer"
+                "nativeplayer.sampleBuffer.route.rejected_hdr — source=\(sourceCorrelation, privacy: .public) fallback=coordinator reason=hdr_dv_unsupported_on_sample_buffer"
             )
             throw NativePlayerPreparationError.appleNativeContainerRequiresCoordinatorFallback("hdr_dv_unsupported_on_sample_buffer")
         }
 
         let playbackURL = plan.canStartLocalPlayback ? originalURL : nil
         PlayerDeepEvidenceSink.append(
-            "nativeplayer.sampleBuffer.route.selected — source=\(resolution.mediaSource.id) avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=\(resolution.serverTranscodeUsed)"
+            event: .routeSelection,
+            session: evidenceSession,
+            media: mediaCorrelation,
+            source: sourceCorrelation,
+            fields: [
+                .route: .category(.sampleBuffer),
+                .avPlayerItem: .boolean(false),
+                .avPlayerViewController: .boolean(false),
+                .serverTranscodeUsed: .boolean(resolution.serverTranscodeUsed),
+            ]
         )
         AppLog.playback.notice(
-            "nativeplayer.sampleBuffer.route.selected — source=\(resolution.mediaSource.id, privacy: .public) avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
+            "nativeplayer.sampleBuffer.route.selected — source=\(sourceCorrelation, privacy: .public) avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=\(resolution.serverTranscodeUsed, privacy: .public)"
         )
         return NativePlayerPlaybackSnapshot(
             overlayLines: diagnostics.overlayLines,

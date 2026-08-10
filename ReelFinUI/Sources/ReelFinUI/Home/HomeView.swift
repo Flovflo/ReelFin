@@ -2010,33 +2010,22 @@ struct HomeView: View {
 
 #if os(iOS) || os(tvOS)
     private var liveUITestTargetItemID: String? {
-        if let argumentValue = liveUITestArgumentValue(after: "-reelfin-live-ui-open-target") {
-            return normalizedLiveUITestItemID(argumentValue)
-        }
         guard isLiveUITestDirectTargetOpenEnabled else { return nil }
-        let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_TARGET_ITEM_ID"] ?? ""
+        let environment = ProcessInfo.processInfo.environment
+        let key: String
+        switch environment["REELFIN_LIVE_UI_TARGET_SCENARIO"] {
+        case "directplay-mp4": key = "TEST_DIRECTPLAY_MP4_ITEM_ID"
+        case "directplay-hdr-dv-long": key = "TEST_DOLBY_VISION_ITEM_ID"
+        case "samplebuffer-mkv": key = "TEST_MKV_ITEM_ID"
+        default: return nil
+        }
+        let rawValue = environment[key] ?? ""
         return normalizedLiveUITestItemID(rawValue)
     }
 
     private var isLiveUITestDirectTargetOpenEnabled: Bool {
-        if liveUITestArgumentValue(after: "-reelfin-live-ui-open-target") != nil {
-            return true
-        }
         let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] ?? ""
         return ["1", "true", "yes", "on"].contains(rawValue.lowercased())
-    }
-
-    private func liveUITestArgumentValue(after flag: String) -> String? {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard
-            let flagIndex = arguments.firstIndex(of: flag),
-            arguments.indices.contains(arguments.index(after: flagIndex))
-        else {
-            return nil
-        }
-        let rawValue = arguments[arguments.index(after: flagIndex)]
-        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedValue.isEmpty ? nil : trimmedValue
     }
 
     private func normalizedLiveUITestItemID(_ rawValue: String) -> String? {
@@ -2088,10 +2077,10 @@ struct HomeView: View {
             selectedDetailTransitionSourceID = nil
             selectedDetailContextItems = [item]
             selectedDetailContextTitle = "Live UI Target"
-            AppLog.ui.info("live_ui_target.open item=\(AppLogFormat.shortIdentifier(item.id), privacy: .public)")
+            AppLog.ui.info("live_ui_target.open media=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)")
             presentDetail(item)
         } catch {
-            AppLog.ui.error("live_ui_target.open_failed item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            AppLog.ui.error("live_ui_target.open_failed media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) errorType=target_unavailable")
         }
     }
 #endif
@@ -2265,7 +2254,7 @@ struct HomeView: View {
         engine.onRequiresNativePlayback = { [weak engine] in
             guard let engine, customEngine === engine else { return }
             AppLog.playback.notice(
-                "home.player.native_handoff — item=\(item.id.prefix(8), privacy: .public)"
+                "home.player.native_handoff — item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
             )
             Task { @MainActor in
                 await startHomeLegacyPlayback(

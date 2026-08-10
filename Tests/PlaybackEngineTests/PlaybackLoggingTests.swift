@@ -4,10 +4,36 @@ import Foundation
 import XCTest
 
 final class PlaybackLoggingTests: XCTestCase {
-    func testShortIdentifierUsesStablePrefix() {
-        XCTAssertEqual(AppLogFormat.shortIdentifier("8930e2b5481eeaec213595eda347443b"), "8930e2b5")
-        XCTAssertEqual(AppLogFormat.shortIdentifier("short"), "short")
-        XCTAssertEqual(AppLogFormat.shortIdentifier(nil), "unknown")
+    func testCorrelationIdentifierUsesInjectedDomainSeparatedHMAC() {
+        let correlator = AppLogCorrelator(keyData: Data((0 ..< 32).map(UInt8.init)))
+        let raw = "raw-media-8930e2b5481eeaec213595eda347443b"
+
+        XCTAssertEqual(correlator.identifier(raw, domain: .media), "6feb9875c85da8e6")
+        XCTAssertEqual(correlator.identifier(raw, domain: .source), "631176f3f87b4c15")
+        XCTAssertEqual(correlator.identifier(raw, domain: .media), correlator.identifier(raw, domain: .media))
+        XCTAssertEqual(correlator.identifier(nil, domain: .media), "unknown")
+        XCTAssertEqual(correlator.identifier("", domain: .media), "unknown")
+        XCTAssertFalse(correlator.identifier(raw, domain: .media).contains(String(raw.prefix(8))))
+    }
+
+    func testCorrelationIdentifierHasFixedOpaqueShape() throws {
+        let first = AppLogFormat.correlationIdentifier("8930e2b5481eeaec213595eda347443b", domain: .media)
+        let second = AppLogFormat.correlationIdentifier("2050da6b10e0636851bb6d00249ee38b", domain: .media)
+
+        XCTAssertNotEqual(first, second)
+        for value in [first, second] {
+            XCTAssertNotNil(value.range(of: #"^[0-9a-f]{16}$"#, options: .regularExpression), value)
+        }
+    }
+
+    func testPlaybackSessionIdentifierIsRandomAndContainsNoMediaIdentity() {
+        let raw = "8930e2b5481eeaec213595eda347443b"
+        let first = PlaybackSessionController.makePlaybackLogSessionID(itemID: raw)
+        let second = PlaybackSessionController.makePlaybackLogSessionID(itemID: raw)
+
+        XCTAssertNotEqual(first, second)
+        XCTAssertNotNil(first.range(of: #"^[0-9a-f]{16}$"#, options: .regularExpression))
+        XCTAssertFalse(first.contains(String(raw.prefix(8))))
     }
 
     func testPlaybackLogScopeIncludesSessionItemAndAttempt() {
@@ -17,7 +43,16 @@ final class PlaybackLoggingTests: XCTestCase {
             attempt: 2
         )
 
-        XCTAssertEqual(scope, "session=8930e2b5-a1b2c3 item=8930e2b5 attempt=2")
+        let fields = Dictionary(
+            uniqueKeysWithValues: scope.split(separator: " ").map { component in
+                let parts = component.split(separator: "=", maxSplits: 1).map(String.init)
+                return (parts[0], parts[1])
+            }
+        )
+        XCTAssertEqual(fields["session"], "8930e2b5-a1b2c3")
+        XCTAssertEqual(fields["media"], AppLogFormat.correlationIdentifier("8930e2b5481eeaec213595eda347443b", domain: .media))
+        XCTAssertEqual(fields["attempt"], "2")
+        XCTAssertNil(fields["item"])
     }
 
     func testSensitiveURLSanitizerProjectsOnlyAllowlistedDiagnosticFields() throws {
@@ -33,7 +68,7 @@ final class PlaybackLoggingTests: XCTestCase {
         XCTAssertEqual(compact, sanitized)
         XCTAssertNotNil(
             sanitized.range(
-                of: #"^https://example\.com path=[0-9a-f]{12} queryNames=allowaudiostreamcopy,videocodec queryItems=6$"#,
+                of: #"^https://example\.com path=[0-9a-f]{16} queryNames=allowaudiostreamcopy,videocodec queryItems=6$"#,
                 options: .regularExpression
             )
         )
@@ -79,7 +114,7 @@ final class PlaybackLoggingTests: XCTestCase {
 
         XCTAssertEqual(
             projector.logString(for: url),
-            "https://example.com path=edf941fdba1c queryNames=videocodec queryItems=2"
+            "https://example.com path=53a88a7a5c106c08 queryNames=videocodec queryItems=2"
         )
     }
 
@@ -103,7 +138,7 @@ final class PlaybackLoggingTests: XCTestCase {
 
         XCTAssertNotNil(
             projection.range(
-                of: #"^https://example\.com path=[0-9a-f]{12} queryNames=videocodec queryItems=2$"#,
+                of: #"^https://example\.com path=[0-9a-f]{16} queryNames=videocodec queryItems=2$"#,
                 options: .regularExpression
             )
         )
@@ -207,8 +242,34 @@ final class PlaybackLoggingTests: XCTestCase {
         }
     }
 
+    func testProductionLogsDoNotPublishRawMediaPrefixesOrTrackMetadata() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let roots = ["Shared/Sources", "PlaybackEngine/Sources", "ReelFinUI/Sources"]
+        let forbiddenPatterns = [
+            #"\.prefix\(8\).*privacy:\s*\.public"#,
+            #"shortIdentifier\([^\n]*privacy:\s*\.public"#,
+            #"\\\((?:[A-Za-z0-9_.]*itemID|[A-Za-z0-9_.]*source\.id|track\.title|track\.language)\s*,\s*privacy:\s*\.public"#,
+        ]
+        let expressions = try forbiddenPatterns.map { try NSRegularExpression(pattern: $0) }
+
+        for root in roots {
+            let rootURL = repositoryRoot.appendingPathComponent(root)
+            let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: rootURL, includingPropertiesForKeys: nil))
+            for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
+                let source = try String(contentsOf: fileURL, encoding: .utf8)
+                let range = NSRange(source.startIndex..<source.endIndex, in: source)
+                for expression in expressions {
+                    XCTAssertNil(expression.firstMatch(in: source, range: range), fileURL.path)
+                }
+            }
+        }
+    }
+
     private func pathCorrelation(in projection: String) throws -> String {
-        let expression = try NSRegularExpression(pattern: #" path=([0-9a-f]{12}) "#)
+        let expression = try NSRegularExpression(pattern: #" path=([0-9a-f]{16}) "#)
         let range = NSRange(projection.startIndex..<projection.endIndex, in: projection)
         let match = try XCTUnwrap(expression.firstMatch(in: projection, range: range))
         let correlationRange = try XCTUnwrap(Range(match.range(at: 1), in: projection))

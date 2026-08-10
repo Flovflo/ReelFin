@@ -15,6 +15,13 @@ import live_directplay_item_probe as probe
 import live_resume_reporting_probe as resume_probe
 
 
+SCENARIO_ITEM_ENV = {
+    "directplay-mp4": "TEST_DIRECTPLAY_MP4_ITEM_ID",
+    "directplay-hdr-dv-long": "TEST_DOLBY_VISION_ITEM_ID",
+    "samplebuffer-mkv": "TEST_MKV_ITEM_ID",
+}
+
+
 def env_value(*names: str) -> str:
     for name in names:
         value = os.environ.get(name, "")
@@ -41,10 +48,20 @@ def load_session() -> tuple[str, probe.Session]:
     return server_url, probe.authenticate(server_url, username, password)
 
 
-def prepare(item_id: str, state_file: Path) -> None:
+def item_id_for_scenario(scenario: str) -> str:
+    env_name = SCENARIO_ITEM_ENV.get(scenario)
+    if env_name is None:
+        raise probe.ProbeFailure("unsupported_ui_scenario")
+    item_id = probe.normalized_item_id(env_value(env_name))
+    if not item_id:
+        raise probe.ProbeFailure("missing_ui_scenario_fixture")
+    return item_id
+
+
+def prepare(scenario: str, state_file: Path) -> None:
     server_url, session = load_session()
-    normalized_item_id = probe.normalized_item_id(item_id)
-    item = resume_probe.fetch_item(server_url, session, normalized_item_id)
+    item_id = item_id_for_scenario(scenario)
+    item = resume_probe.fetch_item(server_url, session, item_id)
     original_ticks = resume_probe.playback_position_ticks(item)
     target_ticks = resume_probe.choose_probe_ticks(item)
 
@@ -52,7 +69,7 @@ def prepare(item_id: str, state_file: Path) -> None:
     state_file.write_text(
         json.dumps(
             {
-                "item_id": normalized_item_id,
+                "scenario": scenario,
                 "original_ticks": original_ticks,
                 "target_ticks": target_ticks,
             },
@@ -61,9 +78,9 @@ def prepare(item_id: str, state_file: Path) -> None:
         encoding="utf-8",
     )
 
-    resume_probe.report_stopped_position(server_url, session, normalized_item_id, target_ticks)
+    resume_probe.report_stopped_position(server_url, session, item_id, target_ticks)
     time.sleep(1.0)
-    verified_item = resume_probe.fetch_item(server_url, session, normalized_item_id)
+    verified_item = resume_probe.fetch_item(server_url, session, item_id)
     actual_ticks = resume_probe.playback_position_ticks(verified_item)
     delta = abs(actual_ticks - target_ticks)
     if delta > resume_probe.VERIFY_TOLERANCE_TICKS:
@@ -72,7 +89,7 @@ def prepare(item_id: str, state_file: Path) -> None:
         )
     print(
         "PASS ui_resume_prepare "
-        f"item={normalized_item_id[:8]} "
+        f"scenario={scenario} "
         f"targetSeconds={target_ticks / resume_probe.TICKS_PER_SECOND:.3f} "
         f"originalSeconds={original_ticks / resume_probe.TICKS_PER_SECOND:.3f}"
     )
@@ -84,13 +101,14 @@ def restore(state_file: Path) -> None:
         return
 
     state: dict[str, Any] = json.loads(state_file.read_text(encoding="utf-8"))
-    item_id = str(state["item_id"])
+    scenario = str(state["scenario"])
+    item_id = item_id_for_scenario(scenario)
     original_ticks = int(state["original_ticks"])
     server_url, session = load_session()
     resume_probe.report_stopped_position(server_url, session, item_id, original_ticks)
     print(
         "PASS ui_resume_restore "
-        f"item={item_id[:8]} "
+        f"scenario={scenario} "
         f"restoredSeconds={original_ticks / resume_probe.TICKS_PER_SECOND:.3f}"
     )
 
@@ -100,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     prepare_parser = subparsers.add_parser("prepare")
-    prepare_parser.add_argument("--item-id", required=True)
+    prepare_parser.add_argument("--scenario", choices=sorted(SCENARIO_ITEM_ENV), required=True)
     prepare_parser.add_argument("--state-file", required=True)
 
     restore_parser = subparsers.add_parser("restore")
@@ -113,7 +131,7 @@ def main() -> int:
     args = parse_args()
     try:
         if args.command == "prepare":
-            prepare(args.item_id, Path(args.state_file))
+            prepare(args.scenario, Path(args.state_file))
         else:
             restore(Path(args.state_file))
         return 0

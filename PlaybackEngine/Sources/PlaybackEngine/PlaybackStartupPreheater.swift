@@ -71,7 +71,7 @@ public enum PlaybackStartupPreheater {
             )
             let rangeStart = result.rangeStart.map(String.init) ?? "none"
             AppLog.playback.info(
-                "playback.startup.preheat.done — item=\(selection.source.itemID.prefix(8), privacy: .public) bytes=\(result.byteCount, privacy: .public) elapsed=\(result.elapsedSeconds, format: .fixed(precision: 3)) bitrate=\(Int(result.observedBitrate), privacy: .public) rangeStart=\(rangeStart, privacy: .public) reason=\(result.reason, privacy: .public)"
+                "playback.startup.preheat.done — item=\(AppLogFormat.correlationIdentifier(selection.source.itemID, domain: .media), privacy: .public) bytes=\(result.byteCount, privacy: .public) elapsed=\(result.elapsedSeconds, format: .fixed(precision: 3)) bitrate=\(Int(result.observedBitrate), privacy: .public) rangeStart=\(rangeStart, privacy: .public) reason=\(result.reason, privacy: .public)"
             )
             return result
         } catch where isCancellation(error) {
@@ -89,7 +89,7 @@ public enum PlaybackStartupPreheater {
             // before consulting the preheat result.)
             let elapsed = max(0.001, Date().timeIntervalSince(startedAt))
             AppLog.playback.notice(
-                "playback.startup.preheat.failed — item=\(selection.source.itemID.prefix(8), privacy: .public) reason=\(requestPlan.reason, privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 3)) error=\(error.localizedDescription, privacy: .public) action=route_watchable_sdr"
+                "playback.startup.preheat.failed — item=\(AppLogFormat.correlationIdentifier(selection.source.itemID, domain: .media), privacy: .public) reason=\(requestPlan.reason, privacy: .public) elapsed=\(elapsed, format: .fixed(precision: 3)) error=\(error.localizedDescription, privacy: .public) action=route_watchable_sdr"
             )
             return Result(
                 byteCount: 0,
@@ -103,7 +103,7 @@ public enum PlaybackStartupPreheater {
             // capability/protocol issue, not a connection-speed verdict — keep the prior behavior
             // (nil → the decision falls back to its guarded default).
             AppLog.playback.debug(
-                "playback.startup.preheat.skipped — item=\(selection.source.itemID.prefix(8), privacy: .public) reason=\(requestPlan.reason, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                "playback.startup.preheat.skipped — item=\(AppLogFormat.correlationIdentifier(selection.source.itemID, domain: .media), privacy: .public) reason=\(requestPlan.reason, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
             )
             return nil
         }

@@ -10,14 +10,14 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     }
 
     private enum PlaybackLiveSmokeError: Error, LocalizedError {
-        case explicitTargetNotVisible(String)
+        case explicitTargetNotVisible
         case requiredControlMissing(String)
         case requiredMenuMissing(String)
 
         var errorDescription: String? {
             switch self {
-            case .explicitTargetNotVisible(let itemID):
-                return "Explicit live UI target item \(itemID.prefix(8)) was not visible in Home; refusing fallback playback."
+            case .explicitTargetNotVisible:
+                return "Explicit live UI target scenario was not visible in Home; refusing fallback playback."
             case .requiredControlMissing(let label):
                 return "Expected required live player control '\(label)' to be visible."
             case .requiredMenuMissing(let identifier):
@@ -540,7 +540,7 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             if explicitCandidate.waitForExistence(timeout: 30) {
                 return explicitCandidate
             }
-            throw PlaybackLiveSmokeError.explicitTargetNotVisible(explicitItemID)
+            throw PlaybackLiveSmokeError.explicitTargetNotVisible
         }
 
         for kind in preferredKinds {
@@ -641,13 +641,15 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
 
     private func explicitTargetItemID() -> String? {
         let environment = loadEnvironmentValues()
-        for key in ["REELFIN_LIVE_UI_TARGET_ITEM_ID", "TEST_DIRECTPLAY_MP4_ITEM_ID"] {
-            guard let raw = environment[key], !raw.isEmpty else { continue }
-            if let normalized = normalizedItemID(raw) {
-                return normalized
-            }
+        guard let scenario = environment["REELFIN_LIVE_UI_TARGET_SCENARIO"] else { return nil }
+        let key: String
+        switch scenario {
+        case "directplay-mp4": key = "TEST_DIRECTPLAY_MP4_ITEM_ID"
+        case "directplay-hdr-dv-long": key = "TEST_DOLBY_VISION_ITEM_ID"
+        case "samplebuffer-mkv": key = "TEST_MKV_ITEM_ID"
+        default: return nil
         }
-        return nil
+        return environment[key].flatMap(normalizedItemID)
     }
 
     private func normalizedItemID(_ raw: String) -> String? {
@@ -841,16 +843,16 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             // the test process so a real-device user's player preference is never touched.
             app.launchArguments += ["-settings.useCustomPlayerEngine", "NO"]
         }
-        if shouldOpenExplicitTargetDirectly(), let targetItemID = explicitTargetItemID() {
-            app.launchArguments += ["-reelfin-live-ui-open-target", targetItemID]
-        }
         for key in [
-            "REELFIN_LIVE_UI_TARGET_ITEM_ID",
+            "REELFIN_LIVE_UI_TARGET_SCENARIO",
             "REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY",
             "REELFIN_LIVE_UI_FORCE_LEGACY",
             "REELFIN_NATIVE_PLAYER",
             "REELFIN_PLAYER_DEEP_EVIDENCE",
-            "REELFIN_PLAYER_DEEP_EVIDENCE_RESET"
+            "REELFIN_PLAYER_DEEP_EVIDENCE_RESET",
+            "TEST_DIRECTPLAY_MP4_ITEM_ID",
+            "TEST_DOLBY_VISION_ITEM_ID",
+            "TEST_MKV_ITEM_ID"
         ] {
             guard let value = environment[key], !value.isEmpty else { continue }
             app.launchEnvironment[key] = value

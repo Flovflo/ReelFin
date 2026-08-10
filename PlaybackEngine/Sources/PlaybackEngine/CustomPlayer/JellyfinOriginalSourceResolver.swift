@@ -105,10 +105,10 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         }
         switch claim {
         case let .cached(hit):
-            AppLog.playback.notice("customplayer.resolve.memo_hit — item=\(itemID.prefix(8), privacy: .public)")
+            AppLog.playback.notice("customplayer.resolve.memo_hit — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
             return hit
         case let .joined(inFlight):
-            AppLog.playback.notice("customplayer.resolve.memo_join — item=\(itemID.prefix(8), privacy: .public)")
+            AppLog.playback.notice("customplayer.resolve.memo_join — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
             return try await inFlight.value
         case let .owner(ownerID, task):
             do {

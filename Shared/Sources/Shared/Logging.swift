@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import os
 
@@ -12,11 +13,47 @@ public enum AppLog {
     public static let nativeBridge = Logger(subsystem: subsystem, category: "nativeBridge")
 }
 
-public enum AppLogFormat {
-    public static func shortIdentifier(_ value: String?, prefixLength: Int = 8) -> String {
+public enum AppLogCorrelationDomain: String, CaseIterable, Sendable {
+    case media
+    case source
+    case track
+    case server
+    case path
+}
+
+struct AppLogCorrelator: Sendable {
+    private let key: SymmetricKey
+
+    init(keyData: Data) {
+        key = SymmetricKey(data: keyData)
+    }
+
+    fileprivate init(key: SymmetricKey) {
+        self.key = key
+    }
+
+    func identifier(_ value: String?, domain: AppLogCorrelationDomain) -> String {
         guard let value, !value.isEmpty else { return "unknown" }
-        guard prefixLength > 0, value.count > prefixLength else { return value }
-        return String(value.prefix(prefixLength))
+        var input = Data(domain.rawValue.utf8)
+        input.append(0)
+        input.append(contentsOf: value.utf8)
+        let authenticationCode = HMAC<SHA256>.authenticationCode(for: input, using: key)
+        return authenticationCode.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public enum AppLogFormat {
+    static let processCorrelator = AppLogCorrelator(key: SymmetricKey(size: .bits256))
+
+    public static func correlationIdentifier(
+        _ value: String?,
+        domain: AppLogCorrelationDomain = .media
+    ) -> String {
+        processCorrelator.identifier(value, domain: domain)
+    }
+
+    public static func randomSessionIdentifier() -> String {
+        String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(16))
     }
 }
 

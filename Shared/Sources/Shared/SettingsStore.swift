@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 public final class DefaultSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
@@ -103,14 +102,14 @@ struct SensitiveURLLogProjector: Sendable {
         "videobitrate",
         "videocodec"
     ]
-    private let pathCorrelationKey: SymmetricKey
+    private let correlator: AppLogCorrelator
 
     init(keyData: Data) {
-        self.init(key: SymmetricKey(data: keyData))
+        correlator = AppLogCorrelator(keyData: keyData)
     }
 
-    fileprivate init(key: SymmetricKey) {
-        pathCorrelationKey = key
+    fileprivate init(correlator: AppLogCorrelator) {
+        self.correlator = correlator
     }
 
     func logString(for url: URL) -> String {
@@ -162,11 +161,7 @@ struct SensitiveURLLogProjector: Sendable {
     }
 
     private func pathCorrelation(for path: String) -> String {
-        let authenticationCode = HMAC<SHA256>.authenticationCode(
-            for: Data(path.utf8),
-            using: pathCorrelationKey
-        )
-        return authenticationCode.prefix(6).map { String(format: "%02x", $0) }.joined()
+        correlator.identifier(path, domain: .path)
     }
 
     private func isSafeHost(_ host: String) -> Bool {
@@ -190,7 +185,7 @@ public enum SensitiveURLSanitizer {
         "access_token"
     ]
     private static let logProjector = SensitiveURLLogProjector(
-        key: SymmetricKey(size: .bits256)
+        correlator: AppLogFormat.processCorrelator
     )
 
     public static func cacheKey(for url: URL) -> String {

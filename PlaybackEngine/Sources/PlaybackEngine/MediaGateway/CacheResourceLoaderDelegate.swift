@@ -175,7 +175,7 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
             // AVPlayer cancelled the request; nothing to finish. The download keeps running.
         } catch {
             AppLog.playback.warning(
-                "playback.cacheloader.serve.fail — item=\(self.key.itemID.prefix(8), privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
+                "playback.cacheloader.serve.fail — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
             )
             if !loadingRequest.isCancelled && !loadingRequest.isFinished {
                 loadingRequest.finishLoading(with: error)
@@ -208,7 +208,7 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
                !data.isEmpty {
                 if waitedForFill {
                     AppLog.playback.notice(
-                        "playback.cacheloader.serve.resumed — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
+                        "playback.cacheloader.serve.resumed — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
                     )
                     waitedForFill = false
                 }
@@ -225,7 +225,7 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
             await publish(id: id, offset: offset, waiting: true)
             if !waitedForFill {
                 AppLog.playback.warning(
-                    "playback.cacheloader.serve.wait — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
+                    "playback.cacheloader.serve.wait — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
                 )
                 waitedForFill = true
             }

@@ -159,7 +159,7 @@ actor OriginDownloader {
         contentInfoTask = nil
         await store.persistContentLength(total, key: key)
         AppLog.playback.notice(
-            "playback.cacheloader.contentinfo.adopted — item=\(self.key.itemID.prefix(8), privacy: .public) total=\(total, privacy: .public) type=\(self.resolvedContentType ?? "-", privacy: .public)"
+            "playback.cacheloader.contentinfo.adopted — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) total=\(total, privacy: .public) type=\(self.resolvedContentType ?? "-", privacy: .public)"
         )
     }
 
@@ -223,16 +223,16 @@ actor OriginDownloader {
                     // Persist so the next play (even with the origin DOWN) starts from the disk cache.
                     await store.persistContentLength(total, key: key)
                     AppLog.playback.notice(
-                        "playback.cacheloader.contentinfo — item=\(self.key.itemID.prefix(8), privacy: .public) attempt=\(attempt, privacy: .public) total=\(total, privacy: .public) type=\(self.resolvedContentType ?? "-", privacy: .public)"
+                        "playback.cacheloader.contentinfo — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) attempt=\(attempt, privacy: .public) total=\(total, privacy: .public) type=\(self.resolvedContentType ?? "-", privacy: .public)"
                     )
                     return (total, resolvedContentType)
                 }
                 AppLog.playback.warning(
-                    "playback.cacheloader.contentinfo.nolength — item=\(self.key.itemID.prefix(8), privacy: .public) attempt=\(attempt, privacy: .public) status=\(http.statusCode, privacy: .public)"
+                    "playback.cacheloader.contentinfo.nolength — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) attempt=\(attempt, privacy: .public) status=\(http.statusCode, privacy: .public)"
                 )
             } catch {
                 AppLog.playback.warning(
-                    "playback.cacheloader.contentinfo.retry — item=\(self.key.itemID.prefix(8), privacy: .public) attempt=\(attempt, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
+                    "playback.cacheloader.contentinfo.retry — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) attempt=\(attempt, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
                 )
             }
             if attempt < contentInfoMaxAttempts {
@@ -312,7 +312,7 @@ actor OriginDownloader {
                     contentInfoFailures += 1
                     if contentInfoFailures >= 6 {
                         AppLog.playback.warning(
-                            "playback.cacheloader.fill.parked — item=\(self.key.itemID.prefix(8), privacy: .public) reason=contentinfo_unreachable"
+                            "playback.cacheloader.fill.parked — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) reason=contentinfo_unreachable"
                         )
                         fillTask = nil
                         return
@@ -351,7 +351,7 @@ actor OriginDownloader {
                 off += windowLength
             }
             AppLog.playback.notice(
-                "playback.cacheloader.fill.batch — item=\(self.key.itemID.prefix(8), privacy: .public) startMB=\(start / 1_048_576, privacy: .public) endMB=\(off / 1_048_576, privacy: .public) windows=\(windows.count, privacy: .public) headMB=\(head / 1_048_576, privacy: .public) leadMB=\(lead / 1_048_576, privacy: .public)"
+                "playback.cacheloader.fill.batch — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) startMB=\(start / 1_048_576, privacy: .public) endMB=\(off / 1_048_576, privacy: .public) windows=\(windows.count, privacy: .public) headMB=\(head / 1_048_576, privacy: .public) leadMB=\(lead / 1_048_576, privacy: .public)"
             )
 
             let windowHead = head
@@ -376,7 +376,7 @@ actor OriginDownloader {
             if Task.isCancelled { return }
             if sawPermanent {
                 AppLog.playback.warning(
-                    "playback.cacheloader.fill.stop — item=\(self.key.itemID.prefix(8), privacy: .public) offset=\(start, privacy: .public) reason=permanent_error"
+                    "playback.cacheloader.fill.stop — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) offset=\(start, privacy: .public) reason=permanent_error"
                 )
                 fillTask = nil
                 return
@@ -385,7 +385,7 @@ actor OriginDownloader {
                 // A window dropped transiently; committed bytes are in the store. Brief backoff,
                 // then the loop recomputes from contiguousEnd(playhead) — no byte re-fetched.
                 AppLog.playback.warning(
-                    "playback.cacheloader.fill.resume — item=\(self.key.itemID.prefix(8), privacy: .public) headMB=\(head / 1_048_576, privacy: .public) reason=transient_drop"
+                    "playback.cacheloader.fill.resume — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) headMB=\(head / 1_048_576, privacy: .public) reason=transient_drop"
                 )
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }

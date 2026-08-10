@@ -440,7 +440,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         func logEnd(_ reason: String, ok: Bool) {
             guard onDemandBytes > 0 || onDemandFails > 0 || !ok else { return }
             AppLog.playback.notice(
-                "playback.cachehttp.serve.end — item=\(self.key.itemID.prefix(8), privacy: .public) startMB=\(start / 1_048_576, privacy: .public) reachedMB=\(offset / 1_048_576, privacy: .public) hitKB=\(hitBytes / 1024, privacy: .public) onDemandKB=\(onDemandBytes / 1024, privacy: .public) onDemandFail=\(onDemandFails, privacy: .public) reason=\(reason, privacy: .public)"
+                "playback.cachehttp.serve.end — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) startMB=\(start / 1_048_576, privacy: .public) reachedMB=\(offset / 1_048_576, privacy: .public) hitKB=\(hitBytes / 1024, privacy: .public) onDemandKB=\(onDemandBytes / 1024, privacy: .public) onDemandFail=\(onDemandFails, privacy: .public) reason=\(reason, privacy: .public)"
             )
         }
         while offset < end {
@@ -480,7 +480,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
             if Date().timeIntervalSince(lastProgress) > livenessDeadline {
                 logEnd("liveness_timeout", ok: false)
                 AppLog.playback.warning(
-                    "playback.cachehttp.serve.liveness_timeout — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
+                    "playback.cachehttp.serve.liveness_timeout — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
                 )
                 return false
             }

@@ -1362,7 +1362,7 @@ struct DetailView: View {
         engine.onRequiresNativePlayback = { [weak engine] in
             guard let engine, customEngine === engine else { return }
             AppLog.playback.notice(
-                "detail.player.native_handoff — item=\(item.id.prefix(8), privacy: .public)"
+                "detail.player.native_handoff — item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
             )
             startLegacyPlayback(
                 item: item,
