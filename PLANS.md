@@ -381,6 +381,18 @@
   - the regression test controls enrichment completion with a continuation and contains no timing sleep or retry
 - Validation: the deterministic RED lost 3 paginated items and current favorite state; after the fix the regression passed `100/100` iterations without retry, both Home view-model test classes passed `16/16`, isolated XcodeGen generation succeeded, and the iOS `ReelFin` simulator build passed.
 
+### M35
+- Status: completed
+- Objective: keep synthetic HLS playlist growth bounded and prevent HTTP segment requests from driving packaging work.
+- Scope: `SyntheticHLSSession`, `LocalHLSServer`, HLS session/server tests, native routing oracle
+- Acceptance:
+  - HTTP serves only canonical, currently advertised segments already retained in the session working set
+  - one actor-owned entry stores fragment bytes, measured duration, and advertisement state under byte and segment-count budgets
+  - playlist refresh advances a bounded sliding window and emits the retained first sequence as `EXT-X-MEDIA-SEQUENCE`
+  - far-future, malformed, unadvertised, and evicted requests perform no demux or repackage work
+  - seek resets scheduler, cache, advertisement, terminal oversize state, and stale prefetch ownership before rebuilding sequence zero
+- Validation: HTTP RED reproduced far-future/unadvertised media work; the full-window RED stalled at sequences `[0,1,2]`; the oversize RED retried past the failed sequence. The final exact-source gate passed 95/95 tests in 424.477 seconds: 28 synthetic-session, 19 real Local HLS (H.264 and HEVC Main 10 startup/seek/replay), 5 manifest/timeline, 7 native-routing, and 36 playback-resilience tests (383.755 seconds). All three named mutations failed their dedicated tests, `xcodegen generate` succeeded, generated scheme noise was discarded, and iOS/tvOS 26.5 builds passed.
+
 ## Validation Commands
 
 ```bash
@@ -733,3 +745,16 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Keep init and fragment NAL-length signaling identical, select all codec decisions and private data from the planned video track ID, and apply the effective sample-entry contract: complete VPS/SPS/PPS for `hvc1`/`dvh1`, with in-band parameter sets permitted only for `hev1`/`dvhe`.
 - Scope `hvc1`/`dvh1` completeness to VPS/SPS/PPS arrays so valid incomplete prefix/suffix SEI remains compatible, reject completeness on non-parameter arrays, and derive master-playlist resolution from the planned video-track ID rather than the container's primary track.
 - Require mutation-backed parser/signaling tests plus real iOS 26.5 AVPlayer evidence for playlist/init/segments, readiness, progression, decoded 10-bit frames, seek, detach, and replay. Keep H.264 and Dolby Vision/HDR paths as mandatory non-regression gates, and retain physical HEVC playback as release evidence rather than extrapolating simulator coverage.
+
+## Synthetic HLS Published-Window Review Follow-up - 2026-08-10
+
+- Keep every URI in a returned media-playlist snapshot readable until the next snapshot is published. Atomically pin the published suffix in the single working set, keep sequential reserve entries unadvertised, and evict only older unadvertised entries.
+- Use a sliding live playlist without `EXT-X-PLAYLIST-TYPE:EVENT`; keep startup preflight VOD/ENDLIST and a generation-stable `TARGETDURATION` matching the 12-second boundary-search ceiling.
+- Own exactly one prefetch task per session generation. Prepare and seek cancel and await it before demux/cache/scheduler mutation; reject scheduler reentrance and validate cancellation/epoch across every suspended collection/repackage boundary and pending-boundary mutation.
+- Release evidence includes refresh beyond the retained window and real AVPlayer playback beyond a two-segment published window, plus targeted mutations for pinning, manifest type/target, scheduler single-flight, and seek ordering.
+- Byte pressure must enforce the same contiguous reserve invariant before the segment-count limit is reached. Publication reserves one measured-fragment byte budget, prefetch admits only the count-and-byte minimum, and eviction may reclaim only unpublished entries older than the current published floor—never the immediate sequential predecessor.
+- Variable fragment sizes must advance from the oldest unpublished successor, never from a newest suffix. A normal refresh and promoted prefetch both keep a FIFO frontier, stage at most one unknown-size insertion, and may release only already-published predecessors at an atomic snapshot boundary.
+- Prime a normal live playlist to the three-segment minimum by awaiting the one owned bounded insertion when needed. Keep the prior snapshot pinned during that generation, and never extend the target of an in-flight prefetch task from a concurrent refresh or promotion.
+- Treat playlist publication as a final atomic commit: derive a candidate without changing `isAdvertised`, perform every generation await against the active snapshot, then swap advertisement once immediately before returning N+1. If a full window needs reserve, return the reduced N+1 first and start its one bounded successor asynchronously afterward.
+- Include the cross-actor cache swap in that atomic boundary: queue segment readers while the final commit is in flight, precompute post-commit capacity/scheduler decisions, and perform no suspension between the completed swap and the returned manifest.
+- Serialize prepare, playlist refresh, and seek behind an owner-token lease. Before publication, close reader admission and drain lookups admitted under the old snapshot; after the swap, reserve queued readers before waking either them or the next refresh so no stale owner can release a successor's transaction.

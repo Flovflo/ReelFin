@@ -365,7 +365,7 @@ public final class LocalHLSServer: LocalHLSServerProtocol, @unchecked Sendable {
                 )
             default:
                 if let sequence = LocalPlaybackServerSecurity.canonicalSegmentSequence(forResourcePath: resourcePath) {
-                    let data = try await session.segment(sequence: sequence)
+                    let data = try await session.advertisedSegment(sequence: sequence)
                     let body = wantsBody ? data : Data()
                     // fMP4 segments use video/iso.segment MIME type per CMAF spec
                     return LocalHLSResponse(
@@ -377,6 +377,12 @@ public final class LocalHLSServer: LocalHLSServerProtocol, @unchecked Sendable {
                 }
                 return LocalHLSResponse(statusCode: 404, contentType: "text/plain", body: Data("Not Found".utf8))
             }
+        } catch SyntheticHLSError.missingSegment {
+            return LocalHLSResponse(
+                statusCode: 404,
+                contentType: "text/plain",
+                body: Data("Not Found".utf8)
+            )
         } catch {
             return LocalHLSResponse(
                 statusCode: 500,

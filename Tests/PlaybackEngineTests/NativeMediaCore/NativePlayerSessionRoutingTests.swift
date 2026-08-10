@@ -114,7 +114,17 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
         // cache — plain-HTTP transport AVFoundation treats exactly like the origin (DV-safe),
         // immune to origin dropouts. The origin URL itself is what the proxy's downloader fills from.
         XCTAssertEqual(asset.url.host, "127.0.0.1")
-        XCTAssertEqual(asset.url.path, "/media/\(itemID)")
+        XCTAssertEqual(asset.url.scheme, "http")
+        let routeComponents = asset.url.pathComponents.filter { $0 != "/" }
+        XCTAssertEqual(routeComponents.count, 2)
+        XCTAssertEqual(routeComponents.last, "media")
+        let capability = try XCTUnwrap(routeComponents.first)
+        XCTAssertEqual(capability.count, 64)
+        XCTAssertTrue(capability.unicodeScalars.allSatisfy { scalar in
+            (48...57).contains(scalar.value) || (97...102).contains(scalar.value)
+        })
+        XCTAssertFalse(asset.url.absoluteString.contains(itemID))
+        XCTAssertNotEqual(asset.url.host, apiClient.configuredServerURL.host)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
     }
@@ -408,6 +418,8 @@ private final class NativeSessionRoutingAPIClient: JellyfinAPIClientProtocol, @u
         self.source = source
         self.stoppedExpectation = stoppedExpectation
     }
+
+    var configuredServerURL: URL { configuration.serverURL }
 
     var stoppedUpdates: [PlaybackProgressUpdate] {
         get async {

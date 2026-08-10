@@ -125,6 +125,11 @@ final class LocalHLSServerTests: XCTestCase {
             XCTAssertNoThrow(try FileManager.default.removeItem(at: serverBundle.fixtureURL))
         }
         let masterURL = serverBundle.baseURL.appendingPathComponent("master.m3u8")
+        let mediaURL = serverBundle.baseURL.appendingPathComponent("video.m3u8")
+        let initialMedia = try await fetchString(from: mediaURL)
+        let initialMediaSequence = playlistIntegerTag("#EXT-X-MEDIA-SEQUENCE:", in: initialMedia)
+        let initialTargetDuration = playlistIntegerTag("#EXT-X-TARGETDURATION:", in: initialMedia)
+        XCTAssertFalse(initialMedia.contains("#EXT-X-PLAYLIST-TYPE:EVENT"))
 
         let asset = AVURLAsset(url: masterURL)
         async let playable = asset.load(.isPlayable)
@@ -134,7 +139,7 @@ final class LocalHLSServerTests: XCTestCase {
         XCTAssertTrue(loadedDuration.isValid, "The measured HLS fixture must expose valid duration metadata.")
         XCTAssertTrue(
             loadedDuration.isIndefinite || (loadedDuration.seconds.isFinite && loadedDuration.seconds > 0),
-            "The measured HLS EVENT fixture must expose either indefinite live duration or finite positive duration."
+            "The measured sliding HLS fixture must expose either indefinite live duration or finite positive duration."
         )
 
         let firstItem = AVPlayerItem(asset: asset)
@@ -165,7 +170,6 @@ final class LocalHLSServerTests: XCTestCase {
             )
             throw error
         }
-
         let seekTarget = CMTime(seconds: 2, preferredTimescale: 600)
         let seekCompleted = await withCheckedContinuation { continuation in
             firstPlayer.seek(
@@ -182,6 +186,22 @@ final class LocalHLSServerTests: XCTestCase {
             timeout: 5,
             message: "AVPlayer time did not progress after the measured HLS seek."
         ) { firstPlayer.currentTime().seconds > seekTarget.seconds + 0.2 }
+        try await require(
+            timeout: 15,
+            message: "AVPlayer did not sustain playback beyond the two-segment published window."
+        ) { firstPlayer.currentTime().seconds > 7 }
+        let refreshedMedia = try await fetchString(from: mediaURL)
+        XCTAssertFalse(refreshedMedia.contains("#EXT-X-PLAYLIST-TYPE:EVENT"))
+        XCTAssertEqual(
+            playlistIntegerTag("#EXT-X-TARGETDURATION:", in: refreshedMedia),
+            initialTargetDuration,
+            "TARGETDURATION must stay fixed while AVPlayer advances the sliding window."
+        )
+        XCTAssertGreaterThan(
+            playlistIntegerTag("#EXT-X-MEDIA-SEQUENCE:", in: refreshedMedia),
+            initialMediaSequence,
+            "Long AVPlayer playback must advance beyond the initial published window."
+        )
 
         firstPlayer.pause()
         firstPlayer.replaceCurrentItem(with: nil)
@@ -205,7 +225,6 @@ final class LocalHLSServerTests: XCTestCase {
 
         // Supplemental manifest fan-out remains a distinct scenario; it must not be presented as
         // AVPlayer's socket peak.
-        let mediaURL = serverBundle.baseURL.appendingPathComponent("video.m3u8")
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<8 {
                 group.addTask {
@@ -381,6 +400,84 @@ final class LocalHLSServerTests: XCTestCase {
         }
         let after = await serverBundle.demuxer.readCount
         XCTAssertEqual(after, before, "Unauthorized routes must not reach demux/repackage work.")
+    }
+
+    func testServerRejectsFarFutureSegmentBeforeMediaWork() async throws {
+        let serverBundle = try await makePreparedServerBundle(connectionCapacity: nil)
+        let server = serverBundle.server
+        defer { server.stop(reason: "test_teardown_far_future_segment") }
+        let before = await serverBundle.demuxer.readCount
+
+        let response = try await fetchResponseAllowingError(
+            from: serverBundle.baseURL.appendingPathComponent("segment_1000000.m4s")
+        )
+        let after = await serverBundle.demuxer.readCount
+
+        XCTAssertEqual(response.statusCode, 404)
+        XCTAssertEqual(
+            after,
+            before,
+            "A far-future HTTP route must not make the session generate intervening media."
+        )
+    }
+
+    func testServerServesOnlySegmentsAdvertisedByMediaPlaylist() async throws {
+        let serverBundle = try await makePreparedServerBundle(connectionCapacity: nil)
+        let server = serverBundle.server
+        defer { server.stop(reason: "test_teardown_unadvertised_segment") }
+        let before = await serverBundle.demuxer.readCount
+
+        let unadvertised = try await fetchResponseAllowingError(
+            from: serverBundle.baseURL.appendingPathComponent("segment_1.m4s")
+        )
+        let afterUnadvertisedRequest = await serverBundle.demuxer.readCount
+
+        XCTAssertEqual(unadvertised.statusCode, 404)
+        XCTAssertEqual(
+            afterUnadvertisedRequest,
+            before,
+            "HTTP must not generate a syntactically valid segment that no playlist advertised."
+        )
+
+        let playlist = try await fetchString(
+            from: serverBundle.baseURL.appendingPathComponent("video.m3u8")
+        )
+        let advertisedLine = try XCTUnwrap(firstMediaLine(in: playlist))
+        let advertisedURL = try XCTUnwrap(
+            URL(string: advertisedLine, relativeTo: serverBundle.baseURL)?.absoluteURL
+        )
+        let advertisedData = try await fetchData(from: advertisedURL)
+        XCTAssertFalse(advertisedData.isEmpty)
+    }
+
+    func testServerRejectsNonCanonicalSegmentRoutesBeforeMediaWork() async throws {
+        let serverBundle = try await makePreparedServerBundle(connectionCapacity: nil)
+        let server = serverBundle.server
+        defer { server.stop(reason: "test_teardown_noncanonical_segments") }
+        _ = try await fetchString(from: serverBundle.baseURL.appendingPathComponent("video.m3u8"))
+        let before = await serverBundle.demuxer.readCount
+        let invalidRoutes = [
+            "segment_-1.m4s",
+            "segment_+1.m4s",
+            "segment_01.m4s",
+            "segment_.m4s",
+            "segment_1.m4s.trailing",
+            "prefix_segment_1.m4s",
+            "segment_9223372036854775808.m4s"
+        ]
+
+        for route in invalidRoutes {
+            let response = try await fetchResponseAllowingError(
+                from: serverBundle.baseURL.appendingPathComponent(route)
+            )
+            XCTAssertEqual(response.statusCode, 404, "Non-canonical segment route was accepted: \(route)")
+        }
+        let after = await serverBundle.demuxer.readCount
+        XCTAssertEqual(
+            after,
+            before,
+            "Malformed segment routes must perform zero media work."
+        )
     }
 
     func testCapabilityRotatesAfterStopAndRestart() async throws {
@@ -602,7 +699,12 @@ final class LocalHLSServerTests: XCTestCase {
                 whyChosen: "avplayer-readable-hls-measurement"
             )
             let repackager = FMP4Repackager(plan: plan)
-            let session = SyntheticHLSSession(plan: plan, demuxer: demuxer, repackager: repackager)
+            let session = SyntheticHLSSession(
+                plan: plan,
+                demuxer: demuxer,
+                repackager: repackager,
+                cache: SegmentCacheActor(maxBytes: 16 * 1024 * 1024, maxSegments: 3)
+            )
             try await session.prepare()
             let server = LocalHLSServer(session: session, connectionCapacity: connectionCapacity)
             return (server, try server.start(), fixtureURL)
@@ -825,6 +927,13 @@ final class LocalHLSServerTests: XCTestCase {
             .split(whereSeparator: \.isNewline)
             .map(String.init)
             .first(where: { !$0.isEmpty && !$0.hasPrefix("#") })
+    }
+
+    private func playlistIntegerTag(_ prefix: String, in playlist: String) -> Int {
+        playlist.split(whereSeparator: \.isNewline).compactMap { line in
+            guard line.hasPrefix(prefix) else { return nil }
+            return Int(line.dropFirst(prefix.count))
+        }.first ?? 0
     }
 
     private func quotedAttribute(_ name: String, in tagLine: String) -> String? {

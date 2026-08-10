@@ -8,6 +8,9 @@ public enum SyntheticHLSError: Error, LocalizedError {
     case missingSegment(Int)
     case unsupportedCodecConfiguration(String)
     case independentBoundaryUnavailable(sequence: Int, samplesScanned: Int)
+    case segmentExceedsWorkingSet(sequence: Int, bytes: Int, limit: Int)
+    case workingSetCapacityExhausted(sequence: Int)
+    case generationInProgress(sequence: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -21,41 +24,293 @@ public enum SyntheticHLSError: Error, LocalizedError {
             return reason
         case .independentBoundaryUnavailable(let sequence, let samplesScanned):
             return "Independent segment boundary unavailable for segment \(sequence) after \(samplesScanned) samples"
+        case .segmentExceedsWorkingSet(let sequence, let bytes, let limit):
+            return "Segment \(sequence) uses \(bytes) bytes and exceeds the \(limit)-byte HLS working set"
+        case .workingSetCapacityExhausted(let sequence):
+            return "Segment \(sequence) cannot enter the HLS working set while the published snapshot is pinned"
+        case .generationInProgress(let sequence):
+            return "Segment \(sequence) cannot start while another HLS generation is in progress"
         }
     }
 }
 
+public struct SyntheticHLSSegment: Sendable {
+    public let sequence: Int
+    public let data: Data
+    public let duration: Double
+    public let isAdvertised: Bool
+}
+
+enum PlaylistOperationTransition: Sendable, Equatable {
+    case acquired
+    case queued
+}
+
 public actor SegmentCacheActor {
     private let maxBytes: Int
-    private var storage: [Int: Data] = [:]
+    private let maxSegments: Int
+    private var storage: [Int: SyntheticHLSSegment] = [:]
     private var order: [Int] = []
     private var currentBytes: Int = 0
+    private var generation: Int = 0
+    private var lastPublishedSequence: Int?
+    private var beforeAdvertisedEntryHookForTesting: (@Sendable () async -> Void)?
 
-    public init(maxBytes: Int = 16 * 1024 * 1024) {
-        self.maxBytes = max(1_048_576, maxBytes)
+    public init(maxBytes: Int = 16 * 1024 * 1024, maxSegments: Int = 12) {
+        self.maxBytes = max(1, maxBytes)
+        self.maxSegments = max(1, maxSegments)
     }
 
-    public func data(for sequence: Int) -> Data? {
-        guard let value = storage[sequence] else { return nil }
-        touch(sequence)
-        return value
-    }
-
-    public func put(_ data: Data, for sequence: Int) {
-        if let old = storage[sequence] {
-            currentBytes -= old.count
+    public func put(
+        _ data: Data,
+        duration: Double,
+        for sequence: Int,
+        expectedGeneration: Int? = nil
+    ) throws {
+        if let expectedGeneration, expectedGeneration != generation {
+            throw CancellationError()
         }
-        storage[sequence] = data
+        guard data.count <= maxBytes else {
+            throw SyntheticHLSError.segmentExceedsWorkingSet(
+                sequence: sequence,
+                bytes: data.count,
+                limit: maxBytes
+            )
+        }
+        if let old = storage[sequence] {
+            currentBytes -= old.data.count
+        }
+        let previousStorage = storage
+        let previousOrder = order
+        let previousBytes = currentBytes
+        storage[sequence] = SyntheticHLSSegment(
+            sequence: sequence,
+            data: data,
+            duration: duration,
+            isAdvertised: false
+        )
         touch(sequence)
         currentBytes += data.count
-        evictIfNeeded()
+        evictIfNeeded(protecting: sequence)
+        guard currentBytes <= maxBytes, storage.count <= maxSegments else {
+            storage = previousStorage
+            order = previousOrder
+            currentBytes = previousBytes + (previousStorage[sequence]?.data.count ?? 0)
+            throw SyntheticHLSError.workingSetCapacityExhausted(sequence: sequence)
+        }
     }
 
-    public func invalidateForSeek(targetPTS: Int64) {
+    public func retainedEntries() -> [SyntheticHLSSegment] {
+        storage.values.sorted { $0.sequence < $1.sequence }
+    }
+
+    public func advertiseRetained(limit: Int? = nil) -> [SyntheticHLSSegment] {
+        let retained = storage.keys.sorted()
+        let selected = Array(retained.prefix(max(0, limit ?? retained.count)))
+        let selectedSet = Set(selected)
+        for sequence in retained {
+            guard let entry = storage[sequence] else { continue }
+            storage[sequence] = SyntheticHLSSegment(
+                sequence: entry.sequence,
+                data: entry.data,
+                duration: entry.duration,
+                isAdvertised: selectedSet.contains(sequence)
+            )
+        }
+        advancePublishedFrontier(with: selected)
+        return selected.compactMap { storage[$0] }
+    }
+
+    public func publishRetainedWindow(
+        startupLimit: Int? = nil,
+        includeReserve: Bool = false
+    ) -> [SyntheticHLSSegment] {
+        commitPublishedWindow(
+            publishedWindowCandidate(
+                startupLimit: startupLimit,
+                includeReserve: includeReserve
+            )
+        )
+    }
+
+    func publishedWindowCandidate(
+        startupLimit: Int? = nil,
+        includeReserve: Bool = false
+    ) -> [Int] {
+        let retained = storage.keys.sorted()
+        let selected: [Int]
+        if let startupLimit {
+            selected = Array(retained.prefix(max(0, startupLimit)))
+        } else if includeReserve {
+            selected = retained
+        } else {
+            let currentPublished = retained.filter { storage[$0]?.isAdvertised == true }
+            let nextRequired = lastPublishedSequence.map { $0 == Int.max ? Int.max : $0 + 1 }
+                ?? retained.first
+            let future = retained.filter { sequence in
+                guard let nextRequired else { return false }
+                return sequence >= nextRequired
+            }
+            if let nextRequired, future.first == nextRequired {
+                var newWindow: [Int] = []
+                var windowBytes = 0
+                var expectedSequence = nextRequired
+                for sequence in future {
+                    guard sequence == expectedSequence,
+                          let entry = storage[sequence] else { break }
+                    if !newWindow.isEmpty {
+                        guard newWindow.count < maxSegments,
+                              entry.data.count <= maxBytes,
+                              windowBytes <= maxBytes - entry.data.count else { break }
+                    }
+                    newWindow.append(sequence)
+                    windowBytes += entry.data.count
+                    if expectedSequence == Int.max { break }
+                    expectedSequence += 1
+                }
+
+                for sequence in currentPublished.reversed() {
+                    guard let first = newWindow.first,
+                          first > Int.min,
+                          sequence == first - 1,
+                          let entry = storage[sequence],
+                          newWindow.count < maxSegments,
+                          entry.data.count <= maxBytes,
+                          windowBytes <= maxBytes - entry.data.count else { break }
+                    newWindow.insert(sequence, at: 0)
+                    windowBytes += entry.data.count
+                }
+                selected = newWindow
+            } else if !currentPublished.isEmpty {
+                // A full published window cannot accept an unknown-size successor.
+                // At this snapshot boundary only, release the oldest already-published
+                // entries so one sequential insertion can be staged without ever
+                // skipping an unpublished sequence.
+                let countLimit = max(1, maxSegments - 1)
+                let reserveBytes = storage.values.lazy.map { $0.data.count }.max() ?? 0
+                let publishedByteLimit = max(0, maxBytes - reserveBytes)
+                let currentPublishedBytes = currentPublished.reduce(0) {
+                    $0 + (storage[$1]?.data.count ?? 0)
+                }
+                if currentPublished.count <= countLimit,
+                   currentPublishedBytes <= publishedByteLimit {
+                    selected = currentPublished
+                } else {
+                    var selectedReversed: [Int] = []
+                    var selectedBytes = 0
+                    for sequence in currentPublished.reversed() {
+                        guard let entry = storage[sequence] else { continue }
+                        if selectedReversed.isEmpty {
+                            selectedReversed.append(sequence)
+                            selectedBytes = entry.data.count
+                            continue
+                        }
+                        guard selectedReversed.count < countLimit,
+                              entry.data.count <= publishedByteLimit,
+                              selectedBytes <= publishedByteLimit - entry.data.count else { break }
+                        selectedReversed.append(sequence)
+                        selectedBytes += entry.data.count
+                    }
+                    selected = Array(selectedReversed.reversed())
+                }
+            } else {
+                selected = Array(retained.prefix(1))
+            }
+        }
+        return selected
+    }
+
+    func commitPublishedWindow(_ selected: [Int]) -> [SyntheticHLSSegment] {
+        let retained = storage.keys.sorted()
+        let selectedSet = Set(selected)
+        for sequence in retained {
+            guard let entry = storage[sequence] else { continue }
+            storage[sequence] = SyntheticHLSSegment(
+                sequence: entry.sequence,
+                data: entry.data,
+                duration: entry.duration,
+                isAdvertised: selectedSet.contains(sequence)
+            )
+        }
+        advancePublishedFrontier(with: selected)
+        return selected.compactMap { storage[$0] }
+    }
+
+    public func advertisedEntry(for sequence: Int) async -> SyntheticHLSSegment? {
+        if let beforeAdvertisedEntryHookForTesting {
+            await beforeAdvertisedEntryHookForTesting()
+        }
+        guard let entry = storage[sequence], entry.isAdvertised else { return nil }
+        return entry
+    }
+
+    func setBeforeAdvertisedEntryHookForTesting(
+        _ hook: (@Sendable () async -> Void)?
+    ) {
+        beforeAdvertisedEntryHookForTesting = hook
+    }
+
+    public func segmentCapacity() -> Int { maxSegments }
+
+    public func availablePrefetchSlots() -> Int {
+        availablePrefetchSlots(
+            advertisedSequences: Set(storage.values.filter(\.isAdvertised).map(\.sequence)),
+            publishedFrontier: lastPublishedSequence
+        )
+    }
+
+    func availablePrefetchSlots(publishing sequences: [Int]) -> Int {
+        let newest = sequences.max()
+        let publishedFrontier = [lastPublishedSequence, newest].compactMap { $0 }.max()
+        return availablePrefetchSlots(
+            advertisedSequences: Set(sequences),
+            publishedFrontier: publishedFrontier
+        )
+    }
+
+    private func availablePrefetchSlots(
+        advertisedSequences: Set<Int>,
+        publishedFrontier: Int?
+    ) -> Int {
+        guard let publishedFloor = advertisedSequences.min() else { return 0 }
+        if let publishedFrontier,
+           storage.values.contains(where: {
+               !advertisedSequences.contains($0.sequence)
+                   && $0.sequence > publishedFrontier
+           }) {
+            return 0
+        }
+        let reclaimable = storage.values.filter {
+            !advertisedSequences.contains($0.sequence) && $0.sequence < publishedFloor
+        }
+        let protectedBytes = currentBytes - reclaimable.reduce(0) { $0 + $1.data.count }
+        let protectedCount = storage.count - reclaimable.count
+        let countSlots = max(0, maxSegments - protectedCount)
+        let nextInsertionReserve = storage.values.lazy.map { $0.data.count }.max() ?? maxBytes
+        let hasByteReserve = nextInsertionReserve <= maxBytes
+            && protectedBytes <= maxBytes - nextInsertionReserve
+        return countSlots > 0 && hasByteReserve ? 1 : 0
+    }
+
+    func availableInitialPrefetchSlots() -> Int {
+        guard !storage.isEmpty,
+              !storage.values.contains(where: \.isAdvertised),
+              storage.count < maxSegments else { return 0 }
+        let nextInsertionReserve = storage.values.lazy.map { $0.data.count }.max() ?? maxBytes
+        guard nextInsertionReserve <= maxBytes,
+              currentBytes <= maxBytes - nextInsertionReserve else { return 0 }
+        return 1
+    }
+
+    @discardableResult
+    public func invalidateForSeek(targetPTS: Int64) -> Int {
         _ = targetPTS
+        generation += 1
         storage.removeAll()
         order.removeAll()
         currentBytes = 0
+        lastPublishedSequence = nil
+        return generation
     }
 
     private func touch(_ sequence: Int) {
@@ -63,14 +318,34 @@ public actor SegmentCacheActor {
         order.append(sequence)
     }
 
-    private func evictIfNeeded() {
-        while currentBytes > maxBytes, let oldest = order.first {
-            order.removeFirst()
-            if let removed = storage.removeValue(forKey: oldest) {
-                currentBytes -= removed.count
+    private func advancePublishedFrontier(with sequences: [Int]) {
+        guard let newest = sequences.max() else { return }
+        lastPublishedSequence = max(lastPublishedSequence ?? newest, newest)
+    }
+
+    private func evictIfNeeded(protecting insertedSequence: Int) {
+        while currentBytes > maxBytes || storage.count > maxSegments {
+            guard let publishedFloor = storage.values.lazy
+                .filter(\.isAdvertised)
+                .map(\.sequence)
+                .min() else { return }
+            guard let evictionIndex = order.firstIndex(where: { sequence in
+                sequence != insertedSequence
+                    && sequence < publishedFloor
+                    && storage[sequence]?.isAdvertised == false
+            }) else { return }
+            let evicted = order.remove(at: evictionIndex)
+            if let removed = storage.removeValue(forKey: evicted) {
+                currentBytes -= removed.data.count
             }
         }
     }
+}
+
+public struct GeneratedHLSSegment: Sendable {
+    public let sequence: Int
+    public let data: Data
+    public let duration: Double
 }
 
 public actor PackagingSchedulerActor {
@@ -90,9 +365,9 @@ public actor PackagingSchedulerActor {
     private let startupAudioGraceNs: Int64 = 400_000_000
 
     private var nextSequenceToGenerate: Int = 0
-    private var generatedSegments: [Int: Data] = [:]
-    private var segmentDurations: [Int: Double] = [:]
     private var pendingBoundarySample: Sample?
+    private var generation: Int = 0
+    private var activeGeneration: (sequence: Int, generation: Int)?
 
     public init(
         demuxer: Demuxer,
@@ -134,54 +409,68 @@ public actor PackagingSchedulerActor {
         self.maximumBoundarySearchDurationNs = Int64(normalizedSearchDuration * 1_000_000_000)
     }
 
-    public func segment(for sequence: Int) async throws -> Data {
-        if let cached = generatedSegments[sequence] {
-            return cached
-        }
-
-        while nextSequenceToGenerate <= sequence {
-            let generatedSequence = nextSequenceToGenerate
-            let samples = try await collectSegmentSamples(sequence: generatedSequence)
-            guard !samples.isEmpty else {
-                throw SyntheticHLSError.endOfStream
-            }
-            let fragment = try await repackager.generateFragment(samples: samples)
-            let durationNs = samples.reduce(Int64(0)) {
-                Self.saturatedAdd($0, max(0, $1.durationNanoseconds))
-            }
-            let durationSeconds = max(0.001, Double(durationNs) / 1_000_000_000.0)
-            generatedSegments[generatedSequence] = fragment
-            segmentDurations[generatedSequence] = durationSeconds
-            if generatedSequence == 0 {
-                AppLog.nativeBridge.notice(
-                    "[NB-DIAG] hls.startup.segment-built — samples=\(samples.count, privacy: .public) duration=\(durationSeconds, format: .fixed(precision: 3))s bytes=\(fragment.count, privacy: .public)"
-                )
-            }
-            nextSequenceToGenerate += 1
-        }
-
-        guard let data = generatedSegments[sequence] else {
+    public func segment(for sequence: Int) async throws -> GeneratedHLSSegment {
+        guard sequence == nextSequenceToGenerate else {
             throw SyntheticHLSError.missingSegment(sequence)
         }
-        return data
-    }
-
-    public func duration(for sequence: Int) -> Double? {
-        segmentDurations[sequence]
+        guard activeGeneration == nil else {
+            throw SyntheticHLSError.generationInProgress(sequence: sequence)
+        }
+        let expectedGeneration = generation
+        activeGeneration = (sequence, expectedGeneration)
+        defer {
+            if activeGeneration?.sequence == sequence,
+               activeGeneration?.generation == expectedGeneration {
+                activeGeneration = nil
+            }
+        }
+        try validateGeneration(expectedGeneration)
+        let samples = try await collectSegmentSamples(
+            sequence: sequence,
+            expectedGeneration: expectedGeneration
+        )
+        guard !samples.isEmpty else {
+            throw SyntheticHLSError.endOfStream
+        }
+        let fragment = try await repackager.generateFragment(samples: samples)
+        try validateGeneration(expectedGeneration)
+        guard generation == expectedGeneration,
+              sequence == nextSequenceToGenerate else {
+            throw CancellationError()
+        }
+        let durationNs = samples.reduce(Int64(0)) {
+            Self.saturatedAdd($0, max(0, $1.durationNanoseconds))
+        }
+        let durationSeconds = max(0.001, Double(durationNs) / 1_000_000_000.0)
+        if sequence == 0 {
+            AppLog.nativeBridge.notice(
+                "[NB-DIAG] hls.startup.segment-built — samples=\(samples.count, privacy: .public) duration=\(durationSeconds, format: .fixed(precision: 3))s bytes=\(fragment.count, privacy: .public)"
+            )
+        }
+        nextSequenceToGenerate += 1
+        return GeneratedHLSSegment(
+            sequence: sequence,
+            data: fragment,
+            duration: durationSeconds
+        )
     }
 
     public func generatedSequences() -> [Int] {
-        generatedSegments.keys.sorted()
+        Array(0..<nextSequenceToGenerate)
     }
 
+    public func nextSequence() -> Int { nextSequenceToGenerate }
+
     public func invalidateAfterSeek() {
+        generation += 1
         nextSequenceToGenerate = 0
-        generatedSegments.removeAll()
-        segmentDurations.removeAll()
         pendingBoundarySample = nil
     }
 
-    private func collectSegmentSamples(sequence: Int) async throws -> [Sample] {
+    private func collectSegmentSamples(
+        sequence: Int,
+        expectedGeneration: Int
+    ) async throws -> [Sample] {
         var samples: [Sample] = []
         var durationNs: Int64 = 0
         let isStartupSegment = (sequence == 0)
@@ -196,6 +485,7 @@ public actor PackagingSchedulerActor {
         var scannedBytes = 0
         var scannedDurationNs: Int64 = 0
 
+        try validateGeneration(expectedGeneration)
         if let pendingBoundarySample {
             samples.append(pendingBoundarySample)
             durationNs = Self.saturatedAdd(durationNs, max(0, pendingBoundarySample.durationNanoseconds))
@@ -204,11 +494,14 @@ public actor PackagingSchedulerActor {
             scannedSamples = 1
             scannedBytes = pendingBoundarySample.data.count
             scannedDurationNs = max(0, pendingBoundarySample.durationNanoseconds)
+            try validateGeneration(expectedGeneration)
             self.pendingBoundarySample = nil
         }
 
         while true {
+            try validateGeneration(expectedGeneration)
             guard let sample = try await demuxer.readSample() else { break }
+            try validateGeneration(expectedGeneration)
             scannedSamples = Self.saturatedAdd(scannedSamples, 1)
             scannedBytes = Self.saturatedAdd(scannedBytes, sample.data.count)
             scannedDurationNs = Self.saturatedAdd(
@@ -254,6 +547,7 @@ public actor PackagingSchedulerActor {
                sawVideoSample,
                durationNs >= targetNs,
                audioRequirementSatisfied {
+                try validateGeneration(expectedGeneration)
                 pendingBoundarySample = sample
                 break
             }
@@ -282,7 +576,13 @@ public actor PackagingSchedulerActor {
             )
         }
 
+        try validateGeneration(expectedGeneration)
         return samples
+    }
+
+    private func validateGeneration(_ expectedGeneration: Int) throws {
+        try Task.checkCancellation()
+        guard generation == expectedGeneration else { throw CancellationError() }
     }
 
     private static func normalizedSeconds(
@@ -314,7 +614,6 @@ public actor SyntheticHLSSession {
     private let demuxer: Demuxer
     private let repackager: Repackager
     private let manifestBuilder = HLSManifestBuilder()
-    private let timelineBuilder = CMAFSegmentTimelineBuilder()
     private let cache: SegmentCacheActor
     private let scheduler: PackagingSchedulerActor
     private let defaultPreloadCount: Int
@@ -328,10 +627,28 @@ public actor SyntheticHLSSession {
     /// The resolved packaging decision (set during prepare()).
     private var packagingDecision: NativeBridgePackagingDecision?
     private var reachedEndOfStream = false
-    private var prefetchInFlight = false
+    private var prefetchTask: Task<Void, Never>?
+    private var prefetchTaskGeneration: Int?
     private var prefetchTargetSequence = 0
     private var adaptivePreloadCount: Int
     private var adaptiveLookaheadSegments: Int
+    private var workGeneration = 0
+    private var cacheGeneration = 0
+    private var terminalWorkingSetError: SyntheticHLSError?
+    private var beforeCacheCommitHookForTesting: (@Sendable (Int) async -> Void)?
+    private var playlistOperationTransitionHookForTesting: (
+        @Sendable (PlaylistOperationTransition) async -> Void
+    )?
+    private var beforePlaylistCommitHookForTesting: (@Sendable () async -> Void)?
+    private var duringPlaylistCommitHookForTesting: (@Sendable () async -> Void)?
+    private var nextPlaylistOperationToken = 0
+    private var playlistOperationOwner: Int?
+    private var playlistOperationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var playlistPublicationOwner: Int?
+    private var activeAdvertisedSegmentReaders = 0
+    private var advertisedSegmentWaiters: [CheckedContinuation<Void, Never>] = []
+    private var advertisedSegmentDrainWaiters: [CheckedContinuation<Void, Never>] = []
+    private let playlistTargetDurationSeconds = 12
 
     public init(
         plan: NativeBridgePlan,
@@ -359,6 +676,12 @@ public actor SyntheticHLSSession {
     }
 
     public func prepare() async throws {
+        let operationToken = await acquirePlaylistOperation()
+        defer { releasePlaylistOperation(operationToken) }
+        workGeneration += 1
+        await cancelPrefetchAndWait()
+        cacheGeneration = await cache.invalidateForSeek(targetPTS: 0)
+        await scheduler.invalidateAfterSeek()
         let opened = try await demuxer.open()
         streamInfo = opened
 
@@ -392,12 +715,14 @@ public actor SyntheticHLSSession {
             )
         }
         reachedEndOfStream = false
-        prefetchInFlight = false
+        prefetchTask = nil
+        prefetchTaskGeneration = nil
         prefetchTargetSequence = 0
         adaptivePreloadCount = defaultPreloadCount
         adaptiveLookaheadSegments = Self.defaultPlaylistGrowthStepSegments
+        terminalWorkingSetError = nil
         do {
-            _ = try await scheduler.segment(for: 0)
+            _ = try await generateNextSegment(expectedSequence: 0)
         } catch {
             streamInfo = nil
             initSegmentData = nil
@@ -415,12 +740,16 @@ public actor SyntheticHLSSession {
     }
 
     public func segment(sequence: Int) async throws -> Data {
-        if let cached = await cache.data(for: sequence) {
-            return cached
+        try await advertisedSegment(sequence: sequence)
+    }
+
+    public func advertisedSegment(sequence: Int) async throws -> Data {
+        await acquireAdvertisedSegmentRead()
+        defer { releaseAdvertisedSegmentRead() }
+        guard let entry = await cache.advertisedEntry(for: sequence) else {
+            throw SyntheticHLSError.missingSegment(sequence)
         }
-        let data = try await scheduler.segment(for: sequence)
-        await cache.put(data, for: sequence)
-        return data
+        return entry.data
     }
 
     public func masterPlaylist(baseURL: URL? = nil) async throws -> String {
@@ -451,61 +780,100 @@ public actor SyntheticHLSSession {
         baseURL: URL? = nil,
         startupPreflightSnapshot: Bool = false
     ) async throws -> String {
+        let operationToken = await acquirePlaylistOperation()
+        defer { releasePlaylistOperation(operationToken) }
         guard streamInfo != nil else {
             throw SyntheticHLSError.notPrepared
         }
+        if let terminalWorkingSetError {
+            throw terminalWorkingSetError
+        }
 
-        var sequences = await scheduler.generatedSequences()
-        if sequences.isEmpty {
+        var retained = await cache.retainedEntries()
+        if retained.isEmpty {
             do {
-                _ = try await segment(sequence: 0)
-                sequences = await scheduler.generatedSequences()
+                let next = await scheduler.nextSequence()
+                _ = try await generateNextSegment(expectedSequence: next)
+                retained = await cache.retainedEntries()
             } catch SyntheticHLSError.endOfStream {
                 reachedEndOfStream = true
             }
         }
 
+        var candidateSequences = await cache.publishedWindowCandidate(
+            startupLimit: startupPreflightSnapshot ? 1 : nil,
+            includeReserve: reachedEndOfStream
+        )
+
+        var nextPrefetchTarget: Int?
         if !reachedEndOfStream, !startupPreflightSnapshot {
-            let baselineCount = max(Self.minimumPreloadSegments, preloadCount ?? adaptivePreloadCount)
-            let growthStepSegments = max(Self.defaultPlaylistGrowthStepSegments, adaptiveLookaheadSegments)
-            let desiredSegmentCount = max(baselineCount, sequences.count + growthStepSegments)
-            let desiredLastSequence = max(0, desiredSegmentCount - 1)
-            requestPrefetch(upTo: desiredLastSequence)
+            let capacity = await cache.segmentCapacity()
+            let baselineCount = min(
+                capacity,
+                max(Self.minimumPreloadSegments, preloadCount ?? adaptivePreloadCount)
+            )
+            let growthStepSegments = min(
+                capacity,
+                max(Self.defaultPlaylistGrowthStepSegments, adaptiveLookaheadSegments)
+            )
+            let publishedAvailableSlots = await cache.availablePrefetchSlots()
+            let availableSlots = publishedAvailableSlots > 0
+                ? publishedAvailableSlots
+                : await cache.availableInitialPrefetchSlots()
+            let requestedAdditional = availableSlots > 0
+                ? min(
+                    availableSlots,
+                    max(max(0, baselineCount - candidateSequences.count), growthStepSegments)
+                )
+                : 0
+            if requestedAdditional > 0 {
+                let next = await scheduler.nextSequence()
+                nextPrefetchTarget = next + requestedAdditional - 1
+            }
         }
 
-        sequences = await scheduler.generatedSequences()
-        var segments: [HLSMediaPlaylistSegment] = []
-        segments.reserveCapacity(sequences.count)
-
-        for sequence in sequences {
-            let duration = await scheduler.duration(for: sequence) ?? 3.0
-            let segmentURI = absoluteURI(path: "segment_\(sequence).m4s", relativeTo: baseURL)
-            segments.append(HLSMediaPlaylistSegment(uri: segmentURI, duration: duration))
+        if let nextPrefetchTarget {
+            requestPrefetch(upTo: nextPrefetchTarget)
+            if candidateSequences.count < Self.minimumPreloadSegments {
+                let task = prefetchTask
+                await task?.value
+                if let terminalWorkingSetError {
+                    throw terminalWorkingSetError
+                }
+                candidateSequences = await cache.publishedWindowCandidate(
+                    includeReserve: reachedEndOfStream
+                )
+            }
         }
-
-        if startupPreflightSnapshot {
-            let firstSequence = sequences.first ?? 0
-            let firstDuration = await scheduler.duration(for: firstSequence) ?? 3.0
-            let firstSegmentURI = absoluteURI(path: "segment_\(firstSequence).m4s", relativeTo: baseURL)
-            segments = [
-                HLSMediaPlaylistSegment(uri: firstSegmentURI, duration: firstDuration)
-            ]
+        var postCommitPrefetchTarget: Int?
+        if nextPrefetchTarget == nil,
+           !reachedEndOfStream,
+           !startupPreflightSnapshot,
+           await cache.availablePrefetchSlots(publishing: candidateSequences) > 0 {
+            postCommitPrefetchTarget = await scheduler.nextSequence()
         }
-
-        let syntheticSamples = segments.enumerated().map { index, segment in
-            Sample(
-                trackID: plan.videoTrack.id,
-                pts: CMTime(value: Int64(index) * 3_000_000_000, timescale: 1_000_000_000),
-                duration: CMTime(seconds: segment.duration, preferredTimescale: 1_000_000_000),
-                isKeyframe: true,
-                data: Data()
+        if let beforePlaylistCommitHookForTesting {
+            await beforePlaylistCommitHookForTesting()
+        }
+        await acquirePlaylistPublication(operationToken)
+        if let duringPlaylistCommitHookForTesting {
+            await duringPlaylistCommitHookForTesting()
+        }
+        retained = await cache.commitPublishedWindow(candidateSequences)
+        releasePlaylistPublication(operationToken)
+        if let postCommitPrefetchTarget {
+            requestPrefetch(upTo: postCommitPrefetchTarget)
+        }
+        let segments = retained.map { entry in
+            HLSMediaPlaylistSegment(
+                uri: absoluteURI(path: "segment_\(entry.sequence).m4s", relativeTo: baseURL),
+                duration: entry.duration
             )
         }
-        let timeline = timelineBuilder.build(samples: syntheticSamples, targetDurationSeconds: 3)
 
         return manifestBuilder.makeMediaPlaylist(
-            targetDuration: timeline.targetDurationSeconds,
-            mediaSequence: 0,
+            targetDuration: playlistTargetDurationSeconds,
+            mediaSequence: retained.first?.sequence ?? 0,
             initSegmentURI: absoluteURI(path: "init.mp4", relativeTo: baseURL),
             segments: segments,
             endList: startupPreflightSnapshot || reachedEndOfStream
@@ -513,75 +881,264 @@ public actor SyntheticHLSSession {
     }
 
     public func promotePrefetch(preloadCount: Int, lookaheadSegments: Int) async {
-        adaptivePreloadCount = max(adaptivePreloadCount, max(Self.minimumPreloadSegments, preloadCount))
+        let capacity = await cache.segmentCapacity()
+        adaptivePreloadCount = min(
+            capacity,
+            max(adaptivePreloadCount, max(Self.minimumPreloadSegments, preloadCount))
+        )
         adaptiveLookaheadSegments = max(
             adaptiveLookaheadSegments,
             max(Self.defaultPlaylistGrowthStepSegments, lookaheadSegments)
         )
+        adaptiveLookaheadSegments = min(capacity, adaptiveLookaheadSegments)
 
-        let generated = await scheduler.generatedSequences()
-        let baselineTargetSequence = max(0, adaptivePreloadCount - 1)
-        let lookaheadTargetSequence = max(0, (generated.last ?? -1) + adaptiveLookaheadSegments)
-        requestPrefetch(upTo: max(baselineTargetSequence, lookaheadTargetSequence))
+        let retained = await cache.retainedEntries()
+        let availableSlots = await cache.availablePrefetchSlots()
+        let desiredAdditional = min(
+            availableSlots,
+            max(max(0, adaptivePreloadCount - retained.count), adaptiveLookaheadSegments)
+        )
+        if desiredAdditional > 0 {
+            let next = await scheduler.nextSequence()
+            requestPrefetch(upTo: next + desiredAdditional - 1)
+        }
         AppLog.nativeBridge.notice(
-            "[NB-DIAG] hls.prefetch.promoted — preload=\(self.adaptivePreloadCount, privacy: .public) lookahead=\(self.adaptiveLookaheadSegments, privacy: .public) generated=\(generated.count, privacy: .public)"
+            "[NB-DIAG] hls.prefetch.promoted — preload=\(self.adaptivePreloadCount, privacy: .public) lookahead=\(self.adaptiveLookaheadSegments, privacy: .public) retained=\(retained.count, privacy: .public)"
         )
     }
 
     public func invalidateForSeek(targetPTS: Int64) async throws {
+        let operationToken = await acquirePlaylistOperation()
+        defer { releasePlaylistOperation(operationToken) }
+        workGeneration += 1
+        await cancelPrefetchAndWait()
         _ = try await demuxer.seek(to: targetPTS)
-        await cache.invalidateForSeek(targetPTS: targetPTS)
+        cacheGeneration = await cache.invalidateForSeek(targetPTS: targetPTS)
         await scheduler.invalidateAfterSeek()
         reachedEndOfStream = false
-        prefetchInFlight = false
+        prefetchTask = nil
+        prefetchTaskGeneration = nil
         prefetchTargetSequence = 0
+        terminalWorkingSetError = nil
     }
 
     func generatedSequenceCountForTesting() async -> Int {
-        await scheduler.generatedSequences().count
+        await cache.retainedEntries().count
+    }
+
+    func setBeforeCacheCommitHookForTesting(
+        _ hook: (@Sendable (Int) async -> Void)?
+    ) {
+        beforeCacheCommitHookForTesting = hook
+    }
+
+    func waitForPrefetchForTesting() async {
+        let task = prefetchTask
+        await task?.value
+    }
+
+    func setBeforePlaylistCommitHookForTesting(
+        _ hook: (@Sendable () async -> Void)?
+    ) {
+        beforePlaylistCommitHookForTesting = hook
+    }
+
+    func setPlaylistOperationTransitionHookForTesting(
+        _ hook: (@Sendable (PlaylistOperationTransition) async -> Void)?
+    ) {
+        playlistOperationTransitionHookForTesting = hook
+    }
+
+    func setDuringPlaylistCommitHookForTesting(
+        _ hook: (@Sendable () async -> Void)?
+    ) {
+        duringPlaylistCommitHookForTesting = hook
+    }
+
+    func playlistOperationWaiterCountForTesting() -> Int {
+        playlistOperationWaiters.count
+    }
+
+    func advertisedSegmentWaiterCountForTesting() -> Int {
+        advertisedSegmentWaiters.count
+    }
+
+    func waitForPlaylistOperationWaiterCountForTesting(_ expectedCount: Int) async {
+        while playlistOperationWaiters.count < expectedCount {
+            await Task.yield()
+        }
+    }
+
+    func waitForAdvertisedSegmentWaiterCountForTesting(_ expectedCount: Int) async {
+        while advertisedSegmentWaiters.count < expectedCount {
+            await Task.yield()
+        }
+    }
+
+    func waitForPlaylistPublicationForTesting() async {
+        while playlistPublicationOwner == nil {
+            await Task.yield()
+        }
+    }
+
+    private func acquirePlaylistOperation() async -> Int {
+        while playlistOperationOwner != nil {
+            if let playlistOperationTransitionHookForTesting {
+                await playlistOperationTransitionHookForTesting(.queued)
+            }
+            await withCheckedContinuation { continuation in
+                playlistOperationWaiters.append(continuation)
+            }
+        }
+        nextPlaylistOperationToken = nextPlaylistOperationToken == Int.max
+            ? 1
+            : nextPlaylistOperationToken + 1
+        let token = nextPlaylistOperationToken
+        playlistOperationOwner = token
+        if let playlistOperationTransitionHookForTesting {
+            await playlistOperationTransitionHookForTesting(.acquired)
+        }
+        return token
+    }
+
+    private func releasePlaylistOperation(_ token: Int) {
+        guard playlistOperationOwner == token else { return }
+        playlistOperationOwner = nil
+        let waiters = playlistOperationWaiters
+        playlistOperationWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func acquirePlaylistPublication(_ token: Int) async {
+        precondition(playlistOperationOwner == token)
+        precondition(playlistPublicationOwner == nil)
+        playlistPublicationOwner = token
+        if activeAdvertisedSegmentReaders > 0 {
+            await withCheckedContinuation { continuation in
+                advertisedSegmentDrainWaiters.append(continuation)
+            }
+        }
+        precondition(playlistPublicationOwner == token)
+        precondition(activeAdvertisedSegmentReaders == 0)
+    }
+
+    private func releasePlaylistPublication(_ token: Int) {
+        guard playlistPublicationOwner == token else { return }
+        playlistPublicationOwner = nil
+        let waiters = advertisedSegmentWaiters
+        advertisedSegmentWaiters.removeAll()
+        activeAdvertisedSegmentReaders += waiters.count
+        waiters.forEach { $0.resume() }
+    }
+
+    private func acquireAdvertisedSegmentRead() async {
+        if playlistPublicationOwner != nil {
+            await withCheckedContinuation { continuation in
+                advertisedSegmentWaiters.append(continuation)
+            }
+            return
+        }
+        activeAdvertisedSegmentReaders += 1
+    }
+
+    private func releaseAdvertisedSegmentRead() {
+        precondition(activeAdvertisedSegmentReaders > 0)
+        activeAdvertisedSegmentReaders -= 1
+        guard activeAdvertisedSegmentReaders == 0 else { return }
+        let waiters = advertisedSegmentDrainWaiters
+        advertisedSegmentDrainWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 
     private func requestPrefetch(upTo sequence: Int) {
         guard !reachedEndOfStream else { return }
-        prefetchTargetSequence = max(prefetchTargetSequence, sequence)
-        guard !prefetchInFlight else { return }
+        guard prefetchTask == nil else { return }
+        prefetchTargetSequence = sequence
 
-        prefetchInFlight = true
+        let generation = workGeneration
         let session = self
-        Task.detached(priority: .utility) {
-            await session.runPrefetchLoop()
+        prefetchTaskGeneration = generation
+        prefetchTask = Task(priority: .utility) {
+            await session.runPrefetchLoop(generation: generation)
         }
     }
 
-    private func runPrefetchLoop() async {
+    private func runPrefetchLoop(generation: Int) async {
+        defer { finishPrefetch(generation: generation) }
         while true {
+            guard !Task.isCancelled, generation == workGeneration else { return }
             if reachedEndOfStream {
-                prefetchInFlight = false
                 return
             }
 
-            let generated = await scheduler.generatedSequences()
-            let next = (generated.last ?? -1) + 1
+            let next = await scheduler.nextSequence()
             let target = prefetchTargetSequence
             if next > target {
-                prefetchInFlight = false
                 return
             }
 
             do {
-                _ = try await segment(sequence: next)
+                _ = try await generateNextSegment(expectedSequence: next)
             } catch SyntheticHLSError.endOfStream {
+                guard generation == workGeneration else { return }
                 reachedEndOfStream = true
-                prefetchInFlight = false
                 return
-            } catch {
+            } catch let error as SyntheticHLSError {
+                guard generation == workGeneration else { return }
+                if case .segmentExceedsWorkingSet = error {
+                    terminalWorkingSetError = error
+                } else if case .workingSetCapacityExhausted = error {
+                    terminalWorkingSetError = error
+                }
                 AppLog.nativeBridge.warning(
                     "[NB-DIAG] hls.prefetch.failed — sequence=\(next, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
                 )
-                prefetchInFlight = false
+                return
+            } catch {
+                if error is CancellationError || Task.isCancelled { return }
+                guard generation == workGeneration else { return }
+                AppLog.nativeBridge.warning(
+                    "[NB-DIAG] hls.prefetch.failed — sequence=\(next, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
+                )
                 return
             }
         }
+    }
+
+    private func finishPrefetch(generation: Int) {
+        guard prefetchTaskGeneration == generation else { return }
+        prefetchTask = nil
+        prefetchTaskGeneration = nil
+    }
+
+    private func cancelPrefetchAndWait() async {
+        let task = prefetchTask
+        prefetchTask = nil
+        prefetchTaskGeneration = nil
+        task?.cancel()
+        await task?.value
+    }
+
+    private func generateNextSegment(expectedSequence: Int) async throws -> SyntheticHLSSegment {
+        let generation = workGeneration
+        let expectedCacheGeneration = cacheGeneration
+        let generated = try await scheduler.segment(for: expectedSequence)
+        if let beforeCacheCommitHookForTesting {
+            await beforeCacheCommitHookForTesting(generated.sequence)
+        }
+        guard generation == workGeneration else { throw CancellationError() }
+        try await cache.put(
+            generated.data,
+            duration: generated.duration,
+            for: generated.sequence,
+            expectedGeneration: expectedCacheGeneration
+        )
+        return SyntheticHLSSegment(
+            sequence: generated.sequence,
+            data: generated.data,
+            duration: generated.duration,
+            isAdvertised: false
+        )
     }
 
     private func absoluteURI(path: String, relativeTo baseURL: URL?) -> String {

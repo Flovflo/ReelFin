@@ -190,12 +190,603 @@ final class SyntheticHLSSessionTests: XCTestCase {
         let session = SyntheticHLSSession(plan: makePlan(), demuxer: demuxer, repackager: repackager)
 
         try await session.prepare()
-        let before = try await session.segment(sequence: 1)
+        _ = try await session.mediaPlaylist()
+        _ = try await waitForGeneratedSegmentCount(in: session, atLeast: 2)
+        _ = try await session.mediaPlaylist()
+        let before = try await session.advertisedSegment(sequence: 1)
         XCTAssertFalse(before.isEmpty)
 
         try await session.invalidateForSeek(targetPTS: 0)
-        let after = try await session.segment(sequence: 0)
+        _ = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        let after = try await session.advertisedSegment(sequence: 0)
         XCTAssertFalse(after.isEmpty)
+    }
+
+    func testPublishedSnapshotRemainsReadableUntilNextPlaylistUnderCountAndBytePressure() async throws {
+        let cache = SegmentCacheActor(maxBytes: 18, maxSegments: 3)
+        let repackager = SizedRepackager(fragmentSizes: [2, 8, 8, 8])
+        let playlistCommitBarrier = GenerationCommitBarrier()
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 1_200)),
+            repackager: repackager,
+            cache: cache,
+            defaultPreloadCount: 3
+        )
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist()
+        let snapshot = try await session.mediaPlaylist()
+        let snapshotSequences = playlistSegmentSequences(in: snapshot)
+        XCTAssertEqual(snapshotSequences, [0, 1, 2])
+        await session.setBeforePlaylistCommitHookForTesting {
+            await playlistCommitBarrier.pause()
+        }
+
+        let refreshTask = Task { try await session.mediaPlaylist() }
+        await playlistCommitBarrier.waitUntilEntered()
+
+        for sequence in snapshotSequences {
+            let bytes = try await session.advertisedSegment(sequence: sequence)
+            XCTAssertFalse(
+                bytes.isEmpty,
+                "Every URI in snapshot N must stay servable until snapshot N+1 returns."
+            )
+        }
+
+        await playlistCommitBarrier.release()
+        let nextSnapshot = try await refreshTask.value
+        await session.setBeforePlaylistCommitHookForTesting(nil)
+        let nextSequences = playlistSegmentSequences(in: nextSnapshot)
+        XCTAssertEqual(nextSequences, [2])
+        for sequence in snapshotSequences where !nextSequences.contains(sequence) {
+            do {
+                _ = try await session.advertisedSegment(sequence: sequence)
+                XCTFail("A URI removed by returned snapshot N+1 must no longer be advertised.")
+            } catch let error as SyntheticHLSError {
+                XCTAssertEqual(
+                    error.errorDescription,
+                    SyntheticHLSError.missingSegment(sequence).errorDescription
+                )
+            }
+        }
+    }
+
+    func testConcurrentPlaylistRefreshesOwnPublicationAndDrainAdmittedReaders() async throws {
+        let cache = SegmentCacheActor(maxBytes: 18, maxSegments: 3)
+        let repackager = SizedRepackager(fragmentSizes: [2, 8, 8, 8, 8])
+        let admittedReaderBarrier = GenerationCommitBarrier()
+        let publicationBarrier = GenerationCommitBarrier()
+        let ordering = PublicationOrderingProbe()
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 1_200)),
+            repackager: repackager,
+            cache: cache,
+            defaultPreloadCount: 3
+        )
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist()
+        let snapshot = try await session.mediaPlaylist()
+        XCTAssertEqual(playlistSegmentSequences(in: snapshot), [0, 1, 2])
+
+        await cache.setBeforeAdvertisedEntryHookForTesting {
+            await ordering.record(.readerLookupEntered)
+            await admittedReaderBarrier.pause()
+            await ordering.record(.readerLookupReleased)
+        }
+        await session.setDuringPlaylistCommitHookForTesting {
+            await ordering.record(.publicationCommitEntered)
+            await publicationBarrier.pause()
+        }
+
+        let admittedReader = Task { try await session.advertisedSegment(sequence: 0) }
+        await admittedReaderBarrier.waitUntilEntered()
+
+        let firstRefresh = Task { try await session.mediaPlaylist() }
+        await session.waitForPlaylistPublicationForTesting()
+        let secondRefresh = Task { try await session.mediaPlaylist() }
+        await session.waitForPlaylistOperationWaiterCountForTesting(1)
+
+        await admittedReaderBarrier.release()
+        let admittedBytes = try await admittedReader.value
+        XCTAssertFalse(admittedBytes.isEmpty)
+        await publicationBarrier.waitUntilEntered()
+
+        let retainedReader = Task { try await session.advertisedSegment(sequence: 2) }
+        await session.waitForAdvertisedSegmentWaiterCountForTesting(1)
+        let operationWaiterCount = await session.playlistOperationWaiterCountForTesting()
+        XCTAssertEqual(operationWaiterCount, 1)
+
+        await publicationBarrier.release()
+        let firstPlaylist = try await firstRefresh.value
+        let retainedBytes = try await retainedReader.value
+        XCTAssertFalse(retainedBytes.isEmpty)
+        let secondPlaylist = try await secondRefresh.value
+
+        for playlist in [firstPlaylist, secondPlaylist] {
+            let sequences = playlistSegmentSequences(in: playlist)
+            if let first = sequences.first, let last = sequences.last {
+                XCTAssertEqual(sequences, Array(first...last))
+            }
+        }
+        let events = await ordering.events()
+        let readerReleaseIndex = try XCTUnwrap(events.firstIndex(of: .readerLookupReleased))
+        let commitIndex = try XCTUnwrap(events.firstIndex(of: .publicationCommitEntered))
+        XCTAssertLessThan(
+            readerReleaseIndex,
+            commitIndex,
+            "A reader admitted under snapshot N must finish its cache lookup before publication can commit N+1."
+        )
+
+        await cache.setBeforeAdvertisedEntryHookForTesting(nil)
+        await session.setDuringPlaylistCommitHookForTesting(nil)
+        try await session.invalidateForSeek(targetPTS: 0)
+        _ = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        let postSeekBytes = try await session.advertisedSegment(sequence: 0)
+        XCTAssertFalse(postSeekBytes.isEmpty)
+    }
+
+    func testConcurrentRefreshesAndSeekQueueBehindOneOwnedPlaylistOperation() async throws {
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 1_200)),
+            repackager: RecordingRepackager()
+        )
+        let commitBarrier = GenerationCommitBarrier()
+        let transitions = PlaylistOperationTransitionProbe()
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist()
+        await session.setPlaylistOperationTransitionHookForTesting { transition in
+            await transitions.record(transition)
+        }
+        await session.setBeforePlaylistCommitHookForTesting {
+            await commitBarrier.pause()
+        }
+
+        let firstRefresh = Task { try await session.mediaPlaylist() }
+        await commitBarrier.waitUntilEntered()
+        let secondRefresh = Task { try await session.mediaPlaylist() }
+        let seek = Task { try await session.invalidateForSeek(targetPTS: 0) }
+        await transitions.waitUntilCount(3)
+
+        let initialTransitions = Array(await transitions.events().prefix(3))
+        XCTAssertEqual(initialTransitions, [.acquired, .queued, .queued])
+
+        await commitBarrier.release()
+        _ = await firstRefresh.result
+        _ = await secondRefresh.result
+        _ = await seek.result
+        await session.setBeforePlaylistCommitHookForTesting(nil)
+        await session.setPlaylistOperationTransitionHookForTesting(nil)
+
+        try await session.invalidateForSeek(targetPTS: 0)
+        let postSeekPlaylist = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        XCTAssertEqual(playlistSegmentSequences(in: postSeekPlaylist), [0])
+    }
+
+    func testByteSaturatedWorkingSetPublishesContiguousWindowsWithoutTerminalError() async throws {
+        let cache = SegmentCacheActor(maxBytes: 10, maxSegments: 12)
+        let repackager = SizedRepackager(fragmentSizes: Array(repeating: 4, count: 8))
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 1_200)),
+            repackager: repackager,
+            cache: cache,
+            defaultPreloadCount: 3
+        )
+
+        try await session.prepare()
+        let snapshotN = try await session.mediaPlaylist()
+        _ = try await repackager.waitForFragmentCount(2)
+        let snapshotN1 = try await session.mediaPlaylist()
+        _ = try await repackager.waitForFragmentCount(3)
+        let snapshotN2 = try await session.mediaPlaylist()
+
+        XCTAssertEqual(playlistSegmentSequences(in: snapshotN), [0, 1])
+        XCTAssertEqual(playlistSegmentSequences(in: snapshotN1), [1])
+        XCTAssertEqual(playlistSegmentSequences(in: snapshotN2), [1, 2])
+        for snapshot in [snapshotN, snapshotN1, snapshotN2] {
+            let advertised = playlistSegmentSequences(in: snapshot)
+            let first = try XCTUnwrap(advertised.first)
+            let last = try XCTUnwrap(advertised.last)
+            XCTAssertEqual(advertised, Array(first...last))
+        }
+        let latest = try await session.advertisedSegment(sequence: 2)
+        XCTAssertFalse(latest.isEmpty)
+    }
+
+    func testBytePressureNeverEvictsTheUnpublishedImmediatePredecessor() async throws {
+        let cache = SegmentCacheActor(maxBytes: 10, maxSegments: 12)
+        try await cache.put(Data(repeating: 0x00, count: 4), duration: 1, for: 0)
+        _ = await cache.advertiseRetained()
+        try await cache.put(Data(repeating: 0x01, count: 4), duration: 1, for: 1)
+
+        do {
+            try await cache.put(Data(repeating: 0x02, count: 4), duration: 1, for: 2)
+            XCTFail("Insertion must fail transactionally instead of evicting the sequential reserve predecessor.")
+        } catch let error as SyntheticHLSError {
+            guard case .workingSetCapacityExhausted(sequence: 2) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        let retained = await cache.retainedEntries().map(\.sequence)
+        XCTAssertEqual(retained, [0, 1])
+    }
+
+    func testVariableFragmentSizesPublishEverySequenceInFIFOOrder() async throws {
+        let (session, repackager, cache) = makeVariableSizePressureSession()
+
+        try await session.prepare()
+        var publicationOrder: [Int] = []
+        var nextExpectedSequence = 0
+        for cycle in 0...3 {
+            let playlist = try await session.mediaPlaylist()
+            let advertised = playlistSegmentSequences(in: playlist)
+            let first = try XCTUnwrap(advertised.first)
+            let last = try XCTUnwrap(advertised.last)
+            XCTAssertEqual(advertised, Array(first...last))
+            for sequence in advertised where sequence >= nextExpectedSequence {
+                XCTAssertEqual(sequence, nextExpectedSequence)
+                publicationOrder.append(sequence)
+                nextExpectedSequence += 1
+            }
+
+            if cycle < 3 {
+                _ = try await repackager.waitForFragmentCount(cycle + 2)
+                let retainedNextSequence = try await waitForRetainedSequence(cycle + 1, in: cache)
+                XCTAssertTrue(retainedNextSequence)
+                for sequence in advertised {
+                    let snapshotBytes = try await session.advertisedSegment(sequence: sequence)
+                    XCTAssertFalse(snapshotBytes.isEmpty, "Snapshot N must stay readable while its one FIFO reserve is generated.")
+                }
+            }
+        }
+
+        XCTAssertEqual(Array(publicationOrder.prefix(4)), [0, 1, 2, 3])
+    }
+
+    func testPromotedPrefetchKeepsVariableFragmentsFIFOAndSingleStaged() async throws {
+        let (session, _, cache) = makeVariableSizePressureSession()
+
+        try await session.prepare()
+        var publicationOrder: [Int] = []
+        var nextExpectedSequence = 0
+        for cycle in 0...3 {
+            let playlist = try await session.mediaPlaylist()
+            await session.promotePrefetch(preloadCount: 12, lookaheadSegments: 12)
+            let advertised = playlistSegmentSequences(in: playlist)
+            let first = try XCTUnwrap(advertised.first)
+            let last = try XCTUnwrap(advertised.last)
+            XCTAssertEqual(advertised, Array(first...last))
+            for sequence in advertised where sequence >= nextExpectedSequence {
+                XCTAssertEqual(sequence, nextExpectedSequence)
+                publicationOrder.append(sequence)
+                nextExpectedSequence += 1
+            }
+
+            if cycle < 3 {
+                let retained = await cache.retainedEntries()
+                let stagedFuture = retained.filter {
+                    !$0.isAdvertised && $0.sequence > (advertised.last ?? -1)
+                }
+                XCTAssertLessThanOrEqual(
+                    stagedFuture.count,
+                    1,
+                    "Promotion must never stage more than one unknown-size successor."
+                )
+                for sequence in advertised {
+                    let snapshotBytes = try await session.advertisedSegment(sequence: sequence)
+                    XCTAssertFalse(snapshotBytes.isEmpty)
+                }
+            }
+        }
+
+        XCTAssertEqual(Array(publicationOrder.prefix(4)), [0, 1, 2, 3])
+    }
+
+    func testPromotionCannotExtendAnInFlightUnknownSizeInsertion() async throws {
+        let (session, _, cache) = makeVariableSizePressureSession()
+        let commitBarrier = GenerationCommitBarrier()
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist()
+        await session.setBeforeCacheCommitHookForTesting { sequence in
+            guard sequence == 2 else { return }
+            await commitBarrier.pause()
+        }
+
+        await session.promotePrefetch(preloadCount: 12, lookaheadSegments: 12)
+        await commitBarrier.waitUntilEntered()
+        await session.promotePrefetch(preloadCount: 12, lookaheadSegments: 12)
+        await commitBarrier.release()
+        await session.waitForPrefetchForTesting()
+
+        let playlist = try await session.mediaPlaylist()
+        let advertised = playlistSegmentSequences(in: playlist)
+        let first = try XCTUnwrap(advertised.first)
+        let last = try XCTUnwrap(advertised.last)
+        XCTAssertEqual(advertised, Array(first...last))
+        XCTAssertTrue(advertised.contains(2))
+        let retained = await cache.retainedEntries()
+        XCTAssertLessThanOrEqual(retained.filter { !$0.isAdvertised }.count, 1)
+    }
+
+    func testWorkingSetPublishesDataDurationAndAdvertisementAtomically() async throws {
+        let cache = SegmentCacheActor(maxBytes: 15, maxSegments: 3)
+        try await cache.put(Data(repeating: 0xA0, count: 4), duration: 1.25, for: 0)
+        try await cache.put(Data(repeating: 0xB1, count: 5), duration: 2.5, for: 1)
+
+        let firstAdvertisement = await cache.advertiseRetained()
+        XCTAssertEqual(firstAdvertisement.map(\.sequence), [0, 1])
+        XCTAssertEqual(firstAdvertisement.map(\.duration), [1.25, 2.5])
+
+        try await cache.put(Data(repeating: 0xC2, count: 6), duration: 3.75, for: 2)
+        let retained = await cache.retainedEntries()
+        let firstStillAdvertised = await cache.advertisedEntry(for: 0)
+        let stillAdvertised = await cache.advertisedEntry(for: 1)
+        let unadvertisedPrefetch = await cache.advertisedEntry(for: 2)
+
+        XCTAssertEqual(retained.map(\.sequence), [0, 1, 2])
+        XCTAssertEqual(retained.reduce(0) { $0 + $1.data.count }, 15)
+        XCTAssertEqual(firstStillAdvertised?.duration, 1.25)
+        XCTAssertEqual(stillAdvertised?.duration, 2.5)
+        XCTAssertNil(unadvertisedPrefetch, "A prefetched fragment is not HTTP-readable until a playlist advertises it.")
+    }
+
+    func testWorkingSetRejectsSingleOversizeFragmentWithoutRetainingMetadata() async throws {
+        let cache = SegmentCacheActor(maxBytes: 8, maxSegments: 3)
+
+        do {
+            try await cache.put(Data(repeating: 0xFF, count: 9), duration: 1, for: 0)
+            XCTFail("A fragment larger than the whole byte budget must fail closed.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("working set"))
+        }
+
+        let retained = await cache.retainedEntries()
+        XCTAssertTrue(retained.isEmpty)
+    }
+
+    func testOversizePrefetchFailsClosedWithoutAdvertisingSequenceGap() async throws {
+        let cache = SegmentCacheActor(maxBytes: 8, maxSegments: 3)
+        let repackager = SizedRepackager(fragmentSizes: [4, 9])
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 240)),
+            repackager: repackager,
+            cache: cache
+        )
+
+        try await session.prepare()
+        do {
+            _ = try await session.mediaPlaylist()
+            XCTFail("A failed oversize prefetch must not let the playlist skip that sequence.")
+        } catch let error as SyntheticHLSError {
+            XCTAssertTrue(error.localizedDescription.contains("working set"))
+        }
+        let retained = await cache.retainedEntries()
+        XCTAssertEqual(retained.map(\.sequence), [0])
+    }
+
+    func testAdvertisedSegmentRereadDoesNotDemuxOrRepackageAgain() async throws {
+        let demuxer = MockDemuxer(samples: makeSamples(count: 240))
+        let repackager = RecordingRepackager()
+        let session = SyntheticHLSSession(plan: makePlan(), demuxer: demuxer, repackager: repackager)
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        let beforeReads = await demuxer.sampleReadCount()
+        let beforeFragments = await repackager.generatedFragmentCount()
+
+        let first = try await session.advertisedSegment(sequence: 0)
+        let second = try await session.advertisedSegment(sequence: 0)
+        let afterReads = await demuxer.sampleReadCount()
+        let afterFragments = await repackager.generatedFragmentCount()
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(afterReads, beforeReads)
+        XCTAssertEqual(afterFragments, beforeFragments)
+    }
+
+    func testPlaylistAdvertisesExactlyTheRetainedWindowUnderPressure() async throws {
+        let cache = SegmentCacheActor(maxBytes: 64, maxSegments: 2)
+        let repackager = RecordingRepackager()
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 720)),
+            repackager: repackager,
+            cache: cache,
+            defaultPreloadCount: 3
+        )
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist()
+        let generatedFragmentCount = try await waitForGeneratedFragmentCount(in: repackager, atLeast: 2)
+        let playlist = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        let retainedEntries = await cache.retainedEntries()
+        let retained = retainedEntries.map(\.sequence)
+        let advertised = playlistSegmentSequences(in: playlist)
+
+        XCTAssertLessThanOrEqual(retained.count, 2)
+        XCTAssertEqual(generatedFragmentCount, 2, "Prefetch must stop at the retained segment window.")
+        XCTAssertLessThanOrEqual(retainedEntries.reduce(0) { $0 + $1.data.count }, 64)
+        XCTAssertEqual(advertised, Array(retained.prefix(1)))
+    }
+
+    func testFullWorkingSetSlidesForwardOnPlaylistRefreshWithoutExceedingBudget() async throws {
+        let cache = SegmentCacheActor(maxBytes: 64, maxSegments: 3)
+        let repackager = RecordingRepackager()
+        let demuxer = FreezeableDemuxer(samples: makeSamples(count: 1_200))
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: demuxer,
+            repackager: repackager,
+            cache: cache,
+            defaultPreloadCount: 3
+        )
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist()
+        let startupCount = try await waitForGeneratedFragmentCount(in: repackager, atLeast: 2)
+        XCTAssertEqual(startupCount, 2)
+        let retainedSequenceOne = try await waitForRetainedSequence(1, in: cache)
+        XCTAssertTrue(retainedSequenceOne)
+
+        _ = try await session.mediaPlaylist()
+        let middleCount = try await waitForGeneratedFragmentCount(in: repackager, atLeast: 3)
+        XCTAssertEqual(middleCount, 3)
+        let retainedSequenceTwo = try await waitForRetainedSequence(2, in: cache)
+        XCTAssertTrue(retainedSequenceTwo)
+
+        _ = try await session.mediaPlaylist()
+        let advancedCount = try await waitForGeneratedFragmentCount(in: repackager, atLeast: 4)
+        XCTAssertEqual(advancedCount, 4)
+        let retainedSequenceThree = try await waitForRetainedSequence(3, in: cache)
+        XCTAssertTrue(retainedSequenceThree)
+        await demuxer.freezeReads()
+        let advancedPlaylist = try await session.mediaPlaylist(startupPreflightSnapshot: false)
+        let retained = await cache.retainedEntries()
+
+        XCTAssertEqual(retained.map(\.sequence), [1, 2, 3])
+        XCTAssertLessThanOrEqual(retained.reduce(0) { $0 + $1.data.count }, 64)
+        XCTAssertEqual(playlistSegmentSequences(in: advancedPlaylist), [1, 2, 3])
+        XCTAssertTrue(advancedPlaylist.contains("#EXT-X-MEDIA-SEQUENCE:1"))
+
+        do {
+            _ = try await session.advertisedSegment(sequence: 0)
+            XCTFail("An evicted segment must not be regenerated by an HTTP-style reread.")
+        } catch let error as SyntheticHLSError {
+            XCTAssertEqual(error.errorDescription, SyntheticHLSError.missingSegment(0).errorDescription)
+        }
+        let fragmentCountAfterEvictedReread = await repackager.generatedFragmentCount()
+        XCTAssertEqual(fragmentCountAfterEvictedReread, advancedCount)
+    }
+
+    func testSlidingPlaylistOmitsEventAndKeepsTargetDurationStableAcrossWindowRefreshes() async throws {
+        let cache = SegmentCacheActor(maxBytes: 256, maxSegments: 3)
+        let repackager = RecordingRepackager()
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 2_400)),
+            repackager: repackager,
+            cache: cache,
+            defaultPreloadCount: 3
+        )
+
+        try await session.prepare()
+        var playlists: [String] = []
+        for _ in 0..<6 {
+            playlists.append(try await session.mediaPlaylist())
+            await session.waitForPrefetchForTesting()
+        }
+        playlists.append(try await session.mediaPlaylist())
+
+        let targets = playlists.compactMap(targetDuration(in:))
+        XCTAssertEqual(targets.count, playlists.count)
+        XCTAssertEqual(Set(targets).count, 1, "TARGETDURATION must remain stable for the whole generation.")
+        XCTAssertTrue(playlists.allSatisfy { !$0.contains("#EXT-X-PLAYLIST-TYPE:EVENT") })
+        XCTAssertGreaterThan(playlistMediaSequence(in: playlists.last ?? ""), 0)
+    }
+
+    func testConcurrentSchedulerRequestsCannotInterleaveDemuxOrRepackageSameSequence() async throws {
+        let demuxer = DelayedReadDemuxer(samples: makeSamples(count: 240))
+        let repackager = RecordingRepackager()
+        let scheduler = PackagingSchedulerActor(
+            demuxer: demuxer,
+            repackager: repackager,
+            videoTrackID: 1,
+            targetDurationSeconds: 3
+        )
+
+        let first = Task { try await scheduler.segment(for: 0) }
+        try await demuxer.waitForActiveRead()
+        let second = Task { try await scheduler.segment(for: 0) }
+        let firstResult = await first.result
+        let secondResult = await second.result
+        let successCount = [firstResult, secondResult].reduce(into: 0) { count, result in
+            if case .success = result { count += 1 }
+        }
+
+        XCTAssertEqual(successCount, 1)
+        let peakReads = await demuxer.maximumConcurrentReads()
+        let fragmentCount = await repackager.generatedFragmentCount()
+        XCTAssertEqual(peakReads, 1)
+        XCTAssertEqual(fragmentCount, 1)
+    }
+
+    func testSeekCancelsAndAwaitsOwnedPrefetchBeforeTouchingDemuxer() async throws {
+        let demuxer = SeekRaceDemuxer(samples: makeSamples(count: 600))
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: demuxer,
+            repackager: RecordingRepackager()
+        )
+
+        try await session.prepare()
+        await demuxer.delaySubsequentRead()
+        let playlistTask = Task { try await session.mediaPlaylist() }
+        try await demuxer.waitForDelayedRead()
+        try await session.invalidateForSeek(targetPTS: 0)
+        _ = await playlistTask.result
+
+        let seekRacedRead = await demuxer.seekBeganDuringDelayedRead()
+        XCTAssertFalse(
+            seekRacedRead,
+            "Seek/reset must cancel and await the only owned generation task before mutating demux state."
+        )
+        let playlist = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        XCTAssertEqual(playlistSegmentSequences(in: playlist), [0])
+    }
+
+    func testConcurrentPlaylistRefreshesSerializeAndOwnOnePrefetchTask() async throws {
+        let demuxer = DelayedReadDemuxer(samples: makeSamples(count: 600))
+        let repackager = RecordingRepackager()
+        let session = SyntheticHLSSession(plan: makePlan(), demuxer: demuxer, repackager: repackager)
+
+        try await session.prepare()
+        async let first = session.mediaPlaylist()
+        async let second = session.mediaPlaylist()
+        _ = try await (first, second)
+        _ = try await waitForGeneratedFragmentCount(in: repackager, atLeast: 2)
+
+        let peakReads = await demuxer.maximumConcurrentReads()
+        let fragmentCount = await repackager.generatedFragmentCount()
+        XCTAssertEqual(peakReads, 1)
+        XCTAssertEqual(
+            fragmentCount,
+            3,
+            "The queued refresh may advance once after the first completes, but generation stays single-flight."
+        )
+    }
+
+    func testSeekClearsAdvertisementAndBackwardSeekRebuildsStartupWindow() async throws {
+        let demuxer = MockDemuxer(samples: makeSamples(count: 240))
+        let repackager = RecordingRepackager()
+        let session = SyntheticHLSSession(plan: makePlan(), demuxer: demuxer, repackager: repackager)
+
+        try await session.prepare()
+        _ = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        let beforeSeek = try await session.advertisedSegment(sequence: 0)
+        XCTAssertFalse(beforeSeek.isEmpty)
+
+        try await session.invalidateForSeek(targetPTS: 0)
+        do {
+            _ = try await session.advertisedSegment(sequence: 0)
+            XCTFail("A segment from the previous generation must not remain advertised after seek.")
+        } catch let error as SyntheticHLSError {
+            XCTAssertEqual(error.errorDescription, SyntheticHLSError.missingSegment(0).errorDescription)
+        }
+
+        let rebuiltPlaylist = try await session.mediaPlaylist(startupPreflightSnapshot: true)
+        let rebuiltSegment = try await session.advertisedSegment(sequence: 0)
+        let fragmentCount = await repackager.generatedFragmentCount()
+        XCTAssertEqual(playlistSegmentSequences(in: rebuiltPlaylist), [0])
+        XCTAssertFalse(rebuiltSegment.isEmpty)
+        XCTAssertEqual(fragmentCount, 2)
     }
 
     func testMediaPlaylistReturnsQuicklyWithoutSyncGeneratingExtraSegments() async throws {
@@ -421,10 +1012,10 @@ final class SyntheticHLSSessionTests: XCTestCase {
         let session = SyntheticHLSSession(plan: plan, demuxer: demuxer, repackager: repackager)
 
         try await session.prepare()
-        var fragments: [Data] = []
-        for sequence in 0...2 {
-            fragments.append(try await session.segment(sequence: sequence))
-        }
+        _ = try await session.mediaPlaylist(preloadCount: 3)
+        _ = try await waitForGeneratedSegmentCount(in: session, atLeast: 2)
+        _ = try await session.mediaPlaylist(preloadCount: 3)
+        _ = try await waitForGeneratedSegmentCount(in: session, atLeast: 3)
         await demuxer.freezeReads()
         let playlist = try await session.mediaPlaylist(preloadCount: 3)
         let advertisedSequences = playlist
@@ -436,8 +1027,9 @@ final class SyntheticHLSSessionTests: XCTestCase {
         XCTAssertEqual(advertisedSequences, [0, 1, 2])
 
         for sequence in advertisedSequences {
+            let fragment = try await session.advertisedSegment(sequence: sequence)
             XCTAssertEqual(
-                try firstSampleFlags(in: fragments[sequence]),
+                try firstSampleFlags(in: fragment),
                 0x02000000,
                 "Advertised segment \(sequence) must independently begin with a sync video sample."
             )
@@ -482,7 +1074,7 @@ final class SyntheticHLSSessionTests: XCTestCase {
         let session = SyntheticHLSSession(plan: makePlan(), demuxer: demuxer, repackager: repackager)
 
         try await session.prepare()
-        _ = try await session.segment(sequence: 0)
+        _ = try await session.mediaPlaylist(startupPreflightSnapshot: true)
 
         let firstFragmentTrackIDs = await repackager.trackIDs(forGeneratedFragmentAt: 0)
         XCTAssertTrue(firstFragmentTrackIDs.contains(1), "Startup fragment must include video samples.")
@@ -592,19 +1184,15 @@ final class SyntheticHLSSessionTests: XCTestCase {
 
         try await session.prepare()
         _ = try await session.mediaPlaylist()
-
-        let startupCount = try await waitForGeneratedSegmentCount(
-            in: session,
-            atLeast: 4
-        )
-        XCTAssertGreaterThanOrEqual(startupCount, 4)
-
-        await session.promotePrefetch(preloadCount: 10, lookaheadSegments: 6)
-
-        let promotedCount = try await waitForGeneratedSegmentCount(
-            in: session,
-            atLeast: 10
-        )
+        var promotedCount = try await waitForGeneratedSegmentCount(in: session, atLeast: 2)
+        for expectedCount in 3...10 {
+            _ = try await session.mediaPlaylist()
+            await session.promotePrefetch(preloadCount: 10, lookaheadSegments: 6)
+            promotedCount = try await waitForGeneratedSegmentCount(
+                in: session,
+                atLeast: expectedCount
+            )
+        }
         XCTAssertGreaterThanOrEqual(promotedCount, 10)
     }
 
@@ -775,6 +1363,42 @@ final class SyntheticHLSSessionTests: XCTestCase {
         return await session.generatedSequenceCountForTesting()
     }
 
+    private func waitForGeneratedFragmentCount(
+        in repackager: RecordingRepackager,
+        atLeast minimumCount: Int,
+        attempts: Int = 150
+    ) async throws -> Int {
+        for _ in 0..<attempts {
+            let count = await repackager.generatedFragmentCount()
+            if count >= minimumCount { return count }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return await repackager.generatedFragmentCount()
+    }
+
+    private func playlistSegmentSequences(in playlist: String) -> [Int] {
+        playlist
+            .split(whereSeparator: \.isNewline)
+            .compactMap { line -> Int? in
+                guard line.hasPrefix("segment_"), line.hasSuffix(".m4s") else { return nil }
+                return Int(line.dropFirst("segment_".count).dropLast(".m4s".count))
+            }
+    }
+
+    private func targetDuration(in playlist: String) -> Int? {
+        playlist.split(whereSeparator: \.isNewline).compactMap { line in
+            guard line.hasPrefix("#EXT-X-TARGETDURATION:") else { return nil }
+            return Int(line.dropFirst("#EXT-X-TARGETDURATION:".count))
+        }.first
+    }
+
+    private func playlistMediaSequence(in playlist: String) -> Int {
+        playlist.split(whereSeparator: \.isNewline).compactMap { line in
+            guard line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") else { return nil }
+            return Int(line.dropFirst("#EXT-X-MEDIA-SEQUENCE:".count))
+        }.first ?? 0
+    }
+
     private func makeInterleavedAVSamples() -> [Sample] {
         let videoFrameNs: Int64 = 41_708_333
         let audioFrameNs: Int64 = 32_000_000
@@ -839,6 +1463,37 @@ final class SyntheticHLSSessionTests: XCTestCase {
             videoRangeType: "HDR10",
             whyChosen: "test"
         )
+    }
+
+    private func makeVariableSizePressureSession() -> (
+        session: SyntheticHLSSession,
+        repackager: SizedRepackager,
+        cache: SegmentCacheActor
+    ) {
+        let repackager = SizedRepackager(fragmentSizes: [2, 8, 8, 8, 8])
+        let cache = SegmentCacheActor(maxBytes: 18, maxSegments: 3)
+        let session = SyntheticHLSSession(
+            plan: makePlan(),
+            demuxer: MockDemuxer(samples: makeSamples(count: 1_500)),
+            repackager: repackager,
+            cache: cache,
+            defaultPreloadCount: 3
+        )
+        return (session, repackager, cache)
+    }
+
+    private func waitForRetainedSequence(
+        _ sequence: Int,
+        in cache: SegmentCacheActor,
+        attempts: Int = 150
+    ) async throws -> Bool {
+        for _ in 0..<attempts {
+            if await cache.retainedEntries().contains(where: { $0.sequence == sequence }) {
+                return true
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return false
     }
 
     private func firstEXTINFDuration(in playlist: String) -> Double? {
@@ -1064,6 +1719,195 @@ private actor FreezeableDemuxer: Demuxer {
     }
 }
 
+private actor DelayedReadDemuxer: Demuxer {
+    private let samples: [Sample]
+    private var index = 0
+    private var activeReads = 0
+    private var peakReads = 0
+
+    init(samples: [Sample]) {
+        self.samples = samples
+    }
+
+    func open() async throws -> StreamInfo {
+        StreamInfo(
+            durationNanoseconds: Int64(samples.count) * 41_708_333,
+            tracks: [TrackInfo(
+                id: 1,
+                trackType: .video,
+                codecID: "V_MPEGH/ISO/HEVC",
+                codecName: "hevc",
+                isDefault: true,
+                codecPrivate: validSyntheticTestHVCC
+            )],
+            hasChapters: false,
+            seekable: true
+        )
+    }
+
+    func readPacket() async throws -> DemuxedPacket? {
+        try await readSample().map(DemuxedPacket.init(sample:))
+    }
+
+    func readSample() async throws -> Sample? {
+        activeReads += 1
+        peakReads = max(peakReads, activeReads)
+        defer { activeReads -= 1 }
+        try await Task.sleep(nanoseconds: 5_000_000)
+        guard index < samples.count else { return nil }
+        defer { index += 1 }
+        return samples[index]
+    }
+
+    func seek(to timeNanoseconds: Int64) async throws -> Int64 {
+        index = samples.firstIndex(where: { $0.ptsNanoseconds >= timeNanoseconds }) ?? samples.count
+        return index < samples.count ? samples[index].ptsNanoseconds : timeNanoseconds
+    }
+
+    func waitForActiveRead(attempts: Int = 100) async throws {
+        for _ in 0..<attempts {
+            if activeReads > 0 { return }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Timed out waiting for a suspended demux read.")
+    }
+
+    func maximumConcurrentReads() -> Int { peakReads }
+}
+
+private actor GenerationCommitBarrier {
+    private var entered = false
+    private var released = false
+    private var enteredContinuations: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+
+    func pause() async {
+        entered = true
+        enteredContinuations.forEach { $0.resume() }
+        enteredContinuations.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { continuation in
+            releaseContinuations.append(continuation)
+        }
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { continuation in
+            enteredContinuations.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        releaseContinuations.forEach { $0.resume() }
+        releaseContinuations.removeAll()
+    }
+}
+
+private actor PublicationOrderingProbe {
+    enum Event: Equatable {
+        case readerLookupEntered
+        case readerLookupReleased
+        case publicationCommitEntered
+    }
+
+    private var recordedEvents: [Event] = []
+
+    func record(_ event: Event) {
+        recordedEvents.append(event)
+    }
+
+    func events() -> [Event] {
+        recordedEvents
+    }
+}
+
+private actor PlaylistOperationTransitionProbe {
+    private var recordedEvents: [PlaylistOperationTransition] = []
+    private var countWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    func record(_ event: PlaylistOperationTransition) {
+        recordedEvents.append(event)
+        let ready = countWaiters.filter { recordedEvents.count >= $0.0 }
+        countWaiters.removeAll { recordedEvents.count >= $0.0 }
+        ready.forEach { $0.1.resume() }
+    }
+
+    func waitUntilCount(_ count: Int) async {
+        guard recordedEvents.count < count else { return }
+        await withCheckedContinuation { continuation in
+            countWaiters.append((count, continuation))
+        }
+    }
+
+    func events() -> [PlaylistOperationTransition] {
+        recordedEvents
+    }
+}
+
+private actor SeekRaceDemuxer: Demuxer {
+    private let samples: [Sample]
+    private var index = 0
+    private var delayNextRead = false
+    private var delayedReadActive = false
+    private var seekRacedRead = false
+
+    init(samples: [Sample]) {
+        self.samples = samples
+    }
+
+    func open() async throws -> StreamInfo {
+        StreamInfo(
+            durationNanoseconds: Int64(samples.count) * 41_708_333,
+            tracks: [TrackInfo(
+                id: 1,
+                trackType: .video,
+                codecID: "V_MPEGH/ISO/HEVC",
+                codecName: "hevc",
+                isDefault: true,
+                codecPrivate: validSyntheticTestHVCC
+            )],
+            hasChapters: false,
+            seekable: true
+        )
+    }
+
+    func readPacket() async throws -> DemuxedPacket? {
+        try await readSample().map(DemuxedPacket.init(sample:))
+    }
+
+    func readSample() async throws -> Sample? {
+        if delayNextRead {
+            delayNextRead = false
+            delayedReadActive = true
+            defer { delayedReadActive = false }
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        guard index < samples.count else { return nil }
+        defer { index += 1 }
+        return samples[index]
+    }
+
+    func seek(to timeNanoseconds: Int64) async throws -> Int64 {
+        seekRacedRead = delayedReadActive
+        index = samples.firstIndex(where: { $0.ptsNanoseconds >= timeNanoseconds }) ?? samples.count
+        return index < samples.count ? samples[index].ptsNanoseconds : timeNanoseconds
+    }
+
+    func delaySubsequentRead() { delayNextRead = true }
+
+    func waitForDelayedRead(attempts: Int = 100) async throws {
+        for _ in 0..<attempts {
+            if delayedReadActive { return }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Timed out waiting for delayed prefetch read.")
+    }
+
+    func seekBeganDuringDelayedRead() -> Bool { seekRacedRead }
+}
+
 private actor SingleTrackDemuxer: Demuxer {
     private let track: TrackInfo
     private let samples: [Sample]
@@ -1201,5 +2045,35 @@ private actor RecordingRepackager: Repackager {
     func samples(forGeneratedFragmentAt index: Int) -> [Sample] {
         guard generatedSamples.indices.contains(index) else { return [] }
         return generatedSamples[index]
+    }
+}
+
+private actor SizedRepackager: Repackager {
+    private let fragmentSizes: [Int]
+    private var fragmentCount = 0
+
+    init(fragmentSizes: [Int]) {
+        self.fragmentSizes = fragmentSizes
+    }
+
+    func generateInitSegment(streamInfo: StreamInfo) async throws -> Data {
+        _ = streamInfo
+        return Data("init".utf8)
+    }
+
+    func generateFragment(packets: [DemuxedPacket]) async throws -> Data {
+        _ = packets
+        let index = min(fragmentCount, max(0, fragmentSizes.count - 1))
+        let size = fragmentSizes.isEmpty ? 1 : fragmentSizes[index]
+        fragmentCount += 1
+        return Data(repeating: UInt8(fragmentCount & 0xFF), count: size)
+    }
+
+    func waitForFragmentCount(_ minimum: Int, attempts: Int = 150) async throws -> Int {
+        for _ in 0..<attempts {
+            if fragmentCount >= minimum { return fragmentCount }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return fragmentCount
     }
 }
