@@ -245,25 +245,26 @@ public enum DolbyVisionGate {
         reason: String
     ) -> NativeBridgePackagingDecision {
         let videoCodecs = [baseCodec, audioCodec].compactMap { $0 }.joined(separator: ",")
+        let isAVC = baseCodec.hasPrefix("avc")
         return NativeBridgePackagingDecision(
             mode: .hdr10OnlyFallback,
             videoEntry: VideoSampleEntryStrategy(
-                sampleEntryType: baseCodec.hasPrefix("hvc") ? "hvc1" : "avc1",
-                includeHvcC: true,
+                sampleEntryType: isAVC ? "avc1" : "hvc1",
+                includeHvcC: !isAVC,
                 includeDvcC: false,
                 ftypIncludesDby1: false,
-                stripDolbyVisionRPUNALs: true
+                stripDolbyVisionRPUNALs: !isAVC
             ),
             hlsSignaling: HLSMasterSignaling(
                 codecs: videoCodecs,
                 supplementalCodecs: nil,
-                videoRange: videoRange,
+                videoRange: isAVC ? nil : videoRange,
                 frameRate: frameRate
             ),
             expectation: PlaybackCapabilityExpectation(
-                floor: .hdr10,
-                ceiling: .hdr10,
-                explanation: "Pure HDR10 — no DV signaling"
+                floor: isAVC ? .sdr : .hdr10,
+                ceiling: isAVC ? .sdr : .hdr10,
+                explanation: isAVC ? "AVC SDR — no HEVC/DV signaling" : "Pure HDR10 — no DV signaling"
             ),
             reason: reason
         )

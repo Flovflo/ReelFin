@@ -21,7 +21,6 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     private let downloader: OriginDownloader
     private let key: MediaGatewayCacheKey
     private let overrideMIMEType: String?
-    private let pathToken: String
     // For low-latency on-demand serving: the serve loop fetches a cache-missed range DIRECTLY from
     // the origin (so AVPlayer's first read / a seek is served at direct-play speed) while the
     // background downloader builds the deep buffer ahead. v1 lacked this and waited on the windowed
@@ -34,6 +33,10 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "reelfin.local-cache-http", attributes: .concurrent)
     private var listener: NWListener?
+    private var security: LocalPlaybackServerSecurity?
+    private var requiredLocalEndpoint: NWEndpoint?
+    private let connectionGate: LocalPlaybackConnectionGate
+    private let connectionCallbackHook: (@Sendable () -> Void)?
 
     private let serveChunk = 4 * 1_024 * 1_024
     /// Socket sends are sliced to this size so a connection AVPlayer already abandoned wastes at
@@ -53,6 +56,10 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     // leak that produced the "memory warning before the next play starts" → jetsam.)
     private var activeConnections: [ObjectIdentifier: NWConnection] = [:]
     private var connectionTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var connectionLeases: [ObjectIdentifier: LocalPlaybackConnectionGate.Lease] = [:]
+    private var acceptingConnections = false
+    private var generation = 0
+    private var receiveStartCount = 0
 
     // Per active serve loop: its current offset + whether it is STARVED (waiting for bytes not yet
     // cached). The downloader fills the lowest starved offset first (unblock the most-behind reader —
@@ -68,7 +75,10 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         key: MediaGatewayCacheKey,
         remoteURL: URL,
         headers: [String: String],
-        overrideMIMEType: String?
+        overrideMIMEType: String?,
+        connectionCapacity: Int? = LocalPlaybackServerSecurity.defaultConnectionCapacity,
+        connectionGate: LocalPlaybackConnectionGate? = nil,
+        connectionCallbackHook: (@Sendable () -> Void)? = nil
     ) {
         self.store = store
         self.downloader = downloader
@@ -76,18 +86,33 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         self.remoteURL = remoteURL
         self.headers = headers
         self.overrideMIMEType = overrideMIMEType
-        // Opaque, stable path so the URL is extensionless (the asset's overrideMIMEType supplies the
-        // type, exactly like the extensionless direct-play origin URL).
-        self.pathToken = "media/\(key.itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "item")"
+        self.connectionGate = connectionGate ?? LocalPlaybackConnectionGate(capacity: connectionCapacity)
+        self.connectionCallbackHook = connectionCallbackHook
     }
 
     /// Starts the listener and returns the localhost URL AVPlayer should play.
     func start() throws -> URL {
-        let listener = try NWListener(using: .tcp, on: .any)
+        let security = LocalPlaybackServerSecurity()
+        let configuredListener = try LocalPlaybackServerSecurity.makeLoopbackListener()
+        let listener = configuredListener.listener
+        let startedGeneration = lock.withLock { () -> Int in
+            generation += 1
+            acceptingConnections = true
+            receiveStartCount = 0
+            self.listener = listener
+            self.security = security
+            requiredLocalEndpoint = configuredListener.requiredLocalEndpoint
+            return generation
+        }
         let ready = DispatchSemaphore(value: 0)
         var startError: Error?
         listener.newConnectionHandler = { [weak self] connection in
-            self?.handle(connection)
+            guard let self else {
+                connection.cancel()
+                return
+            }
+            self.connectionCallbackHook?()
+            self.handle(connection, generation: startedGeneration)
         }
         listener.stateUpdateHandler = { state in
             switch state {
@@ -96,29 +121,48 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
             default: break
             }
         }
-        self.listener = listener
         listener.start(queue: queue)
         _ = ready.wait(timeout: .now() + 4)
-        if let startError { throw startError }
-        guard let port = listener.port else { throw MediaAccessError.cannotDetermineSize }
-        guard let url = URL(string: "http://127.0.0.1:\(port.rawValue)/\(pathToken)") else {
+        if let startError {
+            clearStartup(listener: listener, generation: startedGeneration)
+            listener.cancel()
+            throw startError
+        }
+        guard let port = listener.port,
+              let baseURL = security.baseURL(port: port) else {
+            clearStartup(listener: listener, generation: startedGeneration)
+            listener.cancel()
             throw MediaAccessError.cannotDetermineSize
         }
-        return url
+        guard lock.withLock({ acceptingConnections && generation == startedGeneration && self.listener === listener }) else {
+            listener.cancel()
+            throw CancellationError()
+        }
+        return baseURL.appendingPathComponent("media")
     }
 
     func stop(reason: String) {
-        listener?.cancel()
-        listener = nil
-        lock.lock()
-        let conns = Array(activeConnections.values)
-        let tasks = Array(connectionTasks.values)
-        activeConnections.removeAll()
-        connectionTasks.removeAll()
-        lock.unlock()
+        let drained = lock.withLock { () -> (NWListener?, [NWConnection], [Task<Void, Never>], [LocalPlaybackConnectionGate.Lease]) in
+            acceptingConnections = false
+            let result = (
+                listener,
+                Array(activeConnections.values),
+                Array(connectionTasks.values),
+                Array(connectionLeases.values)
+            )
+            listener = nil
+            security = nil
+            requiredLocalEndpoint = nil
+            activeConnections.removeAll()
+            connectionTasks.removeAll()
+            connectionLeases.removeAll()
+            return result
+        }
+        drained.0?.cancel()
         // Cancelling the connection unblocks its parked `receive` → the handle Task exits its loop.
-        for connection in conns { connection.cancel() }
-        for task in tasks { task.cancel() }
+        for connection in drained.1 { connection.cancel() }
+        for task in drained.2 { task.cancel() }
+        for lease in drained.3 { lease.release() }
         // The process-shared origin session deliberately outlives this local server. Each bounded
         // reader still cancels its own task when the serve is cancelled or its window is complete.
         // Capture the downloader value (NOT self) so this escaping Task is safe to spawn from deinit.
@@ -129,15 +173,25 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     deinit {
         // Safety net if stop() was never called. Cancel transport synchronously; do NOT touch self in
         // an escaping Task during deallocation (that crashes) — capture the downloader value instead.
-        listener?.cancel()
-        lock.lock()
-        let conns = Array(activeConnections.values)
-        let tasks = Array(connectionTasks.values)
-        activeConnections.removeAll()
-        connectionTasks.removeAll()
-        lock.unlock()
-        for connection in conns { connection.cancel() }
-        for task in tasks { task.cancel() }
+        let drained = lock.withLock { () -> (NWListener?, [NWConnection], [Task<Void, Never>], [LocalPlaybackConnectionGate.Lease]) in
+            acceptingConnections = false
+            let result = (
+                listener,
+                Array(activeConnections.values),
+                Array(connectionTasks.values),
+                Array(connectionLeases.values)
+            )
+            listener = nil
+            security = nil
+            activeConnections.removeAll()
+            connectionTasks.removeAll()
+            connectionLeases.removeAll()
+            return result
+        }
+        drained.0?.cancel()
+        for connection in drained.1 { connection.cancel() }
+        for task in drained.2 { task.cancel() }
+        for lease in drained.3 { lease.release() }
         // onDemandSession is process-shared and is intentionally not invalidated here.
         let downloader = self.downloader
         Task { await downloader.stop() }
@@ -146,58 +200,118 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
 #if DEBUG
     /// Test hook: number of connections the server is currently tracking (must return to 0 after stop).
     var debugActiveConnectionCount: Int { lock.lock(); defer { lock.unlock() }; return activeConnections.count }
+    var debugConnectionSnapshot: LocalPlaybackConnectionGate.Snapshot { connectionGate.snapshot }
+    var debugRequiredLocalEndpoint: NWEndpoint? { lock.withLock { requiredLocalEndpoint } }
+    var debugConnectionTaskCount: Int { lock.withLock { connectionTasks.count } }
+    var debugReceiveStartCount: Int { lock.withLock { receiveStartCount } }
 #endif
 
     // MARK: - Connection handling
 
-    private func handle(_ connection: NWConnection) {
-        connection.start(queue: queue)
-        let cid = ObjectIdentifier(connection)
-        lock.lock(); activeConnections[cid] = connection; lock.unlock()
-        let task = Task { [weak self] in
-            guard let self else { connection.cancel(); return }
-            // Deregister + close when this connection's serving ends (client closed, error, or
-            // cancellation from stop()). This is what frees the socket + Task — no cross-session leak.
-            defer {
-                connection.cancel()
-                self.lock.lock()
-                self.activeConnections[cid] = nil
-                self.connectionTasks[cid] = nil
-                self.lock.unlock()
-            }
-            // HTTP/1.1 keep-alive: serve sequential requests on ONE connection so AVPlayer reuses a
-            // single socket for its ranged reads (instead of opening a new connection per range — which
-            // spawned hundreds of active serves and thrashed the downloader's playhead). Loop until the
-            // client closes the socket or a serve says the connection can't continue.
-            while !Task.isCancelled {
-                // An idle keep-alive socket (AVPlayer done with it but not closed) must NOT park this
-                // Task forever — `receiveRequestHead`'s `receive` continuation is not cancellation-aware,
-                // so we cancel the connection after an idle timeout, which makes the receive complete.
-                let watchdog = Task { [idleConnectionTimeout] in
-                    try? await Task.sleep(nanoseconds: UInt64(idleConnectionTimeout * 1_000_000_000))
-                    // Only fire if we actually reached the timeout. When a request arrives we cancel
-                    // this watchdog, which makes the sleep throw — must NOT then close the live socket.
-                    if !Task.isCancelled { connection.cancel() }
-                }
-                let requestData = await self.receiveRequestHead(connection)
-                watchdog.cancel()
-                guard let requestData else {
-                    return // client closed the connection / idle-timed-out / cancelled
-                }
-                guard let request = LocalMediaGatewayHTTPRequest(requestData) else {
-                    await self.trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
-                    return
-                }
-                let keepAlive = await self.serve(request, over: connection)
-                if !keepAlive { return }
-            }
+    private func clearStartup(listener expectedListener: NWListener, generation expectedGeneration: Int) {
+        lock.withLock {
+            guard generation == expectedGeneration, listener === expectedListener else { return }
+            acceptingConnections = false
+            listener = nil
+            security = nil
+            requiredLocalEndpoint = nil
         }
-        lock.lock(); connectionTasks[cid] = task; lock.unlock()
+    }
+
+    private func isCurrent(generation expectedGeneration: Int) -> Bool {
+        lock.withLock { acceptingConnections && generation == expectedGeneration }
+    }
+
+    private func beginReceive(id: ObjectIdentifier, generation expectedGeneration: Int) -> Bool {
+        lock.withLock {
+            guard acceptingConnections, generation == expectedGeneration,
+                  activeConnections[id] != nil,
+                  connectionTasks[id] != nil else { return false }
+            receiveStartCount += 1
+            return true
+        }
+    }
+
+    private func finishConnection(id: ObjectIdentifier, connection: NWConnection) {
+        connection.cancel()
+        let lease = lock.withLock { () -> LocalPlaybackConnectionGate.Lease? in
+            activeConnections[id] = nil
+            connectionTasks[id] = nil
+            return connectionLeases.removeValue(forKey: id)
+        }
+        lease?.release()
+    }
+
+    private func handle(_ connection: NWConnection, generation expectedGeneration: Int) {
+        let cid = ObjectIdentifier(connection)
+        let idleTimeout = idleConnectionTimeout
+        let admitted = lock.withLock { () -> Bool in
+            guard acceptingConnections, generation == expectedGeneration,
+                  let lease = connectionGate.acquire() else { return false }
+            activeConnections[cid] = connection
+            connectionLeases[cid] = lease
+            connection.start(queue: queue)
+            let task = Task { [weak self] in
+                let cleanup: @Sendable () -> Void = { [weak self] in
+                    connection.cancel()
+                    guard let self else {
+                        lease.release()
+                        return
+                    }
+                    self.finishConnection(id: cid, connection: connection)
+                }
+                defer { cleanup() }
+                // HTTP/1.1 keep-alive: serve sequential requests on ONE connection so AVPlayer reuses a
+                // single socket for its ranged reads (instead of opening a new connection per range — which
+                // spawned hundreds of active serves and thrashed the downloader's playhead). Loop until the
+                // client closes the socket or a serve says the connection can't continue.
+                while !Task.isCancelled {
+                    guard self?.beginReceive(id: cid, generation: expectedGeneration) == true else { return }
+                    // An idle keep-alive socket (AVPlayer done with it but not closed) must NOT park this
+                    // Task forever — cancelling the tracked connection during stop resumes this receive.
+                    let requestData = await Self.receiveRequestHead(
+                        connection,
+                        idleTimeout: idleTimeout
+                    )
+                    guard !Task.isCancelled,
+                          self?.isCurrent(generation: expectedGeneration) == true,
+                          let requestData else {
+                        return // client closed the connection / idle-timed-out / cancelled
+                    }
+                    guard let request = LocalMediaGatewayHTTPRequest(requestData) else {
+                        guard let self else { return }
+                        await self.trySend(LocalMediaGatewayHTTPResponse.badRequest(), over: connection)
+                        return
+                    }
+                    guard let keepAlive = await self?.serve(
+                        request,
+                        over: connection,
+                        generation: expectedGeneration
+                    ) else { return }
+                    if !keepAlive { return }
+                }
+            }
+            connectionTasks[cid] = task
+            return true
+        }
+        if !admitted {
+            connection.cancel()
+        }
     }
 
     /// Accumulate bytes until the end of the HTTP header block (`\r\n\r\n`). GET/HEAD have no body,
     /// so that is the whole request.
-    private func receiveRequestHead(_ connection: NWConnection) async -> Data? {
+    private static func receiveRequestHead(
+        _ connection: NWConnection,
+        idleTimeout: TimeInterval
+    ) async -> Data? {
+        let watchdog = Task {
+            try? await Task.sleep(nanoseconds: UInt64(idleTimeout * 1_000_000_000))
+            // Only fire if we actually reached the timeout. When a request arrives we cancel
+            // this watchdog, which makes the sleep throw — must NOT then close the live socket.
+            if !Task.isCancelled { connection.cancel() }
+        }
+        defer { watchdog.cancel() }
         var buffer = Data()
         let terminator = Data("\r\n\r\n".utf8)
         while buffer.count < 64 * 1_024 {
@@ -221,7 +335,20 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     /// Serves one request. Returns whether the connection may be REUSED for a subsequent request
     /// (keep-alive): `true` only when the full response was delivered, `false` when AVPlayer closed
     /// mid-stream or an error response ended the connection.
-    private func serve(_ request: LocalMediaGatewayHTTPRequest, over connection: NWConnection) async -> Bool {
+    private func serve(
+        _ request: LocalMediaGatewayHTTPRequest,
+        over connection: NWConnection,
+        generation expectedGeneration: Int
+    ) async -> Bool {
+        let security = lock.withLock { () -> LocalPlaybackServerSecurity? in
+            guard acceptingConnections, generation == expectedGeneration else { return nil }
+            return self.security
+        }
+        guard security?.authorizedResourcePath(for: request.path) == "/media" else {
+            await trySend(LocalMediaGatewayHTTPResponse.notFound(), over: connection)
+            return false
+        }
+
         // NEVER park a serve behind the origin probe's retry ladder (~2 min worst case): known info
         // first (memory / persisted), then ONE bounded on-demand fetch whose 206 Content-Range
         // answers both "how big" and the first bytes (written to the store → the body loop hits

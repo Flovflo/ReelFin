@@ -96,7 +96,7 @@ public final class CustomPlayerPrewarmer {
             }
             self.prepared = PrewarmedPlayback(resolved: resolved, session: session, localURL: localURL)
             AppLog.playback.notice(
-                "customplayer.prewarm.ready — item=\(itemID.prefix(8), privacy: .public) local=\(localURL.reelfinCompactLogString, privacy: .public)"
+                "customplayer.prewarm.ready — item=\(itemID.prefix(8), privacy: .public) \(LocalPlaybackServerSecurity.logProjection(for: .media), privacy: .public)"
             )
         }
     }

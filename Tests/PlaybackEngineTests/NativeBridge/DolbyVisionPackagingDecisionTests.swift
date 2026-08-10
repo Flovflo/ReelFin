@@ -3,6 +3,65 @@ import Foundation
 import XCTest
 
 final class DolbyVisionPackagingDecisionTests: XCTestCase {
+    func testAVCFallbackPreservesSDRSampleEntryAndCapabilities() {
+        let videoTrack = TrackInfo(
+            id: 1,
+            trackType: .video,
+            codecID: "V_MPEG4/ISO/AVC",
+            codecName: "h264",
+            isDefault: true,
+            width: 1920,
+            height: 1080,
+            bitDepth: 8,
+            codecPrivate: Self.avcC
+        )
+        let plan = makePlan(videoTrack: videoTrack, videoRangeType: "SDR")
+        let decision = DolbyVisionGate.evaluatePackaging(
+            plan: plan,
+            streamInfo: makeStreamInfo(videoTrack: videoTrack),
+            device: DeviceCapabilityFingerprint.current(),
+            requestedMode: .dvProfile81Compatible
+        )
+
+        XCTAssertEqual(decision.mode, .hdr10OnlyFallback)
+        XCTAssertEqual(decision.videoEntry.sampleEntryType, "avc1")
+        XCTAssertFalse(decision.videoEntry.includeHvcC)
+        XCTAssertFalse(decision.videoEntry.includeDvcC)
+        XCTAssertFalse(decision.videoEntry.stripDolbyVisionRPUNALs)
+        XCTAssertNil(decision.hlsSignaling.videoRange)
+        XCTAssertEqual(decision.expectation.floor, .sdr)
+        XCTAssertEqual(decision.expectation.ceiling, .sdr)
+    }
+
+    func testHEVCHDR10FallbackKeepsHvcCAndRPUFilteringContract() {
+        let videoTrack = TrackInfo(
+            id: 1,
+            trackType: .video,
+            codecID: "V_MPEGH/ISO/HEVC",
+            codecName: "hevc",
+            isDefault: true,
+            width: 3840,
+            height: 2160,
+            bitDepth: 10,
+            codecPrivate: makeHVCC()
+        )
+        let plan = makePlan(videoTrack: videoTrack, videoRangeType: "HDR10")
+        let decision = DolbyVisionGate.evaluatePackaging(
+            plan: plan,
+            streamInfo: makeStreamInfo(videoTrack: videoTrack),
+            device: DeviceCapabilityFingerprint.current(),
+            requestedMode: .hdr10OnlyFallback
+        )
+
+        XCTAssertEqual(decision.videoEntry.sampleEntryType, "hvc1")
+        XCTAssertTrue(decision.videoEntry.includeHvcC)
+        XCTAssertFalse(decision.videoEntry.includeDvcC)
+        XCTAssertTrue(decision.videoEntry.stripDolbyVisionRPUNALs)
+        XCTAssertEqual(decision.hlsSignaling.videoRange, "PQ")
+        XCTAssertEqual(decision.expectation.floor, .hdr10)
+        XCTAssertEqual(decision.expectation.ceiling, .hdr10)
+    }
+
     func testEvaluatePackagingFallsBackToPQForMain10WhenColourMetadataMissing() {
         let videoTrack = TrackInfo(
             id: 1,
@@ -127,6 +186,35 @@ final class DolbyVisionPackagingDecisionTests: XCTestCase {
             0xFD, 0xFA, 0xFA, 0x00, 0x00, 0x0F, 0x03, 0xA0
         ])
     }
+
+    private func makePlan(videoTrack: TrackInfo, videoRangeType: String) -> NativeBridgePlan {
+        NativeBridgePlan(
+            itemID: "item-codec-fallback",
+            sourceID: "source-codec-fallback",
+            sourceURL: URL(string: "https://example.com/video.mkv")!,
+            videoTrack: videoTrack,
+            audioTrack: nil,
+            videoAction: .directPassthrough,
+            audioAction: .directPassthrough,
+            subtitleTracks: [],
+            videoRangeType: videoRangeType,
+            whyChosen: "test"
+        )
+    }
+
+    private func makeStreamInfo(videoTrack: TrackInfo) -> StreamInfo {
+        StreamInfo(
+            durationNanoseconds: 120_000_000_000,
+            tracks: [videoTrack],
+            hasChapters: false,
+            seekable: true
+        )
+    }
+
+    private static let avcC = Data([
+        0x01, 0x42, 0x00, 0x1F, 0xFF, 0xE1, 0x00, 0x04,
+        0x67, 0x42, 0x00, 0x1F, 0x01, 0x00, 0x02, 0x68, 0xCE
+    ])
 
     private func parseFirstColrNclx(from data: Data) throws -> (primaries: UInt16, transfer: UInt16, matrix: UInt16)? {
         let nodes = try BMFFInspector.inspect(data)

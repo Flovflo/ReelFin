@@ -31,6 +31,297 @@ final class PlaybackDropResilienceTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    func testCacheProxyRequiresExactCapabilityBeforeOriginWorkAndBindsLoopback() async throws {
+        let payload = Data((0..<64).map(UInt8.init))
+        let originServer = ThrottledDropHTTPServer(
+            payload: payload,
+            contentType: "video/mp4",
+            throttleBytesPerSec: 50_000_000
+        )
+        let originPort = try originServer.start()
+        defer { originServer.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(originPort)/clip.mp4")!
+
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CacheProxyCapability.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDirectory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 64 * 1_024, maxBytes: 1 * 1_024 * 1_024)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "original",
+            userID: "user",
+            serverID: "server",
+            itemID: "capability",
+            sourceID: "source",
+            routeURL: origin
+        )
+        let downloader = OriginDownloader(
+            remoteURL: origin,
+            headers: [:],
+            key: key,
+            store: store,
+            overrideContentType: "video/mp4",
+            sessionConfiguration: .ephemeral
+        )
+        let proxy = LocalCacheHTTPServer(
+            store: store,
+            downloader: downloader,
+            key: key,
+            remoteURL: origin,
+            headers: [:],
+            overrideMIMEType: "video/mp4",
+            connectionCapacity: nil
+        )
+        let localURL = try proxy.start()
+        defer { proxy.stop(reason: "capability_test_end") }
+
+        XCTAssertEqual(proxy.debugRequiredLocalEndpoint, .hostPort(host: "127.0.0.1", port: .any))
+        let capabilityComponents = Array(localURL.pathComponents.dropLast())
+        let capability: String = try XCTUnwrap(capabilityComponents.last(where: { $0 != "/" }))
+        XCTAssertEqual(capability.count, 64)
+        let authority = "http://127.0.0.1:\(try XCTUnwrap(localURL.port))"
+        let bypassTargets = [
+            "/media",
+            "/\(String(repeating: "0", count: 64))/media",
+            "/\(capability)x/media",
+            "/\(capability)%2Fmedia",
+            "/\(capability)/%2e%2e/media"
+        ]
+
+        for target in bypassTargets {
+            let url = try XCTUnwrap(URL(string: authority + target))
+            var request = URLRequest(url: url)
+            request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+            let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 404, "Unauthorized cache route must fail: \(target)")
+            XCTAssertTrue(data.isEmpty)
+        }
+        XCTAssertEqual(originServer.connectionCount, 0, "Unauthorized routes must not trigger an origin probe or read.")
+
+        var validRequest = URLRequest(url: localURL)
+        validRequest.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        let (validData, validResponse) = try await URLSession(configuration: .ephemeral).data(for: validRequest)
+        XCTAssertEqual((validResponse as? HTTPURLResponse)?.statusCode, 206)
+        XCTAssertEqual(validData, Data([0]))
+        XCTAssertGreaterThan(originServer.connectionCount, 0)
+    }
+
+    @MainActor
+    func testCacheIdleReceiveDoesNotRetainServerWhenLastOwnerReleasesIt() async throws {
+        let gate = LocalPlaybackConnectionGate(capacity: 1)
+        var ownedServer: LocalCacheHTTPServer?
+        let localURL: URL
+        let directory: URL
+        do {
+            let fixture = try makeCacheLifecycleFixture(
+                connectionGate: gate,
+                connectionCallbackHook: {}
+            )
+            ownedServer = fixture.server
+            localURL = fixture.url
+            directory = fixture.directory
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let serverProbe = CacheWeakServerProbe(server: try XCTUnwrap(ownedServer))
+        let client = try makeClient(for: localURL)
+        defer { client.cancel() }
+        let peerClosure = CachePeerClosureProbe()
+
+        client.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, isComplete, error in
+            peerClosure.record(isComplete: isComplete, error: error)
+        }
+        client.start(queue: .global())
+        let receiveSuspended = await waitUntil(timeout: 3) {
+            gate.snapshot.active == 1 && serverProbe.receiveStartCount == 1
+        }
+        XCTAssertTrue(receiveSuspended, "The test must abandon the cache server while an idle receive is suspended.")
+
+        ownedServer = nil
+
+        let releasedWithoutStop = await waitUntil(timeout: 1) { serverProbe.isReleased }
+        XCTAssertTrue(releasedWithoutStop, "An idle receive must not retain LocalCacheHTTPServer until its watchdog fires.")
+        let peerWasClosed = await waitUntil(timeout: 1) { peerClosure.wasClosed }
+        XCTAssertTrue(peerWasClosed, "Deinitialization must close the idle cache peer without an explicit stop.")
+        XCTAssertEqual(gate.snapshot, .init(active: 0, peak: 1, rejected: 0))
+    }
+
+    @MainActor
+    func testCacheLateConnectionCallbackAfterStopIsCancelledBeforeAdmissionOrReceive() async throws {
+        let barrier = CacheConnectionCallbackBarrier()
+        let fixture = try makeCacheLifecycleFixture { barrier.blockFirstCallback() }
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let client = try makeClient(for: fixture.url)
+        defer { client.cancel() }
+        let peerClosure = CachePeerClosureProbe()
+
+        client.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, isComplete, error in
+            peerClosure.record(isComplete: isComplete, error: error)
+        }
+        client.start(queue: .global())
+        let callbackEntered = await waitUntil(timeout: 3) { barrier.didEnter }
+        XCTAssertTrue(callbackEntered)
+        fixture.server.stop(reason: "test_late_callback_after_stop")
+        barrier.release()
+
+        let callbackReturned = await waitUntil(timeout: 3) { barrier.didReturn }
+        XCTAssertTrue(callbackReturned)
+        let peerWasClosed = await waitUntil(timeout: 3) { peerClosure.wasClosed }
+        XCTAssertTrue(peerWasClosed, "The late cache socket must be cancelled after stop.")
+        XCTAssertEqual(fixture.server.debugConnectionSnapshot, .init(active: 0, peak: 0, rejected: 0))
+        XCTAssertEqual(fixture.server.debugActiveConnectionCount, 0)
+        XCTAssertEqual(fixture.server.debugConnectionTaskCount, 0)
+        XCTAssertEqual(fixture.server.debugReceiveStartCount, 0)
+    }
+
+    @MainActor
+    func testCacheStaleConnectionCallbackAfterRestartCannotEnterNewGeneration() async throws {
+        let barrier = CacheConnectionCallbackBarrier()
+        let fixture = try makeCacheLifecycleFixture { barrier.blockFirstCallback() }
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let staleClient = try makeClient(for: fixture.url)
+        defer { staleClient.cancel() }
+        let peerClosure = CachePeerClosureProbe()
+
+        staleClient.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, isComplete, error in
+            peerClosure.record(isComplete: isComplete, error: error)
+        }
+        staleClient.start(queue: .global())
+        let callbackEntered = await waitUntil(timeout: 3) { barrier.didEnter }
+        XCTAssertTrue(callbackEntered)
+        fixture.server.stop(reason: "test_stale_callback_restart")
+        _ = try fixture.server.start()
+        defer { fixture.server.stop(reason: "test_stale_callback_teardown") }
+        barrier.release()
+
+        let callbackReturned = await waitUntil(timeout: 3) { barrier.didReturn }
+        XCTAssertTrue(callbackReturned)
+        let peerWasClosed = await waitUntil(timeout: 3) { peerClosure.wasClosed }
+        XCTAssertTrue(peerWasClosed, "A stale-generation cache socket must be cancelled after restart.")
+        XCTAssertEqual(fixture.server.debugConnectionSnapshot, .init(active: 0, peak: 0, rejected: 0))
+        XCTAssertEqual(fixture.server.debugActiveConnectionCount, 0)
+        XCTAssertEqual(fixture.server.debugConnectionTaskCount, 0)
+        XCTAssertEqual(fixture.server.debugReceiveStartCount, 0)
+    }
+
+    /// Measurement gate for the release admission default. Capacity is deliberately disabled here
+    /// while the shared gate still records the peak across real AVPlayer and HTTP behaviors.
+    @MainActor
+    func testAVPlayerLocalCacheConnectionPeakMeasurement() async throws {
+        let clip = try Self.sharedClip()
+        let payload = try Data(contentsOf: clip)
+        let originServer = ThrottledDropHTTPServer(
+            payload: payload,
+            contentType: "video/mp4",
+            throttleBytesPerSec: 50_000_000,
+            keepAlive: true
+        )
+        let originPort = try originServer.start()
+        defer { originServer.stop() }
+        let origin = URL(string: "http://127.0.0.1:\(originPort)/clip.mp4")!
+
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CacheProxyPeak.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDirectory,
+            configuration: MediaGatewayStore.Configuration(
+                chunkSize: 1_024 * 1_024,
+                maxBytes: 2_000_000_000,
+                ttlSeconds: nil
+            )
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "original",
+            userID: "user",
+            serverID: "server",
+            itemID: "peak-measurement",
+            sourceID: "source",
+            routeURL: origin
+        )
+        let downloader = OriginDownloader(
+            remoteURL: origin,
+            headers: [:],
+            key: key,
+            store: store,
+            overrideContentType: "video/mp4",
+            sessionConfiguration: .ephemeral,
+            aheadBudget: 64 * 1_024 * 1_024,
+            maxParallelWindows: 6
+        )
+        let proxy = LocalCacheHTTPServer(
+            store: store,
+            downloader: downloader,
+            key: key,
+            remoteURL: origin,
+            headers: [:],
+            overrideMIMEType: "video/mp4",
+            connectionCapacity: nil
+        )
+        let localURL = try proxy.start()
+        Task { await downloader.primeStart() }
+
+        let asset = AVURLAsset(url: localURL, options: [AVURLAssetOverrideMIMETypeKey: "video/mp4"])
+        async let duration = asset.load(.duration)
+        async let playable = asset.load(.isPlayable)
+        _ = try await (duration, playable)
+
+        let firstItem = AVPlayerItem(asset: asset)
+        let firstPlayer = AVPlayer(playerItem: firstItem)
+        firstPlayer.play()
+        let firstStarted = await waitUntil(timeout: 15) { firstPlayer.currentTime().seconds > 0.2 }
+        XCTAssertTrue(firstStarted, "AVPlayer startup must advance during the capacity measurement.")
+
+        let keepAliveConfig = URLSessionConfiguration.ephemeral
+        keepAliveConfig.httpMaximumConnectionsPerHost = 1
+        let keepAliveSession = URLSession(configuration: keepAliveConfig)
+        for offset in stride(from: 0, through: 8_192, by: 4_096) {
+            var request = URLRequest(url: localURL)
+            request.setValue("bytes=\(offset)-\(offset + 1_023)", forHTTPHeaderField: "Range")
+            _ = try await keepAliveSession.data(for: request)
+        }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for requestIndex in 0..<8 {
+                group.addTask {
+                    let start = requestIndex * 256 * 1_024
+                    var request = URLRequest(url: localURL)
+                    request.setValue("bytes=\(start)-\(start + 256 * 1_024 - 1)", forHTTPHeaderField: "Range")
+                    _ = try await URLSession(configuration: .ephemeral).data(for: request)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        await firstPlayer.seek(to: CMTime(seconds: 20, preferredTimescale: 600))
+        await firstPlayer.seek(to: CMTime(seconds: 1, preferredTimescale: 600))
+        firstPlayer.pause()
+        firstPlayer.replaceCurrentItem(with: nil)
+
+        let replayItem = AVPlayerItem(
+            asset: AVURLAsset(url: localURL, options: [AVURLAssetOverrideMIMETypeKey: "video/mp4"])
+        )
+        let replayPlayer = AVPlayer(playerItem: replayItem)
+        replayPlayer.play()
+        let replayStarted = await waitUntil(timeout: 15) { replayPlayer.currentTime().seconds > 0.2 }
+        XCTAssertTrue(replayStarted, "Stop/replay must advance during the capacity measurement.")
+        replayPlayer.pause()
+        keepAliveSession.invalidateAndCancel()
+
+        let measured = proxy.debugConnectionSnapshot
+        print("localplayback.capacity.measurement — lane=cache peak=\(measured.peak) scenarios=startup,metadata,keepalive,concurrent_ranges,seek_reread,stop_replay runtime=iOS26.5 admission=disabled")
+        XCTAssertGreaterThan(measured.peak, 0)
+        XCTAssertLessThan(measured.peak, LocalPlaybackServerSecurity.defaultConnectionCapacity)
+
+        proxy.stop(reason: "peak_measurement_complete")
+        let released = await waitUntil(timeout: 3) { proxy.debugConnectionSnapshot.active == 0 }
+        XCTAssertTrue(released)
+    }
+
     /// DIAGNOSTIC: does AVPlayer actually fill to `preferredForwardBufferDuration` on a link that
     /// is comfortably faster than the bitrate? Serves at 8x bitrate (no drops) and records the max
     /// buffered-ahead reached. If it plateaus far below the 25s setting, AVPlayer is NOT honoring
@@ -925,7 +1216,12 @@ final class PlaybackDropResilienceTests: XCTestCase {
         engine.handleExternalPlaybackChange(active: false)
         let backOnCache = await waitUntil(timeout: 10) { @MainActor in
             guard let asset = engine.player.currentItem?.asset as? AVURLAsset else { return false }
-            return asset.url.path.hasPrefix("/media/") && engine.player.currentTime().seconds > positionBefore - 3
+            let components = asset.url.pathComponents
+            return asset.url.host == "127.0.0.1"
+                && components.count == 3
+                && components[1].utf8.count == 64
+                && components[2] == "media"
+                && engine.player.currentTime().seconds > positionBefore - 3
         }
         XCTAssertTrue(backOnCache, "ending external playback must swap back onto the localhost cache")
         XCTAssertNil(engine.errorMessage)
@@ -1620,14 +1916,26 @@ final class PlaybackDropResilienceTests: XCTestCase {
         return url
     }
 
-    private static func generateClip(to url: URL, seconds: Int, fps: Int, width: Int, height: Int) throws {
+    static func generateClip(
+        to url: URL,
+        seconds: Int,
+        fps: Int,
+        width: Int,
+        height: Int,
+        allowFrameReordering: Bool = true
+    ) throws {
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        var compressionProperties: [String: Any] = [AVVideoAverageBitRateKey: 2_500_000]
+        if !allowFrameReordering {
+            compressionProperties[AVVideoAllowFrameReorderingKey] = false
+            compressionProperties[AVVideoMaxKeyFrameIntervalKey] = fps
+        }
         let settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 2_500_000]
+            AVVideoCompressionPropertiesKey: compressionProperties
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
@@ -1898,6 +2206,104 @@ final class PlaybackDropResilienceTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return await condition()
+    }
+
+    @MainActor
+    private func makeCacheLifecycleFixture(
+        connectionGate: LocalPlaybackConnectionGate? = nil,
+        connectionCallbackHook: @escaping @Sendable () -> Void
+    ) throws -> (server: LocalCacheHTTPServer, url: URL, directory: URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CacheLifecycle.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let origin = URL(string: "http://127.0.0.1:1/unreachable.mp4")!
+        let store = try MediaGatewayStore(
+            directoryURL: directory,
+            configuration: MediaGatewayStore.Configuration(chunkSize: 64 * 1_024, maxBytes: 1 * 1_024 * 1_024)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "original",
+            userID: "user",
+            serverID: "server",
+            itemID: "lifecycle",
+            sourceID: "source",
+            routeURL: origin
+        )
+        let downloader = OriginDownloader(
+            remoteURL: origin,
+            headers: [:],
+            key: key,
+            store: store,
+            overrideContentType: "video/mp4",
+            sessionConfiguration: .ephemeral
+        )
+        let server = LocalCacheHTTPServer(
+            store: store,
+            downloader: downloader,
+            key: key,
+            remoteURL: origin,
+            headers: [:],
+            overrideMIMEType: "video/mp4",
+            connectionCapacity: 1,
+            connectionGate: connectionGate,
+            connectionCallbackHook: connectionCallbackHook
+        )
+        return (server, try server.start(), directory)
+    }
+
+    private func makeClient(for baseURL: URL) throws -> NWConnection {
+        let rawPort = try XCTUnwrap(baseURL.port)
+        let port = try XCTUnwrap(NWEndpoint.Port(rawValue: UInt16(rawPort)))
+        return NWConnection(host: "127.0.0.1", port: port, using: .tcp)
+    }
+}
+
+private final class CacheConnectionCallbackBarrier: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var shouldBlock = true
+    private var entered = false
+    private var returned = false
+
+    var didEnter: Bool { lock.withLock { entered } }
+    var didReturn: Bool { lock.withLock { returned } }
+
+    func blockFirstCallback() {
+        let blocks = lock.withLock { () -> Bool in
+            guard shouldBlock else { return false }
+            shouldBlock = false
+            entered = true
+            return true
+        }
+        guard blocks else { return }
+        semaphore.wait()
+        lock.withLock { returned = true }
+    }
+
+    func release() {
+        semaphore.signal()
+    }
+}
+
+private final class CacheWeakServerProbe: @unchecked Sendable {
+    private weak var server: LocalCacheHTTPServer?
+
+    init(server: LocalCacheHTTPServer) {
+        self.server = server
+    }
+
+    var isReleased: Bool { server == nil }
+    var receiveStartCount: Int { server?.debugReceiveStartCount ?? 0 }
+}
+
+private final class CachePeerClosureProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var closed = false
+
+    var wasClosed: Bool { lock.withLock { closed } }
+
+    func record(isComplete: Bool, error: NWError?) {
+        lock.withLock { closed = isComplete || error != nil }
     }
 }
 

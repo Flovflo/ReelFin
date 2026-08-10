@@ -719,6 +719,7 @@
 		CD81E61DA523AF9E156BD156 /* BMFFValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6905AE3EDADB8922B13187 /* BMFFValidator.swift */; };
 		CE26E58BBA3761C656566EA9 /* LibraryCardTransitionSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 180B11BDE946144C4021A14D /* LibraryCardTransitionSource.swift */; };
 		CE7C581443C4947E25A2CFCD /* LocalMediaGatewayRoutePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 232A26E06EF0BFADA6AF7EA9 /* LocalMediaGatewayRoutePolicy.swift */; };
+		CE9969E9BEDB1E76296AEC37 /* LocalPlaybackServerSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA7A858D54CB1FF5459C90C7 /* LocalPlaybackServerSecurity.swift */; };
 		CF621A556C44379F66107B65 /* VideoToolboxDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00E035C983455BC441B026A /* VideoToolboxDecoder.swift */; };
 		CF81DD3F916D4DD36F452D75 /* OnboardingContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350F4EF4FE96508EC249CBA5 /* OnboardingContent.swift */; };
 		D095424063FF3DCC37BB4777 /* DolbyVisionClass.swift in Sources */ = {isa = PBXBuildFile; fileRef = F53AB4F215785671B80C4651 /* DolbyVisionClass.swift */; };
@@ -828,6 +829,7 @@
 		F0D3100BE0C3F3820A004327 /* StreamingRangeWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE806788979F45CBB9EEE96 /* StreamingRangeWriter.swift */; };
 		F1397D5E4E21C45789897179 /* MediaProbeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DC7F59746E8C6BA484F1A69 /* MediaProbeModels.swift */; };
 		F16961F4A27F1E7BC14E028B /* NativeBridgeCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 670C2A6259BEFF7CB7C88734 /* NativeBridgeCoreTests.swift */; };
+		F18ABBA0D83F4468D84C01CC /* LocalPlaybackServerSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA7A858D54CB1FF5459C90C7 /* LocalPlaybackServerSecurity.swift */; };
 		F1E00B5751D1C41F2CF4D277 /* VideoFormatDescriptionFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A0AE03C0008389C9E0DE40 /* VideoFormatDescriptionFactory.swift */; };
 		F21956080315AC59AF9A37E5 /* TVRootDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D4953E6C6E30F10DAB1D582 /* TVRootDestination.swift */; };
 		F287B93C236407AF2C5A4BEF /* MacRootDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C358917AE01C0F9ED8EF15 /* MacRootDestination.swift */; };
@@ -841,6 +843,7 @@
 		F56379470D54DD1996D8DB9C /* PlaybackStopReportingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E21636274ADED996E7550B /* PlaybackStopReportingTests.swift */; };
 		F5720F2E2B568AB5C4476621 /* OriginalMediaResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC3D1E426A132CE84E60E5F9 /* OriginalMediaResolver.swift */; };
 		F5B4A30FBDE65529B9CEAF66 /* CustomPlayerSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B9997E7181CBA464DE0605 /* CustomPlayerSupportTests.swift */; };
+		F5F9F8AB4DC07F53C45CE048 /* LocalPlaybackServerSecurityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70D59BF0E0732B498CBEE22B /* LocalPlaybackServerSecurityTests.swift */; };
 		F69ABE9F4E2174F301E66920 /* PlaybackReason.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C583A3BEB2C7FD148EC5B1 /* PlaybackReason.swift */; };
 		F71173B6E30F3343EB6EB401 /* MediaSegmentsDTOs.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78DD093EBA792F6DEBF77B7 /* MediaSegmentsDTOs.swift */; };
 		F796A4D196DA8694813113F5 /* EpisodeReleaseNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B67C09062F13FBA7C1A9E17 /* EpisodeReleaseNotifications.swift */; };
@@ -1655,6 +1658,7 @@
 		6F2496B605395D5C01664409 /* PlayerAccessibilityEvidenceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerAccessibilityEvidenceView.swift; sourceTree = "<group>"; };
 		700EBBE60E2FB7CAFB0E5E86 /* NativeAudioStarvationGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAudioStarvationGateTests.swift; sourceTree = "<group>"; };
 		706DEFB581CF6D607C6918E7 /* PlaybackAuthenticationHeaders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackAuthenticationHeaders.swift; sourceTree = "<group>"; };
+		70D59BF0E0732B498CBEE22B /* LocalPlaybackServerSecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPlaybackServerSecurityTests.swift; sourceTree = "<group>"; };
 		7296CD841C25226EE03F6120 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		72C583A3BEB2C7FD148EC5B1 /* PlaybackReason.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackReason.swift; sourceTree = "<group>"; };
 		73FF48BD18D84618105A1E67 /* PlaybackSessionControllerTrackReloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSessionControllerTrackReloadTests.swift; sourceTree = "<group>"; };
@@ -1749,6 +1753,7 @@
 		A78DD093EBA792F6DEBF77B7 /* MediaSegmentsDTOs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSegmentsDTOs.swift; sourceTree = "<group>"; };
 		A9676C3B1A4A3A6ECF4BA02D /* FMP4RepackagerFilteringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FMP4RepackagerFilteringTests.swift; sourceTree = "<group>"; };
 		AA4A0DA360876B820F495BD6 /* ReelFinMacCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelFinMacCommands.swift; sourceTree = "<group>"; };
+		AA7A858D54CB1FF5459C90C7 /* LocalPlaybackServerSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPlaybackServerSecurity.swift; sourceTree = "<group>"; };
 		AB75D8DACD5DBF1013B8B02D /* SRTParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SRTParser.swift; sourceTree = "<group>"; };
 		AB7ECBE80E6EDDE19BF01DC8 /* JellyfinImageType+Normalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "JellyfinImageType+Normalization.swift"; sourceTree = "<group>"; };
 		AC01812A12A98B81A983FBF5 /* AVFoundationReadableMediaURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVFoundationReadableMediaURL.swift; sourceTree = "<group>"; };
@@ -2173,6 +2178,7 @@
 				2AC057DBACEC43C628E69241 /* LocalMediaGatewayHTTPRangeSecurityTests.swift */,
 				6EA07AD8E5B3DB564AC09414 /* LocalMediaGatewayRoutePolicyTests.swift */,
 				A66ADC5A0A2281F2DF04628F /* LocalMediaGatewayServerTests.swift */,
+				70D59BF0E0732B498CBEE22B /* LocalPlaybackServerSecurityTests.swift */,
 				F735B3500EC5A2A6E8ECA1E7 /* MediaGatewayCacheKeyTests.swift */,
 				B01CD533C24FFF4232FC9560 /* MediaGatewayIndexTests.swift */,
 				22DA2888E23D22CCE3820E14 /* MediaGatewayStoreTests.swift */,
@@ -3063,6 +3069,7 @@
 				9B23EBC5FCE5A6F50C6BACAA /* DirectPlaySessionPolicy.swift */,
 				1D9574A1FAA54C01550E4F25 /* DirectPlayStartupPolicy.swift */,
 				99C396B3D89F262119F0A7D5 /* HLSVariantSelector.swift */,
+				AA7A858D54CB1FF5459C90C7 /* LocalPlaybackServerSecurity.swift */,
 				4607F6D9D24232BDC6E482A3 /* PlaybackAssetSelection+Optimization.swift */,
 				27E64B44D8BD43A5871D85CB /* PlaybackAuthenticatedRequestURL.swift */,
 				706DEFB581CF6D607C6918E7 /* PlaybackAuthenticationHeaders.swift */,
@@ -4182,6 +4189,7 @@
 				8A6B76E8A91C86C7D9761C71 /* LocalMediaGatewayHTTPRangeSecurityTests.swift in Sources */,
 				6091694CC52E19A20AF30B32 /* LocalMediaGatewayRoutePolicyTests.swift in Sources */,
 				A53A12121902095A945B73A1 /* LocalMediaGatewayServerTests.swift in Sources */,
+				F5F9F8AB4DC07F53C45CE048 /* LocalPlaybackServerSecurityTests.swift in Sources */,
 				C951A655C1854BE8EECFFD2A /* MP4AudioSampleEntryTests.swift in Sources */,
 				31560F81C162C5D7610458EF /* MP4DemuxerTests.swift in Sources */,
 				68D3064C4381667B197DDA3C /* MP4PlaybackFixture.swift in Sources */,
@@ -4499,6 +4507,7 @@
 				E79E5192BFD390274A1D02D6 /* LocalMediaGatewayServer.swift in Sources */,
 				C6D53B13E25EE373A2F55248 /* LocalMediaGatewaySession.swift in Sources */,
 				2639168D4DCAAF7EA8B5A4EC /* LocalMediaGatewayURLPolicy.swift in Sources */,
+				CE9969E9BEDB1E76296AEC37 /* LocalPlaybackServerSecurity.swift in Sources */,
 				79AD81B71C1A88C4926F30B3 /* MP4BoxWriter.swift in Sources */,
 				DE601C84F3437AF0765D1173 /* MatroskaDemuxer.swift in Sources */,
 				59EF3DC0F85EFF656D2F1626 /* MediaGatewayCacheKey.swift in Sources */,
@@ -4767,6 +4776,7 @@
 				C98B8C7EEF04AC32709919F8 /* LocalMediaGatewayServer.swift in Sources */,
 				4E2DA569B0DEB0D72D2316A3 /* LocalMediaGatewaySession.swift in Sources */,
 				1AB5298C4BBD72A4F6BC14A1 /* LocalMediaGatewayURLPolicy.swift in Sources */,
+				F18ABBA0D83F4468D84C01CC /* LocalPlaybackServerSecurity.swift in Sources */,
 				81F827BEB1306855F95BFB26 /* MP4BoxWriter.swift in Sources */,
 				5CCE2FAE5496B84D4B7771EC /* MatroskaDemuxer.swift in Sources */,
 				BF6B094E27354BFC66DEEF5B /* MediaGatewayCacheKey.swift in Sources */,

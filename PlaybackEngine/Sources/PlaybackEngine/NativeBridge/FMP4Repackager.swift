@@ -157,9 +157,12 @@ public actor FMP4Repackager: Repackager {
 
         switch decision.mode {
         case .hdr10OnlyFallback:
-            // Normalize video to pure HEVC (strip DV codec identifiers)
+            // Normalize HEVC/DV entries to pure HEVC. AVC must retain its own codec identity and
+            // avcC private data; rewriting it as HEVC creates an avc1 sample entry containing hvcC.
+            let hevcSampleEntries: Set<String> = ["hvc1", "hev1", "dvh1", "dvhe"]
             return filtered.map { track in
-                guard track.trackType == .video else { return track }
+                guard track.trackType == .video,
+                      hevcSampleEntries.contains(decision.videoEntry.sampleEntryType) else { return track }
                 let color = normalizedColorMetadata(for: track, decision: decision)
                 return TrackInfo(
                     id: track.id, trackType: track.trackType,

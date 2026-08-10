@@ -130,7 +130,7 @@ final class CacheProxySession {
         self.localURL = url
         Task { await downloader.primeStart() }
         AppLog.playback.notice(
-            "customplayer.cacheproxy.start — item=\(self.key.itemID.prefix(8), privacy: .public) local=\(url.reelfinCompactLogString, privacy: .public) reservoirTargetSec=\(self.config.targetReservoirSeconds, format: .fixed(precision: 0)) aheadBudgetMB=\(aheadBudget / 1_048_576, privacy: .public) srcMbps=\(self.sourceBitrate / 1_000_000, privacy: .public)"
+            "customplayer.cacheproxy.start — item=\(self.key.itemID.prefix(8), privacy: .public) \(LocalPlaybackServerSecurity.logProjection(for: .media), privacy: .public) reservoirTargetSec=\(self.config.targetReservoirSeconds, format: .fixed(precision: 0)) aheadBudgetMB=\(aheadBudget / 1_048_576, privacy: .public) srcMbps=\(self.sourceBitrate / 1_000_000, privacy: .public)"
         )
         return url
     }
