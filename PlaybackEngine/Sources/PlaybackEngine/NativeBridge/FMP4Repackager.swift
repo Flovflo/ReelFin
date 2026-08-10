@@ -20,9 +20,14 @@ public actor FMP4Repackager: Repackager {
     // MKV uses nanoseconds traditionally, MP4 commonly uses 90000 for standard video playback
     private let timescale: UInt32 = 90000
 
-    /// NALU length prefix size from the source hvcC/avcC record (1, 2, 3, or 4 bytes).
-    /// Determined during init segment generation from codecPrivate byte 21 bits 0-1.
-    private var sourceNALULengthSize: Int = 4
+    private enum SourceNALUFormat: Sendable {
+        case unknown
+        case lengthPrefixed(Int)
+    }
+
+    /// Explicit source format derived from a trustworthy hvcC/avcC record.
+    /// Annex-B heuristics are used only while this remains unknown.
+    private var sourceNALUFormat: SourceNALUFormat = .unknown
     private var strippedDVRPUSampleCount: Int = 0
     private var strippedDVRPUNALCount: Int = 0
 
@@ -40,28 +45,41 @@ public actor FMP4Repackager: Repackager {
 
     public func generateInitSegment(streamInfo: StreamInfo) async throws -> Data {
         AppLog.playback.debug("FMP4Repackager: Generating Init Segment for plan \(self.plan.whyChosen, privacy: .public)")
+        sourceNALUFormat = .unknown
 
         // Extract source NALU length size from video track's hvcC/avcC codecPrivate
-        if let videoTrack = streamInfo.tracks.first(where: { $0.trackType == .video }),
-           let codecPrivate = videoTrack.codecPrivate, codecPrivate.count >= 22 {
-            let isHEVC = videoTrack.codecName.lowercased().contains("hevc") ||
-                         videoTrack.codecID.lowercased().contains("hevc")
+        let videoTrack = streamInfo.tracks.first {
+            $0.trackType == .video && $0.id == plan.videoTrack.id
+        } ?? plan.videoTrack
+        if let codecPrivate = videoTrack.codecPrivate {
+            let isHEVC = HEVCCodecFamily.contains(
+                videoTrack,
+                effectiveSampleEntry: packagingDecision?.videoEntry.sampleEntryType
+            )
             if isHEVC {
-                sourceNALULengthSize = Int(codecPrivate[21] & 0x03) + 1
-                let configVersion = codecPrivate[0]
-                let generalProfile = codecPrivate[1]
-                let numArrays = codecPrivate.count >= 23 ? codecPrivate[22] : 0
-                let hexPrefix = codecPrivate.prefix(min(32, codecPrivate.count)).map { String(format: "%02x", $0) }.joined(separator: " ")
-                AppLog.nativeBridge.notice(
-                    "FMP4Repackager: hvcC version=\(configVersion) profile=\(generalProfile) naluLenSize=\(self.sourceNALULengthSize) numArrays=\(numArrays) first32=[\(hexPrefix, privacy: .public)]"
-                )
-            } else {
-                if codecPrivate.count >= 5 {
-                    sourceNALULengthSize = Int(codecPrivate[4] & 0x03) + 1
+                let effectiveSampleEntry = packagingDecision?.videoEntry.sampleEntryType
+                    ?? HEVCCodecFamily.sourceSampleEntry(for: videoTrack)
+                if HEVCCodecParameter.hasValidStructure(
+                    codecPrivate,
+                    sampleEntry: effectiveSampleEntry
+                ) {
+                    let lengthSize = Int(codecPrivate[21] & 0x03) + 1
+                    sourceNALUFormat = .lengthPrefixed(lengthSize)
+                    let configVersion = codecPrivate[0]
+                    let generalProfile = codecPrivate[1]
+                    let numArrays = codecPrivate[22]
+                    let hexPrefix = codecPrivate.prefix(min(32, codecPrivate.count)).map { String(format: "%02x", $0) }.joined(separator: " ")
+                    AppLog.nativeBridge.notice(
+                        "FMP4Repackager: hvcC version=\(configVersion) profile=\(generalProfile) naluLenSize=\(lengthSize) numArrays=\(numArrays) first32=[\(hexPrefix, privacy: .public)]"
+                    )
                 }
-                AppLog.nativeBridge.notice(
-                    "FMP4Repackager: avcC NALULengthSize = \(self.sourceNALULengthSize) bytes, codecPrivate size=\(codecPrivate.count)"
-                )
+            } else {
+                if let lengthSize = Self.avcCNALULengthSize(codecPrivate) {
+                    sourceNALUFormat = .lengthPrefixed(lengthSize)
+                    AppLog.nativeBridge.notice(
+                        "FMP4Repackager: avcC NALULengthSize = \(lengthSize) bytes, codecPrivate size=\(codecPrivate.count)"
+                    )
+                }
             }
         } else {
             AppLog.nativeBridge.warning("FMP4Repackager: No codecPrivate found for video track — NALU parsing may fail")
@@ -149,11 +167,7 @@ public actor FMP4Repackager: Repackager {
 
     /// Track normalization driven by the new packaging decision.
     private func normalizedTracksForDecision(_ tracks: [TrackInfo], decision: NativeBridgePackagingDecision) -> [TrackInfo] {
-        let allowedIDs = Set([plan.videoTrack.id, plan.audioTrack?.id].compactMap { $0 })
-        let filtered = tracks.filter { track in
-            guard allowedIDs.contains(track.id) else { return false }
-            return track.trackType == .video || track.trackType == .audio
-        }
+        let filtered = selectedTracksForMoov(tracks)
 
         switch decision.mode {
         case .hdr10OnlyFallback:
@@ -215,11 +229,7 @@ public actor FMP4Repackager: Repackager {
     }
 
     private func normalizedTracksForMoov(_ tracks: [TrackInfo], hasDV: Bool) -> [TrackInfo] {
-        let allowedIDs = Set([plan.videoTrack.id, plan.audioTrack?.id].compactMap { $0 })
-        let filtered = tracks.filter { track in
-            guard allowedIDs.contains(track.id) else { return false }
-            return track.trackType == .video || track.trackType == .audio
-        }
+        let filtered = selectedTracksForMoov(tracks)
 
         guard !hasDV else { return filtered }
         return filtered.map { track in
@@ -252,6 +262,20 @@ public actor FMP4Repackager: Repackager {
                 subtitleHandling: track.subtitleHandling
             )
         }
+    }
+
+    private func selectedTracksForMoov(_ tracks: [TrackInfo]) -> [TrackInfo] {
+        let allowedIDs = Set([plan.videoTrack.id, plan.audioTrack?.id].compactMap { $0 })
+        var filtered = tracks.filter { track in
+            guard allowedIDs.contains(track.id) else { return false }
+            return track.trackType == .video || track.trackType == .audio
+        }
+        if !filtered.contains(where: {
+            $0.trackType == .video && $0.id == plan.videoTrack.id
+        }) {
+            filtered.append(plan.videoTrack)
+        }
+        return filtered
     }
 
     private func normalizedColorMetadata(
@@ -511,28 +535,67 @@ public actor FMP4Repackager: Repackager {
 
     // MARK: - NALU Utilities
 
+    /// Returns the source NAL length size only when the mandatory avcC SPS/PPS
+    /// structure is complete. A truncated record must leave the source format
+    /// unknown so an actual Annex-B sample can still be recognized.
+    private static func avcCNALULengthSize(_ record: Data) -> Int? {
+        guard record.count >= 7,
+              record[0] == 1,
+              record[4] & 0xFC == 0xFC,
+              record[5] & 0xE0 == 0xE0 else {
+            return nil
+        }
+
+        let lengthSize = Int(record[4] & 0x03) + 1
+        guard lengthSize != 3 else { return nil }
+
+        var cursor = 6
+        let sequenceParameterSetCount = Int(record[5] & 0x1F)
+        guard sequenceParameterSetCount > 0 else { return nil }
+        for _ in 0..<sequenceParameterSetCount {
+            guard cursor <= record.count - 2 else { return nil }
+            let length = Int(record[cursor]) << 8 | Int(record[cursor + 1])
+            cursor += 2
+            guard length > 0, cursor <= record.count - length else { return nil }
+            guard record[cursor] & 0x80 == 0,
+                  record[cursor] & 0x1F == 7 else { return nil }
+            cursor += length
+        }
+
+        guard cursor < record.count else { return nil }
+        let pictureParameterSetCount = Int(record[cursor])
+        cursor += 1
+        guard pictureParameterSetCount > 0 else { return nil }
+        for _ in 0..<pictureParameterSetCount {
+            guard cursor <= record.count - 2 else { return nil }
+            let length = Int(record[cursor]) << 8 | Int(record[cursor + 1])
+            cursor += 2
+            guard length > 0, cursor <= record.count - length else { return nil }
+            guard record[cursor] & 0x80 == 0,
+                  record[cursor] & 0x1F == 8 else { return nil }
+            cursor += length
+        }
+        return lengthSize
+    }
+
     /// Normalizes video frame NALUs to 4-byte length-prefixed format for fMP4.
     /// Handles both length-prefixed (from MKV hvcC) and Annex-B (rare, from some muxers) input.
     private func normalizeNALUs(data: Data) -> Data {
         guard data.count > 4 else { return data }
 
-        // Detect format: Annex-B starts with 00 00 00 01 or 00 00 01
-        let isAnnexB = (data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1) ||
-                       (data[0] == 0 && data[1] == 0 && data[2] == 1)
-
-        if isAnnexB {
-            return convertAnnexBToLengthPrefixed(data: data)
+        switch sourceNALUFormat {
+        case .lengthPrefixed(let sourceLengthSize):
+            if sourceLengthSize == 4 {
+                return data
+            }
+            return rePrefixNALUs(data: data, sourceLengthSize: sourceLengthSize)
+        case .unknown:
+            // Only an unconfigured source may use start-code heuristics. A valid
+            // 4-byte length such as 00 00 01 xx must never be mistaken for Annex-B.
+            let isAnnexB = (data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1)
+                || (data[0] == 0 && data[1] == 0 && data[2] == 1)
+            return isAnnexB ? convertAnnexBToLengthPrefixed(data: data) : data
         }
-
-        // Data is length-prefixed from source; re-prefix to 4-byte if needed
-        let srcLen = sourceNALULengthSize
-        if srcLen == 4 {
-            // Already 4-byte prefixed — pass through directly
-            return data
-        }
-
-        // Re-prefix from srcLen-byte to 4-byte length prefixes
-        return rePrefixNALUs(data: data, sourceLengthSize: srcLen)
     }
 
     /// Re-prefixes NALUs from `sourceLengthSize`-byte to 4-byte length prefixes.

@@ -232,7 +232,13 @@ public struct MP4BoxWriter {
 
     /// Wraps an AVCDecoderConfigurationRecord in an `avcC` box (ISO 14496-15).
     public static func writeAvcCBox(codecPrivate: Data) -> Data {
-        return writeBox(type: "avcC", payload: codecPrivate)
+        var config = codecPrivate
+        if config.count >= 5 {
+            // Fragments are normalized to four-byte NAL prefixes. The decoder
+            // configuration must advertise that same length contract.
+            config[4] = (config[4] & 0xFC) | 0x03
+        }
+        return writeBox(type: "avcC", payload: config)
     }
 
     /// Writes a `dvcC` box (Dolby Vision Configuration Record) for DV Profile 8.
@@ -340,7 +346,7 @@ public struct MP4BoxWriter {
         let typeCode: String
 
         if track.trackType == .video {
-            let isHEVC = track.codecName == "hevc" || track.codecID.lowercased().contains("hevc")
+            let isHEVC = HEVCCodecFamily.contains(track)
 
             // Explicit override takes priority (used by packaging modes A/B/C).
             // Without override: backward-compatible auto-detection (dvConfig → dvh1).
@@ -369,7 +375,7 @@ public struct MP4BoxWriter {
 
             // --- Codec configuration box (hvcC / avcC) ---
             if let config = track.codecPrivate {
-                if isHEVC || typeCode == "dvh1" || typeCode == "dvhe" {
+                if HEVCCodecFamily.contains(track, effectiveSampleEntry: typeCode) {
                     sampleEntry.append(writeHvcCBox(codecPrivate: config))
                 } else {
                     sampleEntry.append(writeAvcCBox(codecPrivate: config))

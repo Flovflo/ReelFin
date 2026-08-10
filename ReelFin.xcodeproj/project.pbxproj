@@ -222,6 +222,7 @@
 		3BE0498061619C34A3DF8D5F /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1BD154EC0D9E7CF7D9B6D1 /* LoginView.swift */; };
 		3BF09C8541735745FD8E2D6B /* SyntheticHLSSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0952A2134D63D08EA37908EC /* SyntheticHLSSessionTests.swift */; };
 		3BFB44C93BC527E5B7A94BD5 /* MatroskaDemuxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A78018E313A18C3E9AFB7BB /* MatroskaDemuxer.swift */; };
+		3C1E425F3CF6AB35DE908B8E /* HEVCCodecParameter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77F277C564D9990EFA1DB5C7 /* HEVCCodecParameter.swift */; };
 		3C5F4EFF75E570BFD6DA7C9B /* OnboardingContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350F4EF4FE96508EC249CBA5 /* OnboardingContent.swift */; };
 		3CBAFA87E57D4E623E847CB5 /* PlaybackStartupPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF05993EB1BA6D1059706D97 /* PlaybackStartupPolicyTests.swift */; };
 		3D325BA904654065DF477FC5 /* PlaybackLanePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FE4BB079417A75C561AA864 /* PlaybackLanePolicyTests.swift */; };
@@ -806,6 +807,7 @@
 		E875DA23B877320A5A2B9240 /* CustomPlaybackMarkers.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCCD9EAC3B64017CB67BA10B /* CustomPlaybackMarkers.swift */; };
 		E926D363CA5B2BA7F3CD0DC2 /* PlaybackFallbackOption.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8BEF7D2316D080E8F872BD /* PlaybackFallbackOption.swift */; };
 		E93CFD52E7E0BC15E92D04A6 /* DetailPresentationTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91E947B29760F1595A9D44DF /* DetailPresentationTelemetry.swift */; };
+		E99486A6B865731CED6DB090 /* HEVCCodecParameter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77F277C564D9990EFA1DB5C7 /* HEVCCodecParameter.swift */; };
 		E99EDC8E1F80C0C7F9181220 /* DatabaseMigrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BABF83B5B28D68BB525CFA0 /* DatabaseMigrator.swift */; };
 		E9B7EB782F9F8F79E95CFE50 /* ColorSpaceMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7782A32DB3FDD51B187905E /* ColorSpaceMapper.swift */; };
 		EA4EB87F3783460659B90346 /* TVScreenStateModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BABF06A827B19F708319959 /* TVScreenStateModels.swift */; };
@@ -1667,6 +1669,7 @@
 		760A58E342B21B28DECA0BD9 /* MatroskaCueParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatroskaCueParser.swift; sourceTree = "<group>"; };
 		7706301D13D373CF60EA237E /* TVAuthNavigationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVAuthNavigationPolicy.swift; sourceTree = "<group>"; };
 		772F152F17A37E7C179F4F11 /* MediaDetailRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaDetailRepositoryTests.swift; sourceTree = "<group>"; };
+		77F277C564D9990EFA1DB5C7 /* HEVCCodecParameter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCCodecParameter.swift; sourceTree = "<group>"; };
 		78473472563A9D8A3297B5D8 /* TVLoginModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVLoginModels.swift; sourceTree = "<group>"; };
 		7848AFE9D7E07F350C9F1ABE /* TVLibraryPillButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVLibraryPillButton.swift; sourceTree = "<group>"; };
 		79C2497E73FEEE8ABF5848E7 /* NativePlayerIOSTransportOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerIOSTransportOverlayView.swift; sourceTree = "<group>"; };
@@ -2823,6 +2826,7 @@
 				EF615B9F765B5BDB05B3D698 /* DolbyVisionPackagingMode.swift */,
 				B9EDDA05E72D879E0FDD64E9 /* EBMLParser.swift */,
 				A5FA65414CC033FC848F3531 /* FMP4Repackager.swift */,
+				77F277C564D9990EFA1DB5C7 /* HEVCCodecParameter.swift */,
 				4AE76255A48C2A67DF3B42B9 /* HTTPRangeReader.swift */,
 				DB866E5FBCE2122BB44F1A3C /* MatroskaDemuxer.swift */,
 				BDB3EAA467276E9EB46A3DEF /* MP4BoxWriter.swift */,
@@ -4492,6 +4496,7 @@
 				9D05073BC906A715F0148F19 /* DolbyVisionPackagingMode.swift in Sources */,
 				A3F947B0C5BF506F1EAAEC75 /* EBMLParser.swift in Sources */,
 				358050EC479B2AF7D263C4B7 /* FMP4Repackager.swift in Sources */,
+				E99486A6B865731CED6DB090 /* HEVCCodecParameter.swift in Sources */,
 				423A1EBC8AF77E4EBE3707CF /* HLSManifestBuilder.swift in Sources */,
 				49B8E2C86A4B238EBE800EE0 /* HLSSegmentDiskCache.swift in Sources */,
 				0F383D438C871BAE1F8E5389 /* HLSVariantSelector.swift in Sources */,
@@ -4761,6 +4766,7 @@
 				1B04A876AFE41A4B97F40942 /* DolbyVisionPackagingMode.swift in Sources */,
 				589E7E003BFD725C817B2732 /* EBMLParser.swift in Sources */,
 				433D070EA15C2BFB483AC551 /* FMP4Repackager.swift in Sources */,
+				3C1E425F3CF6AB35DE908B8E /* HEVCCodecParameter.swift in Sources */,
 				646B7951FF8EA896AF6C1AAE /* HLSManifestBuilder.swift in Sources */,
 				F4610B69E7AAD4D7776A2982 /* HLSSegmentDiskCache.swift in Sources */,
 				D2768D6B04BA67BD4F9D87FF /* HLSVariantSelector.swift in Sources */,

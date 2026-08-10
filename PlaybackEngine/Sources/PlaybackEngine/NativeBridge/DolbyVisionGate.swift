@@ -17,7 +17,7 @@ public enum DolbyVisionGate {
     static var runtimeDVPackagingOverride: Bool?
 
     public static func evaluate(plan: NativeBridgePlan, streamInfo: StreamInfo, device: DeviceCapabilityFingerprint) -> DolbyVisionGateDecision {
-        let videoTrack = streamInfo.primaryVideoTrack ?? plan.videoTrack
+        let videoTrack = selectedVideoTrack(plan: plan, streamInfo: streamInfo)
 
         guard isExperimentalDVPackagingEnabled() else {
             return .disableDV(reason: "experimental_dv_packaging_disabled")
@@ -27,7 +27,7 @@ public enum DolbyVisionGate {
             return .disableDV(reason: "device_no_dolby_vision")
         }
 
-        guard videoTrack.codecName.lowercased().contains("hevc") || videoTrack.codecID.lowercased().contains("hevc") else {
+        guard HEVCCodecFamily.contains(videoTrack) else {
             return .disableDV(reason: "non_hevc_video")
         }
 
@@ -90,19 +90,14 @@ public enum DolbyVisionGate {
         device: DeviceCapabilityFingerprint,
         requestedMode: DolbyVisionPackagingMode
     ) -> NativeBridgePackagingDecision {
-        let videoTrack = streamInfo.primaryVideoTrack ?? plan.videoTrack
-        let isHEVC = videoTrack.codecName.lowercased().contains("hevc")
-            || videoTrack.codecID.lowercased().contains("hevc")
+        let videoTrack = selectedVideoTrack(plan: plan, streamInfo: streamInfo)
+        let isHEVC = HEVCCodecFamily.contains(videoTrack)
 
         // Derive the effective transfer characteristic for HLS VIDEO-RANGE signaling.
         // Priority: (1) explicit MKV Colour element, (2) plan-level DV/HDR metadata.
-        // Some DV MKVs omit the Colour EBML element entirely — in that case we infer
-        // PQ from mode + bit depth + plan metadata so VIDEO-RANGE=PQ appears in the playlist.
+        // Main 10 is a bit-depth/profile property, not HDR evidence. Only explicit
+        // transfer, Dolby Vision, or plan-level HDR range metadata may advertise HDR.
         let planRangeType = (plan.videoRangeType ?? "").lowercased()
-        let likelyMain10OrBetter = max(videoTrack.bitDepth ?? 0, inferHEVCBitDepth(from: videoTrack.codecPrivate) ?? 0) >= 10
-        let modeExpectsPQ = requestedMode == .dvProfile81Compatible
-            || requestedMode == .hdr10OnlyFallback
-            || requestedMode == .primaryDolbyVisionExperimental
 
         let effectiveTransfer: Int = {
             if let tc = videoTrack.transferCharacteristic, tc > 0 { return tc }
@@ -110,12 +105,6 @@ public enum DolbyVisionGate {
             if (plan.dvProfile ?? 0) > 0
                 || planRangeType.contains("dovi")
                 || planRangeType.contains("hdr10") { return 16 }
-            // Deterministic fallback for Apple HDR packaging modes:
-            // if we're explicitly in a PQ-capable mode and source is HEVC Main10,
-            // we must advertise PQ or AVPlayer can reject HDR renderer setup.
-            if modeExpectsPQ, isHEVC, likelyMain10OrBetter {
-                return 16
-            }
             return 1 // BT.709 (SDR fallback)
         }()
         let videoRange: String? = {
@@ -136,20 +125,51 @@ public enum DolbyVisionGate {
             return "mp4a.40.2"
         }()
 
-        // Base HEVC codec string (RFC 6381 format for Main 10 L5.1 High Tier)
-        // TODO: derive dynamically from hvcC codecPrivate when available
-        let baseHEVCCodecString = "hvc1.2.4.L153.B0"
-        let frameRate: Double? = 23.976
-
         let dvProfile = plan.dvProfile
         let dvLevel = plan.dvLevel ?? 6
         let dvCompatId = plan.dvBlSignalCompatibilityId ?? 1
+        let hevcSampleEntry = HEVCCodecFamily.effectiveSampleEntry(
+            for: videoTrack,
+            requestedMode: requestedMode,
+            hasDolbyVision: [5, 7, 8].contains(dvProfile ?? -1)
+        )
+        let effectiveOutputSampleEntry: String = {
+            if requestedMode == .primaryDolbyVisionExperimental,
+               isHEVC,
+               (dvProfile ?? 0) > 0 {
+                return "dvh1"
+            }
+            return hevcSampleEntry
+        }()
+        let baseHEVCCodecString: String?
+        if isHEVC {
+            baseHEVCCodecString = videoTrack.codecPrivate.flatMap { codecPrivate in
+                guard HEVCCodecParameter.hasValidStructure(
+                    codecPrivate,
+                    sampleEntry: effectiveOutputSampleEntry
+                ) else { return nil }
+                return HEVCCodecParameter(
+                    configurationRecord: codecPrivate,
+                    sampleEntry: hevcSampleEntry
+                )?.value
+            }
+            guard baseHEVCCodecString != nil else {
+                return makeUnsupportedHEVCDecision(
+                    sampleEntry: effectiveOutputSampleEntry,
+                    requestedMode: requestedMode
+                )
+            }
+        } else {
+            baseHEVCCodecString = nil
+        }
+        let baseCodecString = baseHEVCCodecString ?? "avc1.640028"
+        let frameRate: Double? = 23.976
 
         switch requestedMode {
         case .dvProfile81Compatible:
             guard isHEVC, let dvProfile, (dvProfile == 5 || dvProfile == 7 || dvProfile == 8) else {
                 return makeHDR10OnlyDecision(
-                    baseCodec: isHEVC ? baseHEVCCodecString : "avc1.640028",
+                    baseCodec: baseCodecString,
                     audioCodec: audioCodecString,
                     videoRange: videoRange,
                     frameRate: frameRate,
@@ -163,7 +183,7 @@ public enum DolbyVisionGate {
             return NativeBridgePackagingDecision(
                 mode: .dvProfile81Compatible,
                 videoEntry: VideoSampleEntryStrategy(
-                    sampleEntryType: "hvc1",
+                    sampleEntryType: hevcSampleEntry,
                     includeHvcC: true,
                     includeDvcC: true,
                     dvProfile: dvProfile,
@@ -188,7 +208,7 @@ public enum DolbyVisionGate {
 
         case .hdr10OnlyFallback:
             return makeHDR10OnlyDecision(
-                baseCodec: isHEVC ? baseHEVCCodecString : "avc1.640028",
+                baseCodec: baseCodecString,
                 audioCodec: audioCodecString,
                 videoRange: videoRange,
                 frameRate: frameRate,
@@ -198,7 +218,7 @@ public enum DolbyVisionGate {
         case .primaryDolbyVisionExperimental:
             guard isHEVC, let dvProfile, dvProfile > 0 else {
                 return makeHDR10OnlyDecision(
-                    baseCodec: isHEVC ? baseHEVCCodecString : "avc1.640028",
+                    baseCodec: baseCodecString,
                     audioCodec: audioCodecString,
                     videoRange: videoRange,
                     frameRate: frameRate,
@@ -246,10 +266,12 @@ public enum DolbyVisionGate {
     ) -> NativeBridgePackagingDecision {
         let videoCodecs = [baseCodec, audioCodec].compactMap { $0 }.joined(separator: ",")
         let isAVC = baseCodec.hasPrefix("avc")
+        let sampleEntry = String(baseCodec.prefix(4))
+        let isHDR = !isAVC && videoRange != nil
         return NativeBridgePackagingDecision(
             mode: .hdr10OnlyFallback,
             videoEntry: VideoSampleEntryStrategy(
-                sampleEntryType: isAVC ? "avc1" : "hvc1",
+                sampleEntryType: sampleEntry,
                 includeHvcC: !isAVC,
                 includeDvcC: false,
                 ftypIncludesDby1: false,
@@ -262,11 +284,36 @@ public enum DolbyVisionGate {
                 frameRate: frameRate
             ),
             expectation: PlaybackCapabilityExpectation(
-                floor: isAVC ? .sdr : .hdr10,
-                ceiling: isAVC ? .sdr : .hdr10,
-                explanation: isAVC ? "AVC SDR — no HEVC/DV signaling" : "Pure HDR10 — no DV signaling"
+                floor: isHDR ? .hdr10 : .sdr,
+                ceiling: isHDR ? .hdr10 : .sdr,
+                explanation: isHDR
+                    ? "HEVC HDR — explicit transfer/range signaling, no DV signaling"
+                    : "SDR — no HDR/DV signaling"
             ),
             reason: reason
+        )
+    }
+
+    private static func makeUnsupportedHEVCDecision(
+        sampleEntry: String,
+        requestedMode: DolbyVisionPackagingMode
+    ) -> NativeBridgePackagingDecision {
+        NativeBridgePackagingDecision(
+            mode: requestedMode,
+            videoEntry: VideoSampleEntryStrategy(
+                sampleEntryType: sampleEntry,
+                includeHvcC: false,
+                includeDvcC: false,
+                ftypIncludesDby1: false,
+                stripDolbyVisionRPUNALs: false
+            ),
+            hlsSignaling: HLSMasterSignaling(codecs: ""),
+            expectation: PlaybackCapabilityExpectation(
+                floor: .sdr,
+                ceiling: .sdr,
+                explanation: "Unsupported HEVC decoder configuration"
+            ),
+            reason: "unsupported_hevc_configuration"
         )
     }
 
@@ -298,6 +345,15 @@ public enum DolbyVisionGate {
         }
 
         return false
+    }
+
+    private static func selectedVideoTrack(
+        plan: NativeBridgePlan,
+        streamInfo: StreamInfo
+    ) -> TrackInfo {
+        streamInfo.tracks.first {
+            $0.trackType == .video && $0.id == plan.videoTrack.id
+        } ?? plan.videoTrack
     }
 
     private static func inferHEVCBitDepth(from codecPrivate: Data?) -> Int? {

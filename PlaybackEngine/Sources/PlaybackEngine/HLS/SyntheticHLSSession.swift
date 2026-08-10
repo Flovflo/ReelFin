@@ -6,6 +6,8 @@ public enum SyntheticHLSError: Error, LocalizedError {
     case notPrepared
     case endOfStream
     case missingSegment(Int)
+    case unsupportedCodecConfiguration(String)
+    case independentBoundaryUnavailable(sequence: Int, samplesScanned: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -15,6 +17,10 @@ public enum SyntheticHLSError: Error, LocalizedError {
             return "Demuxer reached end of stream"
         case .missingSegment(let sequence):
             return "Segment \(sequence) is unavailable"
+        case .unsupportedCodecConfiguration(let reason):
+            return reason
+        case .independentBoundaryUnavailable(let sequence, let samplesScanned):
+            return "Independent segment boundary unavailable for segment \(sequence) after \(samplesScanned) samples"
         }
     }
 }
@@ -76,10 +82,17 @@ public actor PackagingSchedulerActor {
     private let targetDurationSeconds: Double
     private let startupTargetDurationSeconds: Double
     private let startupMaxSamples: Int
+    private let maximumSegmentBytes: Int
+    private let maximumBoundarySearchDurationNs: Int64
+    // 4,096 demux reads covers well beyond a normal 60 fps video + packetized
+    // audio GOP while the 64 MiB / 12 s limits remain the primary hard bounds.
+    private let nonStartupMaxSamples = 4_096
+    private let startupAudioGraceNs: Int64 = 400_000_000
 
     private var nextSequenceToGenerate: Int = 0
     private var generatedSegments: [Int: Data] = [:]
     private var segmentDurations: [Int: Double] = [:]
+    private var pendingBoundarySample: Sample?
 
     public init(
         demuxer: Demuxer,
@@ -88,16 +101,37 @@ public actor PackagingSchedulerActor {
         audioTrackID: Int? = nil,
         targetDurationSeconds: Double = 3.0,
         startupTargetDurationSeconds: Double = 1.5,
-        startupMaxSamples: Int = 64
+        startupMaxSamples: Int = 4_096,
+        maximumSegmentBytes: Int = 64 * 1024 * 1024,
+        maximumBoundarySearchDurationSeconds: Double = 12
     ) {
         self.demuxer = demuxer
         self.repackager = repackager
         self.videoTrackID = videoTrackID
         self.audioTrackID = audioTrackID
         self.allowedTrackIDs = Set([videoTrackID, audioTrackID].compactMap { $0 })
-        self.targetDurationSeconds = max(1.0, targetDurationSeconds)
-        self.startupTargetDurationSeconds = max(0.5, min(self.targetDurationSeconds, startupTargetDurationSeconds))
+        let normalizedTargetDuration = Self.normalizedSeconds(
+            targetDurationSeconds,
+            fallback: 3,
+            minimum: 1,
+            maximum: 3_600
+        )
+        self.targetDurationSeconds = normalizedTargetDuration
+        self.startupTargetDurationSeconds = Self.normalizedSeconds(
+            startupTargetDurationSeconds,
+            fallback: 1.5,
+            minimum: 0.5,
+            maximum: normalizedTargetDuration
+        )
         self.startupMaxSamples = max(8, startupMaxSamples)
+        self.maximumSegmentBytes = max(1_048_576, maximumSegmentBytes)
+        let normalizedSearchDuration = Self.normalizedSeconds(
+            maximumBoundarySearchDurationSeconds,
+            fallback: 12,
+            minimum: 1,
+            maximum: 86_400
+        )
+        self.maximumBoundarySearchDurationNs = Int64(normalizedSearchDuration * 1_000_000_000)
     }
 
     public func segment(for sequence: Int) async throws -> Data {
@@ -112,7 +146,9 @@ public actor PackagingSchedulerActor {
                 throw SyntheticHLSError.endOfStream
             }
             let fragment = try await repackager.generateFragment(samples: samples)
-            let durationNs = samples.reduce(Int64(0)) { $0 + max(0, $1.durationNanoseconds) }
+            let durationNs = samples.reduce(Int64(0)) {
+                Self.saturatedAdd($0, max(0, $1.durationNanoseconds))
+            }
             let durationSeconds = max(0.001, Double(durationNs) / 1_000_000_000.0)
             generatedSegments[generatedSequence] = fragment
             segmentDurations[generatedSequence] = durationSeconds
@@ -142,6 +178,7 @@ public actor PackagingSchedulerActor {
         nextSequenceToGenerate = 0
         generatedSegments.removeAll()
         segmentDurations.removeAll()
+        pendingBoundarySample = nil
     }
 
     private func collectSegmentSamples(sequence: Int) async throws -> [Sample] {
@@ -149,57 +186,123 @@ public actor PackagingSchedulerActor {
         var durationNs: Int64 = 0
         let isStartupSegment = (sequence == 0)
         let targetNs = Int64((isStartupSegment ? startupTargetDurationSeconds : targetDurationSeconds) * 1_000_000_000.0)
-        let startupAudioGraceNs: Int64 = 400_000_000
-        let startupAudioGraceSamples = 24
-        let requiresAudioForStartup = isStartupSegment && (audioTrackID != nil)
-        var sawVideoKeyframeBoundary = false
+        let requiresStartupAudio = isStartupSegment && audioTrackID != nil
+        let maximumSamples = isStartupSegment
+            ? startupMaxSamples
+            : nonStartupMaxSamples
         var sawVideoSample = false
         var sawAudioSample = false
+        var scannedSamples = 0
+        var scannedBytes = 0
+        var scannedDurationNs: Int64 = 0
+
+        if let pendingBoundarySample {
+            samples.append(pendingBoundarySample)
+            durationNs = Self.saturatedAdd(durationNs, max(0, pendingBoundarySample.durationNanoseconds))
+            sawVideoSample = pendingBoundarySample.trackID == videoTrackID
+            sawAudioSample = pendingBoundarySample.trackID == audioTrackID
+            scannedSamples = 1
+            scannedBytes = pendingBoundarySample.data.count
+            scannedDurationNs = max(0, pendingBoundarySample.durationNanoseconds)
+            self.pendingBoundarySample = nil
+        }
 
         while true {
             guard let sample = try await demuxer.readSample() else { break }
-            guard allowedTrackIDs.contains(sample.trackID) else { continue }
+            scannedSamples = Self.saturatedAdd(scannedSamples, 1)
+            scannedBytes = Self.saturatedAdd(scannedBytes, sample.data.count)
+            scannedDurationNs = Self.saturatedAdd(
+                scannedDurationNs,
+                max(0, sample.durationNanoseconds)
+            )
+
+            let audioRequirementSatisfied = !requiresStartupAudio
+                || sawAudioSample
+                || durationNs >= Self.saturatedAdd(targetNs, startupAudioGraceNs)
+            let searchBudgetReached = scannedSamples >= maximumSamples
+                || scannedBytes >= maximumSegmentBytes
+                || scannedDurationNs >= maximumBoundarySearchDurationNs
+
+            guard allowedTrackIDs.contains(sample.trackID) else {
+                if searchBudgetReached {
+                    throw SyntheticHLSError.independentBoundaryUnavailable(
+                        sequence: sequence,
+                        samplesScanned: scannedSamples
+                    )
+                }
+                continue
+            }
+
+            // A generation epoch (startup or post-seek invalidation) may resume before
+            // the demuxer reaches a random-access point. Drop dependent leading video
+            // samples so the first advertised video sample remains independently sync.
+            if sample.trackID == videoTrackID, !sawVideoSample, !sample.isKeyframe {
+                if searchBudgetReached {
+                    throw SyntheticHLSError.independentBoundaryUnavailable(
+                        sequence: sequence,
+                        samplesScanned: scannedSamples
+                    )
+                }
+                continue
+            }
+
+            // A media segment advertised under EXT-X-INDEPENDENT-SEGMENTS must leave
+            // its boundary sync sample for the next segment. Consuming that keyframe
+            // here makes the next fragment begin with a dependent P/B frame.
+            if sample.trackID == videoTrackID,
+               sample.isKeyframe,
+               sawVideoSample,
+               durationNs >= targetNs,
+               audioRequirementSatisfied {
+                pendingBoundarySample = sample
+                break
+            }
 
             samples.append(sample)
-            durationNs += max(0, sample.durationNanoseconds)
+            durationNs = Self.saturatedAdd(durationNs, max(0, sample.durationNanoseconds))
 
             if sample.trackID == videoTrackID {
                 sawVideoSample = true
-                if sample.isKeyframe, samples.count > 1 {
-                    sawVideoKeyframeBoundary = true
-                }
             } else if sample.trackID == audioTrackID {
                 sawAudioSample = true
             }
 
-            if isStartupSegment {
-                let reachedSoftStartupLimit = durationNs >= targetNs || samples.count >= startupMaxSamples
-
-                if requiresAudioForStartup, !sawAudioSample {
-                    let exceededAudioWait =
-                        durationNs >= (targetNs + startupAudioGraceNs) ||
-                        samples.count >= (startupMaxSamples + startupAudioGraceSamples)
-                    if exceededAudioWait {
-                        break
-                    }
-                    continue
-                }
-
-                if reachedSoftStartupLimit, sawVideoSample {
-                    break
-                }
-            } else {
-                if durationNs >= targetNs, sawVideoKeyframeBoundary {
-                    break
-                }
-
-                if samples.count >= 160 {
-                    break
-                }
+            if searchBudgetReached {
+                throw SyntheticHLSError.independentBoundaryUnavailable(
+                    sequence: sequence,
+                    samplesScanned: scannedSamples
+                )
             }
         }
 
+        if !sawVideoSample, scannedSamples > 0 {
+            throw SyntheticHLSError.independentBoundaryUnavailable(
+                sequence: sequence,
+                samplesScanned: scannedSamples
+            )
+        }
+
         return samples
+    }
+
+    private static func normalizedSeconds(
+        _ value: Double,
+        fallback: Double,
+        minimum: Double,
+        maximum: Double
+    ) -> Double {
+        let candidate = value.isFinite ? value : fallback
+        return min(max(candidate, minimum), maximum)
+    }
+
+    private static func saturatedAdd(_ lhs: Int, _ rhs: Int) -> Int {
+        guard rhs > 0 else { return lhs }
+        return lhs > Int.max - rhs ? Int.max : lhs + rhs
+    }
+
+    private static func saturatedAdd(_ lhs: Int64, _ rhs: Int64) -> Int64 {
+        guard rhs > 0 else { return lhs }
+        return lhs > Int64.max - rhs ? Int64.max : lhs + rhs
     }
 }
 
@@ -267,6 +370,11 @@ public actor SyntheticHLSSession {
             device: device,
             requestedMode: requestedPackagingMode
         )
+        guard !decision.hlsSignaling.codecs.isEmpty else {
+            throw SyntheticHLSError.unsupportedCodecConfiguration(
+                "Unsupported HEVC decoder configuration"
+            )
+        }
         packagingDecision = decision
         AppLog.nativeBridge.notice(
             "[NB-DIAG] hls.packaging.decision — mode=\(decision.mode.rawValue, privacy: .public) entry=\(decision.videoEntry.sampleEntryType, privacy: .public) codecs=\(decision.hlsSignaling.codecs, privacy: .public) supplemental=\(decision.hlsSignaling.supplementalCodecs ?? "none", privacy: .public) videoRange=\(decision.hlsSignaling.videoRange ?? "none", privacy: .public) reason=\(decision.reason, privacy: .public)"
@@ -288,7 +396,15 @@ public actor SyntheticHLSSession {
         prefetchTargetSequence = 0
         adaptivePreloadCount = defaultPreloadCount
         adaptiveLookaheadSegments = Self.defaultPlaylistGrowthStepSegments
-        _ = try await scheduler.segment(for: 0)
+        do {
+            _ = try await scheduler.segment(for: 0)
+        } catch {
+            streamInfo = nil
+            initSegmentData = nil
+            initSegmentInspection = nil
+            packagingDecision = nil
+            throw error
+        }
     }
 
     public func initSegment() async throws -> Data {
@@ -311,7 +427,10 @@ public actor SyntheticHLSSession {
         guard let info = streamInfo, let decision = packagingDecision else {
             throw SyntheticHLSError.notPrepared
         }
-        let resolution = "\(info.primaryVideoTrack?.width ?? 1920)x\(info.primaryVideoTrack?.height ?? 1080)"
+        let selectedVideoTrack = info.tracks.first {
+            $0.trackType == .video && $0.id == plan.videoTrack.id
+        } ?? plan.videoTrack
+        let resolution = "\(selectedVideoTrack.width ?? 1920)x\(selectedVideoTrack.height ?? 1080)"
         let hls = decision.hlsSignaling
         let videoPlaylistURI = absoluteURI(path: "video.m3u8", relativeTo: baseURL)
         return manifestBuilder.makeMasterPlaylist(
