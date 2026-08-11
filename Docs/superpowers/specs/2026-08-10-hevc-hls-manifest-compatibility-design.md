@@ -40,4 +40,3 @@ Use a real HEVC fixture and AVPlayer on iOS 26.5. Validate the two attributes in
 4. H.264, HDR10, and Dolby Vision decision and manifest suites must remain green.
 
 The local route classifier may record only route classes while diagnosing requests; it must not expose the capability value.
-

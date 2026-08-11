@@ -31,4 +31,3 @@
 - Require playlist request, init request, media request, `isPlayable`, `readyToPlay`, progression, effective seek, detach, and replay on iPhone 17 / iOS 26.5.
 - Add a PQ signaling control and retain H.264 real-playback coverage.
 - Run the HLS and playback-resilience gates, update `OPTIMIZATION_AUDIT.md`, review the exact diff, and commit `fix: derive HEVC HLS signaling`.
-
