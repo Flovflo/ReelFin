@@ -129,6 +129,31 @@ public final class CustomPlayerPrewarmer {
         return result
     }
 
+    /// Returns whether an exact, already-completed warmup can skip the disposable custom surface
+    /// and present the native packet player directly. This never waits at tap time.
+    public func consumeReadyNativeHandoff(itemID: String, startTimeTicks: Int64? = nil) -> Bool {
+        let normalizedStartTimeTicks = Self.normalizedStartTimeTicks(startTimeTicks)
+        if preparedItemID == itemID,
+           preparedStartTimeTicks == normalizedStartTimeTicks,
+           let prepared,
+           prepared.resolved.requiresNativePlayback,
+           prepared.resolved.nativeHandoffClaim?.isAvailable == true {
+            task = nil
+            self.prepared = nil
+            preparedItemID = nil
+            preparedStartTimeTicks = nil
+            return true
+        }
+        guard let entry = resolvedOnly[itemID],
+              Date().timeIntervalSince(entry.at) < resolvedOnlyTTL,
+              entry.resolved.requiresNativePlayback,
+              !entry.resolved.isAdaptiveStream,
+              entry.resolved.nativeHandoffClaim?.isAvailable == true
+        else { return false }
+        resolvedOnly.removeValue(forKey: itemID)
+        return true
+    }
+
     /// Resolve-only warm for a focus dwell: one PlaybackInfo round trip, cached. Idempotent per
     /// item; a newer focus cancels the previous in-flight resolve (one at a time — never a storm).
     /// No-op when the FULL warm already covers the item.

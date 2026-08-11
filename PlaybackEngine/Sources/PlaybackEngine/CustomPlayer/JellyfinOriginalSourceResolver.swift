@@ -101,7 +101,11 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             session: sessionScope
         )
         let claim = await ResolutionMemo.shared.claim(key: key) {
-            try await performResolveOriginal(itemID: itemID, startTimeTicks: startTimeTicks)
+            try await performResolveOriginal(
+                itemID: itemID,
+                startTimeTicks: startTimeTicks,
+                sessionScope: sessionScope
+            )
         }
         switch claim {
         case let .cached(hit):
@@ -122,7 +126,11 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         }
     }
 
-    private func performResolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
+    private func performResolveOriginal(
+        itemID: String,
+        startTimeTicks: Int64?,
+        sessionScope: PlaybackCoordinator.AuthenticatedSessionScope
+    ) async throws -> ResolvedOriginalSource {
         // Pass a non-nil fallback reason (not the post-start-stall sentinel) so the coordinator's
         // legacy native-route self-block is bypassed and it resolves the direct-play original. That
         // guard is removed entirely when the legacy engine is stripped (blueprint Phase 7).
@@ -137,7 +145,15 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             preferredContainers: ["mp4", "m4v", "mov"]
         )
         if Self.requiresNativeOriginalPlayback(for: selection.source) {
-            return resolvedNativeHandoff(selection: selection)
+            let claim = await NativeOriginalSourceHandoffStore.shared.offer(
+                source: selection.source,
+                for: .init(
+                    itemID: itemID,
+                    startTimeTicks: startTimeTicks,
+                    session: sessionScope
+                )
+            )
+            return resolvedNativeHandoff(selection: selection, claim: claim)
         }
         switch selection.decision.route {
         case .directPlay:
@@ -207,9 +223,12 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
         )
     }
 
-    private func resolvedNativeHandoff(selection: PlaybackAssetSelection) -> ResolvedOriginalSource {
+    private func resolvedNativeHandoff(
+        selection: PlaybackAssetSelection,
+        claim: NativeOriginalSourceHandoffClaim
+    ) -> ResolvedOriginalSource {
         let assetURL = selection.assetURL
-        return ResolvedOriginalSource(
+        var resolved = ResolvedOriginalSource(
             originURL: assetURL,
             headers: selection.headers,
             sourceBitrate: selection.source.bitrate,
@@ -232,6 +251,8 @@ public struct JellyfinOriginalSourceResolver: CustomPlaybackSourceResolving {
             requiresNativePlayback: true,
             externalSubtitles: Self.externalSubtitleTracks(for: selection.source, assetURL: assetURL)
         )
+        resolved.nativeHandoffClaim = claim
+        return resolved
     }
 
     /// The custom AVPlayer path keeps Apple-native files on its fast progressive cache. A lone

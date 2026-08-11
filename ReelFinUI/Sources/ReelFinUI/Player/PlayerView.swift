@@ -25,9 +25,22 @@ struct PlayerView: View {
                     item: item,
                     diagnostics: session.nativePlayerDiagnosticsOverlayLines,
                     errorMessage: session.playbackErrorMessage,
+                    audioTrackDisplayHints: session.nativePlayerAudioTrackDisplayHints,
+                    subtitleTrackDisplayHints: session.nativePlayerSubtitleTrackDisplayHints,
                     transportState: session.transportState,
                     onSelectTrack: handleNativePlaybackControlSelection,
                     onPlaybackTime: { session.updateNativePlayerPlaybackTime($0) },
+                    onAudioSelectionApplied: { session.commitNativeAudioTrackSelection(id: $0) },
+                    onAudioSelectionFailed: { session.failNativeAudioTrackSelection(id: $0) },
+                    onFirstVideoFrame: { session.markNativeSampleBufferFirstFrame() },
+                    onTracksDiscovered: { audio, subtitles, audioID, subtitleID in
+                        session.applyNativeSampleBufferTracks(
+                            audio: audio,
+                            subtitles: subtitles,
+                            selectedAudioTrackID: audioID,
+                            selectedSubtitleTrackID: subtitleID
+                        )
+                    },
                     onSkipSuggestion: { suggestion in
                         switch suggestion.target {
                         case let .seek(to: targetSeconds):
@@ -65,6 +78,7 @@ struct PlayerView: View {
 #endif
         }
         .onAppear {
+            session.markPlayerSurfacePresented()
 #if os(iOS)
             OrientationManager.shared.lockLandscapeForPlayerPresentation()
 #endif

@@ -60,6 +60,126 @@ public struct OriginalMediaResolution: Sendable, Equatable {
     }
 }
 
+final class NativeOriginalSourceHandoffClaim: @unchecked Sendable {
+    fileprivate let id = UUID()
+    private let lock = NSLock()
+    private var source: MediaSource?
+    private let createdAtUptime: TimeInterval
+    private let ttl: TimeInterval
+    private let now: @Sendable () -> TimeInterval
+
+    init(
+        source: MediaSource,
+        createdAtUptime: TimeInterval,
+        ttl: TimeInterval,
+        now: @escaping @Sendable () -> TimeInterval
+    ) {
+        self.source = source
+        self.createdAtUptime = createdAtUptime
+        self.ttl = ttl
+        self.now = now
+    }
+
+    var isAvailable: Bool {
+        lock.withLock {
+            source != nil && max(0, now() - createdAtUptime) < ttl
+        }
+    }
+
+    fileprivate func consume() -> MediaSource? {
+        lock.withLock {
+            guard source != nil, max(0, now() - createdAtUptime) < ttl else {
+                source = nil
+                return nil
+            }
+            defer { source = nil }
+            return source
+        }
+    }
+
+    fileprivate func invalidate() {
+        lock.withLock { source = nil }
+    }
+}
+
+/// One-shot bridge between CustomPlayer's already-completed PlaybackInfo selection and the native
+/// packet-demuxed player that replaces it. Only source metadata crosses the handoff; the native
+/// controller rebuilds authentication from its current session, so an adaptive PlaySession URL or
+/// stale token can never be reused.
+actor NativeOriginalSourceHandoffStore {
+    static let shared = NativeOriginalSourceHandoffStore()
+
+    struct Key: Hashable, Sendable {
+        let itemID: String
+        let startTimeTicks: Int64?
+        let session: PlaybackCoordinator.AuthenticatedSessionScope
+    }
+
+    private var entries: [Key: NativeOriginalSourceHandoffClaim] = [:]
+    private var insertionOrder: [Key] = []
+    private let ttl: TimeInterval
+    private let capacity: Int
+    private let now: @Sendable () -> TimeInterval
+
+    init(
+        ttl: TimeInterval = 180,
+        capacity: Int = 64,
+        now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
+        self.ttl = ttl
+        self.capacity = max(1, capacity)
+        self.now = now
+    }
+
+    @discardableResult
+    func offer(source: MediaSource, for key: Key) -> NativeOriginalSourceHandoffClaim {
+        trimExpired()
+        if let replaced = entries.removeValue(forKey: key) {
+            replaced.invalidate()
+            insertionOrder.removeAll { $0 == key }
+        }
+        let claim = NativeOriginalSourceHandoffClaim(
+            source: source,
+            createdAtUptime: now(),
+            ttl: ttl,
+            now: now
+        )
+        entries[key] = claim
+        insertionOrder.append(key)
+        while entries.count > capacity, let oldest = insertionOrder.first {
+            insertionOrder.removeFirst()
+            entries.removeValue(forKey: oldest)?.invalidate()
+        }
+        return claim
+    }
+
+    func consume(for key: Key) -> MediaSource? {
+        trimExpired()
+        if let exact = removeClaim(for: key)?.consume() {
+            return exact
+        }
+        // A raw original-file resolution is independent of the client-side resume offset. A
+        // focus warm therefore may resolve from start, while the native snapshot still carries
+        // the exact requested ticks into its demux seek. Item and authenticated session remain
+        // part of the key; adaptive/session URLs are never offered to this store.
+        guard key.startTimeTicks != nil else { return nil }
+        let fromStartKey = Key(itemID: key.itemID, startTimeTicks: nil, session: key.session)
+        return removeClaim(for: fromStartKey)?.consume()
+    }
+
+    private func trimExpired() {
+        for key in insertionOrder where entries[key]?.isAvailable == false {
+            entries.removeValue(forKey: key)?.invalidate()
+        }
+        insertionOrder.removeAll { entries[$0] == nil }
+    }
+
+    private func removeClaim(for key: Key) -> NativeOriginalSourceHandoffClaim? {
+        insertionOrder.removeAll { $0 == key }
+        return entries.removeValue(forKey: key)
+    }
+}
+
 public struct OriginalMediaURLBuilder: Sendable {
     public init() {}
 

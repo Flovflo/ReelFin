@@ -2232,6 +2232,21 @@ struct HomeView: View {
     @MainActor
     private func startHomeCustomPlayback(request: PlaybackLaunchRequest) {
         let item = request.item
+        let startTicks = request.startPosition(for: .custom) == .resumeIfAvailable
+            ? request.resumePositionTicks
+            : nil
+        if customPrewarmer?.consumeReadyNativeHandoff(
+            itemID: item.id,
+            startTimeTicks: startTicks
+        ) == true {
+            AppLog.playback.notice(
+                "home.player.native_handoff — status=ready item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
+            )
+            Task { @MainActor in
+                await startHomeLegacyPlayback(request: request, forceNativeOriginalPlayback: true)
+            }
+            return
+        }
         guard let store = try? CustomPlaybackEngine.sharedStore() else {
             playbackErrorMessage = "Cache local indisponible."
             return
@@ -2276,9 +2291,7 @@ struct HomeView: View {
         )
         engine.load(
             itemID: item.id,
-            startTimeTicks: request.startPosition(for: .custom) == .resumeIfAvailable
-                ? request.resumePositionTicks
-                : nil,
+            startTimeTicks: startTicks,
             autoPlay: true
         )
     }

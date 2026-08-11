@@ -238,6 +238,7 @@ public struct ResolvedOriginalSource: Sendable {
     /// Text sidecar subtitle tracks the player renders itself (AVFoundation can't inject external
     /// text tracks into a progressive asset).
     public let externalSubtitles: [ExternalSubtitleTrack]
+    var nativeHandoffClaim: NativeOriginalSourceHandoffClaim?
 
     public init(
         originURL: URL,
@@ -261,6 +262,7 @@ public struct ResolvedOriginalSource: Sendable {
         self.isAdaptiveStream = isAdaptiveStream
         self.requiresNativePlayback = requiresNativePlayback
         self.externalSubtitles = externalSubtitles
+        self.nativeHandoffClaim = nil
     }
 }
 

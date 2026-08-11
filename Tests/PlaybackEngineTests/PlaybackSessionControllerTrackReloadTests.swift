@@ -2807,6 +2807,22 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
                 reason: StartupFailureReason.decodedFrameWatchdog.rawValue
             )
         )
+        XCTAssertTrue(
+            PlaybackSessionController.shouldAllowSampleBufferCoordinatorFallback(
+                reason: StartupFailureReason.readyButNoVideoFrame.rawValue,
+                isNativePlayerActive: true,
+                nativeSurface: .sampleBuffer
+            ),
+            "sample-buffer first-frame timeout must admit one recovery-scoped coordinator fallback"
+        )
+        XCTAssertFalse(
+            PlaybackSessionController.shouldAllowSampleBufferCoordinatorFallback(
+                reason: StartupFailureReason.readyButNoVideoFrame.rawValue,
+                isNativePlayerActive: false,
+                nativeSurface: .sampleBuffer
+            ),
+            "the recovery override must not broaden AVPlayer/legacy routing"
+        )
         XCTAssertFalse(
             PlaybackSessionController.shouldAllowNativeModeCoordinatorFallback(
                 reason: StartupFailureReason.decodedFrameWatchdog.rawValue,

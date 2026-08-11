@@ -32,6 +32,22 @@ final class PlayerOrientationLockTests: XCTestCase {
         XCTAssertEqual(requestedOrientations, [.landscapeRight])
     }
 
+    func testReplacingCustomSurfaceWithNativeSurfaceDoesNotRequestLandscapeTwice() {
+        OrientationManager.shared.lock = .portrait
+        var requestedOrientations: [UIInterfaceOrientationMask] = []
+        OrientationManager.shared.geometryUpdateHandler = { requestedOrientations.append($0) }
+
+        OrientationManager.shared.lockLandscapeForPlayerPresentation()
+        OrientationManager.shared.lockLandscapeForPlayerPresentation()
+
+        XCTAssertEqual(OrientationManager.shared.lock, .landscape)
+        XCTAssertEqual(
+            requestedOrientations,
+            [.landscapeRight],
+            "a same-cover custom-to-native handoff must not open a second UIKit orientation transaction"
+        )
+    }
+
     func testPlayerDismissalRestoresPortraitOutsidePlayer() {
         OrientationManager.shared.lock = .landscape
 

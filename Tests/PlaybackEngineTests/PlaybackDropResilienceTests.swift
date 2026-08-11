@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Network
+import Shared
 import XCTest
 @testable import PlaybackEngine
 
@@ -1175,6 +1176,71 @@ final class PlaybackDropResilienceTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testReadyNativePrewarmCanBePresentedDirectlyExactlyOnce() async throws {
+        let origin = URL(string: "https://example.com/Videos/direct-native/stream")!
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DirectNativePrewarm.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: .init(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "native-handoff", userID: "u", serverID: "s", itemID: "direct-native",
+            sourceID: "src", routeURL: origin
+        )
+        var resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: 8_000_000, cacheKey: key)
+        resolver.requiresNativePlayback = true
+        let requests = ResolveRequestRecorder()
+        resolver.resolveRequests = requests
+        let prewarmer = CustomPlayerPrewarmer(resolver: resolver, store: store)
+        let resumeTicks: Int64 = 420_000_000
+
+        prewarmer.prewarm(itemID: "direct-native", startTimeTicks: resumeTicks)
+        let didResolve = await waitUntil(timeout: 2) { requests.values.count == 1 }
+        XCTAssertTrue(didResolve)
+
+        XCTAssertTrue(prewarmer.consumeReadyNativeHandoff(itemID: "direct-native", startTimeTicks: resumeTicks))
+        XCTAssertFalse(prewarmer.consumeReadyNativeHandoff(itemID: "direct-native", startTimeTicks: resumeTicks))
+        XCTAssertEqual(requests.values, [resumeTicks])
+    }
+
+    @MainActor
+    func testResolveOnlyNativePrewarmCanSkipCustomSurfaceForResume() async throws {
+        let origin = URL(string: "https://example.com/Videos/focus-native/stream")!
+        let storeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FocusNativePrewarm.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = try MediaGatewayStore(
+            directoryURL: storeDir,
+            configuration: .init(chunkSize: 1_024 * 1_024, maxBytes: 2_000_000_000, ttlSeconds: nil)
+        )
+        let key = MediaGatewayCacheKey(
+            scope: "native-handoff", userID: "u", serverID: "s", itemID: "focus-native",
+            sourceID: "src", routeURL: origin
+        )
+        var resolver = MockCustomSourceResolver(originURL: origin, sourceBitrate: 8_000_000, cacheKey: key)
+        resolver.requiresNativePlayback = true
+        let requests = ResolveRequestRecorder()
+        resolver.resolveRequests = requests
+        let prewarmer = CustomPlayerPrewarmer(resolver: resolver, store: store)
+
+        prewarmer.prewarmResolveOnly(itemID: "focus-native")
+        let didResolve = await waitUntil(timeout: 2) { requests.values.count == 1 }
+        XCTAssertTrue(didResolve)
+
+        XCTAssertTrue(
+            prewarmer.consumeReadyNativeHandoff(itemID: "focus-native", startTimeTicks: 7_910_000_000)
+        )
+        XCTAssertFalse(
+            prewarmer.consumeReadyNativeHandoff(itemID: "focus-native", startTimeTicks: 7_910_000_000)
+        )
+        XCTAssertEqual(requests.values, [nil])
+    }
+
     /// AIRPLAY correctness: while external playback is active the item must play the ORIGIN URL
     /// (a receiver cannot reach 127.0.0.1's cache), and swap back onto the localhost cache when it
     /// ends — position preserved both ways.
@@ -2187,12 +2253,31 @@ final class PlaybackDropResilienceTests: XCTestCase {
         func resolveOriginal(itemID: String, startTimeTicks: Int64?) async throws -> ResolvedOriginalSource {
             resolveCounter?.increment()
             resolveRequests?.append(startTimeTicks)
-            return ResolvedOriginalSource(
+            var resolved = ResolvedOriginalSource(
                 originURL: originURL, headers: [:], sourceBitrate: sourceBitrate,
                 overrideMIMEType: adaptiveOnly ? nil : "video/mp4", cacheKey: cacheKey,
                 isDolbyVision: false,
                 isAdaptiveStream: adaptiveOnly,
                 requiresNativePlayback: requiresNativePlayback)
+            if requiresNativePlayback {
+                resolved.nativeHandoffClaim = NativeOriginalSourceHandoffClaim(
+                    source: MediaSource(
+                        id: cacheKey.sourceID,
+                        itemID: itemID,
+                        name: "Native test source",
+                        container: "mkv",
+                        videoCodec: "hevc",
+                        audioCodec: "aac",
+                        supportsDirectPlay: true,
+                        supportsDirectStream: false,
+                        directPlayURL: originURL
+                    ),
+                    createdAtUptime: ProcessInfo.processInfo.systemUptime,
+                    ttl: 180,
+                    now: { ProcessInfo.processInfo.systemUptime }
+                )
+            }
+            return resolved
         }
         func resolveAdaptiveFallback(itemID: String, startSeconds: Double) async -> URL? {
             fallbackURL

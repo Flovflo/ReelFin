@@ -30,6 +30,8 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
     public var nativeBridgePlan: NativeBridgePlan?
     public var audioTracks: [Shared.MediaTrack]
     public var subtitleTracks: [Shared.MediaTrack]
+    public var audioTrackDisplayHints: [Shared.MediaTrack]
+    public var subtitleTrackDisplayHints: [Shared.MediaTrack]
     public var selectedAudioTrackID: String?
     public var selectedSubtitleTrackID: String?
 
@@ -45,6 +47,8 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
         nativeBridgePlan: NativeBridgePlan? = nil,
         audioTracks: [Shared.MediaTrack] = [],
         subtitleTracks: [Shared.MediaTrack] = [],
+        audioTrackDisplayHints: [Shared.MediaTrack] = [],
+        subtitleTrackDisplayHints: [Shared.MediaTrack] = [],
         selectedAudioTrackID: String? = nil,
         selectedSubtitleTrackID: String? = nil
     ) {
@@ -59,6 +63,8 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
         self.nativeBridgePlan = nativeBridgePlan
         self.audioTracks = audioTracks
         self.subtitleTracks = subtitleTracks
+        self.audioTrackDisplayHints = audioTrackDisplayHints
+        self.subtitleTrackDisplayHints = subtitleTrackDisplayHints
         self.selectedAudioTrackID = selectedAudioTrackID
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
     }
@@ -104,7 +110,27 @@ public actor NativePlayerPlaybackController {
             nativeConfig: nativeConfig,
             startTimeTicks: startTimeTicks
         )
-        let sources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: options)
+        let sessionScope = PlaybackCoordinator.AuthenticatedSessionScope(
+            server: configuration.serverURL.absoluteString,
+            userID: session.userID,
+            token: session.token
+        )
+        let handoffSource = await NativeOriginalSourceHandoffStore.shared.consume(
+            for: .init(
+                itemID: itemID,
+                startTimeTicks: startTimeTicks,
+                session: sessionScope
+            )
+        )
+        let sources: [MediaSource]
+        if let handoffSource {
+            sources = [handoffSource]
+            AppLog.playback.notice(
+                "nativeplayer.original.resolve.handoff_hit — media=\(mediaCorrelation, privacy: .public)"
+            )
+        } else {
+            sources = try await apiClient.fetchPlaybackSources(itemID: itemID, options: options)
+        }
         let resolution = try resolver.resolve(
             request: OriginalMediaRequest(itemID: itemID, startTimeTicks: startTimeTicks),
             sources: sources,
@@ -119,6 +145,13 @@ public actor NativePlayerPlaybackController {
             "nativeplayer.original.resolve.ok — media=\(mediaCorrelation, privacy: .public) source=\(AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source), privacy: .public) selectedPath=original_stream"
         )
         stateMachine.apply(.originalResolved)
+        if handoffSource != nil {
+            return makeTrustedNativeHandoffSnapshot(
+                resolution,
+                session: session,
+                startTimeTicks: startTimeTicks
+            )
+        }
         return try await prepareResolved(
             resolution,
             configuration: configuration,
@@ -127,6 +160,41 @@ public actor NativePlayerPlaybackController {
             startTimeTicks: startTimeTicks,
             itemID: itemID,
             evidenceSession: evidenceSession
+        )
+    }
+
+    private func makeTrustedNativeHandoffSnapshot(
+        _ resolution: OriginalMediaResolution,
+        session: UserSession,
+        startTimeTicks: Int64?
+    ) -> NativePlayerPlaybackSnapshot {
+        let headers = authenticatedOriginalHeaders(resolution: resolution, session: session)
+        let url = authenticatedOriginalURL(resolution: resolution, headers: headers)
+        stateMachine.apply(.bufferStarted)
+        AppLog.playback.notice(
+            "nativeplayer.sampleBuffer.route.selected — source=\(AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source), privacy: .public) handoffPrepared=true nativeProbe=false avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=false"
+        )
+        return NativePlayerPlaybackSnapshot(
+            overlayLines: [
+                "playbackState=buffering",
+                "container=matroska",
+                "demuxer=surface-owned",
+                "originalMediaRequested=true",
+                "serverTranscodeUsed=false"
+            ],
+            routeDescription: "NativeEngine(matroska)",
+            surface: .sampleBuffer,
+            playbackURL: url,
+            playbackHeaders: headers,
+            startTimeSeconds: startTimeTicks.map { Double($0) / 10_000_000 },
+            // Jellyfin IDs (`track-<stream index>`) are not Matroska EBML TrackNumber values.
+            // The one surface-owned demux open publishes verified native IDs back to the session.
+            audioTracks: [],
+            subtitleTracks: [],
+            audioTrackDisplayHints: resolution.mediaSource.audioTracks,
+            subtitleTrackDisplayHints: resolution.mediaSource.subtitleTracks,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil
         )
     }
 
@@ -250,6 +318,7 @@ public actor NativePlayerPlaybackController {
             return NativePlayerPlaybackSnapshot(
                 overlayLines: diagnostics.overlayLines,
                 routeDescription: "NativeEngine(\(probe.format.rawValue))",
+                startTimeSeconds: startTimeTicks.map { Double($0) / 10_000_000 },
                 playbackErrorMessage: error.localizedDescription
             )
         }
@@ -377,6 +446,8 @@ public actor NativePlayerPlaybackController {
             playbackErrorMessage: plan.canStartLocalPlayback ? nil : diagnostics.failureReason,
             audioTracks: audio,
             subtitleTracks: subtitles,
+            audioTrackDisplayHints: resolution.mediaSource.audioTracks,
+            subtitleTrackDisplayHints: resolution.mediaSource.subtitleTracks,
             selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
             selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
         )

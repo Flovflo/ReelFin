@@ -11,9 +11,15 @@ struct NativePlayerView: View {
     let item: MediaItem
     let diagnostics: [String]
     let errorMessage: String?
+    let audioTrackDisplayHints: [Shared.MediaTrack]
+    let subtitleTrackDisplayHints: [Shared.MediaTrack]
     let transportState: PlaybackTransportState
     let onSelectTrack: (PlaybackControlSelection) -> Void
     let onPlaybackTime: (Double) -> Void
+    let onAudioSelectionApplied: (String) -> Void
+    let onAudioSelectionFailed: (String) -> Void
+    let onFirstVideoFrame: () -> Void
+    let onTracksDiscovered: ([Shared.MediaTrack], [Shared.MediaTrack], String?, String?) -> Void
     let onSkipSuggestion: (PlaybackSkipSuggestion) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var liveDiagnostics: [String] = []
@@ -66,11 +72,18 @@ struct NativePlayerView: View {
                             startTimeSeconds: resolvedStartTime,
                             seekRequest: seekRequest,
                             selectedAudioTrackID: transportState.selectedAudioTrackID,
+                            pendingAudioTrackID: transportState.pendingAudioTrackID,
                             selectedSubtitleTrackID: transportState.selectedSubtitleTrackID,
+                            audioTrackDisplayHints: audioTrackDisplayHints,
+                            subtitleTrackDisplayHints: subtitleTrackDisplayHints,
                             baseDiagnostics: diagnostics,
                             isPaused: $isPaused,
                             onDiagnostics: handleDiagnostics,
-                            onPlaybackTime: handlePlaybackTime
+                            onPlaybackTime: handlePlaybackTime,
+                            onAudioSelectionApplied: onAudioSelectionApplied,
+                            onAudioSelectionFailed: onAudioSelectionFailed,
+                            onFirstVideoFrame: onFirstVideoFrame,
+                            onTracksDiscovered: onTracksDiscovered
                         )
                     } else {
                         NativeMP4SampleBufferPlayerView(

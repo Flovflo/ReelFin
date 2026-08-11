@@ -1342,6 +1342,20 @@ struct DetailView: View {
         resumePositionTicks: Int64?
     ) {
         let startTicks = startPosition == .resumeIfAvailable ? resumePositionTicks : nil
+        if customPrewarmer?.consumeReadyNativeHandoff(
+            itemID: item.id,
+            startTimeTicks: startTicks
+        ) == true {
+            AppLog.playback.notice(
+                "detail.player.native_handoff — status=ready item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
+            )
+            startLegacyPlayback(
+                item: item,
+                startPosition: startPosition,
+                forceNativeOriginalPlayback: true
+            )
+            return
+        }
         // ONE shared store for all plays: its in-memory coverage map must be the single authority,
         // and the deep cache survives across titles/replays under one LRU budget.
         guard let store = try? CustomPlaybackEngine.sharedStore() else {

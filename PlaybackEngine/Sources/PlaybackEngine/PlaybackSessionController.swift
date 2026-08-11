@@ -18,10 +18,33 @@ public struct PlaybackPerformanceMetrics: Sendable {
     }
 }
 
+struct NativeSampleBufferStartupWatchdogState: Equatable {
+    private(set) var armedSessionID: String?
+
+    mutating func arm(sessionID: String) {
+        armedSessionID = sessionID
+    }
+
+    mutating func cancel(sessionID: String) -> Bool {
+        guard armedSessionID == sessionID else { return false }
+        armedSessionID = nil
+        return true
+    }
+
+    mutating func consumeTimeout(sessionID: String) -> Bool {
+        cancel(sessionID: sessionID)
+    }
+
+    mutating func reset() {
+        armedSessionID = nil
+    }
+}
+
 public struct PlaybackTransportState: Sendable, Equatable {
     public var availableAudioTracks: [MediaTrack]
     public var availableSubtitleTracks: [MediaTrack]
     public var selectedAudioTrackID: String?
+    public var pendingAudioTrackID: String?
     public var selectedSubtitleTrackID: String?
     public var activeSkipSuggestion: PlaybackSkipSuggestion?
     public var trickplayManifest: TrickplayManifest?
@@ -31,6 +54,7 @@ public struct PlaybackTransportState: Sendable, Equatable {
         availableAudioTracks: [MediaTrack] = [],
         availableSubtitleTracks: [MediaTrack] = [],
         selectedAudioTrackID: String? = nil,
+        pendingAudioTrackID: String? = nil,
         selectedSubtitleTrackID: String? = nil,
         activeSkipSuggestion: PlaybackSkipSuggestion? = nil,
         trickplayManifest: TrickplayManifest? = nil,
@@ -39,6 +63,7 @@ public struct PlaybackTransportState: Sendable, Equatable {
         self.availableAudioTracks = availableAudioTracks
         self.availableSubtitleTracks = availableSubtitleTracks
         self.selectedAudioTrackID = selectedAudioTrackID
+        self.pendingAudioTrackID = pendingAudioTrackID
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
         self.activeSkipSuggestion = activeSkipSuggestion
         self.trickplayManifest = trickplayManifest
@@ -277,6 +302,9 @@ public final class PlaybackSessionController {
     public private(set) var selectedAudioTrackID: String? {
         didSet { scheduleTransportStateSnapshotUpdate() }
     }
+    public private(set) var pendingAudioTrackID: String? {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
     public private(set) var selectedSubtitleTrackID: String? {
         didSet { scheduleTransportStateSnapshotUpdate() }
     }
@@ -288,6 +316,8 @@ public final class PlaybackSessionController {
     public private(set) var nativePlayerPlaybackURL: URL?
     public private(set) var nativePlayerPlaybackHeaders: [String: String] = [:]
     public private(set) var nativePlayerStartTimeSeconds: Double?
+    public private(set) var nativePlayerAudioTrackDisplayHints: [MediaTrack] = []
+    public private(set) var nativePlayerSubtitleTrackDisplayHints: [MediaTrack] = []
     public private(set) var currentPlaybackPlan: PlaybackPlan?
     public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
     public private(set) var metrics = PlaybackPerformanceMetrics()
@@ -295,6 +325,7 @@ public final class PlaybackSessionController {
     public private(set) var playbackHealth = PlaybackHealthSnapshot()
     public private(set) var fallbackRecommendation: PlaybackFallbackRecommendation?
     public private(set) var startupTrace = PlaybackStartupTrace()
+    public private(set) var startupStageTrace = PlaybackStartupStageTrace(sessionID: "none")
     public private(set) var isExternalPlaybackActive = false
     public internal(set) var playbackErrorMessage: String?
     public internal(set) var activeSkipSuggestion: PlaybackSkipSuggestion? {
@@ -390,6 +421,7 @@ public final class PlaybackSessionController {
     private var lastFailureReason: String?
     private var lastRecoverySuggestion: String?
     private var playbackLogSessionID = "none"
+    private var hasPlayerSurfacePresented = false
     private let audioSelector = AudioCompatibilitySelector()
     private let subtitlePolicy = SubtitleCompatibilityPolicy()
     private let assetURLValidator = AssetURLValidator()
@@ -451,6 +483,48 @@ public final class PlaybackSessionController {
         Self.playbackLogScope(sessionID: playbackLogSessionID, itemID: currentItemID, attempt: attempt)
     }
 
+    private func markStartupStage(_ stage: String) {
+        let sample = startupStageTrace.mark(stage)
+        AppLog.playback.notice(
+            "playback.startup.stage — session=\(self.startupStageTrace.sessionID, privacy: .public) build=\(self.startupStageTrace.build, privacy: .public) platform=\(self.startupStageTrace.platform, privacy: .public) stage=\(stage, privacy: .public) elapsedMs=\(sample.elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+    }
+
+    public func markPlayerSurfacePresented() {
+        hasPlayerSurfacePresented = true
+        guard playbackLogSessionID != "none" else { return }
+        guard !startupStageTrace.samples.contains(where: { $0.stage == "player-presented" }) else { return }
+        markStartupStage("player-presented")
+    }
+
+    public func markNativeSampleBufferFirstFrame() {
+        guard isNativePlayerActive,
+              nativePlayerPlaybackSurface == .sampleBuffer
+        else { return }
+        commitFirstFrame(
+            currentSeconds: currentTime,
+            avPlayerItem: nil,
+            diagnosticsSource: "sample-buffer"
+        )
+    }
+
+    public func applyNativeSampleBufferTracks(
+        audio: [MediaTrack],
+        subtitles: [MediaTrack],
+        selectedAudioTrackID discoveredAudioTrackID: String?,
+        selectedSubtitleTrackID discoveredSubtitleTrackID: String?
+    ) {
+        guard isNativePlayerActive, nativePlayerPlaybackSurface == .sampleBuffer else { return }
+        availableAudioTracks = audio
+        availableSubtitleTracks = subtitles
+        if selectedAudioTrackID == nil || !audio.contains(where: { $0.id == selectedAudioTrackID }) {
+            selectedAudioTrackID = discoveredAudioTrackID
+        }
+        if selectedSubtitleTrackID == nil || !subtitles.contains(where: { $0.id == selectedSubtitleTrackID }) {
+            selectedSubtitleTrackID = discoveredSubtitleTrackID
+        }
+    }
+
     private func isActivePlaybackTarget(itemID: String) -> Bool {
         guard currentItemID == itemID else { return false }
         guard let currentMediaItem else { return false }
@@ -465,6 +539,10 @@ public final class PlaybackSessionController {
     private var ttffResolveInterval: SignpostInterval?
     private var ttffFirstBytesInterval: SignpostInterval?
     private var startupWatchdogTask: Task<Void, Never>?
+    private var nativeSampleBufferStartupWatchdog = NativeSampleBufferStartupWatchdogState()
+    var isNativeSampleBufferStartupWatchdogArmed: Bool {
+        nativeSampleBufferStartupWatchdog.armedSessionID == playbackLogSessionID
+    }
     private var decodedFrameWatchdogTask: Task<Void, Never>?
     private var videoOutputPollTask: Task<Void, Never>?
     private var remoteProgressReportTask: Task<Void, Never>?
@@ -581,6 +659,7 @@ public final class PlaybackSessionController {
             availableAudioTracks: availableAudioTracks,
             availableSubtitleTracks: availableSubtitleTracks,
             selectedAudioTrackID: selectedAudioTrackID,
+            pendingAudioTrackID: pendingAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             activeSkipSuggestion: activeSkipSuggestion,
             trickplayManifest: activeTrickplayManifest,
@@ -633,6 +712,7 @@ public final class PlaybackSessionController {
         startPosition: PlaybackStartPosition = .resumeIfAvailable,
         forceNativeOriginalPlayback: Bool = false
     ) async throws {
+        lastPreparedSelection = nil
         currentItemID = item.id
         playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
         stopLocalMediaGateway(reason: "new_load")
@@ -677,6 +757,11 @@ public final class PlaybackSessionController {
         playbackHealth = playbackHealthMonitor.snapshot()
         fallbackRecommendation = nil
         startupTrace = PlaybackStartupTrace(userTappedPlayAt: loadStartDate)
+        startupStageTrace = PlaybackStartupStageTrace(sessionID: playbackLogSessionID)
+        markStartupStage("load-started")
+        if hasPlayerSurfacePresented {
+            markStartupStage("player-presented")
+        }
         playbackErrorMessage = nil
         isNativePlayerActive = false
         nativePlayerPlaybackSurface = .sampleBuffer
@@ -684,9 +769,12 @@ public final class PlaybackSessionController {
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
+        nativePlayerAudioTrackDisplayHints = []
+        nativePlayerSubtitleTrackDisplayHints = []
         currentPlaybackPlan = nil
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
+        nativeSampleBufferStartupWatchdog.reset()
         decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
@@ -782,6 +870,7 @@ public final class PlaybackSessionController {
             let resumeTimeTicks: Int64? = initialResumeSecs > 0 ? Int64(initialResumeSecs * 10_000_000) : nil
 
             if playbackConfig.nativePlayerConfig.enabled {
+                markStartupStage("native-resolution-started")
                 AppLog.playback.notice(
                     "nativeplayer.route.selected — \(self.playbackLogScope(), privacy: .public) surfacePreference=\(playbackConfig.nativePlayerConfig.surfacePreference.rawValue, privacy: .public) legacyCoordinator=false avPlayerItem=pending avPlayerViewController=pending profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)"
                 )
@@ -791,6 +880,7 @@ public final class PlaybackSessionController {
                     startTimeTicks: resumeTimeTicks,
                     autoPlay: autoPlay
                 )
+                markStartupStage("native-resolution-applied")
                 ttffInfoInterval?.end(name: "ttff_playback_info", message: "native_player_info_received")
                 ttffInfoInterval = nil
                 ttffResolveInterval?.end(name: "ttff_url_resolution", message: "native_player_prepared")
@@ -1710,7 +1800,8 @@ public final class PlaybackSessionController {
                     ],
                     routeDescription: "NativeEngine(failed)",
                     playbackErrorMessage: message
-                )
+                ),
+                armStartupWatchdog: false
             )
         }
     }
@@ -1816,6 +1907,8 @@ public final class PlaybackSessionController {
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
+        nativePlayerAudioTrackDisplayHints = []
+        nativePlayerSubtitleTrackDisplayHints = []
         await nativeBridgeSession?.invalidate()
         nativeBridgeSession = nil
         syntheticHLSSession = nil
@@ -2057,7 +2150,7 @@ public final class PlaybackSessionController {
             }
             return
         }
-        applyNativePlayerSnapshot(snapshot)
+        applyNativePlayerSnapshot(snapshot, armStartupWatchdog: autoPlay)
     }
 
     private func makeStartupPreheatTask(
@@ -2302,18 +2395,24 @@ public final class PlaybackSessionController {
         case serverBaseline(PlaybackServerNetworkBaseline.Result?)
     }
 
-    private func applyNativePlayerSnapshot(_ snapshot: NativePlayerPlaybackSnapshot) {
+    private func applyNativePlayerSnapshot(
+        _ snapshot: NativePlayerPlaybackSnapshot,
+        armStartupWatchdog: Bool
+    ) {
         isNativePlayerActive = true
         nativePlayerPlaybackSurface = snapshot.surface
         nativePlayerDiagnosticsOverlayLines = snapshot.overlayLines
         nativePlayerPlaybackURL = snapshot.playbackURL
         nativePlayerPlaybackHeaders = snapshot.playbackHeaders
         nativePlayerStartTimeSeconds = snapshot.startTimeSeconds
+        nativePlayerAudioTrackDisplayHints = snapshot.audioTrackDisplayHints
+        nativePlayerSubtitleTrackDisplayHints = snapshot.subtitleTrackDisplayHints
         routeDescription = snapshot.routeDescription
         playbackErrorMessage = snapshot.playbackErrorMessage
         availableAudioTracks = snapshot.audioTracks
         availableSubtitleTracks = snapshot.subtitleTracks
         selectedAudioTrackID = snapshot.selectedAudioTrackID
+        pendingAudioTrackID = nil
         selectedSubtitleTrackID = snapshot.selectedSubtitleTrackID
         playMethodForReporting = "NativeEngine"
         debugInfo = PlaybackDebugInfo(
@@ -2325,6 +2424,9 @@ public final class PlaybackSessionController {
             bitrate: nil,
             playMethod: "NativeEngine"
         )
+        if armStartupWatchdog, snapshot.surface == .sampleBuffer, snapshot.playbackErrorMessage == nil {
+            scheduleNativeSampleBufferStartupWatchdog()
+        }
         endTransportStateSnapshotBatch(commitNow: true)
     }
 
@@ -2379,6 +2481,7 @@ public final class PlaybackSessionController {
         lastPreparedSelection = selection
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
+        nativeSampleBufferStartupWatchdog.reset()
         decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
@@ -2977,6 +3080,7 @@ public final class PlaybackSessionController {
         availableAudioTracks = []
         availableSubtitleTracks = []
         selectedAudioTrackID = nil
+        pendingAudioTrackID = nil
         selectedSubtitleTrackID = nil
         routeDescription = ""
         debugInfo = nil
@@ -2990,6 +3094,8 @@ public final class PlaybackSessionController {
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
+        nativePlayerAudioTrackDisplayHints = []
+        nativePlayerSubtitleTrackDisplayHints = []
         playbackProof = PlaybackProofSnapshot()
         currentMediaItem = nil
         nextEpisodeQueue = []
@@ -3045,6 +3151,7 @@ public final class PlaybackSessionController {
 
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
+        nativeSampleBufferStartupWatchdog.reset()
         decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
@@ -3170,7 +3277,9 @@ public final class PlaybackSessionController {
 
     private func selectAudioTrack(_ track: MediaTrack) async {
         if isNativePlayerActive && nativePlayerPlaybackSurface == .sampleBuffer {
-            selectedAudioTrackID = track.id
+            guard selectedAudioTrackID != track.id,
+                  pendingAudioTrackID != track.id else { return }
+            pendingAudioTrackID = track.id
             AppLog.playback.info("nativeplayer.audio.selection_changed — status=requested")
             return
         }
@@ -3196,6 +3305,21 @@ public final class PlaybackSessionController {
             return
         }
         await reloadForAudioTrack(track)
+    }
+
+    public func commitNativeAudioTrackSelection(id: String) {
+        guard isNativePlayerActive,
+              nativePlayerPlaybackSurface == .sampleBuffer,
+              pendingAudioTrackID == id else { return }
+        selectedAudioTrackID = id
+        pendingAudioTrackID = nil
+        commitTransportStateSnapshotNow()
+    }
+
+    public func failNativeAudioTrackSelection(id: String) {
+        guard pendingAudioTrackID == id else { return }
+        pendingAudioTrackID = nil
+        commitTransportStateSnapshotNow()
     }
 
     /// Reload the current stream with a different AudioStreamIndex.
@@ -3975,8 +4099,22 @@ public final class PlaybackSessionController {
         if !avkitReadyForDisplay {
             guard size.width > 1, size.height > 1 else { return }
         }
+        commitFirstFrame(
+            currentSeconds: currentSeconds,
+            avPlayerItem: currentItem,
+            diagnosticsSource: "avplayer"
+        )
+    }
+
+    private func commitFirstFrame(
+        currentSeconds: Double,
+        avPlayerItem: AVPlayerItem?,
+        diagnosticsSource: String
+    ) {
+        guard !hasMarkedFirstFrame else { return }
         let firstFrameDate = Date()
         hasMarkedFirstFrame = true
+        _ = nativeSampleBufferStartupWatchdog.cancel(sessionID: playbackLogSessionID)
         self.firstFrameDate = firstFrameDate
         playbackErrorMessage = nil
         startupWatchdogTask?.cancel()
@@ -3990,6 +4128,9 @@ public final class PlaybackSessionController {
         playbackHealth = playbackHealthMonitor.recordStartup(firstFrameMs: totalTTFFMs)
         playbackProof.healthState = playbackHealth.state.rawValue
         startupTrace.firstFrameAt = firstFrameDate
+        if !startupStageTrace.samples.contains(where: { $0.stage == "first-frame" }) {
+            markStartupStage("first-frame")
+        }
         publishHealthFallbackIfNeeded()
         playbackDiagnostics.recordStartupTrace(startupTrace, guarantees: routeGuarantees)
         PlayerDeepEvidenceSink.append(
@@ -4001,15 +4142,21 @@ public final class PlaybackSessionController {
                 .currentSeconds: .decimal(currentSeconds),
             ]
         )
-        AppLog.nativeBridge.notice("[NB-DIAG] avplayer.first-frame — \(self.playbackLogScope(), privacy: .public) elapsedMs=\(playerStartupMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
-        emitLocalHLSStartupSummary(avplayerResult: "firstFrame")
-        firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
-        firstFrameInterval = nil
+        AppLog.nativeBridge.notice("[NB-DIAG] playback.first-frame — \(self.playbackLogScope(), privacy: .public) source=\(diagnosticsSource, privacy: .public) elapsedMs=\(playerStartupMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
+        if avPlayerItem != nil {
+            emitLocalHLSStartupSummary(avplayerResult: "firstFrame")
+            firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
+            firstFrameInterval = nil
+        }
         ttffPipelineInterval?.end(name: "ttff_total", message: "complete")
         ttffPipelineInterval = nil
-        applyDeferredResumeSeekIfNeeded()
+        if avPlayerItem != nil {
+            applyDeferredResumeSeekIfNeeded()
+        }
         rememberWorkingProfileForCurrentItem()
-        applyDirectPlaySteadyStateBufferingIfNeeded()
+        if avPlayerItem != nil {
+            applyDirectPlaySteadyStateBufferingIfNeeded()
+        }
 
         // Structured TTFF pipeline summary
         let method = playMethodForReporting
@@ -4039,7 +4186,9 @@ public final class PlaybackSessionController {
             NativeBridgeFailureCache.clearFailure(itemID: itemID)
         }
 
-        applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for: currentItem)
+        if let avPlayerItem {
+            applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for: avPlayerItem)
+        }
     }
 
     private func applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for item: AVPlayerItem) {
@@ -5680,6 +5829,57 @@ public final class PlaybackSessionController {
         }
     }
 
+    private func scheduleNativeSampleBufferStartupWatchdog() {
+        startupWatchdogTask?.cancel()
+        let sessionID = playbackLogSessionID
+        let itemID = currentItemID
+        nativeSampleBufferStartupWatchdog.arm(sessionID: sessionID)
+        startupWatchdogTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let delay = self.startupWatchdogDelayNanoseconds()
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            await self.handleNativeSampleBufferStartupWatchdogTimeout(
+                sessionID: sessionID,
+                itemID: itemID
+            )
+        }
+    }
+
+    func expireNativeSampleBufferStartupWatchdogNow() async {
+        await handleNativeSampleBufferStartupWatchdogTimeout(
+            sessionID: playbackLogSessionID,
+            itemID: currentItemID
+        )
+    }
+
+    private func handleNativeSampleBufferStartupWatchdogTimeout(
+        sessionID: String,
+        itemID: String?
+    ) async {
+        guard nativeSampleBufferStartupWatchdog.consumeTimeout(sessionID: sessionID),
+                  self.playbackLogSessionID == sessionID,
+                  self.currentItemID == itemID,
+                  self.isNativePlayerActive,
+                  self.nativePlayerPlaybackSurface == .sampleBuffer,
+                  !self.hasMarkedFirstFrame
+        else { return }
+
+        let reason = StartupFailureReason.readyButNoVideoFrame
+        playbackErrorMessage = "No video frame received from the native player. Retrying playback."
+        playbackHealth = playbackHealthMonitor.markRouteFailed()
+        playbackProof.healthState = playbackHealth.state.rawValue
+        playbackDiagnostics.recordHealth(playbackHealth)
+        markStartupStage("first-frame-timeout")
+        AppLog.playback.error(
+            "nativeplayer.sampleBuffer.startup_timeout — \(self.playbackLogScope(), privacy: .public) reason=\(reason.rawValue, privacy: .public)"
+        )
+        _ = await attemptRecoveryPreservingDirectPlay(
+            reason: reason.rawValue,
+            userMessage: "No native video frame was rendered. Retrying playback."
+        )
+    }
+
     private func scheduleDecodedFrameWatchdog() {
         decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = Task { @MainActor [weak self] in
@@ -6940,6 +7140,14 @@ public final class PlaybackSessionController {
     }
 
     private func nativeCoordinatorFallbackReason(forRecoveryReason reason: String) -> String? {
+        if Self.shouldAllowSampleBufferCoordinatorFallback(
+            reason: reason,
+            isNativePlayerActive: isNativePlayerActive,
+            nativeSurface: nativePlayerPlaybackSurface
+        ) {
+            return reason
+        }
+
         if Self.shouldAllowNativeModeCoordinatorFallback(
             reason: reason,
             rootReason: nativeModeCoordinatorFallbackRootReason
@@ -8912,6 +9120,15 @@ public final class PlaybackSessionController {
         default:
             return false
         }
+    }
+
+    nonisolated static func shouldAllowSampleBufferCoordinatorFallback(
+        reason: String,
+        isNativePlayerActive: Bool,
+        nativeSurface: NativePlayerPlaybackSurface
+    ) -> Bool {
+        guard isNativePlayerActive, nativeSurface == .sampleBuffer else { return false }
+        return StartupFailureReason(rawValue: reason) == .readyButNoVideoFrame
     }
 
     nonisolated static func shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(reason: String) -> Bool {

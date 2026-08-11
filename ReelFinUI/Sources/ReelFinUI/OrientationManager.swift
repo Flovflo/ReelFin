@@ -14,6 +14,7 @@ public final class OrientationManager {
     }
 
     public func lockLandscapeForPlayerPresentation(requestGeometryUpdate: Bool = true) {
+        guard lock != .landscape else { return }
         lock = .landscape
         updateSupportedOrientations()
 

@@ -239,6 +239,153 @@ final class NativePlayerSessionRoutingTests: XCTestCase {
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.enableDirectStream, false)
     }
 
+    func testSampleBufferFirstVideoFrameCommitsTTFFMetricsAndStageExactlyOnce() async throws {
+        let enabledKey = NativePlayerRuntimeDefaults.enabledKey
+        let surfaceKey = NativePlayerRuntimeDefaults.surfacePreferenceKey
+        let previousEnabledOverride = UserDefaults.standard.object(forKey: enabledKey)
+        let previousSurfaceOverride = UserDefaults.standard.object(forKey: surfaceKey)
+        UserDefaults.standard.set(true, forKey: enabledKey)
+        UserDefaults.standard.set(NativePlayerSurfacePreference.customPlayer.rawValue, forKey: surfaceKey)
+        defer {
+            if let previousEnabledOverride {
+                UserDefaults.standard.set(previousEnabledOverride, forKey: enabledKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: enabledKey)
+            }
+            if let previousSurfaceOverride {
+                UserDefaults.standard.set(previousSurfaceOverride, forKey: surfaceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: surfaceKey)
+            }
+        }
+
+        let itemID = "item-sample-buffer-first-frame"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream.mp4")
+        try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let apiClient = NativeSessionRoutingAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: root,
+                nativePlayerConfig: NativePlayerConfig(enabled: false, surfacePreference: .directPlayWhenPossible)
+            ),
+            source: MediaSource(
+                id: "source-sample-buffer-first-frame",
+                itemID: itemID,
+                name: "Original",
+                fileSize: Int64((try? FileManager.default.attributesOfItem(atPath: streamURL.path)[.size] as? NSNumber)?.intValue ?? 0),
+                container: "mp4",
+                videoCodec: "h264",
+                audioCodec: "aac",
+                supportsDirectPlay: false,
+                supportsDirectStream: false
+            )
+        )
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: NativeSessionRoutingRepository())
+        try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: true)
+
+        XCTAssertTrue(controller.isNativePlayerActive)
+        XCTAssertTrue(controller.isNativeSampleBufferStartupWatchdogArmed)
+        XCTAssertNil(controller.metrics.timeToFirstFrameMs)
+        XCTAssertNil(controller.startupTrace.firstFrameAt)
+        XCTAssertTrue(controller.startupStageTrace.samples.filter { $0.stage == "first-frame" }.isEmpty)
+
+        controller.currentTime = 1.25
+        XCTAssertTrue(controller.isNativeSampleBufferStartupWatchdogArmed, "playback-time updates are not video-frame proof")
+        controller.markNativeSampleBufferFirstFrame()
+
+        let committedMetric = try XCTUnwrap(controller.metrics.timeToFirstFrameMs)
+        let committedDate = try XCTUnwrap(controller.startupTrace.firstFrameAt)
+        XCTAssertGreaterThanOrEqual(committedMetric, 0)
+        XCTAssertEqual(controller.startupStageTrace.samples.filter { $0.stage == "first-frame" }.count, 1)
+        XCTAssertFalse(controller.isNativeSampleBufferStartupWatchdogArmed)
+
+        controller.currentTime = 2.5
+        controller.markNativeSampleBufferFirstFrame()
+
+        XCTAssertEqual(controller.metrics.timeToFirstFrameMs, committedMetric)
+        XCTAssertEqual(controller.startupTrace.firstFrameAt, committedDate)
+        XCTAssertEqual(controller.startupStageTrace.samples.filter { $0.stage == "first-frame" }.count, 1)
+    }
+
+    func testSampleBufferStartupWatchdogTimeoutPerformsOneSessionScopedRecoveryAndStopDisarmsIt() async throws {
+        var state = NativeSampleBufferStartupWatchdogState()
+        state.arm(sessionID: "old")
+        XCTAssertFalse(state.cancel(sessionID: "new"))
+        XCTAssertFalse(state.consumeTimeout(sessionID: "new"))
+        XCTAssertEqual(state.armedSessionID, "old")
+        XCTAssertTrue(state.cancel(sessionID: "old"))
+
+        let enabledKey = NativePlayerRuntimeDefaults.enabledKey
+        let surfaceKey = NativePlayerRuntimeDefaults.surfacePreferenceKey
+        let previousEnabledOverride = UserDefaults.standard.object(forKey: enabledKey)
+        let previousSurfaceOverride = UserDefaults.standard.object(forKey: surfaceKey)
+        UserDefaults.standard.set(false, forKey: enabledKey)
+        UserDefaults.standard.set(NativePlayerSurfacePreference.customPlayer.rawValue, forKey: surfaceKey)
+        defer {
+            if let previousEnabledOverride { UserDefaults.standard.set(previousEnabledOverride, forKey: enabledKey) }
+            else { UserDefaults.standard.removeObject(forKey: enabledKey) }
+            if let previousSurfaceOverride { UserDefaults.standard.set(previousSurfaceOverride, forKey: surfaceKey) }
+            else { UserDefaults.standard.removeObject(forKey: surfaceKey) }
+        }
+
+        let itemID = "item-sample-buffer-watchdog"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let streamURL = root.appendingPathComponent("Videos").appendingPathComponent(itemID).appendingPathComponent("stream.mp4")
+        try FileManager.default.createDirectory(at: streamURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let apiClient = NativeSessionRoutingAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: root,
+                nativePlayerConfig: NativePlayerConfig(enabled: false, surfacePreference: .directPlayWhenPossible)
+            ),
+            source: MediaSource(
+                id: "source-sample-buffer-watchdog", itemID: itemID, name: "Original",
+                container: "mp4", videoCodec: "h264", audioCodec: "aac",
+                supportsDirectPlay: true, supportsDirectStream: false
+            )
+        )
+        let controller = PlaybackSessionController(apiClient: apiClient, repository: NativeSessionRoutingRepository())
+        try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: false)
+        XCTAssertFalse(controller.isNativePlayerActive)
+
+        UserDefaults.standard.set(true, forKey: enabledKey)
+        try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: true)
+        XCTAssertTrue(controller.isNativeSampleBufferStartupWatchdogArmed)
+        let requestsBeforeTimeout = apiClient.playbackSourceRequestCount
+
+        await controller.expireNativeSampleBufferStartupWatchdogNow()
+
+        XCTAssertFalse(controller.isNativeSampleBufferStartupWatchdogArmed)
+        XCTAssertEqual(
+            apiClient.playbackSourceRequestCount,
+            requestsBeforeTimeout + 1,
+            "timeout must perform one bounded coordinator recovery, not reuse a stale prior-load selection"
+        )
+        XCTAssertNil(controller.playbackErrorMessage)
+        XCTAssertFalse(controller.isNativePlayerActive, "successful fallback must leave the failed sample-buffer route")
+        let recoveredAsset = try XCTUnwrap(controller.player.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(recoveredAsset.url.lastPathComponent, "master.m3u8")
+        XCTAssertTrue(recoveredAsset.url.query?.contains("VideoCodec=h264") == true)
+        XCTAssertEqual(controller.startupStageTrace.samples.filter { $0.stage == "first-frame-timeout" }.count, 1)
+
+        try await controller.load(item: MediaItem(id: itemID, name: "Fixture", mediaType: .movie), autoPlay: true)
+        XCTAssertTrue(controller.isNativeSampleBufferStartupWatchdogArmed)
+        let timeoutStageCountBeforeStop = controller.startupStageTrace.samples.filter { $0.stage == "first-frame-timeout" }.count
+        controller.stop()
+        XCTAssertFalse(controller.isNativeSampleBufferStartupWatchdogArmed)
+        await controller.expireNativeSampleBufferStartupWatchdogNow()
+        XCTAssertNil(controller.playbackErrorMessage)
+        XCTAssertEqual(
+            controller.startupStageTrace.samples.filter { $0.stage == "first-frame-timeout" }.count,
+            timeoutStageCountBeforeStop,
+            "a stopped session must ignore stale watchdog delivery"
+        )
+    }
+
     func testNativeDirectPlayResumeSeeksWhenItemBecomesReadyBeforeAutoplay() async throws {
         let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
         let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
@@ -412,6 +559,7 @@ private final class NativeSessionRoutingAPIClient: JellyfinAPIClientProtocol, @u
     private(set) var lastPlaybackInfoOptions: PlaybackInfoOptions?
     private let lock = NSLock()
     private var _stoppedUpdates: [PlaybackProgressUpdate] = []
+    private var _playbackSourceRequestCount = 0
 
     init(configuration: ServerConfiguration, source: MediaSource, stoppedExpectation: XCTestExpectation? = nil) {
         self.configuration = configuration
@@ -427,6 +575,10 @@ private final class NativeSessionRoutingAPIClient: JellyfinAPIClientProtocol, @u
             defer { lock.unlock() }
             return _stoppedUpdates
         }
+    }
+
+    var playbackSourceRequestCount: Int {
+        lock.withLock { _playbackSourceRequestCount }
     }
 
     func currentConfiguration() async -> ServerConfiguration? { configuration }
@@ -445,9 +597,15 @@ private final class NativeSessionRoutingAPIClient: JellyfinAPIClientProtocol, @u
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] { [] }
     func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? { nil }
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] { [] }
-    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] { [source] }
+    func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
+        lock.withLock { _playbackSourceRequestCount += 1 }
+        return [source]
+    }
     func fetchPlaybackSources(itemID: String, options: PlaybackInfoOptions) async throws -> [MediaSource] {
-        lastPlaybackInfoOptions = options
+        lock.withLock {
+            _playbackSourceRequestCount += 1
+            lastPlaybackInfoOptions = options
+        }
         return [source]
     }
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? { nil }
