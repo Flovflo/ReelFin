@@ -10,14 +10,11 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     }
 
     private enum PlaybackLiveSmokeError: Error, LocalizedError {
-        case explicitTargetNotVisible
         case requiredControlMissing(String)
         case requiredMenuMissing(String)
 
         var errorDescription: String? {
             switch self {
-            case .explicitTargetNotVisible:
-                return "Explicit live UI target scenario was not visible in Home; refusing fallback playback."
             case .requiredControlMissing(let label):
                 return "Expected required live player control '\(label)' to be visible."
             case .requiredMenuMissing(let identifier):
@@ -192,10 +189,10 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         XCTAssertTrue(waitForHome(in: app))
         dismissCredentialSavePromptIfNeeded(in: app, timeout: 1)
 
-        if shouldOpenExplicitTargetDirectly() {
+        if shouldOpenScenarioTargetDirectly() {
             XCTAssertTrue(
                 waitForDetail(in: app, timeout: 45),
-                "Expected the app to open the explicit live UI target detail."
+                "Expected the app to resolve and open the live UI scenario detail."
             )
         } else {
             let targetCard = try selectCard(in: app, preferredKinds: preferredKinds, scenario: scenario)
@@ -523,7 +520,7 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         return ["1", "true", "yes", "on"].contains(value.lowercased())
     }
 
-    private func shouldOpenExplicitTargetDirectly() -> Bool {
+    private func shouldOpenScenarioTargetDirectly() -> Bool {
         let value = loadEnvironmentValues()["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] ?? ""
         return ["1", "true", "yes", "on"].contains(value.lowercased())
     }
@@ -533,16 +530,6 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         preferredKinds: [String],
         scenario: String
     ) throws -> XCUIElement {
-        if let explicitItemID = explicitTargetItemID() {
-            let explicitCandidate = app.buttons.matching(
-                NSPredicate(format: "identifier CONTAINS %@", explicitItemID)
-            ).firstMatch
-            if explicitCandidate.waitForExistence(timeout: 30) {
-                return explicitCandidate
-            }
-            throw PlaybackLiveSmokeError.explicitTargetNotVisible
-        }
-
         for kind in preferredKinds {
             let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_\(kind)_")
             let candidates = app.buttons.matching(predicate)
@@ -637,32 +624,6 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         }
 
         return carousel.exists || favoriteButton.exists || watchedButton.exists
-    }
-
-    private func explicitTargetItemID() -> String? {
-        let environment = loadEnvironmentValues()
-        guard let scenario = environment["REELFIN_LIVE_UI_TARGET_SCENARIO"] else { return nil }
-        let key: String
-        switch scenario {
-        case "directplay-mp4": key = "TEST_DIRECTPLAY_MP4_ITEM_ID"
-        case "directplay-hdr-dv-long": key = "TEST_DOLBY_VISION_ITEM_ID"
-        case "samplebuffer-mkv": key = "TEST_MKV_ITEM_ID"
-        default: return nil
-        }
-        return environment[key].flatMap(normalizedItemID)
-    }
-
-    private func normalizedItemID(_ raw: String) -> String? {
-        let patterns = [
-            #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
-            #"[0-9a-fA-F]{32}"#
-        ]
-        for pattern in patterns {
-            if let range = raw.range(of: pattern, options: .regularExpression) {
-                return raw[range].filter { $0 != "-" }.lowercased()
-            }
-        }
-        return nil
     }
 
     private func tapElement(_ element: XCUIElement) {
@@ -849,10 +810,7 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             "REELFIN_LIVE_UI_FORCE_LEGACY",
             "REELFIN_NATIVE_PLAYER",
             "REELFIN_PLAYER_DEEP_EVIDENCE",
-            "REELFIN_PLAYER_DEEP_EVIDENCE_RESET",
-            "TEST_DIRECTPLAY_MP4_ITEM_ID",
-            "TEST_DOLBY_VISION_ITEM_ID",
-            "TEST_MKV_ITEM_ID"
+            "REELFIN_PLAYER_DEEP_EVIDENCE_RESET"
         ] {
             guard let value = environment[key], !value.isEmpty else { continue }
             app.launchEnvironment[key] = value

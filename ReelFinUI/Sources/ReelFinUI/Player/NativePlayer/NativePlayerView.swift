@@ -10,6 +10,7 @@ struct NativePlayerView: View {
     let startTimeSeconds: Double?
     let item: MediaItem
     let diagnostics: [String]
+    let evidenceContext: NativePlayerEvidenceContext?
     let errorMessage: String?
     let audioTrackDisplayHints: [Shared.MediaTrack]
     let subtitleTrackDisplayHints: [Shared.MediaTrack]
@@ -47,7 +48,6 @@ struct NativePlayerView: View {
     @State private var isViewActive = false
     @State private var lastDeepEvidenceLogDate: Date?
     @State private var lastDeepEvidencePlaybackTime: Double?
-    @State private var deepEvidenceSessionID = AppLogFormat.randomSessionIdentifier()
     @State private var accessibilityEvidence = PlayerAccessibilityEvidenceState()
     @State private var accessibilityEvidenceExpiryTask: Task<Void, Never>?
 #if os(tvOS)
@@ -278,6 +278,10 @@ struct NativePlayerView: View {
             liveDiagnostics = []
             accessibilityEvidence.reset()
             revealChrome()
+        }
+        .onChange(of: evidenceContext) { _, _ in
+            lastDeepEvidenceLogDate = nil
+            lastDeepEvidencePlaybackTime = nil
         }
         .onChange(of: isPaused) { _, _ in
             accessibilityEvidence.setTransportState(accessibilityTransportState)
@@ -781,7 +785,9 @@ struct NativePlayerView: View {
         rows: [String],
         now: Date
     ) {
-        guard Self.isDeepPlaybackEvidenceEnabled, seconds.isFinite else { return }
+        guard Self.isDeepPlaybackEvidenceEnabled,
+              seconds.isFinite,
+              let evidenceContext else { return }
         if let lastLogDate = lastDeepEvidenceLogDate,
            now.timeIntervalSince(lastLogDate) < Self.deepEvidenceIntervalSeconds {
             return
@@ -808,8 +814,9 @@ struct NativePlayerView: View {
         let dvProfile = Self.value(named: "dvProfile", in: hdrLine) ?? "none"
         PlayerDeepEvidenceSink.append(
             event: .sampleBufferTick,
-            session: deepEvidenceSessionID,
-            media: AppLogFormat.correlationIdentifier(item.id, domain: .media),
+            session: evidenceContext.session,
+            media: evidenceContext.media,
+            source: evidenceContext.source,
             fields: [
                 .currentSeconds: .decimal(seconds),
                 .deltaSeconds: .decimal(delta),
@@ -828,7 +835,7 @@ struct NativePlayerView: View {
         )
 
         AppLog.playback.info(
-            "nativeplayer.deep.tick — session=\(self.deepEvidenceSessionID, privacy: .public) media=\(AppLogFormat.correlationIdentifier(self.item.id, domain: .media), privacy: .public) current=\(seconds, format: .fixed(precision: 3)) delta=\(delta, format: .fixed(precision: 3)) state=\(Self.value(named: "state", in: rows) ?? "unknown", privacy: .public) videoPackets=\(videoPackets, privacy: .public) audioPackets=\(audioPackets, privacy: .public) audioSamples=\(audioSamples, privacy: .public) audioRenderer=\(audioRenderer, privacy: .public) droppedFrames=\(droppedFrames, privacy: .public) audioUnderruns=\(audioUnderruns, privacy: .public) audioRebuffers=\(audioRebuffers, privacy: .public) avDriftMs=\(avDriftMs, privacy: .public) hdr=\(hdr, privacy: .public) dvProfile=\(dvProfile, privacy: .public)"
+            "nativeplayer.deep.tick — session=\(evidenceContext.session, privacy: .public) media=\(evidenceContext.media, privacy: .public) source=\(evidenceContext.source, privacy: .public) current=\(seconds, format: .fixed(precision: 3)) delta=\(delta, format: .fixed(precision: 3)) state=\(Self.value(named: "state", in: rows) ?? "unknown", privacy: .public) videoPackets=\(videoPackets, privacy: .public) audioPackets=\(audioPackets, privacy: .public) audioSamples=\(audioSamples, privacy: .public) audioRenderer=\(audioRenderer, privacy: .public) droppedFrames=\(droppedFrames, privacy: .public) audioUnderruns=\(audioUnderruns, privacy: .public) audioRebuffers=\(audioRebuffers, privacy: .public) avDriftMs=\(avDriftMs, privacy: .public) hdr=\(hdr, privacy: .public) dvProfile=\(dvProfile, privacy: .public)"
         )
     }
 

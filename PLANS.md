@@ -783,6 +783,7 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Store opt-in evidence under `Library/Caches/ReelFin/Diagnostics` with owner-only modes (`0700`/`0600`) and complete file protection. Serialize prepare/rollover/append, reject oversized records, reset deterministically, and enforce an exact 1 MiB total ceiling before each append.
 - Correlate E2E artifacts by scenario, random session, and opaque media identity. Remove raw item identifiers from command-line selectors, resume-state fields, target environment values, and diagnostic output while resolving live fixture IDs internally from a closed scenario.
 - Require RED/GREEN and mutations for keyed/domain-separated correlation, session opacity, schema/category rejection, malicious strings, storage/protection/reset/rollover/concurrency, raw public sinks, and raw CLI selectors. Final acceptance includes focused Swift and isolated-`uv` script tests, syntax and source scans, XcodeGen, and iOS/tvOS simulator builds; live Jellyfin execution remains outside this task.
+- Reviewer follow-up requires one controller-created evidence context to survive snapshot/session/view handoff and key sample-buffer plan/route/tick validation by scenario/session/media/source. The app launch boundary carries only a closed scenario; fixture identifiers stay runner/server-side. Apple-native overlays must expose only source correlations, with mismatch, source-canary, and returned-line mutation coverage.
 
 ## Build 17 Native Episode Startup And Audio Switching - 2026-08-11
 

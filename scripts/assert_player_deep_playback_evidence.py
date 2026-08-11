@@ -164,9 +164,11 @@ class AVPlayerSessionEvidence:
 @dataclass
 class SampleBufferEvidence:
     scenario: str
+    session_id: str
     media_correlation: str
-    plan_sources: set[str] = field(default_factory=set)
-    route_sources: set[str] = field(default_factory=set)
+    source_correlation: str
+    has_plan: bool = False
+    has_route: bool = False
     tick_count: int = 0
     has_video_packets: bool = False
     has_audio_packets: bool = False
@@ -176,7 +178,7 @@ class SampleBufferEvidence:
 
     @property
     def has_plan_and_route(self) -> bool:
-        return bool(self.plan_sources.intersection(self.route_sources))
+        return self.has_plan and self.has_route
 
     @property
     def has_audio(self) -> bool:
@@ -318,19 +320,20 @@ def update_samplebuffer(
     record: dict[str, Any],
 ) -> None:
     media = record.get("media")
-    if not isinstance(media, str):
-        return
-    key = f"{scenario}:{media}"
-    evidence = sessions.setdefault(key, SampleBufferEvidence(scenario, media))
-    event = record["event"]
     source = record.get("source")
-    if event == "plan" and record.get("canStart") is True and isinstance(source, str):
+    if not isinstance(media, str) or not isinstance(source, str):
+        return
+    session_id = record["session"]
+    key = f"{scenario}:{session_id}:{media}:{source}"
+    evidence = sessions.setdefault(key, SampleBufferEvidence(scenario, session_id, media, source))
+    event = record["event"]
+    if event == "plan" and record.get("canStart") is True:
         video = record.get("videoBackend")
         audio = record.get("audioBackend")
         if video not in {None, "none", "unknown", "unavailable"} and audio not in {None, "none", "unknown", "unavailable"}:
-            evidence.plan_sources.add(source)
-    elif event == "routeSelection" and record.get("route") == "sampleBuffer" and isinstance(source, str):
-        evidence.route_sources.add(source)
+            evidence.has_plan = True
+    elif event == "routeSelection" and record.get("route") == "sampleBuffer":
+        evidence.has_route = True
     elif event == "sampleBufferTick":
         evidence.tick_count += 1
         evidence.has_video_packets |= int(record.get("videoPackets", 0)) > 0
@@ -441,8 +444,13 @@ def evaluate_paths(paths: list[Path], config: EvidenceConfig) -> EvidenceResult:
 
     if config.require_samplebuffer:
         complete = [evidence for evidence in samplebuffer.values() if evidence.has_plan_and_route and evidence.tick_count]
+        if not complete:
+            findings.append(Finding(
+                "samplebuffer_correlated_evidence_missing",
+                "No scenario/session/media/source has a correlated sample-buffer plan, route, and tick",
+            ))
         if not any(evidence.has_plan_and_route for evidence in samplebuffer.values()):
-            findings.append(Finding("samplebuffer_plan_route_evidence_missing", "No scenario/media has a correlated sample-buffer plan and route"))
+            findings.append(Finding("samplebuffer_plan_route_evidence_missing", "No scenario/session/media/source has a correlated sample-buffer plan and route"))
         if not benchmark_contract:
             findings.append(Finding("samplebuffer_benchmark_contract_missing", "No sample-buffer benchmark contract pass found"))
         if not any(evidence.tick_count for evidence in samplebuffer.values()):

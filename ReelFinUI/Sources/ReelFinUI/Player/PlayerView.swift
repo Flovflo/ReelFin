@@ -24,6 +24,7 @@ struct PlayerView: View {
                     startTimeSeconds: session.nativePlayerStartTimeSeconds,
                     item: item,
                     diagnostics: session.nativePlayerDiagnosticsOverlayLines,
+                    evidenceContext: session.nativePlayerEvidenceContext,
                     errorMessage: session.playbackErrorMessage,
                     audioTrackDisplayHints: session.nativePlayerAudioTrackDisplayHints,
                     subtitleTrackDisplayHints: session.nativePlayerSubtitleTrackDisplayHints,

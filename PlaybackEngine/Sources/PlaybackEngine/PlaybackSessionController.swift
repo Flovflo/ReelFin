@@ -313,6 +313,7 @@ public final class PlaybackSessionController {
     public private(set) var isNativePlayerActive = false
     public private(set) var nativePlayerPlaybackSurface: NativePlayerPlaybackSurface = .sampleBuffer
     public private(set) var nativePlayerDiagnosticsOverlayLines: [String] = []
+    public private(set) var nativePlayerEvidenceContext: NativePlayerEvidenceContext?
     public private(set) var nativePlayerPlaybackURL: URL?
     public private(set) var nativePlayerPlaybackHeaders: [String: String] = [:]
     public private(set) var nativePlayerStartTimeSeconds: Double?
@@ -766,6 +767,7 @@ public final class PlaybackSessionController {
         isNativePlayerActive = false
         nativePlayerPlaybackSurface = .sampleBuffer
         nativePlayerDiagnosticsOverlayLines = []
+        nativePlayerEvidenceContext = nil
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
@@ -1904,6 +1906,7 @@ public final class PlaybackSessionController {
         isNativePlayerActive = false
         nativePlayerPlaybackSurface = .appleNative
         nativePlayerDiagnosticsOverlayLines = []
+        nativePlayerEvidenceContext = nil
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
@@ -1987,6 +1990,7 @@ public final class PlaybackSessionController {
             isNativePlayerActive = false
             nativePlayerPlaybackSurface = .appleNative
             nativePlayerDiagnosticsOverlayLines = []
+            nativePlayerEvidenceContext = nil
             nativePlayerPlaybackURL = nil
             nativePlayerPlaybackHeaders = [:]
             nativePlayerStartTimeSeconds = nil
@@ -2402,6 +2406,7 @@ public final class PlaybackSessionController {
         isNativePlayerActive = true
         nativePlayerPlaybackSurface = snapshot.surface
         nativePlayerDiagnosticsOverlayLines = snapshot.overlayLines
+        nativePlayerEvidenceContext = snapshot.evidenceContext
         nativePlayerPlaybackURL = snapshot.playbackURL
         nativePlayerPlaybackHeaders = snapshot.playbackHeaders
         nativePlayerStartTimeSeconds = snapshot.startTimeSeconds
@@ -3091,6 +3096,7 @@ public final class PlaybackSessionController {
         playbackErrorMessage = nil
         isNativePlayerActive = false
         nativePlayerDiagnosticsOverlayLines = []
+        nativePlayerEvidenceContext = nil
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil

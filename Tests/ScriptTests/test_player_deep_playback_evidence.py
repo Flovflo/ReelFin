@@ -94,7 +94,12 @@ class PlayerDeepPlaybackEvidenceTests(unittest.TestCase):
         )
         return "\n".join(lines)
 
-    def samplebuffer_evidence(self) -> str:
+    def samplebuffer_evidence(
+        self,
+        *,
+        tick_session: str | None = None,
+        tick_source: str | None = None,
+    ) -> str:
         return "\n".join(
             [
                 self.record(
@@ -119,8 +124,9 @@ class PlayerDeepPlaybackEvidenceTests(unittest.TestCase):
                 ),
                 self.record(
                     "sampleBufferTick",
-                    self.sample_session,
+                    tick_session or self.sample_session,
                     media=self.sample_media,
+                    source=tick_source or self.sample_source,
                     currentSeconds=6.0,
                     deltaSeconds=6.0,
                     state="playing",
@@ -208,6 +214,34 @@ class PlayerDeepPlaybackEvidenceTests(unittest.TestCase):
         result = self.evaluate({"ios-live-ui-runtime.stream": evidence})
 
         self.assertIn("avplayer_startup_evidence_incomplete", result.finding_labels())
+
+    def test_samplebuffer_tick_from_another_session_does_not_complete_route_evidence(self) -> None:
+        result = self.evaluate(
+            {
+                "ios-live-ui-runtime.stream": self.avplayer_evidence(),
+                "ios-live-ui-samplebuffer-runtime.stream": self.samplebuffer_evidence(
+                    tick_session="aaaaaaaaaaaaaaaa"
+                ),
+                "original-stream-benchmark.log": "PASS mkv_original api=NativeEngine+AVSampleBufferDisplayLayer container=mkv video=hevc audio=eac3",
+            },
+            require_samplebuffer=True,
+        )
+
+        self.assertIn("samplebuffer_correlated_evidence_missing", result.finding_labels())
+
+    def test_samplebuffer_tick_from_another_source_does_not_complete_route_evidence(self) -> None:
+        result = self.evaluate(
+            {
+                "ios-live-ui-runtime.stream": self.avplayer_evidence(),
+                "ios-live-ui-samplebuffer-runtime.stream": self.samplebuffer_evidence(
+                    tick_source="bbbbbbbbbbbbbbbb"
+                ),
+                "original-stream-benchmark.log": "PASS mkv_original api=NativeEngine+AVSampleBufferDisplayLayer container=mkv video=hevc audio=eac3",
+            },
+            require_samplebuffer=True,
+        )
+
+        self.assertIn("samplebuffer_correlated_evidence_missing", result.finding_labels())
 
     def test_rejects_raw_identity_free_text_unknown_fields_and_malformed_correlations(self) -> None:
         malicious = "\n".join(
@@ -316,6 +350,34 @@ class PlayerRunnerIdentityContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, combined)
         self.assertIn("--require-avplayer-scenario", runner)
         self.assertIn("REELFIN_LIVE_UI_TARGET_SCENARIO", runner)
+
+    def test_app_launch_contract_forwards_only_closed_scenario_not_fixture_item_ids(self) -> None:
+        runner = (SCRIPTS_DIR / "run_reelfin_player_e2e.sh").read_text(encoding="utf-8")
+        home = (REPO_ROOT / "ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift").read_text(encoding="utf-8")
+        ui_test = (REPO_ROOT / "Tests/ReelFinUITests/PlaybackLiveSmokeUITests.swift").read_text(encoding="utf-8")
+
+        self.assertNotRegex(runner, r"SIMCTL_CHILD_TEST_[A-Z0-9_]*ITEM_ID")
+        self.assertNotRegex(home, r"TEST_[A-Z0-9_]*ITEM_ID")
+        self.assertNotIn("explicitTargetItemID", ui_test)
+        self.assertNotRegex(ui_test, r'"TEST_[A-Z0-9_]*ITEM_ID"')
+        self.assertIn("REELFIN_LIVE_UI_TARGET_SCENARIO", runner)
+        self.assertIn("REELFIN_LIVE_UI_TARGET_SCENARIO", home)
+
+    def test_trusted_samplebuffer_handoff_emits_plan_and_route_with_snapshot_context(self) -> None:
+        controller = (
+            REPO_ROOT
+            / "PlaybackEngine/Sources/PlaybackEngine/NativePlayer/NativePlayerPlaybackController.swift"
+        ).read_text(encoding="utf-8")
+        handoff = controller.split("private func makeTrustedNativeHandoffSnapshot", 1)[1].split(
+            "private func prepareResolved", 1
+        )[0]
+
+        self.assertIn("event: .plan", handoff)
+        self.assertIn("event: .routeSelection", handoff)
+        self.assertGreaterEqual(handoff.count("session: evidenceContext.session"), 2)
+        self.assertGreaterEqual(handoff.count("media: evidenceContext.media"), 2)
+        self.assertGreaterEqual(handoff.count("source: evidenceContext.source"), 2)
+        self.assertIn("evidenceContext: evidenceContext", handoff)
 
 
 if __name__ == "__main__":

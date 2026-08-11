@@ -2009,39 +2009,19 @@ struct HomeView: View {
 #endif
 
 #if os(iOS) || os(tvOS)
-    private var liveUITestTargetItemID: String? {
+    private var liveUITestScenario: LiveUIPlaybackScenario? {
+#if DEBUG
         guard isLiveUITestDirectTargetOpenEnabled else { return nil }
-        let environment = ProcessInfo.processInfo.environment
-        let key: String
-        switch environment["REELFIN_LIVE_UI_TARGET_SCENARIO"] {
-        case "directplay-mp4": key = "TEST_DIRECTPLAY_MP4_ITEM_ID"
-        case "directplay-hdr-dv-long": key = "TEST_DOLBY_VISION_ITEM_ID"
-        case "samplebuffer-mkv": key = "TEST_MKV_ITEM_ID"
-        default: return nil
-        }
-        let rawValue = environment[key] ?? ""
-        return normalizedLiveUITestItemID(rawValue)
+        let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_TARGET_SCENARIO"] ?? ""
+        return LiveUIPlaybackScenario(rawValue: rawValue)
+#else
+        return nil
+#endif
     }
 
     private var isLiveUITestDirectTargetOpenEnabled: Bool {
         let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] ?? ""
         return ["1", "true", "yes", "on"].contains(rawValue.lowercased())
-    }
-
-    private func normalizedLiveUITestItemID(_ rawValue: String) -> String? {
-        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedValue.isEmpty else { return nil }
-
-        let patterns = [
-            #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
-            #"[0-9a-fA-F]{32}"#
-        ]
-        for pattern in patterns {
-            if let range = trimmedValue.range(of: pattern, options: .regularExpression) {
-                return trimmedValue[range].filter { $0 != "-" }.lowercased()
-            }
-        }
-        return trimmedValue
     }
 
     @MainActor
@@ -2068,19 +2048,25 @@ struct HomeView: View {
             return
         }
 
-        guard let itemID = liveUITestTargetItemID else { return }
+        guard let scenario = liveUITestScenario else { return }
         liveUITestTargetOpenAttempted = true
 
         do {
-            let item = try await dependencies.detailRepository.refreshItem(id: itemID)
+            guard let item = try await LiveUIPlaybackFixtureResolver.resolve(
+                scenario: scenario,
+                apiClient: dependencies.apiClient
+            ) else {
+                AppLog.ui.error("live_ui_target.open_failed scenario=\(scenario.rawValue, privacy: .public) errorType=fixture_unavailable")
+                return
+            }
             selectedDetailNamespace = nil
             selectedDetailTransitionSourceID = nil
             selectedDetailContextItems = [item]
             selectedDetailContextTitle = "Live UI Target"
-            AppLog.ui.info("live_ui_target.open media=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)")
+            AppLog.ui.info("live_ui_target.open scenario=\(scenario.rawValue, privacy: .public)")
             presentDetail(item)
         } catch {
-            AppLog.ui.error("live_ui_target.open_failed media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) errorType=target_unavailable")
+            AppLog.ui.error("live_ui_target.open_failed scenario=\(scenario.rawValue, privacy: .public) errorType=target_unavailable")
         }
     }
 #endif

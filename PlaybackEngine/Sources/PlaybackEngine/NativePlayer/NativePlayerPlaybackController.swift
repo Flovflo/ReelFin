@@ -18,6 +18,18 @@ public enum NativePlayerPreparationError: LocalizedError, Sendable, Equatable {
     }
 }
 
+public struct NativePlayerEvidenceContext: Sendable, Equatable {
+    public let session: String
+    public let media: String
+    public let source: String
+
+    public init(session: String, media: String, source: String) {
+        self.session = session
+        self.media = media
+        self.source = source
+    }
+}
+
 public struct NativePlayerPlaybackSnapshot: Sendable {
     public var overlayLines: [String]
     public var routeDescription: String
@@ -34,6 +46,7 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
     public var subtitleTrackDisplayHints: [Shared.MediaTrack]
     public var selectedAudioTrackID: String?
     public var selectedSubtitleTrackID: String?
+    public var evidenceContext: NativePlayerEvidenceContext?
 
     public init(
         overlayLines: [String],
@@ -50,7 +63,8 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
         audioTrackDisplayHints: [Shared.MediaTrack] = [],
         subtitleTrackDisplayHints: [Shared.MediaTrack] = [],
         selectedAudioTrackID: String? = nil,
-        selectedSubtitleTrackID: String? = nil
+        selectedSubtitleTrackID: String? = nil,
+        evidenceContext: NativePlayerEvidenceContext? = nil
     ) {
         self.overlayLines = overlayLines
         self.routeDescription = routeDescription
@@ -67,6 +81,7 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
         self.subtitleTrackDisplayHints = subtitleTrackDisplayHints
         self.selectedAudioTrackID = selectedAudioTrackID
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
+        self.evidenceContext = evidenceContext
     }
 }
 
@@ -144,12 +159,18 @@ public actor NativePlayerPlaybackController {
         AppLog.playback.notice(
             "nativeplayer.original.resolve.ok — media=\(mediaCorrelation, privacy: .public) source=\(AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source), privacy: .public) selectedPath=original_stream"
         )
+        let evidenceContext = NativePlayerEvidenceContext(
+            session: evidenceSession,
+            media: mediaCorrelation,
+            source: AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source)
+        )
         stateMachine.apply(.originalResolved)
         if handoffSource != nil {
             return makeTrustedNativeHandoffSnapshot(
                 resolution,
                 session: session,
-                startTimeTicks: startTimeTicks
+                startTimeTicks: startTimeTicks,
+                evidenceContext: evidenceContext
             )
         }
         return try await prepareResolved(
@@ -158,21 +179,45 @@ public actor NativePlayerPlaybackController {
             session: session,
             nativeConfig: nativeConfig,
             startTimeTicks: startTimeTicks,
-            itemID: itemID,
-            evidenceSession: evidenceSession
+            evidenceContext: evidenceContext
         )
     }
 
     private func makeTrustedNativeHandoffSnapshot(
         _ resolution: OriginalMediaResolution,
         session: UserSession,
-        startTimeTicks: Int64?
+        startTimeTicks: Int64?,
+        evidenceContext: NativePlayerEvidenceContext
     ) -> NativePlayerPlaybackSnapshot {
         let headers = authenticatedOriginalHeaders(resolution: resolution, session: session)
         let url = authenticatedOriginalURL(resolution: resolution, headers: headers)
         stateMachine.apply(.bufferStarted)
+        PlayerDeepEvidenceSink.append(
+            event: .plan,
+            session: evidenceContext.session,
+            media: evidenceContext.media,
+            source: evidenceContext.source,
+            fields: [
+                .canStart: .boolean(true),
+                .demuxer: .category(.matroska),
+                .videoBackend: .category(.videoToolbox),
+                .audioBackend: .category(.sampleBufferAudioRenderer),
+            ]
+        )
+        PlayerDeepEvidenceSink.append(
+            event: .routeSelection,
+            session: evidenceContext.session,
+            media: evidenceContext.media,
+            source: evidenceContext.source,
+            fields: [
+                .route: .category(.sampleBuffer),
+                .avPlayerItem: .boolean(false),
+                .avPlayerViewController: .boolean(false),
+                .serverTranscodeUsed: .boolean(resolution.serverTranscodeUsed),
+            ]
+        )
         AppLog.playback.notice(
-            "nativeplayer.sampleBuffer.route.selected — source=\(AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source), privacy: .public) handoffPrepared=true nativeProbe=false avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=false"
+            "nativeplayer.sampleBuffer.route.selected — source=\(evidenceContext.source, privacy: .public) handoffPrepared=true nativeProbe=false avPlayerItem=false avPlayerViewController=false serverTranscodeUsed=false"
         )
         return NativePlayerPlaybackSnapshot(
             overlayLines: [
@@ -194,7 +239,8 @@ public actor NativePlayerPlaybackController {
             audioTrackDisplayHints: resolution.mediaSource.audioTracks,
             subtitleTrackDisplayHints: resolution.mediaSource.subtitleTracks,
             selectedAudioTrackID: nil,
-            selectedSubtitleTrackID: nil
+            selectedSubtitleTrackID: nil,
+            evidenceContext: evidenceContext
         )
     }
 
@@ -204,11 +250,10 @@ public actor NativePlayerPlaybackController {
         session: UserSession,
         nativeConfig: NativePlayerConfig,
         startTimeTicks: Int64?,
-        itemID: String,
-        evidenceSession: String
+        evidenceContext: NativePlayerEvidenceContext
     ) async throws -> NativePlayerPlaybackSnapshot {
-        let mediaCorrelation = AppLogFormat.correlationIdentifier(itemID, domain: .media)
-        let sourceCorrelation = AppLogFormat.correlationIdentifier(resolution.mediaSource.id, domain: .source)
+        let mediaCorrelation = evidenceContext.media
+        let sourceCorrelation = evidenceContext.source
         let originalHeaders = authenticatedOriginalHeaders(resolution: resolution, session: session)
         let originalURL = authenticatedOriginalURL(resolution: resolution, headers: originalHeaders)
         let prefersDirectAppleSurface = nativeConfig.surfacePreference == .directPlayWhenPossible
@@ -235,7 +280,7 @@ public actor NativePlayerPlaybackController {
             )
             PlayerDeepEvidenceSink.append(
                 event: .routeSelection,
-                session: evidenceSession,
+                session: evidenceContext.session,
                 media: mediaCorrelation,
                 source: sourceCorrelation,
                 fields: [
@@ -256,7 +301,8 @@ public actor NativePlayerPlaybackController {
                 audioTracks: audio,
                 subtitleTracks: subtitles,
                 selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
-                selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
+                selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id,
+                evidenceContext: evidenceContext
             )
         }
 
@@ -319,7 +365,8 @@ public actor NativePlayerPlaybackController {
                 overlayLines: diagnostics.overlayLines,
                 routeDescription: "NativeEngine(\(probe.format.rawValue))",
                 startTimeSeconds: startTimeTicks.map { Double($0) / 10_000_000 },
-                playbackErrorMessage: error.localizedDescription
+                playbackErrorMessage: error.localizedDescription,
+                evidenceContext: evidenceContext
             )
         }
         stateMachine.apply(.planStarted)
@@ -330,7 +377,7 @@ public actor NativePlayerPlaybackController {
         )
         PlayerDeepEvidenceSink.append(
             event: .plan,
-            session: evidenceSession,
+            session: evidenceContext.session,
             media: mediaCorrelation,
             source: sourceCorrelation,
             fields: [
@@ -384,7 +431,7 @@ public actor NativePlayerPlaybackController {
             )
             PlayerDeepEvidenceSink.append(
                 event: .routeSelection,
-                session: evidenceSession,
+                session: evidenceContext.session,
                 media: mediaCorrelation,
                 source: sourceCorrelation,
                 fields: [
@@ -405,7 +452,8 @@ public actor NativePlayerPlaybackController {
                 audioTracks: audio,
                 subtitleTracks: subtitles,
                 selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
-                selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
+                selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id,
+                evidenceContext: evidenceContext
             )
         }
 
@@ -423,7 +471,7 @@ public actor NativePlayerPlaybackController {
         let playbackURL = plan.canStartLocalPlayback ? originalURL : nil
         PlayerDeepEvidenceSink.append(
             event: .routeSelection,
-            session: evidenceSession,
+            session: evidenceContext.session,
             media: mediaCorrelation,
             source: sourceCorrelation,
             fields: [
@@ -449,7 +497,8 @@ public actor NativePlayerPlaybackController {
             audioTrackDisplayHints: resolution.mediaSource.audioTracks,
             subtitleTrackDisplayHints: resolution.mediaSource.subtitleTracks,
             selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
-            selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
+            selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id,
+            evidenceContext: evidenceContext
         )
         }
     }
@@ -727,7 +776,7 @@ public actor NativePlayerPlaybackController {
         let source = selection.source
         return [
             "state=apple-native-directplay",
-            "mediaSource=\(source.id)",
+            "mediaSource=\(AppLogFormat.correlationIdentifier(source.id, domain: .source))",
             "container=\(source.container ?? "unknown")",
             "video=\(source.videoCodec ?? "unknown")",
             "audio=\(source.audioCodec ?? "unknown")",
@@ -742,7 +791,7 @@ public actor NativePlayerPlaybackController {
         let source = resolution.mediaSource
         return [
             "state=apple-native-directplay",
-            "mediaSource=\(source.id)",
+            "mediaSource=\(AppLogFormat.correlationIdentifier(source.id, domain: .source))",
             "container=\(source.container ?? "unknown")",
             "video=\(source.videoCodec ?? "unknown")",
             "audio=\(source.audioCodec ?? "unknown")",
