@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Unit tests for the live player benchmark diagnostics."""
 
 from __future__ import annotations

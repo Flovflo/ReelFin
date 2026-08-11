@@ -9,11 +9,7 @@ Use this skill for repeatable ReelFin playback validation. Do not print Jellyfin
 
 ## Required Inputs
 
-Use the local env file:
-
-```bash
-/Users/florian/Documents/Projet/ReelFin/.artifacts/secrets/reelfin-e2e.env
-```
+For live runs, provide the server and username through the runner's pre-existing ephemeral process environment. Provide the password through that same ephemeral environment or with `--password-stdin`. The runner captures these values into non-exported shell locals and immediately unsets inherited aliases. Do not pass passwords, API keys, signed URLs, or media item IDs as command-line arguments or put credentials in env files or QA artifact files.
 
 Required keys:
 
@@ -27,14 +23,15 @@ TEST_HDR_ITEM_ID
 TEST_DOLBY_VISION_ITEM_ID
 ```
 
-Values equal to `...` are placeholders and must fail the live suite.
+Values equal to `...` are placeholders and must fail the live suite. A file passed with `--env-file` is optional and nonsecret; it accepts only the four `TEST_*_ITEM_ID` selectors and rejects credential-like keys.
 
 ## Standard Command
 
-From `/Users/florian/Documents/Projet/ReelFin`:
+From the ReelFin repository root:
 
 ```bash
 scripts/run_reelfin_player_e2e.sh
+printf '%s\n' "${REELFIN_E2E_PASSWORD:?}" | scripts/run_reelfin_player_e2e.sh --password-stdin
 ```
 
 Useful faster variants:
@@ -43,6 +40,8 @@ Useful faster variants:
 scripts/run_reelfin_player_e2e.sh --skip-ui --skip-tvos --loops 1 --sample-size 4
 scripts/run_reelfin_player_e2e.sh --loops 3 --sample-size 10
 ```
+
+The runner uses the fixed offline uv-managed Python 3.13 boundary. Credentialed DerivedData, simulator control state, resume state, and implicit XCTest results live only in an owner-only `mktemp` directory removed by one immutable exit/signal trap. Only redacted logs survive under `.artifacts/player-e2e/`; the runner scans them for exact and arbitrary upper/lower/mixed percent-encoded credential or item-selector values before reporting success. It never retains credentialed `.xcresult` bundles.
 
 ## Validation Gates
 

@@ -1,0 +1,9 @@
+### Task 8: Enforce uv-only, secret-safe QA execution
+
+**Files:** Create `scripts/run_python_with_uv.sh`, `scripts/redact_xctest_activity.py`, `scripts/assert_no_secret_artifacts.py`, and `Tests/ScriptTests/test_secure_qa_runners.py`; modify `scripts/run_playback_qa_loop.sh`, `scripts/run_reelfin_player_e2e.sh`, all Python files reported by `rg -l '(^|[;&|[:space:]])python3?([[:space:]]|$)|^#!.*python' scripts Tests/ScriptTests`, and affected ScriptTests.
+
+- [x] **RED:** With invented canaries, test `umask 077`, stdin/ephemeral-env input, env-file password-key rejection, `2>&1 | redact | tee` ordering with preserved `PIPESTATUS[0]`, no credentialed `.xcresult`, exact/URL-encoded artifact scan without echoing the match, cleanup/unset, and zero executable direct `python`/`python3` commands or system-Python shebang bypasses.
+- [x] **Minimum correction:** Make the wrapper fail closed unless the isolated uv path and managed Python 3.13 are available. Route every active Python call through it; remove direct-execution system-Python shebangs/executable bits or replace the entry with an uv wrapper. Never put password/signed URL in argv/files; sanitize before persistence; scan retained text; delete transient secret state on every exit.
+- [x] **GREEN:** Run `uv run --no-project --python 3.13 python -m unittest discover -s Tests/ScriptTests -p 'test_*.py'`; run static scans for executable Python calls, shebangs, credentialed result bundles, raw `tee`, and permissive artifact modes.
+- [x] **Mutation:** Pipe raw XCTest output to `tee`, call `python3`, restore a system-Python shebang/executable bit, and retain a canary; ordering, uv-boundary, direct-exec, and scanner tests must fail. Restore and rerun GREEN.
+- [x] **Commit:** Stage wrapper/redactor/scanner, both runners, mechanically affected Python metadata, and tests; `git diff --check`; commit `fix: sanitize credentialed QA artifacts`.

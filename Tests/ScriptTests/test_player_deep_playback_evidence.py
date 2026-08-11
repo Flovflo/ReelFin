@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Unit tests for ReelFin typed deep playback evidence checks."""
 
 from __future__ import annotations

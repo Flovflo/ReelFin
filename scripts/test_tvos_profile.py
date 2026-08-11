@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Test what Jellyfin returns for MKV files with the tvOS device profile."""
 
 import json

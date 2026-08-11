@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Prepare and restore a Jellyfin resume row for live UI player targeting."""
 
 from __future__ import annotations

@@ -822,13 +822,18 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        var values = readEnvFile(repoRoot.appendingPathComponent(".artifacts/secrets/reelfin-e2e.env"))
+        var values: [String: String] = [:]
         ProcessInfo.processInfo.environment.forEach { key, value in
             values[key] = value
         }
         let liveUITargetURL = repoRoot.appendingPathComponent(".artifacts/player-e2e/live-ui-target.env")
         if isFreshLiveUITargetEnv(liveUITargetURL) {
             readEnvFile(liveUITargetURL).forEach { key, value in
+                // This short-lived scenario file is intentionally control-only. Credentials
+                // must arrive only through the private process environment or secrets file.
+                guard !key.uppercased().contains("PASSWORD"),
+                      !key.uppercased().contains("TOKEN"),
+                      !key.uppercased().contains("SECRET") else { return }
                 values[key] = value
             }
         }

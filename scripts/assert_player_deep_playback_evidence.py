@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Validate ReelFin's typed, opaque deep playback JSONL evidence."""
 
 from __future__ import annotations

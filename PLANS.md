@@ -800,3 +800,10 @@ xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platf
 - Arm a session-scoped startup watchdog for sample-buffer playback independently of AVPlayer. Only the active generation's first enqueued video sample cancels it; audio/time updates cannot, and a zero-video timeout publishes the existing recovery state.
 - On a sample-buffer zero-video timeout, admit exactly one recovery-scoped coordinator resolution with direct routes disabled, then leave the failed native surface for the recovered server-managed route. A new load must discard any prior prepared selection, and stop must synchronously disarm the watchdog so stale delivery is inert.
 - Preserve Jellyfin metadata as display hints on both handoff and normally prepared sample-buffer snapshots; the surface still publishes verified EBML IDs while retaining rich track labels.
+
+## Build 17 Credential-Safe QA Runners - 2026-08-12
+
+- Player QA Python now runs only through the fixed isolated uv executable with offline managed Python 3.13; script entry points have no system-Python shebang or executable bypass.
+- QA directories are owner-only, transient scenario state is cleaned on exit, persisted xcodebuild output is redacted from both streams before `tee`, and credentialed result bundles are not retained.
+- Retained artifact text is scanned for exact and percent-encoded credentials without reproducing a matching secret. Live execution remains intentionally out of scope for this hardening task.
+- Fresh completion evidence: 40/40 isolated ScriptTests passed; the six required uv flags, foreground pipeline stages, background runtime stage propagation, and raw Unicode coverage were mutation-discriminated; `xcodegen generate` succeeded; the focused iOS 26.5 live-loader selection passed with eight expected credential skips and zero failures; and the ReelFinTV tvOS 26.5 build succeeded. All build/test DerivedData and `.xcresult` evidence was transient and removed after the run.

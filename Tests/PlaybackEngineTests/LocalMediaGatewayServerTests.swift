@@ -1291,24 +1291,8 @@ final class LocalMediaGatewayServerTests: XCTestCase {
     }
 
     private func loadEnvFile() -> [String: String] {
-        let envURL = URL(fileURLWithPath: "/Users/florian/Documents/Projet/ReelFin/.artifacts/secrets/reelfin-e2e.env")
-        guard let contents = try? String(contentsOf: envURL, encoding: .utf8) else { return [:] }
-        var values: [String: String] = [:]
-        for rawLine in contents.split(whereSeparator: \.isNewline) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=") else { continue }
-            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
-            var value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.count >= 2,
-               let first = value.first,
-               let last = value.last,
-               (first == "\"" && last == "\"") || (first == "'" && last == "'") {
-                value.removeFirst()
-                value.removeLast()
-            }
-            values[key] = value
-        }
-        return values
+        // The test runner supplies credentials only through its ephemeral environment.
+        return [:]
     }
 
     private func normalizedItemID(_ raw: String) -> String {

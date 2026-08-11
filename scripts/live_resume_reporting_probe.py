@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Verify Jellyfin persists resume position after Playback Stopped."""
 
 from __future__ import annotations
