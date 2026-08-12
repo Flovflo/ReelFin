@@ -15,10 +15,23 @@ final class IPadAdaptiveUITests: XCTestCase {
         XCTAssertTrue(split.waitForExistence(timeout: 10))
         XCTAssertFalse(app.otherElements["root_tab_layout"].firstMatch.exists)
 
-        for identifier in ["root_sidebar_home", "root_sidebar_search", "root_sidebar_settings"] {
-            let destination = app.descendants(matching: .any)[identifier].firstMatch
-            XCTAssertTrue(destination.exists)
-            XCTAssertTrue(destination.isHittable)
+        let destinations: [(identifier: String, expectedScreen: XCUIElement)] = [
+            ("root_sidebar_search", app.staticTexts["Library"].firstMatch),
+            ("root_sidebar_settings", app.descendants(matching: .any)["settings_screen"].firstMatch),
+            (
+                "root_sidebar_home",
+                app.buttons.matching(
+                    NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_continueWatching_")
+                ).firstMatch
+            )
+        ]
+
+        for destination in destinations {
+            let row = app.cells.containing(.any, identifier: destination.identifier).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            XCTAssertTrue(row.isHittable)
+            row.tap()
+            XCTAssertTrue(destination.expectedScreen.waitForExistence(timeout: 10))
         }
 
         let firstCard = app.buttons.matching(
