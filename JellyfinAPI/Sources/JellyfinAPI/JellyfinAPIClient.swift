@@ -93,6 +93,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     private let tokenStore: TokenStoreProtocol
     private let settingsStore: SettingsStoreProtocol
     private let urlSession: URLSession
+    private let imagePipeline: (any ImagePipelineProtocol)?
     private let retryPolicy: RetryPolicy
     private let clientName: String
     private let deviceName: String
@@ -122,6 +123,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         tokenStore: TokenStoreProtocol = KeychainTokenStore(),
         settingsStore: SettingsStoreProtocol = DefaultSettingsStore(),
         session: URLSession = .shared,
+        imagePipeline: (any ImagePipelineProtocol)? = nil,
         retryPolicy: RetryPolicy = .init(),
         clientName: String = "ReelFin",
         deviceName: String = "iOS",
@@ -131,6 +133,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         self.tokenStore = tokenStore
         self.settingsStore = settingsStore
         self.urlSession = session
+        self.imagePipeline = imagePipeline
         self.retryPolicy = retryPolicy
         self.clientName = clientName
         self.deviceName = deviceName
@@ -910,8 +913,9 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func prefetchImages(for items: [MediaItem]) async {
-        // Speculative prefetching: Generate the most likely artwork requests up front.
-        // This warms the server-side cache and improves perceived detail-page readiness.
+        // The app owns the authenticated image transport/cache. Keep API URL selection here,
+        // but never bypass its validation, byte limits, decode bounds, or deduplication.
+        var imageURLs = Set<URL>()
         for item in items {
             guard !Task.isCancelled else { return }
             let imageTargets: [(itemID: String, type: JellyfinImageType, width: Int, quality: Int)] = [
@@ -930,13 +934,12 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                     continue
                 }
 
-                var request = URLRequest(url: imageURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
-                if let token = activeSession?.token, !token.isEmpty {
-                    request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
-                }
-                _ = try? await urlSession.data(for: request)
+                imageURLs.insert(imageURL)
             }
         }
+
+        guard !Task.isCancelled else { return }
+        await imagePipeline?.prefetch(urls: Array(imageURLs))
     }
 
     public func reportPlayback(progress: PlaybackProgressUpdate) async throws {

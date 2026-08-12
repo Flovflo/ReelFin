@@ -67,6 +67,22 @@ final class LRUDiskCacheTests: XCTestCase {
         )
     }
 
+    func testRejectsTamperedFileOverReadLimitBeforeLoadingData() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = try LRUDiskCache(directoryURL: cacheDir, maxSizeBytes: 4_096)
+        await cache.setData(Data(repeating: 1, count: 32), forKey: "poster")
+
+        let index = try decodeIndexSnapshot(from: cacheDir.appendingPathComponent("index.json"))
+        let fileURL = cacheDir.appendingPathComponent(try XCTUnwrap(index["poster"]?.fileName))
+        try Data(repeating: 2, count: 2_048).write(to: fileURL)
+
+        let data = await cache.data(forKey: "poster", maximumSizeBytes: 1_024)
+        XCTAssertNil(data)
+        let entries = await cache.entryCount()
+        XCTAssertEqual(entries, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
     private func decodeIndexSnapshot(from url: URL) throws -> [String: IndexEntry] {
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode([String: IndexEntry].self, from: data)

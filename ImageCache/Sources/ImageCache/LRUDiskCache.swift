@@ -58,15 +58,21 @@ public actor LRUDiskCache {
         }
     }
 
-    public func data(forKey key: String) -> Data? {
+    public func data(forKey key: String, maximumSizeBytes: Int? = nil) -> Data? {
         guard var entry = entries[key] else {
             return nil
         }
 
         let fileURL = directoryURL.appendingPathComponent(entry.fileName)
+        if let maximumSizeBytes,
+           let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path),
+           let fileSize = attributes[.size] as? NSNumber,
+           fileSize.intValue > maximumSizeBytes {
+            remove(key: key, entry: entry)
+            return nil
+        }
         guard let data = try? Data(contentsOf: fileURL) else {
-            entries[key] = nil
-            schedulePersistIndex()
+            remove(key: key, entry: entry)
             return nil
         }
 
@@ -105,6 +111,10 @@ public actor LRUDiskCache {
         persistTask = nil
         guard let entry = entries[key] else { return }
 
+        remove(key: key, entry: entry)
+    }
+
+    private func remove(key: String, entry: Entry) {
         let fileURL = directoryURL.appendingPathComponent(entry.fileName)
         try? fileManager.removeItem(at: fileURL)
         currentSizeBytes -= entry.size

@@ -38,7 +38,12 @@ final class TVAppContainer {
     init() {
         settingsStore = DefaultSettingsStore()
         tokenStore = KeychainTokenStore()
-        apiClient = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settingsStore)
+        let imagePipeline = DefaultImagePipeline()
+        apiClient = JellyfinAPIClient(
+            tokenStore: tokenStore,
+            settingsStore: settingsStore,
+            imagePipeline: imagePipeline
+        )
 
         do {
             repository = try GRDBMetadataRepository()
@@ -54,7 +59,7 @@ final class TVAppContainer {
             }
         }
 
-        imagePipeline = DefaultImagePipeline()
+        self.imagePipeline = imagePipeline
         episodeReleaseNotificationManager = NoopEpisodeReleaseNotificationManager()
         detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
