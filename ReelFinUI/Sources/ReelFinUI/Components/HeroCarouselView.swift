@@ -1,5 +1,8 @@
 import Shared
 import SwiftUI
+#if os(iOS) || os(tvOS)
+import UIKit
+#endif
 #if os(iOS)
 import Combine
 #endif
@@ -24,6 +27,7 @@ public struct HeroCarouselView: View {
     private let tvPrimaryActionFocusID: String?
 
     @State private var currentIndex = 0
+    @State private var visibleArtworkItemID: String?
     #if os(iOS)
     private let timer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
     #endif
@@ -97,13 +101,18 @@ public struct HeroCarouselView: View {
                 if items.count > 1 {
                     pageControl
                 }
+
+                if visibleArtworkItemID == (items[safe: currentIndex] ?? items.first)?.id {
+                    StorefrontArtworkReadyAnchor(identifier: "home_hero_artwork_ready")
+                        .frame(width: 1, height: 1)
+                }
             }
             .frame(width: proxy.size.width, height: heroHeight, alignment: .bottom)
         }
         .frame(height: heroHeight)
         #if os(iOS)
         .onReceive(timer) { _ in
-            if items.count > 1 {
+            if !isStorefrontCaptureMode, items.count > 1 {
                 withAnimation(TVMotion.heroPageAnimation) {
                     currentIndex = (currentIndex + 1) % items.count
                 }
@@ -220,6 +229,12 @@ public struct HeroCarouselView: View {
                     tvPageControl
                         .padding(.bottom, 20)
                 }
+
+
+                if visibleArtworkItemID == (items[safe: currentIndex] ?? items.first)?.id {
+                    StorefrontArtworkReadyAnchor(identifier: "home_hero_artwork_ready")
+                        .frame(width: 1, height: 1)
+                }
             }
             .frame(width: proxy.size.width, height: heroHeight)
         }
@@ -227,8 +242,18 @@ public struct HeroCarouselView: View {
         .ignoresSafeArea(edges: .top)
         .focusSection()
         .onMoveCommand(perform: handleMoveCommand)
+        .transaction { transaction in
+            if isStorefrontCaptureMode {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
         .onAppear {
-            syncSelectionFromBinding()
+            if isStorefrontCaptureMode {
+                currentIndex = 0
+            } else {
+                syncSelectionFromBinding()
+            }
             if let item = items[safe: currentIndex] ?? items.first {
                 selectedItemID?.wrappedValue = item.id
                 onVisibleItemChange?(item)
@@ -256,7 +281,8 @@ public struct HeroCarouselView: View {
             width: backdropImageWidth(for: size),
             quality: 90,
             apiClient: apiClient,
-            imagePipeline: imagePipeline
+            imagePipeline: imagePipeline,
+            onImageLoaded: { visibleArtworkItemID = item.id }
         )
         .frame(width: size.width, height: heroHeight)
         .clipped()
@@ -489,14 +515,14 @@ public struct HeroCarouselView: View {
     // MARK: Paging
 
     private func pageForward() {
-        guard items.count > 1 else { return }
+        guard !isStorefrontCaptureMode, items.count > 1 else { return }
         withAnimation(TVMotion.heroPageAnimation) {
             currentIndex = (currentIndex + 1) % items.count
         }
     }
 
     private func pageBackward() {
-        guard items.count > 1 else { return }
+        guard !isStorefrontCaptureMode, items.count > 1 else { return }
         withAnimation(TVMotion.heroPageAnimation) {
             currentIndex = (currentIndex - 1 + items.count) % items.count
         }
@@ -518,7 +544,12 @@ public struct HeroCarouselView: View {
         selectedItemID?.wrappedValue
     }
 
+    private var isStorefrontCaptureMode: Bool {
+        AppMetadata.current.isScreenshotModeEnabled
+    }
+
     private func syncSelectionFromBinding() {
+        guard !isStorefrontCaptureMode else { return }
         guard
             let selectedItemValue,
             let newIndex = items.firstIndex(where: { $0.id == selectedItemValue }),
@@ -544,7 +575,8 @@ public struct HeroCarouselView: View {
             width: backdropImageWidth(for: size),
             quality: 85,
             apiClient: apiClient,
-            imagePipeline: imagePipeline
+            imagePipeline: imagePipeline,
+            onImageLoaded: { visibleArtworkItemID = item.id }
         )
         .frame(width: size.width, height: heroHeight)
         .clipped()
@@ -731,6 +763,26 @@ public struct HeroCarouselView: View {
     }
 }
 
+#if os(iOS) || os(tvOS)
+struct StorefrontArtworkReadyAnchor: UIViewRepresentable {
+    let identifier: String
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = identifier
+        view.accessibilityLabel = "Artwork ready"
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        view.accessibilityIdentifier = identifier
+    }
+}
+#endif
+
 #if os(tvOS)
 private struct TVHeroCapsuleButton: View {
     @Environment(\.tvTopNavigationFocusAction) private var requestTopNavigationFocus
@@ -773,7 +825,14 @@ private struct TVHeroCapsuleButton: View {
 
     @ViewBuilder
     private var backgroundView: some View {
-        if #available(tvOS 26.0, *) {
+        if AppMetadata.current.isScreenshotModeEnabled {
+            Capsule(style: .continuous)
+                .fill(isFocused ? Color.white : Color.white.opacity(0.10))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color.white.opacity(isFocused ? 0.22 : 0.12), lineWidth: 1)
+                }
+        } else if #available(tvOS 26.0, *) {
             Capsule(style: .continuous)
                 .fill(isFocused ? Color.white.opacity(0.08) : .clear)
                 .glassEffect(

@@ -63,6 +63,12 @@ public struct ReelFinRootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transaction { transaction in
+            if AppMetadata.current.isScreenshotModeEnabled {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
         .environment(\.reelFinDisplayDensity, displayDensity)
         .task(id: ObjectIdentifier(viewModel)) {
             await viewModel.runRootLifecycle()

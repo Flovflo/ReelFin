@@ -132,6 +132,16 @@ capture_family() {
     -only-testing:"$test_identifier" \
     2>&1 | tee "$log_file"
 
+  local expected_pngs
+  local actual_pngs
+  expected_pngs="$(printf '%s.png\n' "${expected_names[@]}" | LC_ALL=C sort)"
+  actual_pngs="$(find "${raw_root}/${slug}" -maxdepth 1 -type f -name '*.png' -exec basename {} \; | LC_ALL=C sort)"
+  if [[ "$actual_pngs" != "$expected_pngs" ]]; then
+    echo "Capture set for ${slug} is not exact." >&2
+    diff -u <(printf '%s\n' "$expected_pngs") <(printf '%s\n' "$actual_pngs") >&2 || true
+    exit 1
+  fi
+
   local name
   for name in "${expected_names[@]}"; do
     local source_png="${raw_root}/${slug}/${name}.png"
@@ -149,6 +159,13 @@ capture_family() {
       exit 1
     fi
   done
+
+
+  actual_pngs="$(find "$normalized_root" -maxdepth 1 -type f -name '*.png' -exec basename {} \; | LC_ALL=C sort)"
+  if [[ "$actual_pngs" != "$expected_pngs" ]]; then
+    echo "Normalized set for ${slug} is not exact." >&2
+    exit 1
+  fi
 
   "$XCRUN" simctl status_bar "$udid" clear >/dev/null 2>&1 || true
   "$XCRUN" simctl shutdown "$udid" >/dev/null 2>&1 || true
@@ -171,21 +188,48 @@ run_capture_matrix 1
 run_capture_matrix 2
 
 for slug in "6.9-inch" "13-inch" "tvOS"; do
-  diff -rq "${RUN_ROOT}/run-1/normalized/${slug}" "${RUN_ROOT}/run-2/normalized/${slug}"
+  for first_png in "${RUN_ROOT}/run-1/normalized/${slug}/"*.png; do
+    name="$(basename "$first_png")"
+    second_png="${RUN_ROOT}/run-2/normalized/${slug}/${name}"
+    if [[ ! -f "$second_png" ]]; then
+      echo "Missing comparison capture: ${second_png}" >&2
+      exit 1
+    fi
+    "$XCRUN" swift scripts/compare_storefront_png.swift "$first_png" "$second_png"
+  done
 done
 
 if [[ "$PROMOTE" -eq 1 ]]; then
+  promotion_root="$(mktemp -d "${RUN_ROOT}/promotion.XXXXXX")"
+  for slug in "6.9-inch" "13-inch" "tvOS"; do
+    staged_destination="${promotion_root}/${slug}/screenshots"
+    mkdir -p "$staged_destination"
+    cp "${RUN_ROOT}/run-1/normalized/${slug}/"*.png "$staged_destination/"
+    if [[ "$(find "$staged_destination" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')" -ne 4 ]]; then
+      echo "Refusing to promote an incomplete ${slug} set." >&2
+      exit 1
+    fi
+  done
+
   for slug in "6.9-inch" "13-inch" "tvOS"; do
     destination="${ROOT_DIR}/Docs/Media/AppStoreReady/${slug}/screenshots"
-    mkdir -p "$destination"
-    cp "${RUN_ROOT}/run-1/normalized/${slug}/"*.png "$destination/"
+    previous_destination="${RUN_ROOT}/previous-${slug}-screenshots"
+    if [[ -e "$previous_destination" ]]; then
+      echo "Refusing to overwrite promotion backup: ${previous_destination}" >&2
+      exit 1
+    fi
+    if [[ -e "$destination" ]]; then
+      mv "$destination" "$previous_destination"
+    fi
+    mv "${promotion_root}/${slug}/screenshots" "$destination"
   done
 fi
 
-echo "Validated two pixel-identical fictional storefront runs."
+echo "Validated two perceptually equivalent fictional storefront runs with fail-closed rasterization limits."
 echo "Artifacts: ${RUN_ROOT}"
 if [[ "$PROMOTE" -eq 1 ]]; then
   echo "Promoted validated assets under Docs/Media/AppStoreReady/."
+  echo "Canonical promoted bytes remain pinned bit-exactly by Docs/Media/AppStoreReady/screenshots.sha256."
 else
   echo "Assets were not promoted; rerun with --promote after visual review."
 fi

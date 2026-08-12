@@ -6,11 +6,13 @@ import ReelFinUI
 import Shared
 import SyncEngine
 import Foundation
+import UIKit
 
 enum TVAppBootstrap {
     @MainActor
     static func makeDependencies(metadata: AppMetadata) -> ReelFinDependencies {
         if metadata.isMockModeEnabled || metadata.isScreenshotModeEnabled {
+            UIView.setAnimationsEnabled(!metadata.isScreenshotModeEnabled)
             let arguments = Set(ProcessInfo.processInfo.arguments)
             let shouldStartLoggedOut = arguments.contains(AppMetadata.mockLoggedOutArgument)
             return ReelFinPreviewFactory.appStoreDependencies(authenticated: !shouldStartLoggedOut)

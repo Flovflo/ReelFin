@@ -247,6 +247,7 @@ final class AppStoreScreenshotTests: XCTestCase {
 
         let firstPoster = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")).firstMatch
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
+        XCTAssertTrue(app.otherElements["home_hero_artwork_ready"].waitForExistence(timeout: 12))
         capture(name: "01-home")
 
         openSection(named: "Search", in: app)
@@ -259,6 +260,7 @@ final class AppStoreScreenshotTests: XCTestCase {
         firstPoster.tap()
         let playButton = playbackActionButton(in: app)
         XCTAssertTrue(playButton.exists)
+        XCTAssertTrue(app.otherElements["detail_hero_artwork_ready"].waitForExistence(timeout: 12))
         capture(name: "03-detail")
         openSection(named: "Settings", in: app)
         XCTAssertTrue(app.staticTexts["Settings"].firstMatch.waitForExistence(timeout: 8))

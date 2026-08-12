@@ -15,6 +15,7 @@ final class TVAppStoreScreenshotTests: XCTestCase {
             "-reelfin-mock-mode",
             "-reelfin-screenshot-mode",
             "-reelfin-reset-screenshot-defaults",
+            "-reelfin-storefront-search-query", "aurora",
             "-AppleLanguages", "(en)",
             "-AppleLocale", "en_US",
             "-AppleInterfaceStyle", "Dark"
@@ -26,6 +27,8 @@ final class TVAppStoreScreenshotTests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
         )
         XCTAssertTrue(cards.firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.otherElements["home_hero_artwork_ready"].waitForExistence(timeout: 20))
+        try focusTopNavigation("Watch Now", in: app)
         capture(name: "01-home")
 
         try selectTopNavigation("Library", in: app)
@@ -42,6 +45,7 @@ final class TVAppStoreScreenshotTests: XCTestCase {
             XCUIRemote.shared.press(.down)
         }
         XCTAssertTrue(playButton.hasFocus, "Expected detail Play to own focus before capture.")
+        XCTAssertTrue(app.otherElements["detail_hero_artwork_ready"].waitForExistence(timeout: 20))
         capture(name: "03-detail")
 
         app.terminate()
@@ -49,11 +53,16 @@ final class TVAppStoreScreenshotTests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(cards.firstMatch.waitForExistence(timeout: 20))
         try selectTopNavigation("Search", in: app)
-        XCTAssertTrue(app.staticTexts["Search your library"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Hollow Aurora"].waitForExistence(timeout: 15))
         capture(name: "04-search")
     }
 
     private func selectTopNavigation(_ label: String, in app: XCUIApplication) throws {
+        try focusTopNavigation(label, in: app)
+        XCUIRemote.shared.press(.select)
+    }
+
+    private func focusTopNavigation(_ label: String, in app: XCUIApplication) throws {
         let target = app.buttons[label]
         XCTAssertTrue(target.waitForExistence(timeout: 10))
 
@@ -72,7 +81,6 @@ final class TVAppStoreScreenshotTests: XCTestCase {
         }
 
         XCTAssertTrue(target.hasFocus, "Expected \(label) to receive top-navigation focus.")
-        XCUIRemote.shared.press(.select)
     }
 
     private func focusFirstCard(in cards: XCUIElementQuery) throws -> XCUIElement {

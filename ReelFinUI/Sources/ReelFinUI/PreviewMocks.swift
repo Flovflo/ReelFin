@@ -101,8 +101,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
 
     func fetchSeasons(seriesID: String) async throws -> [MediaItem] {
         [
-            MediaItem(id: "season1", name: "Season 1", mediaType: .season, indexNumber: 1),
-            MediaItem(id: "season2", name: "Season 2", mediaType: .season, indexNumber: 2)
+            MediaItem(id: "\(seriesID)-season1", name: "Season 1", mediaType: .season, indexNumber: 1),
+            MediaItem(id: "\(seriesID)-season2", name: "Season 2", mediaType: .season, indexNumber: 2)
         ]
     }
 
@@ -111,12 +111,34 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
             return Self.continueWatchingEpisodes()
         }
 
-        return Self.sampleItems(prefix: 5).enumerated().map { index, item in
-            var modified = item
-            modified.mediaType = .episode
-            modified.indexNumber = index + 1
-            modified.parentID = seriesID
-            return modified
+        let series = Self.item(for: seriesID)
+        let episodeCopy: [(name: String, overview: String)] = [
+            ("The First Entry", "A new line appears in the almanac overnight, guiding Elian toward a clock tower no map records."),
+            ("Blue Ink", "Mara follows a water-stained prediction through the old market while the town prepares for an unexpected eclipse."),
+            ("The Quiet Forecast", "A page left intentionally blank begins filling with the smallest choices made by everyone in the valley."),
+            ("North of Midnight", "The almanac points beyond the last streetlight, where Elian finds a message written in his own handwriting."),
+            ("Tomorrow's Margin", "As the final page turns, Mara must decide whether a prediction is a promise, a warning, or an invitation.")
+        ]
+
+        return episodeCopy.enumerated().map { index, copy in
+            MediaItem(
+                id: "\(seriesID)-episode-\(index + 1)",
+                name: copy.name,
+                overview: copy.overview,
+                mediaType: .episode,
+                year: series.year,
+                runtimeTicks: Int64((42 + index) * 60 * 10_000_000),
+                genres: series.genres,
+                communityRating: 7.8 + Double(index % 3) * 0.1,
+                posterTag: "poster",
+                backdropTag: "backdrop",
+                libraryID: "shows",
+                parentID: seriesID,
+                seriesName: series.name,
+                seriesPosterTag: series.posterTag,
+                indexNumber: index + 1,
+                parentIndexNumber: 1
+            )
         }
     }
 
@@ -134,31 +156,30 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func fetchHomeFeed(since: Date?) async throws -> HomeFeed {
-        let releasedMovies = Self.sampleItems(prefix: 8).enumerated().map { index, item -> MediaItem in
+        let releasedMovies = Self.storefrontItems(prefix: 8).enumerated().map { index, item -> MediaItem in
             var copy = item
             copy.mediaType = .movie
             copy.year = 2026 - (index % 3)
             return copy
         }
-        let releasedSeries = Self.sampleItems(prefix: 8).enumerated().map { index, item -> MediaItem in
+        let releasedSeries = Self.storefrontItems(prefix: 8).enumerated().map { index, item -> MediaItem in
             var copy = item
             copy.id = "released-series-\(index)"
-            copy.name = "Released Series \(index + 1)"
             copy.mediaType = .series
             copy.year = 2026 - (index % 2)
             return copy
         }
-        let recentMovies = Self.sampleItems(prefix: 8).map { item -> MediaItem in
+        let recentMovies = Self.storefrontItems(prefix: 8).map { item -> MediaItem in
             var copy = item
             copy.mediaType = .movie
             return copy
         }
-        let recentSeries = Self.sampleItems(prefix: 8).map { item -> MediaItem in
+        let recentSeries = Self.storefrontItems(prefix: 8).map { item -> MediaItem in
             var copy = item
             copy.mediaType = .series
             return copy
         }
-        return HomeFeed(featured: Self.sampleItems(prefix: 5), rows: [
+        return HomeFeed(featured: Self.storefrontItems(prefix: 5), rows: [
             HomeRow(kind: .continueWatching, title: "Continue Watching", items: Self.continueWatchingItems()),
             HomeRow(kind: .recentlyReleasedMovies, title: "Recently Released Movies", items: releasedMovies),
             HomeRow(kind: .recentlyReleasedSeries, title: "Recently Released TV Shows", items: releasedSeries),
@@ -169,14 +190,14 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
 
     func fetchItemDetail(id: String) async throws -> MediaDetail {
         let item = Self.item(for: id)
-        return MediaDetail(item: item, similar: Self.sampleItems(prefix: 8), cast: [
-            PersonCredit(id: "1", name: "Actor One", role: "Lead", primaryImageTag: "primary"),
-            PersonCredit(id: "2", name: "Actor Two", role: "Support", primaryImageTag: "primary")
+        return MediaDetail(item: item, similar: Self.storefrontItems(prefix: 8), cast: [
+            PersonCredit(id: "1", name: "Mara Ellison", role: "Iria Vale", primaryImageTag: "primary"),
+            PersonCredit(id: "2", name: "Theo Arden", role: "Jonas Saye", primaryImageTag: "primary")
         ])
     }
 
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
-        Self.sampleItems(prefix: query.pageSize)
+        Self.storefrontItems(prefix: query.pageSize)
     }
 
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
@@ -184,7 +205,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
             MediaSource(
                 id: "source-1",
                 itemID: itemID,
-                name: "Mock Source",
+                name: "Original Quality",
                 container: "mp4",
                 videoCodec: "h264",
                 audioCodec: "aac",
@@ -211,40 +232,77 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
 
     func reportPlayed(itemID: String) async throws {}
 
-    private static func sampleItems(prefix: Int) -> [MediaItem] {
-        var items: [MediaItem] = []
-        items.reserveCapacity(prefix)
+    static func storefrontItems(prefix: Int) -> [MediaItem] {
+        let entries: [(title: String, overview: String, genres: [String])] = [
+            ("Vesper Meridian", "A solitary cartographer follows a luminous current across an uncharted sea and discovers a coastline that redraws itself each night.", ["Adventure", "Mystery"]),
+            ("Lattice of Rain", "Two estranged sisters restore a weather observatory where every storm carries fragments of a forgotten melody.", ["Drama", "Mystery"]),
+            ("The Quiet Cartographer", "An apprentice mapmaker uncovers a hidden district whose streets appear only to people searching for a second chance.", ["Drama", "Fantasy"]),
+            ("Copperlight", "A night-shift engineer receives impossible radio calls from a city that vanished beyond the northern horizon decades ago.", ["Science Fiction", "Thriller"]),
+            ("Aster Vale", "A botanist returns to her mountain village as rare flowers begin blooming in patterns that mirror the stars above.", ["Drama", "Fantasy"]),
+            ("Signal at Caldera", "A rescue crew enters a silent volcanic station and finds one final transmission counting down to sunrise.", ["Thriller", "Adventure"]),
+            ("Mothglass", "A museum conservator discovers that the colors in an antique window change whenever someone nearby tells the truth.", ["Mystery", "Drama"]),
+            ("Orbit of Ash", "The last courier between two drifting colonies must cross a field of burning debris before their shared oxygen runs out.", ["Science Fiction", "Adventure"]),
+            ("The Last Blue Hour", "On the longest evening of summer, four old friends follow a trail of lanterns toward the promise they once abandoned.", ["Drama", "Adventure"]),
+            ("Juniper Static", "A community radio host hears tomorrow's local news hidden beneath the static and tries to change one impossible headline.", ["Mystery", "Drama"]),
+            ("Echoes of Kestrel", "A sound archivist climbs an abandoned signal tower to recover the final recording of a celebrated explorer.", ["Mystery", "Adventure"]),
+            ("Velvet Current", "A competitive free diver follows a warm underwater current toward a reef missing from every nautical chart.", ["Adventure", "Drama"]),
+            ("Night Bloom Protocol", "When a citywide garden awakens after dark, a systems designer must decode the flowers before the power grid fails.", ["Science Fiction", "Mystery"]),
+            ("The Paper Horizon", "A young illustrator finds that every landscape she folds from paper becomes a doorway for exactly one minute.", ["Fantasy", "Adventure"]),
+            ("Sundial North", "Three researchers race across a frozen valley where shadows move in reverse and daylight is quickly disappearing.", ["Adventure", "Thriller"]),
+            ("Mercury Garden", "An orbital horticulturist protects a fragile greenhouse while a silver storm closes around the station.", ["Science Fiction", "Drama"]),
+            ("Cinder Atlas", "A railway photographer follows a midnight train whose passengers each carry a map to a place they have lost.", ["Mystery", "Drama"]),
+            ("Palewater", "A harbor pilot guides an unfamiliar vessel through dense fog and learns why its crew refuses to look toward shore.", ["Mystery", "Thriller"]),
+            ("Lanterns at Zero", "At a remote winter festival, a clockmaker and a chef uncover the secret keeping every lantern alight without flame.", ["Drama", "Mystery"]),
+            ("The Ember Archive", "A librarian safeguards the last collection of handwritten memories as a wildfire approaches the valley.", ["Drama", "Adventure"]),
+            ("Cloudbreakers", "A fearless glider team crosses a chain of floating islands to deliver medicine before the seasonal winds turn.", ["Adventure", "Fantasy"]),
+            ("Marble Sleep", "An architect wakes inside an unfinished hotel where each room preserves a different version of the same day.", ["Mystery", "Thriller"]),
+            ("Fable Circuit", "A game designer discovers an obsolete console that tells new stories about anyone who holds its controller.", ["Science Fiction", "Mystery"]),
+            ("The Arctic Room", "A climate researcher opens a sealed laboratory and finds a perfectly preserved summer afternoon waiting inside.", ["Science Fiction", "Drama"]),
+            ("Hollow Aurora", "Beneath a silent aurora, a wilderness guide leads six travelers toward a refuge that may exist only in their memories.", ["Adventure", "Mystery"]),
+            ("Postcards from Luna", "A postal worker begins receiving beautifully stamped letters from the first lunar settlement, thirty years too early.", ["Science Fiction", "Drama"]),
+            ("The Long Frequency", "Two amateur astronomers trace a repeating signal to an abandoned cinema at the edge of their coastal town.", ["Mystery", "Science Fiction"]),
+            ("Citadel of Salt", "A marine historian enters a fortress revealed by the lowest tide in a century and races the returning sea.", ["Adventure", "Mystery"]),
+            ("Wildlight", "A documentary crew follows a rare ribbon of light through the forest and finds a village missing from modern maps.", ["Adventure", "Drama"]),
+            ("River of Glass", "A courier skates across a frozen river carrying a mysterious package that grows warmer with every mile.", ["Thriller", "Adventure"]),
+            ("Twelve Moons", "A school astronomer notices a new moon appearing each midnight and recruits her neighbors to solve the celestial puzzle.", ["Fantasy", "Mystery"]),
+            ("Saffron Skies", "A retired pilot returns to the desert airfield where a brilliant amber cloud has grounded every plane except hers.", ["Adventure", "Drama"]),
+            ("The Indigo Hour", "During the brief hour when the city turns blue, a violinist can hear the private wishes of everyone passing by.", ["Drama", "Fantasy"]),
+            ("Horizon Relay", "A bicycle messenger crosses a storm-darkened metropolis to reconnect a chain of rooftop emergency beacons.", ["Adventure", "Thriller"]),
+            ("Low Tide Signals", "Three siblings return to their island home and decode blinking lights beneath the harbor at every low tide.", ["Mystery", "Drama"]),
+            ("Axiom Grove", "A mathematician retreats to an orchard where the branches grow into elegant proofs of questions no one has asked.", ["Science Fiction", "Drama"]),
+            ("Blue Ember", "A ceramic artist discovers a flame that burns cold and attracts visitors carrying stories they have never shared.", ["Drama", "Fantasy"]),
+            ("The Velvet Comet", "A small observatory prepares for a once-in-a-lifetime comet while an unexpected guest changes the viewing plan.", ["Drama", "Science Fiction"]),
+            ("Glimmer Coast", "A lighthouse keeper and her daughter follow phosphorescent footprints along a shore erased by morning.", ["Mystery", "Fantasy"]),
+            ("The Night Almanac", "An antique bookseller finds an almanac that predicts only the quiet decisions capable of changing an entire town.", ["Drama", "Mystery"])
+        ]
 
-        for index in 0 ..< prefix {
+        return entries.prefix(prefix).enumerated().map { index, entry in
             let mediaType: MediaType = index.isMultiple(of: 2) ? .movie : .series
             let runtimeTicks = Int64((95 + index * 3) * 60 * 10_000_000)
-            let rating = 7.4 + Double(index) * 0.1
+            let rating = 7.4 + Double(index % 13) * 0.1
 
-            let item = MediaItem(
+            return MediaItem(
                 id: "sample-\(index)",
-                name: "Sample Title \(index + 1)",
-                overview: "A high-quality preview entry used to validate the UI and offline rendering pipeline.",
+                name: entry.title,
+                overview: entry.overview,
                 mediaType: mediaType,
-                year: 2020 + (index % 5),
+                year: 2022 + (index % 5),
                 runtimeTicks: runtimeTicks,
-                genres: ["Drama", "Thriller"],
+                genres: entry.genres,
                 communityRating: rating,
                 posterTag: "poster",
                 backdropTag: "backdrop",
                 libraryID: "movies"
             )
-            items.append(item)
         }
-
-        return items
     }
 
     private static func continueWatchingItems() -> [MediaItem] {
         let resumeEpisode = continueWatchingEpisodes()[1]
         let resumeMovie = MediaItem(
             id: "cw-movie-1",
-            name: "Resume Movie",
-            overview: "A mock movie already started for validating direct resume from home.",
+            name: "Northbound Signal",
+            overview: "A mountain dispatcher follows a fading distress signal into a valley where every compass points toward the same deserted cabin.",
             mediaType: .movie,
             year: 2024,
             runtimeTicks: Int64(112 * 60 * 10_000_000),
@@ -258,15 +316,15 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
             playbackPositionTicks: Int64(41 * 60 * 10_000_000)
         )
 
-        return [resumeEpisode, resumeMovie] + sampleItems(prefix: 6)
+        return [resumeEpisode, resumeMovie] + storefrontItems(prefix: 6)
     }
 
     private static func continueWatchingEpisodes() -> [MediaItem] {
         [
             MediaItem(
                 id: "cw-episode-1",
-                name: "Pilot",
-                overview: "The opening episode used to validate series resume flow.",
+                name: "First Light",
+                overview: "Mira reaches the remote observatory and discovers a signal hidden inside the first sunrise of the season.",
                 mediaType: .episode,
                 year: 2025,
                 runtimeTicks: Int64(24 * 60 * 10_000_000),
@@ -276,7 +334,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
                 backdropTag: "backdrop",
                 libraryID: "shows",
                 parentID: "series-continue-1",
-                seriesName: "Continue Series",
+                seriesName: "Antenna Falls",
                 seriesPosterTag: "poster",
                 indexNumber: 1,
                 parentIndexNumber: 1,
@@ -285,8 +343,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
             ),
             MediaItem(
                 id: "cw-episode-2",
-                name: "Second Wind",
-                overview: "The in-progress episode used to validate direct resume from Continue Watching.",
+                name: "Second Horizon",
+                overview: "A sudden blackout forces Mira and Rowan to carry the observatory's last transmitter across the ridge before dawn.",
                 mediaType: .episode,
                 year: 2025,
                 runtimeTicks: Int64(27 * 60 * 10_000_000),
@@ -296,7 +354,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
                 backdropTag: "backdrop",
                 libraryID: "shows",
                 parentID: "series-continue-1",
-                seriesName: "Continue Series",
+                seriesName: "Antenna Falls",
                 seriesPosterTag: "poster",
                 indexNumber: 2,
                 parentIndexNumber: 1,
@@ -314,8 +372,8 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         if id == "series-continue-1" {
             return MediaItem(
                 id: "series-continue-1",
-                name: "Continue Series",
-                overview: "Mock series container for continue watching playback resolution.",
+                name: "Antenna Falls",
+                overview: "At a secluded observatory, two radio astronomers trace an impossible signal through the mountains and into their shared past.",
                 mediaType: .series,
                 year: 2025,
                 runtimeTicks: Int64(27 * 60 * 10_000_000),
@@ -330,7 +388,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         if id.hasPrefix("sample-"),
            let index = Int(id.dropFirst("sample-".count)),
            index >= 0 {
-            return sampleItems(prefix: index + 1)[index]
+            return storefrontItems(prefix: index + 1)[index]
         }
 
         return MediaItem(id: id, name: "Fictional Feature")
@@ -390,9 +448,20 @@ actor MockMetadataRepository: MetadataRepositoryProtocol {
     }
 
     func searchItems(query: String, limit: Int) async throws -> [MediaItem] {
-        Array(itemsByID.values.sorted {
-            $0.id.localizedStandardCompare($1.id) == .orderedAscending
-        }.prefix(limit))
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let catalog = MockJellyfinAPIClient.storefrontItems(prefix: 40)
+        let matches = catalog.filter { item in
+            guard !normalizedQuery.isEmpty else { return true }
+            let searchableCopy = [
+                item.name,
+                item.overview ?? "",
+                item.genres.joined(separator: " ")
+            ]
+            .joined(separator: " ")
+            .lowercased()
+            return searchableCopy.contains(normalizedQuery)
+        }
+        return Array(matches.prefix(limit))
     }
 
     func savePlaybackProgress(_ progress: PlaybackProgress) async throws {}
@@ -437,6 +506,7 @@ private enum ArtworkPlaceholderRenderer {
     static func makeImage(seed: String, size: CGSize = CGSize(width: 900, height: 1350)) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: size)
         let palette = palette(for: seed)
+        let stableHash = StorefrontStableSeed.hash(seed)
 
         return renderer.image { context in
             let cgContext = context.cgContext
@@ -452,13 +522,69 @@ private enum ArtworkPlaceholderRenderer {
                 options: []
             )
 
-            UIColor.white.withAlphaComponent(0.07).setFill()
-            cgContext.fillEllipse(in: CGRect(x: size.width - 420, y: size.height - 520, width: 560, height: 560))
+            let unit = min(size.width, size.height)
+            let phase = CGFloat(stableHash % 360) * .pi / 180
+            let center = CGPoint(
+                x: size.width * (0.46 + 0.12 * cos(phase)),
+                y: size.height * (0.44 + 0.10 * sin(phase))
+            )
 
-            let symbolConfiguration = UIImage.SymbolConfiguration(pointSize: 220, weight: .bold)
-            let symbol = UIImage(systemName: "film.stack.fill", withConfiguration: symbolConfiguration)?
-                .withTintColor(.white.withAlphaComponent(0.16), renderingMode: .alwaysOriginal)
-            symbol?.draw(in: CGRect(x: 72, y: size.height - 360, width: 220, height: 220))
+            cgContext.saveGState()
+            cgContext.setBlendMode(.screen)
+            for index in 0..<4 {
+                let inset = CGFloat(index) * unit * 0.07
+                let diameter = unit * 0.70 - inset * 2
+                let ring = CGRect(
+                    x: center.x - diameter / 2,
+                    y: center.y - diameter / 2,
+                    width: diameter,
+                    height: diameter
+                )
+                cgContext.setStrokeColor(UIColor.white.withAlphaComponent(0.12 - CGFloat(index) * 0.018).cgColor)
+                cgContext.setLineWidth(max(2, unit * (0.012 - CGFloat(index) * 0.0015)))
+                cgContext.strokeEllipse(in: ring)
+            }
+
+            let beam = CGMutablePath()
+            let beamOffset = CGFloat((stableHash >> 12) % 100) / 100
+            beam.move(to: CGPoint(x: -size.width * 0.15, y: size.height * (0.66 + beamOffset * 0.08)))
+            beam.addLine(to: CGPoint(x: size.width * 1.08, y: size.height * (0.18 + beamOffset * 0.10)))
+            beam.addLine(to: CGPoint(x: size.width * 1.16, y: size.height * (0.31 + beamOffset * 0.08)))
+            beam.addLine(to: CGPoint(x: -size.width * 0.08, y: size.height * (0.80 + beamOffset * 0.06)))
+            beam.closeSubpath()
+            cgContext.addPath(beam)
+            cgContext.setFillColor(UIColor.white.withAlphaComponent(0.075).cgColor)
+            cgContext.fillPath()
+
+            let orbDiameter = unit * 0.20
+            let orb = CGRect(
+                x: center.x - orbDiameter / 2,
+                y: center.y - orbDiameter / 2,
+                width: orbDiameter,
+                height: orbDiameter
+            )
+            cgContext.setFillColor(UIColor.white.withAlphaComponent(0.20).cgColor)
+            cgContext.fillEllipse(in: orb)
+            cgContext.restoreGState()
+
+            let vignetteColors = [
+                UIColor.clear.cgColor,
+                UIColor.black.withAlphaComponent(0.58).cgColor
+            ] as CFArray
+            if let vignette = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: vignetteColors,
+                locations: [0.40, 1]
+            ) {
+                cgContext.drawRadialGradient(
+                    vignette,
+                    startCenter: center,
+                    startRadius: 0,
+                    endCenter: center,
+                    endRadius: max(size.width, size.height) * 0.82,
+                    options: [.drawsAfterEndLocation]
+                )
+            }
         }
     }
 
