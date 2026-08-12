@@ -451,8 +451,22 @@ private enum ArtworkPlaceholderRenderer {
             [UIColor(red: 0.11, green: 0.08, blue: 0.20, alpha: 1), UIColor(red: 0.28, green: 0.20, blue: 0.55, alpha: 1), UIColor(red: 0.72, green: 0.48, blue: 0.96, alpha: 1)]
         ]
 
-        let index = abs(seed.hashValue) % palettes.count
+        let index = StorefrontStableSeed.paletteIndex(for: seed, paletteCount: palettes.count)
         return palettes[index]
+    }
+}
+
+enum StorefrontStableSeed {
+    static func hash(_ value: String) -> UInt64 {
+        value.utf8.reduce(into: UInt64(14_695_981_039_346_656_037)) { hash, byte in
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+    }
+
+    static func paletteIndex(for value: String, paletteCount: Int) -> Int {
+        precondition(paletteCount > 0)
+        return Int(hash(value) % UInt64(paletteCount))
     }
 }
 

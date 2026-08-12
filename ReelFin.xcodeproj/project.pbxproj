@@ -423,6 +423,7 @@
 		726456450392EC27C52BA053 /* TVPlayerLaunchLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8C286366D281DF4AB116EE /* TVPlayerLaunchLayout.swift */; };
 		72722D866C2DECD556AEE193 /* MatroskaCueParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 760A58E342B21B28DECA0BD9 /* MatroskaCueParser.swift */; };
 		727793DD9CD7E9EA922651C8 /* JellyfinAPI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0FEBC4A4146B8791D0D29B8C /* JellyfinAPI.framework */; };
+		729547FEF567E4922F5CA784 /* PlayerOrientationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F263E2CB5ADCF32401A5CDDF /* PlayerOrientationPolicy.swift */; };
 		72B03B98072E7757CDFDB388 /* NativePlayerIOSTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC4EC8001C170C3815D1947 /* NativePlayerIOSTimelineView.swift */; };
 		744A5491346BCFCCA75A9BF1 /* EpisodeFileInfoSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39CB2B4EBFCCDC4B04C1347 /* EpisodeFileInfoSummary.swift */; };
 		744C39A06158554F1F7F480E /* IOSDetailSynopsisLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = E561A643296E577EACA7C983 /* IOSDetailSynopsisLayout.swift */; };
@@ -497,6 +498,7 @@
 		84CFCF74173DA8779C8C4B2F /* PlaybackSessionController+SkipSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D46D031DD654D1A24C6654B /* PlaybackSessionController+SkipSegments.swift */; };
 		857B78C067EC0DE78453DD7D /* HDRMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD8184751AB40E1CFC3D720A /* HDRMetadataTests.swift */; };
 		8611FF0CA2EDAA86B54E3EE3 /* NativePlayerAVKitMenuModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8500C30D834F780A93A60BE /* NativePlayerAVKitMenuModel.swift */; };
+		8642B6ABC9521DB45722994A /* PlayerOrientationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F263E2CB5ADCF32401A5CDDF /* PlayerOrientationPolicy.swift */; };
 		8689A2BFFEDCA4E214EC45DD /* RollingPosterCarousel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA1AB9E1F66425BB1A7A6301 /* RollingPosterCarousel.swift */; };
 		86EA62AC4FE412FD125A03F0 /* reelfin-onboarding-home.png in Resources */ = {isa = PBXBuildFile; fileRef = 48D988A1D91BABBD518E1E53 /* reelfin-onboarding-home.png */; };
 		8790AAC2D65CBE395DFEBAB7 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3772E703603E46C29857FE13 /* LibraryView.swift */; };
@@ -574,6 +576,7 @@
 		A027B62E3A64DB7374EEE01F /* FMP4RepackagerFilteringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9676C3B1A4A3A6ECF4BA02D /* FMP4RepackagerFilteringTests.swift */; };
 		A0956F4FDEDD1FDADEF4AAB0 /* EpisodeCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38FD3C4A7FBB705C2E6F9B2D /* EpisodeCardView.swift */; };
 		A0F8EFFAADE91B3C4591FEC2 /* TrackPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A237BB40F851078695BC9B6 /* TrackPickerView.swift */; };
+		A133EB37D553CDAE8E610D40 /* StorefrontDeterminismTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00D6534ACA555DDDDA3261 /* StorefrontDeterminismTests.swift */; };
 		A15B4FBCC72CFAB5F676DF9A /* ServerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC61363CEB8253845567E5D /* ServerSettingsView.swift */; };
 		A1B9F0C3B4C1B17CED62D107 /* SubtitleClockAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0363089E6E8AA0550275CEC7 /* SubtitleClockAdapter.swift */; };
 		A1F34726946185D4EB8A3CEA /* NativeBridgeTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A006AE71205F703BBDEF633 /* NativeBridgeTypes.swift */; };
@@ -772,6 +775,7 @@
 		DD024839245244AFEB67A651 /* CustomPlayerPrewarmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A51599ED71D464B982E866 /* CustomPlayerPrewarmer.swift */; };
 		DD05065E71CC480A32AF55DF /* PlaybackBufferingStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C24CC9E04E580026B079A983 /* PlaybackBufferingStateTests.swift */; };
 		DD4DB027E5D4DBD2A561B575 /* NativePlayerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17D215E9FDB3612A8E87031C /* NativePlayerViewController.swift */; };
+		DDA4D5E618050A738AE031CA /* IPadAdaptiveUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A276FB257743D7F144200CE /* IPadAdaptiveUITests.swift */; };
 		DE165C48E1776893CE3DA037 /* JellyfinLibraryAggregationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D673E6B988526C030AEDD6D /* JellyfinLibraryAggregationTests.swift */; };
 		DE601C84F3437AF0765D1173 /* MatroskaDemuxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB866E5FBCE2122BB44F1A3C /* MatroskaDemuxer.swift */; };
 		DEFDCF4816032E3ECAD6270D /* DataStoreTV.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0ADDF5F85C2BC8BB678D3B83 /* DataStoreTV.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -1475,6 +1479,7 @@
 		0952A2134D63D08EA37908EC /* SyntheticHLSSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntheticHLSSessionTests.swift; sourceTree = "<group>"; };
 		099E99C93EFE70B4A41020AD /* LibraryViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModelTests.swift; sourceTree = "<group>"; };
 		099FEDEEF1B7608DCB1F60C9 /* ASSParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASSParser.swift; sourceTree = "<group>"; };
+		0A276FB257743D7F144200CE /* IPadAdaptiveUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAdaptiveUITests.swift; sourceTree = "<group>"; };
 		0ADDF5F85C2BC8BB678D3B83 /* DataStoreTV.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = DataStoreTV.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B889EAF1EFAB69BBC1BE165 /* OnboardingExperienceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingExperienceView.swift; sourceTree = "<group>"; };
 		0BB201377975967C85B4152E /* TVTopNavigationAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVTopNavigationAppearance.swift; sourceTree = "<group>"; };
@@ -1868,6 +1873,7 @@
 		DB97E43ACE328F487875B68A /* DolbyAudioHeaderParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DolbyAudioHeaderParser.swift; sourceTree = "<group>"; };
 		DBBAA01A1CA072D54CE02F11 /* HomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
 		DBEF3A4BAABDD23E03F63B4A /* NativePlaybackPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaybackPlanner.swift; sourceTree = "<group>"; };
+		DC00D6534ACA555DDDDA3261 /* StorefrontDeterminismTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorefrontDeterminismTests.swift; sourceTree = "<group>"; };
 		DC3D1E426A132CE84E60E5F9 /* OriginalMediaResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OriginalMediaResolver.swift; sourceTree = "<group>"; };
 		DC964040B15D91B28E589DD4 /* DolbyVisionClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DolbyVisionClassificationTests.swift; sourceTree = "<group>"; };
 		DD05B5F324CCE742815E6DFF /* MatroskaParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatroskaParserTests.swift; sourceTree = "<group>"; };
@@ -1918,6 +1924,7 @@
 		F1A4DFEEC2DEF8B88131E08A /* PosterCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterCardView.swift; sourceTree = "<group>"; };
 		F1B4C1E95643DBDD281A2221 /* NativePlayerTVProgressScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerTVProgressScrubberView.swift; sourceTree = "<group>"; };
 		F218AF3EAB066E116201E828 /* NativePauseStateGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePauseStateGate.swift; sourceTree = "<group>"; };
+		F263E2CB5ADCF32401A5CDDF /* PlayerOrientationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerOrientationPolicy.swift; sourceTree = "<group>"; };
 		F2BFD34FF80CFC26E1ED1096 /* LocalCacheHTTPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCacheHTTPServer.swift; sourceTree = "<group>"; };
 		F53AB4F215785671B80C4651 /* DolbyVisionClass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DolbyVisionClass.swift; sourceTree = "<group>"; };
 		F6E20B79D83C704F4FFA2659 /* PlaybackEngineTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PlaybackEngineTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -2229,6 +2236,7 @@
 				4FA02EDCDF5AC6D51AC2AA24 /* RootDesktopLayoutPolicyTests.swift */,
 				FD8F8B87A4A392FB35BD088B /* RootViewModelAuthPersistenceTests.swift */,
 				CA8A73A634C0467F018BA267 /* SessionPersistenceTests.swift */,
+				DC00D6534ACA555DDDDA3261 /* StorefrontDeterminismTests.swift */,
 				4D4EB6B44DC8976D5F88BEDB /* TransparentImageCropperTests.swift */,
 				45085CB222AC245F3375A085 /* TVDetailActionButtonLayoutTests.swift */,
 				3B7917D031EFB31A75871EC9 /* TVPerformanceStateTests.swift */,
@@ -2354,6 +2362,7 @@
 			isa = PBXGroup;
 			children = (
 				9C5B4EFF6FFC884150B32CE2 /* OrientationManager.swift */,
+				F263E2CB5ADCF32401A5CDDF /* PlayerOrientationPolicy.swift */,
 				FF3931F310FA6DB22BD97F81 /* PreviewMocks.swift */,
 				423061893D83BA407DCA4E7F /* ReelFinDependencies.swift */,
 				7B233DF87AF6E0167EA771DA /* ReelFinRootView.swift */,
@@ -2528,6 +2537,7 @@
 			isa = PBXGroup;
 			children = (
 				26889EF0AD3D5EE0ACB1EF8F /* HomeAndDetailActionsUITests.swift */,
+				0A276FB257743D7F144200CE /* IPadAdaptiveUITests.swift */,
 				6A5B4D0E334EDE3A7199FB09 /* PlaybackLiveSmokeUITests.swift */,
 				B24DBEB3A10445317A4E2744 /* ReelFinUITests.swift */,
 			);
@@ -4046,6 +4056,7 @@
 				FEF58B22EBE48B08D728B178 /* PlaybackSkipOverlayView.swift in Sources */,
 				01481D0DECFD4AC4ECB147A0 /* PlaybackTrickplayPreviewView.swift in Sources */,
 				38C4B4A1CA16EFCED6565EF3 /* PlayerAccessibilityEvidenceView.swift in Sources */,
+				8642B6ABC9521DB45722994A /* PlayerOrientationPolicy.swift in Sources */,
 				1536F16C6DDD75A63C385B63 /* PlayerView.swift in Sources */,
 				B7E21C4024EE3933D610FD97 /* PosterCardView.swift in Sources */,
 				CD6A87EE95AE9B604656FD6A /* PreviewMocks.swift in Sources */,
@@ -4270,6 +4281,7 @@
 				7E1174B374715828BD104CB6 /* SRTWebVTTConverterTests.swift in Sources */,
 				E4C3D9EFB423276D8519F2FE /* ServerSettingsNativePlayerTests.swift in Sources */,
 				07169BC78256D2EB0709ED4C /* SessionPersistenceTests.swift in Sources */,
+				A133EB37D553CDAE8E610D40 /* StorefrontDeterminismTests.swift in Sources */,
 				0A9E66E513B3A83D6D30C082 /* StreamingRangeWriterTests.swift in Sources */,
 				560A7AF1C55B89FAB60420AE /* SubtitleParserTests.swift in Sources */,
 				3BF09C8541735745FD8E2D6B /* SyntheticHLSSessionTests.swift in Sources */,
@@ -4355,6 +4367,7 @@
 				4F5BC869EFBE511EE671BAAB /* PlaybackSkipOverlayView.swift in Sources */,
 				2194167B2C470DE830D3ADB8 /* PlaybackTrickplayPreviewView.swift in Sources */,
 				C8419EC259AD7EA259364794 /* PlayerAccessibilityEvidenceView.swift in Sources */,
+				729547FEF567E4922F5CA784 /* PlayerOrientationPolicy.swift in Sources */,
 				E16FF48842A50E1B6B748D13 /* PlayerView.swift in Sources */,
 				4C7D4C81794A550498C26FA3 /* PosterCardView.swift in Sources */,
 				3A12A27899E2CD383AF35A39 /* PreviewMocks.swift in Sources */,
@@ -4421,6 +4434,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				88537E6A46BEA9A1FB8EA98E /* HomeAndDetailActionsUITests.swift in Sources */,
+				DDA4D5E618050A738AE031CA /* IPadAdaptiveUITests.swift in Sources */,
 				8342AB3A3659E5BAD16C86CB /* PlaybackLiveSmokeUITests.swift in Sources */,
 				45A2515F97BC10741DDFDB84 /* ReelFinUITests.swift in Sources */,
 			);
@@ -5354,6 +5368,7 @@
 				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
 				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -5367,7 +5382,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -5611,7 +5626,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 17;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -5626,7 +5641,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.2;
+				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -5655,6 +5670,7 @@
 				INFOPLIST_KEY_REELFIN_SUPPORT_URL = "https://flovflo.github.io/reelfin-site/support.html";
 				INFOPLIST_KEY_REELFIN_TERMS_OF_SERVICE_URL = "https://flovflo.github.io/reelfin-site/terms.html";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -5668,7 +5684,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -6109,7 +6125,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 17;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -6130,7 +6146,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.2;
+				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

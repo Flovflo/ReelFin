@@ -232,7 +232,7 @@ final class AppStoreScreenshotTests: XCTestCase {
 
     func testCaptureScreenshots() throws {
         let app = XCUIApplication()
-        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        configureStorefrontLaunch(app)
         app.launch()
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
@@ -256,7 +256,7 @@ final class AppStoreScreenshotTests: XCTestCase {
 
     func testCapturePlayerScreenshot() throws {
         let app = XCUIApplication()
-        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        configureStorefrontLaunch(app)
         app.launch()
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
@@ -277,7 +277,7 @@ final class AppStoreScreenshotTests: XCTestCase {
 
     func testMockDetailShowsIOSCarouselChrome() throws {
         let app = XCUIApplication()
-        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        configureStorefrontLaunch(app)
         app.launch()
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
@@ -298,7 +298,7 @@ final class AppStoreScreenshotTests: XCTestCase {
 
     func testMockDetailOpensCarouselOnSelectedContextItem() throws {
         let app = XCUIApplication()
-        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        configureStorefrontLaunch(app)
         app.launch()
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
@@ -347,6 +347,17 @@ final class AppStoreScreenshotTests: XCTestCase {
         }
 
         XCTFail("Unable to navigate to \(title)", file: file, line: line)
+    }
+
+    private func configureStorefrontLaunch(_ app: XCUIApplication) {
+        app.launchArguments += [
+            "-reelfin-mock-mode",
+            "-reelfin-screenshot-mode",
+            "-reelfin-reset-screenshot-defaults",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Dark"
+        ]
     }
 
     private func tabIndex(for title: String) -> Int? {
