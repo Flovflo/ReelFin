@@ -102,7 +102,8 @@ public struct HeroCarouselView: View {
                     pageControl
                 }
 
-                if visibleArtworkItemID == (items[safe: currentIndex] ?? items.first)?.id {
+                if AppMetadata.current.isScreenshotModeEnabled,
+                   visibleArtworkItemID == (items[safe: currentIndex] ?? items.first)?.id {
                     StorefrontArtworkReadyAnchor(identifier: "home_hero_artwork_ready")
                         .frame(width: 1, height: 1)
                 }
@@ -231,7 +232,8 @@ public struct HeroCarouselView: View {
                 }
 
 
-                if visibleArtworkItemID == (items[safe: currentIndex] ?? items.first)?.id {
+                if AppMetadata.current.isScreenshotModeEnabled,
+                   visibleArtworkItemID == (items[safe: currentIndex] ?? items.first)?.id {
                     StorefrontArtworkReadyAnchor(identifier: "home_hero_artwork_ready")
                         .frame(width: 1, height: 1)
                 }

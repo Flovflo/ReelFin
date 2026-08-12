@@ -82,6 +82,47 @@ class StorefrontPNGComparatorTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("dimensions", completed.stdout + completed.stderr)
 
+    def test_rejects_unreadable_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first = directory / "first.png"
+            second = directory / "second.png"
+            first.write_text("not a PNG", encoding="utf-8")
+            write_rgb_png(second, 1, 1, bytearray([96, 96, 96]))
+
+            completed = self.compare(first, second)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("cannot decode PNG", completed.stdout + completed.stderr)
+
+    def test_accepts_exact_fraction_delta_and_component_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            first, second, baseline, candidate = self.fixture(Path(temporary), width=200, height=200)
+            for x in range(4):
+                candidate[x * 3] += 1
+            write_rgb_png(first, 200, 200, baseline)
+            write_rgb_png(second, 200, 200, candidate)
+
+            completed = self.compare(first, second)
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("changed_fraction=0.000100000", completed.stdout)
+        self.assertIn("max_channel_delta=1", completed.stdout)
+        self.assertIn("largest_component=4", completed.stdout)
+
+    def test_rejects_first_changed_fraction_above_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            first, second, baseline, candidate = self.fixture(Path(temporary), width=200, height=200)
+            for x, y in ((0, 0), (20, 20), (40, 40), (60, 60), (80, 80)):
+                candidate[(y * 200 + x) * 3] += 1
+            write_rgb_png(first, 200, 200, baseline)
+            write_rgb_png(second, 200, 200, candidate)
+
+            completed = self.compare(first, second)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("changed fraction", completed.stdout + completed.stderr)
+
     def test_rejects_visible_color_change_even_when_it_is_one_pixel(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             first, second, baseline, candidate = self.fixture(Path(temporary))

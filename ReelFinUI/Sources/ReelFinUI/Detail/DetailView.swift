@@ -200,7 +200,8 @@ struct DetailView: View {
         }
 #if os(iOS)
         .overlay(alignment: .topLeading) {
-            if heroArtworkReadyItemID == viewModel.detail.item.id {
+            if AppMetadata.current.isScreenshotModeEnabled,
+               heroArtworkReadyItemID == viewModel.detail.item.id {
                 StorefrontArtworkReadyAnchor(identifier: "detail_hero_artwork_ready")
                     .frame(width: 1, height: 1)
             }
@@ -216,7 +217,8 @@ struct DetailView: View {
                 )
                 .frame(width: 1, height: 1)
             }
-            if heroArtworkReadyItemID == viewModel.detail.item.id {
+            if AppMetadata.current.isScreenshotModeEnabled,
+               heroArtworkReadyItemID == viewModel.detail.item.id {
                 StorefrontArtworkReadyAnchor(identifier: "detail_hero_artwork_ready")
                     .frame(width: 1, height: 1)
             }

@@ -254,17 +254,62 @@ final class AppStoreScreenshotTests: XCTestCase {
         if UIDevice.current.userInterfaceIdiom == .pad {
             XCTAssertTrue(app.staticTexts["Library"].firstMatch.waitForExistence(timeout: 5))
         }
-        XCTAssertTrue(firstPoster.waitForExistence(timeout: 8))
+        let showsFilter = app.buttons["Shows"].firstMatch
+        XCTAssertTrue(showsFilter.waitForExistence(timeout: 8))
+        showsFilter.tap()
+        let showcasedSeries = app.buttons["media_card_button_sample-39"].firstMatch
+        XCTAssertTrue(showcasedSeries.waitForExistence(timeout: 8))
         capture(name: "02-library")
 
-        firstPoster.tap()
+        showcasedSeries.tap()
         let playButton = playbackActionButton(in: app)
         XCTAssertTrue(playButton.exists)
         XCTAssertTrue(app.otherElements["detail_hero_artwork_ready"].waitForExistence(timeout: 12))
         capture(name: "03-detail")
+
+        let detailBackButton = app.buttons["Back"].firstMatch
+        XCTAssertTrue(detailBackButton.waitForExistence(timeout: 5))
+        detailBackButton.tap()
+        XCTAssertTrue(app.staticTexts["Library"].firstMatch.waitForExistence(timeout: 8))
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.descendants(matching: .any)["root_sidebar_home"].firstMatch.waitForExistence(timeout: 5))
+        }
+
         openSection(named: "Settings", in: app)
         XCTAssertTrue(app.staticTexts["Settings"].firstMatch.waitForExistence(timeout: 8))
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.descendants(matching: .any)["root_sidebar_home"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Home"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["ReelFin"].firstMatch.waitForExistence(timeout: 5))
+        }
+        let storefrontUsername = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Avery Morgan")
+        ).firstMatch
+        XCTAssertTrue(storefrontUsername.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Preview"].firstMatch.exists)
         capture(name: "04-settings")
+    }
+
+    func testArtworkReadyAnchorsAreAbsentOutsideScreenshotMode() throws {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-reelfin-mock-mode",
+            "-AppleLanguages", "(en)",
+            "-AppleLocale", "en_US",
+            "-AppleInterfaceStyle", "Dark"
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        let firstPoster = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")
+        ).firstMatch
+        XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
+        XCTAssertFalse(app.otherElements["home_hero_artwork_ready"].waitForExistence(timeout: 4))
+
+        firstPoster.tap()
+        XCTAssertTrue(playbackActionButton(in: app).exists)
+        XCTAssertFalse(app.otherElements["detail_hero_artwork_ready"].waitForExistence(timeout: 4))
     }
 
     func testCapturePlayerScreenshot() throws {

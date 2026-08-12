@@ -31,7 +31,7 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
         pollQuickConnectOverride: (@Sendable (String) async throws -> UserSession?)? = nil
     ) {
         config = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
-        session = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
+        session = authenticated ? UserSession(userID: "preview-user", username: "Avery Morgan", token: "token") : nil
         defaultSessionInvalidations = sessionInvalidations
         self.sessionInvalidationsOverride = sessionInvalidationsOverride
         self.currentSessionOverride = currentSessionOverride
@@ -197,7 +197,15 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
-        Self.storefrontItems(prefix: query.pageSize)
+        var items = Self.storefrontItems(prefix: 40)
+        if let mediaType = query.mediaType {
+            items = items.filter { $0.mediaType == mediaType }
+        }
+
+        let pageSize = max(query.pageSize, 0)
+        let startIndex = max(query.page, 0) * pageSize
+        guard startIndex < items.count else { return [] }
+        return Array(items.dropFirst(startIndex).prefix(pageSize))
     }
 
     func fetchPlaybackSources(itemID: String) async throws -> [MediaSource] {
@@ -405,7 +413,7 @@ final class MockSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
 
     init(authenticated: Bool = true) {
         serverConfiguration = ServerConfiguration(serverURL: URL(string: "https://demo.reelfin.app")!)
-        lastSession = authenticated ? UserSession(userID: "preview-user", username: "Preview", token: "token") : nil
+        lastSession = authenticated ? UserSession(userID: "preview-user", username: "Avery Morgan", token: "token") : nil
         hasCompletedOnboarding = authenticated
         completedOnboardingVersion = authenticated ? ReelFinOnboardingVersion.current : 0
     }
@@ -443,8 +451,15 @@ actor MockMetadataRepository: MetadataRepositoryProtocol {
     }
 
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
-        let all = itemsByID.values.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
-        return Array(all.prefix(query.pageSize))
+        var items = itemsByID.values.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+        if let mediaType = query.mediaType {
+            items = items.filter { $0.mediaType == mediaType }
+        }
+
+        let pageSize = max(query.pageSize, 0)
+        let startIndex = max(query.page, 0) * pageSize
+        guard startIndex < items.count else { return [] }
+        return Array(items.dropFirst(startIndex).prefix(pageSize))
     }
 
     func searchItems(query: String, limit: Int) async throws -> [MediaItem] {
