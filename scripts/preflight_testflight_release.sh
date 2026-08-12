@@ -9,6 +9,8 @@ APP_INFO_PLIST="ReelFinApp/App/Info.plist"
 APP_PRIVACY_MANIFEST="ReelFinApp/Resources/PrivacyInfo.xcprivacy"
 TV_TOP_SHELF_WIDE_CONTENTS="ReelFinApp/Resources/Assets.xcassets/AppIcon.brandassets/Top Shelf Image Wide.imageset/Contents.json"
 TV_TOP_SHELF_WIDE_2X="ReelFinApp/Resources/Assets.xcassets/AppIcon.brandassets/Top Shelf Image Wide.imageset/topshelf-wide@2x.png"
+STOREFRONT_ASSET_ROOT="${REELFIN_STOREFRONT_ASSET_ROOT:-$ROOT_DIR/Docs/Media/AppStoreReady}"
+STOREFRONT_MANIFEST="${REELFIN_STOREFRONT_MANIFEST:-$STOREFRONT_ASSET_ROOT/screenshots.sha256}"
 
 pass() {
   echo "[PASS] $1"
@@ -48,6 +50,74 @@ require_image_dimensions() {
     pass "$label"
   else
     fail "$label (expected ${expected_width}x${expected_height}, found ${actual_width:-unknown}x${actual_height:-unknown})"
+  fi
+}
+
+require_storefront_family() {
+  local slug="$1"
+  local expected_width="$2"
+  local expected_height="$3"
+  shift 3
+  local expected_names=("$@")
+  local screenshot_root="$STOREFRONT_ASSET_ROOT/$slug/screenshots"
+  local actual_count=0
+  local screenshot
+  local name
+
+  if [[ -d "$screenshot_root" ]]; then
+    actual_count="$(find "$screenshot_root" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')"
+  fi
+  if [[ "$actual_count" == "${#expected_names[@]}" ]]; then
+    pass "$slug has exactly ${#expected_names[@]} PNG files"
+  else
+    fail "$slug has exactly ${#expected_names[@]} PNG files (found $actual_count)"
+  fi
+
+  for name in "${expected_names[@]}"; do
+    screenshot="$screenshot_root/$name.png"
+    local actual_width=""
+    local actual_height=""
+    local alpha=""
+    if [[ -f "$screenshot" ]]; then
+      actual_width="$(/usr/bin/sips -g pixelWidth "$screenshot" 2>/dev/null | awk '/pixelWidth:/ { print $2; exit }')"
+      actual_height="$(/usr/bin/sips -g pixelHeight "$screenshot" 2>/dev/null | awk '/pixelHeight:/ { print $2; exit }')"
+      alpha="$(/usr/bin/sips -g hasAlpha "$screenshot" 2>/dev/null | awk '/hasAlpha:/ { print $2; exit }')"
+    fi
+    if [[ "$actual_width" == "$expected_width" && "$actual_height" == "$expected_height" ]]; then
+      pass "$slug $name screenshot is ${expected_width}x${expected_height}"
+    else
+      fail "$slug $name screenshot is ${expected_width}x${expected_height}"
+    fi
+    if [[ "$alpha" == "no" ]]; then
+      pass "$slug $name screenshot has no alpha channel"
+    else
+      fail "$slug $name screenshot has no alpha channel"
+    fi
+  done
+}
+
+require_storefront_manifest() {
+  if [[ ! -f "$STOREFRONT_MANIFEST" ]]; then
+    fail "Storefront SHA-256 manifest exists"
+    return
+  fi
+  if (
+    cd "$STOREFRONT_ASSET_ROOT"
+    /usr/bin/shasum -a 256 -c "$STOREFRONT_MANIFEST" >/dev/null 2>&1
+  ); then
+    pass "Storefront SHA-256 manifest matches all promoted screenshots"
+  else
+    fail "Storefront SHA-256 manifest matches all promoted screenshots"
+  fi
+}
+
+require_storefront_assets() {
+  require_storefront_family "6.9-inch" 1320 2868 01-home 02-library 03-detail 04-settings
+  require_storefront_family "13-inch" 2064 2752 01-home 02-library 03-detail 04-settings
+  require_storefront_family "tvOS" 1920 1080 01-home 02-library 03-detail 04-search
+  require_storefront_manifest
+  if (( FAILURES == 0 )); then
+    pass "12 storefront screenshots match the release manifest"
   fi
 }
 
@@ -178,6 +248,19 @@ if [[ "${1:-}" == "--review-credentials-readiness" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "--storefront-assets-readiness" ]]; then
+  echo "Checking promoted App Store screenshots..."
+  require_storefront_assets
+  if (( FAILURES > 0 )); then
+    echo
+    echo "Storefront readiness completed with $FAILURES failure(s)."
+    exit 1
+  fi
+  echo
+  echo "Storefront readiness completed successfully."
+  exit 0
+fi
+
 if [[ "${1:-}" == "--distribution-readiness" ]]; then
   echo "Checking ephemeral App Review credential readiness..."
   require_review_credentials
@@ -237,10 +320,7 @@ require_contains "Docs/TestFlight-Launch-Checklist.md" "External TestFlight grou
 require_contains "Shared/Sources/Shared/ReviewDemoMode.swift" "review-demo-user" "Review demo mode is compiled into the app"
 require_contains "$TV_TOP_SHELF_WIDE_CONTENTS" '"topshelf-wide@2x.png"' "tvOS Top Shelf Wide catalog declares its 2x image"
 require_image_dimensions "$TV_TOP_SHELF_WIDE_2X" 4640 1440 "tvOS Top Shelf Wide 2x image is 4640x1440"
-for screenshot in 01-home 02-library 03-detail 04-settings; do
-  require_image_dimensions "Docs/Media/AppStoreReady/13-inch/screenshots/${screenshot}.png" 2064 2752 \
-    "13-inch ${screenshot} screenshot is 2064x2752"
-done
+require_storefront_assets
 require_url "https://flovflo.github.io/reelfin-site/" "Marketing site is reachable over HTTPS"
 require_url "https://flovflo.github.io/reelfin-site/privacy.html" "Privacy Policy page is reachable over HTTPS"
 require_url "https://flovflo.github.io/reelfin-site/terms.html" "Terms page is reachable over HTTPS"
