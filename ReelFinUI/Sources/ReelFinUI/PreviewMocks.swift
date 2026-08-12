@@ -200,6 +200,9 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
     }
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? {
+        if type == .logo {
+            return nil
+        }
         let normalizedWidth = width.map { type.normalizedImageWidth($0) } ?? 400
         return URL(string: "mock-image://\(itemID)?type=\(type.rawValue)&width=\(normalizedWidth)")
     }
@@ -324,7 +327,13 @@ final class MockJellyfinAPIClient: JellyfinAPIClientProtocol, @unchecked Sendabl
             )
         }
 
-        return sampleItems(prefix: 8).first(where: { $0.id == id }) ?? MediaItem(id: id, name: "Mock")
+        if id.hasPrefix("sample-"),
+           let index = Int(id.dropFirst("sample-".count)),
+           index >= 0 {
+            return sampleItems(prefix: index + 1)[index]
+        }
+
+        return MediaItem(id: id, name: "Fictional Feature")
     }
 }
 
@@ -376,12 +385,14 @@ actor MockMetadataRepository: MetadataRepositoryProtocol {
     }
 
     func fetchLibraryItems(query: LibraryQuery) async throws -> [MediaItem] {
-        let all = Array(itemsByID.values)
+        let all = itemsByID.values.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
         return Array(all.prefix(query.pageSize))
     }
 
     func searchItems(query: String, limit: Int) async throws -> [MediaItem] {
-        Array(itemsByID.values.prefix(limit))
+        Array(itemsByID.values.sorted {
+            $0.id.localizedStandardCompare($1.id) == .orderedAscending
+        }.prefix(limit))
     }
 
     func savePlaybackProgress(_ progress: PlaybackProgress) async throws {}
@@ -393,7 +404,7 @@ actor MockMetadataRepository: MetadataRepositoryProtocol {
 
 final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     func image(for url: URL) async throws -> UIImage {
-        ArtworkPlaceholderRenderer.makeImage(seed: url.absoluteString)
+        ArtworkPlaceholderRenderer.makeImage(for: url)
     }
 
     func image(for url: URL, consumer consumerID: ImageRequestConsumerID) async throws -> UIImage {
@@ -402,7 +413,7 @@ final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
     }
 
     func cachedImage(for url: URL) async -> UIImage? {
-        nil
+        ArtworkPlaceholderRenderer.makeImage(for: url)
     }
 
     func prefetch(urls: [URL]) async {}
@@ -415,6 +426,14 @@ final class MockImagePipeline: ImagePipelineProtocol, @unchecked Sendable {
 }
 
 private enum ArtworkPlaceholderRenderer {
+    static func makeImage(for url: URL) -> UIImage {
+        let isBackdrop = url.absoluteString.lowercased().contains("type=backdrop")
+        let size = isBackdrop
+            ? CGSize(width: 1920, height: 1080)
+            : CGSize(width: 900, height: 1350)
+        return makeImage(seed: url.absoluteString, size: size)
+    }
+
     static func makeImage(seed: String, size: CGSize = CGSize(width: 900, height: 1350)) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: size)
         let palette = palette(for: seed)

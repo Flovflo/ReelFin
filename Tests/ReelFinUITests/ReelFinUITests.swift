@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 class ReelFinUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -236,12 +237,22 @@ final class AppStoreScreenshotTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.otherElements["root_split_layout"].waitForExistence(timeout: 10))
+            for identifier in ["root_sidebar_home", "root_sidebar_search", "root_sidebar_settings"] {
+                XCTAssertTrue(app.descendants(matching: .any)[identifier].exists)
+            }
+            XCTAssertFalse(app.otherElements["root_tab_layout"].exists)
+        }
 
         let firstPoster = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")).firstMatch
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
         capture(name: "01-home")
 
         openSection(named: "Search", in: app)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.staticTexts["Library"].firstMatch.waitForExistence(timeout: 5))
+        }
         XCTAssertTrue(firstPoster.waitForExistence(timeout: 8))
         capture(name: "02-library")
 

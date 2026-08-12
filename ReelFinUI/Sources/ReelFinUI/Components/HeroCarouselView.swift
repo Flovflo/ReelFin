@@ -888,6 +888,14 @@ private struct TVHeroTitleView: View {
             return
         }
 
+        // Fictional storefront artwork is deliberately opaque. Keep the
+        // title as accessible text instead of treating a poster placeholder
+        // as a transparent Jellyfin logo.
+        if url.scheme == "mock-image" {
+            logoFailed = true
+            return
+        }
+
         // Try cache first
         if let cached = await imagePipeline.cachedImage(for: url) {
             withAnimation(TVMotion.titleLoadAnimation) { logoImage = cached }

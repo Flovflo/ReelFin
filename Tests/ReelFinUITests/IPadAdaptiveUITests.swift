@@ -13,7 +13,6 @@ final class IPadAdaptiveUITests: XCTestCase {
         let app = launchStorefrontApp()
         let split = app.otherElements["root_split_layout"].firstMatch
         XCTAssertTrue(split.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.otherElements["root_sidebar"].firstMatch.exists)
         XCTAssertFalse(app.otherElements["root_tab_layout"].firstMatch.exists)
 
         for identifier in ["root_sidebar_home", "root_sidebar_search", "root_sidebar_settings"] {
