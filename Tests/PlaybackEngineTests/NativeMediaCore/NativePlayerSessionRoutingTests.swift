@@ -571,9 +571,7 @@ private final class NativeSessionRoutingAPIClient: JellyfinAPIClientProtocol, @u
 
     var stoppedUpdates: [PlaybackProgressUpdate] {
         get async {
-            lock.lock()
-            defer { lock.unlock() }
-            return _stoppedUpdates
+            lock.withLock { _stoppedUpdates }
         }
     }
 
@@ -611,9 +609,9 @@ private final class NativeSessionRoutingAPIClient: JellyfinAPIClientProtocol, @u
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL? { nil }
     func reportPlayback(progress: PlaybackProgressUpdate) async throws {}
     func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws {
-        lock.lock()
-        _stoppedUpdates.append(progress)
-        lock.unlock()
+        lock.withLock {
+            _stoppedUpdates.append(progress)
+        }
         stoppedExpectation?.fulfill()
     }
     func reportPlayed(itemID: String) async throws {}
