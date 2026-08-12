@@ -67,7 +67,11 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     // reader when nothing is starved. This is what stops a concurrent metadata read near offset 0
     // from yanking the fill back to the file head while playback needs bytes far ahead.
     private let lock = NSLock()
-    private var activeServes: [UUID: (offset: Int64, waiting: Bool)] = [:]
+    private let playheadState = PlayheadTargetState<UUID>()
+    private let playheadPolicy = PlayheadPublicationPolicy()
+    private lazy var playheadCoordinator = PlayheadPublicationCoordinator(policy: playheadPolicy) { [downloader] target in
+        await downloader.setPlayhead(target)
+    }
 
     init(
         store: MediaGatewayStore,
@@ -199,7 +203,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
 
 #if DEBUG
     /// Test hook: number of connections the server is currently tracking (must return to 0 after stop).
-    var debugActiveConnectionCount: Int { lock.lock(); defer { lock.unlock() }; return activeConnections.count }
+    var debugActiveConnectionCount: Int { lock.withLock { activeConnections.count } }
     var debugConnectionSnapshot: LocalPlaybackConnectionGate.Snapshot { connectionGate.snapshot }
     var debugRequiredLocalEndpoint: NWEndpoint? { lock.withLock { requiredLocalEndpoint } }
     var debugConnectionTaskCount: Int { lock.withLock { connectionTasks.count } }
@@ -593,29 +597,13 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     // MARK: - Downloader playhead targeting
 
     private func publish(id: UUID, offset: Int64, waiting: Bool) async {
-        lock.lock()
-        activeServes[id] = (offset, waiting)
-        let target = downloaderTargetLocked()
-        lock.unlock()
-        if let target { await downloader.setPlayhead(target) }
+        let publication = playheadState.update(key: id, offset: offset, waiting: waiting)
+        await playheadCoordinator.publish(publication)
     }
 
     private func finishServe(_ id: UUID) {
-        lock.lock()
-        activeServes[id] = nil
-        let target = downloaderTargetLocked()
-        lock.unlock()
-        if let target {
-            Task { await downloader.setPlayhead(target) }
-        }
-    }
-
-    /// Caller must hold `lock`. Lowest starved offset (unblock the most-behind reader), else the
-    /// furthest active offset (build cushion ahead of playback).
-    private func downloaderTargetLocked() -> Int64? {
-        let starved = activeServes.values.filter { $0.waiting }.map { $0.offset }
-        if let lowestStarved = starved.min() { return lowestStarved }
-        return activeServes.values.map { $0.offset }.max()
+        let publication = playheadState.remove(key: id)
+        Task { await playheadCoordinator.publish(publication) }
     }
 
     // MARK: - Socket send
