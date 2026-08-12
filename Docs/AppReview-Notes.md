@@ -1,7 +1,7 @@
 # ReelFin App Review Notes
 
 Use this worksheet to prepare both TestFlight beta review and App Store review notes.
-Do not paste this file verbatim into App Store Connect. Replace every field with live review information before submission.
+Keep all live review credentials out of Git, local artifacts, logs, and copied command lines.
 
 ## Contact
 
@@ -9,18 +9,21 @@ Do not paste this file verbatim into App Store Connect. Replace every field with
 
 ## Review account
 
-- Server URL: `https://review.reelfin.app`
-- Username: `review`
-- Password: `ReelFin-Review-2026`
+- Server URL: supplied securely at submission time through `REELFIN_REVIEW_SERVER_URL`
+- Username: supplied securely at submission time through `REELFIN_REVIEW_USERNAME`
+- Password: supplied securely at submission time through `REELFIN_REVIEW_PASSWORD`
+
+The release operator must provide those three values as ephemeral environment input only.
+Never replace the lines above with live values or commit a populated copy of this file.
 
 The review account activates a built-in demo library with fictional media data.
-It does not require a live Jellyfin server and does not expose user content.
+It does not expose personal user content.
 
 ## Review flow
 
 1. Launch ReelFin.
-2. Enter the review server URL, then continue.
-3. Sign in with the review username and password.
+2. Enter the securely supplied review server URL, then continue.
+3. Sign in with the securely supplied review username and password.
 4. From Home or Library, open any movie or show detail page.
 5. Start playback and validate resume state, subtitles, and general playback stability.
 6. Optionally open Settings to review playback preferences and account state.

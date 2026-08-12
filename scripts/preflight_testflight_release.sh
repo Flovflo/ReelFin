@@ -91,6 +91,47 @@ require_distribution_xcode_ready() {
   fi
 }
 
+require_review_credentials() {
+  local missing=0
+
+  if [[ -z "${REELFIN_REVIEW_SERVER_URL:-}" ]]; then
+    fail "Missing ephemeral REELFIN_REVIEW_SERVER_URL input"
+    missing=1
+  elif [[ "${REELFIN_REVIEW_SERVER_URL}" != https://* ]]; then
+    fail "REELFIN_REVIEW_SERVER_URL must use HTTPS"
+    missing=1
+  fi
+
+  if [[ -z "${REELFIN_REVIEW_USERNAME:-}" ]]; then
+    fail "Missing ephemeral REELFIN_REVIEW_USERNAME input"
+    missing=1
+  fi
+
+  if [[ -z "${REELFIN_REVIEW_PASSWORD:-}" ]]; then
+    fail "Missing ephemeral REELFIN_REVIEW_PASSWORD input"
+    missing=1
+  fi
+
+  if (( missing == 0 )); then
+    pass "App Review credentials are available from ephemeral environment input"
+  fi
+}
+
+require_review_notes_secure_template() {
+  local path="$ROOT_DIR/Docs/AppReview-Notes.md"
+  local expected_server='- Server URL: supplied securely at submission time through `REELFIN_REVIEW_SERVER_URL`'
+  local expected_username='- Username: supplied securely at submission time through `REELFIN_REVIEW_USERNAME`'
+  local expected_password='- Password: supplied securely at submission time through `REELFIN_REVIEW_PASSWORD`'
+
+  if [[ "$(/usr/bin/grep -Fxc -- "$expected_server" "$path")" == "1" \
+    && "$(/usr/bin/grep -Fxc -- "$expected_username" "$path")" == "1" \
+    && "$(/usr/bin/grep -Fxc -- "$expected_password" "$path")" == "1" ]]; then
+    pass "App review notes keep credentials behind ephemeral environment input"
+  else
+    fail "App review notes must contain only the credential-safe worksheet fields"
+  fi
+}
+
 reject_contains() {
   local path="$1"
   local pattern="$2"
@@ -123,6 +164,29 @@ require_url() {
     fail "$label"
   fi
 }
+
+if [[ "${1:-}" == "--review-credentials-readiness" ]]; then
+  echo "Checking ephemeral App Review credential readiness..."
+  require_review_credentials
+  if (( FAILURES > 0 )); then
+    echo
+    echo "Credential readiness completed with $FAILURES failure(s)."
+    exit 1
+  fi
+  echo
+  echo "Credential readiness completed successfully."
+  exit 0
+fi
+
+if [[ "${1:-}" == "--distribution-readiness" ]]; then
+  echo "Checking ephemeral App Review credential readiness..."
+  require_review_credentials
+  if (( FAILURES > 0 )); then
+    echo
+    echo "Distribution readiness stopped with $FAILURES credential failure(s)."
+    exit 1
+  fi
+fi
 
 echo "Running ReelFin TestFlight preflight..."
 
@@ -165,14 +229,11 @@ require_plist_array_member "$APP_INFO_PLIST" "UISupportedInterfaceOrientations~i
 require_plist_array_member "$APP_INFO_PLIST" "UISupportedInterfaceOrientations~ipad" "UIInterfaceOrientationLandscapeRight" "iPad supports landscape right"
 require_contains "$APP_PRIVACY_MANIFEST" "NSPrivacyTracking" "Privacy manifest declares tracking status"
 require_contains "$APP_PRIVACY_MANIFEST" "NSPrivacyAccessedAPICategoryUserDefaults" "Privacy manifest declares UserDefaults required-reason API"
-reject_contains "Docs/AppReview-Notes.md" "<replace-with-review-server-url>" "App review notes no longer contain placeholder server URL text"
-reject_contains "Docs/AppReview-Notes.md" "<replace-with-review-username>" "App review notes no longer contain placeholder username text"
-reject_contains "Docs/AppReview-Notes.md" "<replace-with-review-password>" "App review notes no longer contain placeholder password text"
+require_review_notes_secure_template
 require_contains "Docs/privacy-policy.html" "Authentication tokens are stored only in the Apple Keychain." "Privacy policy documents Keychain-only token storage"
 require_contains "Docs/privacy-policy.html" "<h2>Retention</h2>" "Privacy policy includes a retention section"
 require_contains "Docs/AppStore-Submission.md" "iPhone, iPad, and Apple TV" "Submission docs match supported platforms"
 require_contains "Docs/TestFlight-Launch-Checklist.md" "External TestFlight group" "Checklist includes external TestFlight distribution"
-require_contains "Docs/AppReview-Notes.md" "https://review.reelfin.app" "App review notes include the review demo server URL"
 require_contains "Shared/Sources/Shared/ReviewDemoMode.swift" "review-demo-user" "Review demo mode is compiled into the app"
 require_contains "$TV_TOP_SHELF_WIDE_CONTENTS" '"topshelf-wide@2x.png"' "tvOS Top Shelf Wide catalog declares its 2x image"
 require_image_dimensions "$TV_TOP_SHELF_WIDE_2X" 4640 1440 "tvOS Top Shelf Wide 2x image is 4640x1440"

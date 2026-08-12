@@ -42,8 +42,9 @@
 
 ## Beta App Review
 
-- [ ] Copy the structure from [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) into App Store Connect and replace every field with live review data
-- [ ] Provide the built-in review demo server URL, username, and password from the review notes
+- [ ] Keep `Docs/AppReview-Notes.md` unpopulated and provide the server URL, username, and password only through ephemeral `REELFIN_REVIEW_SERVER_URL`, `REELFIN_REVIEW_USERNAME`, and `REELFIN_REVIEW_PASSWORD` environment inputs
+- [ ] Run `scripts/preflight_testflight_release.sh --review-credentials-readiness` without command tracing before updating App Store Connect
+- [ ] Transfer the three ephemeral values directly into App Store Connect without printing them or retaining a populated local file
 - [ ] Make sure the review account can access at least one movie and one series in the built-in demo library
 
 ## Compliance

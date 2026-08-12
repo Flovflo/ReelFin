@@ -42,7 +42,7 @@ Privacy Policy: https://flovflo.github.io/reelfin-site/privacy.html
 - What to Test:
   Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone, iPad, and Apple TV.
 - Beta review notes:
-  Use [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) as a worksheet, then paste live review credentials and notes into App Store Connect.
+  Use `Docs/AppReview-Notes.md` as the unpopulated worksheet. Supply the live server URL, username, and password to the release command only through the ephemeral `REELFIN_REVIEW_*` environment inputs; never save them in the repository or retained artifacts.
 
 ## Visual assets
 
