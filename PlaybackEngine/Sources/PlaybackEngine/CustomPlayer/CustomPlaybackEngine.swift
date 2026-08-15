@@ -296,6 +296,20 @@ public struct CustomPlaybackAudioTrack: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Selection requests can arrive before AVFoundation has finished loading the audible
+/// media-selection group. Keep the user's intent instead of silently dropping the tap.
+public enum CustomPlaybackAudioSelectionPolicy {
+    public static func pendingSelection(
+        requestedID: String,
+        currentID: String?,
+        availableIDs: [String],
+        mediaSelectionGroupReady: Bool
+    ) -> String? {
+        guard availableIDs.contains(requestedID), requestedID != currentID else { return nil }
+        return mediaSelectionGroupReady ? nil : requestedID
+    }
+}
+
 public enum CustomPlaybackTransportState: Equatable, Sendable {
     case playing
     case paused
@@ -388,6 +402,13 @@ public final class CustomPlaybackEngine {
     private var audioTracksTask: Task<Void, Never>?
     private var audioSelectionGroup: AVMediaSelectionGroup?
     private var audioOptionsByID: [String: AVMediaSelectionOption] = [:]
+    public private(set) var pendingAudioTrackID: String?
+    public private(set) var audioSelectionErrorMessage: String?
+
+    public var audioSelectionStatusMessage: String? {
+        if pendingAudioTrackID != nil { return "Application de la piste audio…" }
+        return audioSelectionErrorMessage
+    }
 
     // Recovery ladder state.
     private var currentItemID: String?
@@ -497,8 +518,11 @@ public final class CustomPlaybackEngine {
                 self?.transportState = status == .paused ? .paused : .playing
             }
         }
-        self.subtitles.onLoadFailure = { [weak self] message in
-            self?.enterFailedState(message: message)
+        self.subtitles.onLoadFailure = { message in
+            // A sidecar failure must not tear down an otherwise healthy video. The model keeps
+            // the error visible to the picker/status overlay; playback can continue with captions
+            // disabled until the user retries the selection.
+            AppLog.playback.warning("customplayer.subtitle.load_failed — message=\(message, privacy: .public)")
         }
     }
 
@@ -583,15 +607,20 @@ public final class CustomPlaybackEngine {
     }
 
     public func selectAudioTrack(id: String) {
-        guard let item = player.currentItem,
-              let group = audioSelectionGroup,
-              let option = audioOptionsByID[id]
-        else { return }
-        item.select(option, in: group)
-        hasSelectedAudibleMediaOption = item.currentMediaSelection.selectedMediaOption(in: group) != nil
-        audioTracks = audioTracks.map { track in
-            CustomPlaybackAudioTrack(id: track.id, title: track.title, isSelected: track.id == id)
+        guard audioTracks.contains(where: { $0.id == id }) else { return }
+        let currentID = audioTracks.first(where: \.isSelected)?.id
+        guard id != currentID else {
+            pendingAudioTrackID = nil
+            return
         }
+        audioSelectionErrorMessage = nil
+        pendingAudioTrackID = CustomPlaybackAudioSelectionPolicy.pendingSelection(
+            requestedID: id,
+            currentID: currentID,
+            availableIDs: audioTracks.map(\.id),
+            mediaSelectionGroupReady: audioSelectionGroup != nil
+        ) ?? id
+        applyPendingAudioSelectionIfReady()
     }
 
     /// Last playback position the engine observed (drives resume reporting and retry).
@@ -1477,6 +1506,8 @@ public final class CustomPlaybackEngine {
         audioOptionsByID = [:]
         audioTracks = []
         hasSelectedAudibleMediaOption = false
+        pendingAudioTrackID = nil
+        audioSelectionErrorMessage = nil
         audioTracksTask = Task { @MainActor [weak self, weak item] in
             guard let self, let item else { return }
             let group = try? await item.asset.loadMediaSelectionGroup(for: .audible)
@@ -1500,6 +1531,29 @@ public final class CustomPlaybackEngine {
             self.audioOptionsByID = optionsByID
             self.audioTracks = tracks
             self.hasSelectedAudibleMediaOption = selected != nil
+            self.applyPendingAudioSelectionIfReady()
+        }
+    }
+
+    private func applyPendingAudioSelectionIfReady() {
+        guard let requestedID = pendingAudioTrackID,
+              let item = player.currentItem,
+              let group = audioSelectionGroup,
+              let option = audioOptionsByID[requestedID]
+        else { return }
+
+        item.select(option, in: group)
+        let applied = item.currentMediaSelection.selectedMediaOption(in: group) === option
+        if applied {
+            pendingAudioTrackID = nil
+            audioSelectionErrorMessage = nil
+            hasSelectedAudibleMediaOption = true
+            audioTracks = audioTracks.map { track in
+                CustomPlaybackAudioTrack(id: track.id, title: track.title, isSelected: track.id == requestedID)
+            }
+        } else {
+            pendingAudioTrackID = nil
+            audioSelectionErrorMessage = "La piste audio n’a pas pu être appliquée."
         }
     }
 
@@ -1721,6 +1775,8 @@ public final class CustomPlaybackEngine {
         activeSkipSuggestion = nil
         audioTracks = []
         audioSelectionGroup = nil
+        pendingAudioTrackID = nil
+        audioSelectionErrorMessage = nil
         hasSelectedAudibleMediaOption = false
         audioOptionsByID = [:]
         removeItemObservers()

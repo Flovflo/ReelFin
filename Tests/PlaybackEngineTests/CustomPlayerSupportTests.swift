@@ -458,7 +458,7 @@ final class CustomPlayerSupportTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedSidecarIsNeverShownSelectedAndSurfacesPlayerError() async throws {
+    func testFailedSidecarIsNeverShownSelectedAndKeepsVideoAvailableWithVisibleError() async throws {
         let model = SubtitleOverlayModel(loadCues: { _ in nil })
         let track = ExternalSubtitleTrack(
             id: "sidecar-failure",
@@ -483,12 +483,64 @@ final class CustomPlayerSupportTests: XCTestCase {
 
         model.select(trackID: track.id)
 
-        let failed = await waitUntil(timeout: 2) { engine.bufferingState.phase == .failed }
-        XCTAssertTrue(failed)
+        let reported = await waitUntil(timeout: 2) { model.loadErrorMessage != nil }
+        XCTAssertTrue(reported)
         XCTAssertNil(model.activeTrackID)
         XCTAssertNil(model.pendingTrackID)
         XCTAssertNotNil(model.loadErrorMessage)
-        XCTAssertNotNil(engine.errorMessage)
+        XCTAssertNotEqual(engine.bufferingState.phase, .failed)
+        XCTAssertNil(engine.errorMessage)
+    }
+
+    @MainActor
+    func testSubtitleSelectionPublishesPendingFeedbackAndAppliesCueAtCurrentTime() async throws {
+        let parsed = try XCTUnwrap(SubtitleOverlayModel.parse(text: Self.validSRT))
+        let model = SubtitleOverlayModel(loadCues: { _ in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            return parsed
+        })
+        let track = ExternalSubtitleTrack(
+            id: "sidecar-feedback",
+            label: "Français",
+            url: URL(string: "https://example.com/subtitle.srt")!
+        )
+        model.configure(tracks: [track])
+        model.updateTime(2)
+        model.select(trackID: track.id)
+
+        XCTAssertEqual(model.selectionStatusMessage, "Chargement des sous-titres…")
+        let applied = await waitUntil(timeout: 2) { model.activeTrackID == track.id }
+        XCTAssertTrue(applied)
+        XCTAssertEqual(model.currentCue, "Bonjour")
+        XCTAssertNil(model.selectionStatusMessage)
+    }
+
+    func testCustomAudioSelectionQueuesUntilAVFoundationGroupIsReady() {
+        XCTAssertEqual(
+            CustomPlaybackAudioSelectionPolicy.pendingSelection(
+                requestedID: "audio-1",
+                currentID: "audio-0",
+                availableIDs: ["audio-0", "audio-1"],
+                mediaSelectionGroupReady: false
+            ),
+            "audio-1"
+        )
+        XCTAssertNil(
+            CustomPlaybackAudioSelectionPolicy.pendingSelection(
+                requestedID: "audio-1",
+                currentID: "audio-0",
+                availableIDs: ["audio-0", "audio-1"],
+                mediaSelectionGroupReady: true
+            )
+        )
+        XCTAssertNil(
+            CustomPlaybackAudioSelectionPolicy.pendingSelection(
+                requestedID: "audio-0",
+                currentID: "audio-0",
+                availableIDs: ["audio-0", "audio-1"],
+                mediaSelectionGroupReady: false
+            )
+        )
     }
 
     // MARK: - Helpers
