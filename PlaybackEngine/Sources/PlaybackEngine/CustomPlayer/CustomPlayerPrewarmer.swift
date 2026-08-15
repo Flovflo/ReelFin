@@ -65,7 +65,7 @@ public final class CustomPlayerPrewarmer {
                 // start. Retain the resolution itself so Play can hand off without another request.
                 self.prepared = PrewarmedPlayback(resolved: resolved, session: nil, localURL: nil)
                 AppLog.playback.notice(
-                    "customplayer.prewarm.native_handoff_ready — item=\(itemID.prefix(8), privacy: .public)"
+                    "customplayer.prewarm.native_handoff_ready — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)"
                 )
                 return
             }
@@ -74,7 +74,7 @@ public final class CustomPlayerPrewarmer {
                 // detail can make the first segment return HTTP 500. Resolution is deliberately
                 // repeated at the actual Play tap; only progressive originals own a full prewarm.
                 AppLog.playback.notice(
-                    "customplayer.prewarm.adaptive_deferred — item=\(itemID.prefix(8), privacy: .public)"
+                    "customplayer.prewarm.adaptive_deferred — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)"
                 )
                 return
             }
@@ -96,7 +96,7 @@ public final class CustomPlayerPrewarmer {
             }
             self.prepared = PrewarmedPlayback(resolved: resolved, session: session, localURL: localURL)
             AppLog.playback.notice(
-                "customplayer.prewarm.ready — item=\(itemID.prefix(8), privacy: .public) local=\(localURL.reelfinCompactLogString, privacy: .public)"
+                "customplayer.prewarm.ready — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) \(LocalPlaybackServerSecurity.logProjection(for: .media), privacy: .public)"
             )
         }
     }
@@ -129,6 +129,31 @@ public final class CustomPlayerPrewarmer {
         return result
     }
 
+    /// Returns whether an exact, already-completed warmup can skip the disposable custom surface
+    /// and present the native packet player directly. This never waits at tap time.
+    public func consumeReadyNativeHandoff(itemID: String, startTimeTicks: Int64? = nil) -> Bool {
+        let normalizedStartTimeTicks = Self.normalizedStartTimeTicks(startTimeTicks)
+        if preparedItemID == itemID,
+           preparedStartTimeTicks == normalizedStartTimeTicks,
+           let prepared,
+           prepared.resolved.requiresNativePlayback,
+           prepared.resolved.nativeHandoffClaim?.isAvailable == true {
+            task = nil
+            self.prepared = nil
+            preparedItemID = nil
+            preparedStartTimeTicks = nil
+            return true
+        }
+        guard let entry = resolvedOnly[itemID],
+              Date().timeIntervalSince(entry.at) < resolvedOnlyTTL,
+              entry.resolved.requiresNativePlayback,
+              !entry.resolved.isAdaptiveStream,
+              entry.resolved.nativeHandoffClaim?.isAvailable == true
+        else { return false }
+        resolvedOnly.removeValue(forKey: itemID)
+        return true
+    }
+
     /// Resolve-only warm for a focus dwell: one PlaybackInfo round trip, cached. Idempotent per
     /// item; a newer focus cancels the previous in-flight resolve (one at a time — never a storm).
     /// No-op when the FULL warm already covers the item.
@@ -158,7 +183,7 @@ public final class CustomPlayerPrewarmer {
             if self.resolveOnlyItemID == itemID { self.resolveOnlyItemID = nil }
             self.trimResolvedOnly()
             AppLog.playback.notice(
-                "customplayer.prewarm.resolved_only — item=\(itemID.prefix(8), privacy: .public)"
+                "customplayer.prewarm.resolved_only — item=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)"
             )
             await self.warmOriginContentInfo(resolved: resolved)
         }
@@ -184,7 +209,7 @@ public final class CustomPlayerPrewarmer {
         else { return }
         await store.persistContentLength(total, key: resolved.cacheKey)
         AppLog.playback.notice(
-            "customplayer.prewarm.origin_warm — item=\(resolved.cacheKey.itemID.prefix(8), privacy: .public) total=\(total, privacy: .public)"
+            "customplayer.prewarm.origin_warm — item=\(AppLogFormat.correlationIdentifier(resolved.cacheKey.itemID, domain: .media), privacy: .public) total=\(total, privacy: .public)"
         )
     }
 

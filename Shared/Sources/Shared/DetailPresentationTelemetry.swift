@@ -15,7 +15,9 @@ public actor DetailPresentationTelemetry {
 
     public func beginNavigation(for itemID: String) {
         entries[itemID] = Entry(startDate: Date())
-        AppLog.ui.notice("Detail navigation started for \(itemID, privacy: .public)")
+        AppLog.ui.notice(
+            "Detail navigation started media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)"
+        )
     }
 
     public func markDetailVisible(for itemID: String) {
@@ -48,6 +50,8 @@ public actor DetailPresentationTelemetry {
 
     private func log(label: String, itemID: String, from startDate: Date) {
         let elapsedMs = Int(Date().timeIntervalSince(startDate) * 1000)
-        AppLog.ui.notice("Detail telemetry \(label, privacy: .public) for \(itemID, privacy: .public): \(elapsedMs, privacy: .public)ms")
+        AppLog.ui.notice(
+            "Detail telemetry \(label, privacy: .public) media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
+        )
     }
 }

@@ -14,9 +14,28 @@ final class RootViewModel {
     var didBootstrap = false
 
     private let dependencies: ReelFinDependencies
+    private var authenticationGeneration = 0
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
+    }
+
+    func runRootLifecycle() async {
+        let invalidations = dependencies.apiClient.sessionInvalidations
+        await bootstrap()
+
+        for await _ in invalidations {
+            guard !Task.isCancelled else { return }
+            let generation = authenticationGeneration
+            let session = await dependencies.apiClient.currentSession()
+            guard !Task.isCancelled else { return }
+            guard authenticationGeneration == generation, session == nil else { continue }
+            authenticationGeneration &+= 1
+            withAnimation(.easeInOut(duration: 0.2)) {
+                didBootstrap = true
+                isAuthenticated = false
+            }
+        }
     }
 
     func bootstrap() async {
@@ -41,6 +60,7 @@ final class RootViewModel {
     }
 
     func completeLogin(_ session: UserSession) {
+        authenticationGeneration &+= 1
         dependencies.settingsStore.lastSession = session
         markOnboardingCompletedIfNeeded()
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -50,9 +70,12 @@ final class RootViewModel {
     }
 
     func signOut() {
+        authenticationGeneration &+= 1
+        let generation = authenticationGeneration
         Task {
             await dependencies.apiClient.signOut()
             await MainActor.run {
+                guard self.authenticationGeneration == generation else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
                     self.didBootstrap = true
                     self.isAuthenticated = false

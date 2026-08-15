@@ -91,6 +91,7 @@ struct DetailView: View {
     @State private var isLoadingPlayback = false
     @State private var hasAnimatedIn = false
     @State private var tvHeroRevealProgress: CGFloat = 0
+    @State private var heroArtworkReadyItemID: String?
     @State private var navigationContext: DetailNavigationContext
     @State private var iosSelectedCarouselItemID: String?
     @State private var currentReturnSourceItem: MediaItem
@@ -197,6 +198,15 @@ struct DetailView: View {
             }
 #endif
         }
+#if os(iOS)
+        .overlay(alignment: .topLeading) {
+            if AppMetadata.current.isScreenshotModeEnabled,
+               heroArtworkReadyItemID == viewModel.detail.item.id {
+                StorefrontArtworkReadyAnchor(identifier: "detail_hero_artwork_ready")
+                    .frame(width: 1, height: 1)
+            }
+        }
+#endif
 #if os(tvOS)
         .overlay(alignment: .topLeading) {
             if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess,
@@ -206,6 +216,11 @@ struct DetailView: View {
                     primaryPlayFocused: focusedHeroAction == .play
                 )
                 .frame(width: 1, height: 1)
+            }
+            if AppMetadata.current.isScreenshotModeEnabled,
+               heroArtworkReadyItemID == viewModel.detail.item.id {
+                StorefrontArtworkReadyAnchor(identifier: "detail_hero_artwork_ready")
+                    .frame(width: 1, height: 1)
             }
         }
 #endif
@@ -477,6 +492,7 @@ struct DetailView: View {
                 apiClient: dependencies.apiClient,
                 imagePipeline: dependencies.imagePipeline,
                 onHeroImageVisible: {
+                    heroArtworkReadyItemID = viewModel.detail.item.id
                     Task {
                         await DetailPresentationTelemetry.shared.markHeroVisible(for: viewModel.detail.item.id)
                     }
@@ -580,6 +596,7 @@ struct DetailView: View {
                     apiClient: dependencies.apiClient,
                     imagePipeline: dependencies.imagePipeline,
                     onHeroImageVisible: {
+                        heroArtworkReadyItemID = viewModel.detail.item.id
                         Task {
                             await DetailPresentationTelemetry.shared.markHeroVisible(for: viewModel.detail.item.id)
                         }
@@ -1342,6 +1359,20 @@ struct DetailView: View {
         resumePositionTicks: Int64?
     ) {
         let startTicks = startPosition == .resumeIfAvailable ? resumePositionTicks : nil
+        if customPrewarmer?.consumeReadyNativeHandoff(
+            itemID: item.id,
+            startTimeTicks: startTicks
+        ) == true {
+            AppLog.playback.notice(
+                "detail.player.native_handoff — status=ready item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
+            )
+            startLegacyPlayback(
+                item: item,
+                startPosition: startPosition,
+                forceNativeOriginalPlayback: true
+            )
+            return
+        }
         // ONE shared store for all plays: its in-memory coverage map must be the single authority,
         // and the deep cache survives across titles/replays under one LRU budget.
         guard let store = try? CustomPlaybackEngine.sharedStore() else {
@@ -1362,7 +1393,7 @@ struct DetailView: View {
         engine.onRequiresNativePlayback = { [weak engine] in
             guard let engine, customEngine === engine else { return }
             AppLog.playback.notice(
-                "detail.player.native_handoff — item=\(item.id.prefix(8), privacy: .public)"
+                "detail.player.native_handoff — item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
             )
             startLegacyPlayback(
                 item: item,
@@ -3016,6 +3047,12 @@ private struct IOSSeasonHeaderMenu: View {
 }
 #endif
 
+enum HeroBackgroundRenderingPolicy {
+    static func includesAmbientArtwork(isScreenshotMode: Bool) -> Bool {
+        !isScreenshotMode
+    }
+}
+
 private struct HeroBackgroundView: View {
     let item: MediaItem
     let heroHeight: CGFloat
@@ -3028,7 +3065,15 @@ private struct HeroBackgroundView: View {
             ZStack {
                 fallbackGradient
 
+                #if os(tvOS)
+                if HeroBackgroundRenderingPolicy.includesAmbientArtwork(
+                    isScreenshotMode: AppMetadata.current.isScreenshotModeEnabled
+                ) {
+                    ambientArtwork(size: proxy.size)
+                }
+                #else
                 ambientArtwork(size: proxy.size)
+                #endif
                 sharpArtwork(size: proxy.size)
 
                 overlayGradients

@@ -57,7 +57,7 @@ public actor MatroskaDemuxer: Demuxer {
             throw NativeBridgeError.demuxerFailed("Demuxer is already open.")
         }
         
-        AppLog.nativeBridge.notice("[NB-DIAG] demux.open.enter — source=\(self.plan.sourceURL.lastPathComponent, privacy: .public)")
+        AppLog.nativeBridge.notice("[NB-DIAG] demux.open.enter — source=matroska")
         
         // 1. Read EBML Header
         let networkStart = Date()
@@ -148,7 +148,7 @@ public actor MatroskaDemuxer: Demuxer {
                 try advanceBuffer(by: elementTotalSize)
                 AppLog.nativeBridge.notice("[NB-DIAG] demux.tracks.parsed — \(self.parsedTracks.count) tracks found")
                 for t in self.parsedTracks {
-                    AppLog.nativeBridge.notice("[NB-DIAG]   track \(t.id): type=\(t.trackType.rawValue, privacy: .public) codec=\(t.codecID, privacy: .public) name=\(t.codecName, privacy: .public) cpSize=\(t.codecPrivate?.count ?? 0) \(t.width.map { "\($0)x\(t.height ?? 0)" } ?? "") ch=\(t.channels ?? 0) sr=\(t.sampleRate ?? 0)")
+                    AppLog.nativeBridge.notice("[NB-DIAG]   track=\(AppLogFormat.correlationIdentifier(String(t.id), domain: .track), privacy: .public) type=\(t.trackType.rawValue, privacy: .public) codec=\(t.codecID, privacy: .public) cpSize=\(t.codecPrivate?.count ?? 0) \(t.width.map { "\($0)x\(t.height ?? 0)" } ?? "") ch=\(t.channels ?? 0) sr=\(t.sampleRate ?? 0)")
                 }
             } else if id == EBMLParser.idCues {
                 // Cues can be very large; avoid startup stalls by deferring oversized cue parsing.

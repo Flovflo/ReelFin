@@ -31,7 +31,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     }
 
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        return OrientationManager.shared.lock
+        OrientationManager.shared.supportedOrientations(
+            for: window?.traitCollection.userInterfaceIdiom ?? UIDevice.current.userInterfaceIdiom
+        )
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {

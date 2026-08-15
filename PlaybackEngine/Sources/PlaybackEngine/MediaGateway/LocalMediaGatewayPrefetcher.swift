@@ -158,7 +158,7 @@ actor LocalMediaGatewayPrefetcher {
             activeTaskEndOffset = targetEnd
         }
         AppLog.playback.notice(
-            "playback.cache.prefetch.start — item=\(self.key.itemID.prefix(8), privacy: .public) source=\(self.key.sourceID.prefix(8), privacy: .public) start=\(startOffset, privacy: .public) targetEnd=\(targetEnd, privacy: .public)"
+            "playback.cache.prefetch.start — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) source=\(AppLogFormat.correlationIdentifier(self.key.sourceID, domain: .source), privacy: .public) start=\(startOffset, privacy: .public) targetEnd=\(targetEnd, privacy: .public)"
         )
         var offset = startOffset
         while offset < targetEnd, !Task.isCancelled {
@@ -173,7 +173,7 @@ actor LocalMediaGatewayPrefetcher {
                 offset += Int64(max(fetched, length))
             } catch {
                 AppLog.playback.warning(
-                    "playback.cache.prefetch.stop — item=\(self.key.itemID.prefix(8), privacy: .public) source=\(self.key.sourceID.prefix(8), privacy: .public) offset=\(offset, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
+                    "playback.cache.prefetch.stop — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) source=\(AppLogFormat.correlationIdentifier(self.key.sourceID, domain: .source), privacy: .public) offset=\(offset, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
                 )
                 return
             }

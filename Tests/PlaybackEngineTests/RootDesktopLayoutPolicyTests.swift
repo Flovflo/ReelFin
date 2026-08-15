@@ -22,7 +22,6 @@ final class RootDesktopLayoutPolicyTests: XCTestCase {
     func testMacCatalystDoesNotReuseIPadSplitLayout() {
         XCTAssertFalse(
             RootLayoutPlatformPolicy.shouldUseSplitLayout(
-                isScreenshotMode: false,
                 isRegularHorizontalSizeClass: false,
                 isPadIdiom: false,
                 isMacCatalyst: true
@@ -42,7 +41,6 @@ final class RootDesktopLayoutPolicyTests: XCTestCase {
     func testScreenshotModeDisablesSplitLayoutOnMacCatalyst() {
         XCTAssertFalse(
             RootLayoutPlatformPolicy.shouldUseSplitLayout(
-                isScreenshotMode: true,
                 isRegularHorizontalSizeClass: false,
                 isPadIdiom: false,
                 isMacCatalyst: true
@@ -50,10 +48,9 @@ final class RootDesktopLayoutPolicyTests: XCTestCase {
         )
     }
 
-    func testIPadUsesSplitLayoutOnlyWhenHorizontallyRegular() {
+    func testRegularIPadUsesSplitLayoutIncludingStorefrontCaptureMode() {
         XCTAssertTrue(
             RootLayoutPlatformPolicy.shouldUseSplitLayout(
-                isScreenshotMode: false,
                 isRegularHorizontalSizeClass: true,
                 isPadIdiom: true,
                 isMacCatalyst: false
@@ -61,9 +58,18 @@ final class RootDesktopLayoutPolicyTests: XCTestCase {
         )
         XCTAssertFalse(
             RootLayoutPlatformPolicy.shouldUseSplitLayout(
-                isScreenshotMode: false,
                 isRegularHorizontalSizeClass: false,
                 isPadIdiom: true,
+                isMacCatalyst: false
+            )
+        )
+    }
+
+    func testPhoneNeverUsesIPadSplitLayout() {
+        XCTAssertFalse(
+            RootLayoutPlatformPolicy.shouldUseSplitLayout(
+                isRegularHorizontalSizeClass: true,
+                isPadIdiom: false,
                 isMacCatalyst: false
             )
         )

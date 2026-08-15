@@ -284,30 +284,8 @@ final class PlaybackIntegrationProbeTests: XCTestCase {
     }
 
     private func loadEnvFile() -> [String: String] {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let envURL = repoRoot.appendingPathComponent(".artifacts/secrets/reelfin-e2e.env")
-        guard let content = try? String(contentsOf: envURL, encoding: .utf8) else { return [:] }
-
-        var values: [String: String] = [:]
-        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=") else { continue }
-            let key = line[..<separator].trimmingCharacters(in: .whitespaces)
-            guard key.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil else { continue }
-            var value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               let quote = value.first,
-               quote == value.last,
-               quote == "\"" || quote == "'" {
-                value.removeFirst()
-                value.removeLast()
-            }
-            values[key] = String(value)
-        }
-        return values
+        // Authentication credentials must be injected by the private runner environment.
+        return [:]
     }
 
     private func probeSelection(_ selection: PlaybackAssetSelection) async throws -> Bool {

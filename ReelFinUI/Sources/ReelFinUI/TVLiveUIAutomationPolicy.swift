@@ -100,3 +100,62 @@ enum TVLiveUIFixtureResolver {
         return TVLiveUIAutomationPolicy.fixturePlaybackItem(episodeOne)
     }
 }
+
+enum LiveUIPlaybackScenario: String, CaseIterable, Sendable {
+    case directPlayMP4 = "directplay-mp4"
+    case directPlayHDRDolbyVisionLong = "directplay-hdr-dv-long"
+    case sampleBufferMKV = "samplebuffer-mkv"
+}
+
+/// Resolves a closed, non-sensitive scenario inside the authenticated app. The runner prepares
+/// the requested fixture as a Resume item; no Jellyfin item identifier crosses the launch boundary.
+enum LiveUIPlaybackFixtureResolver {
+    static func resolve(
+        scenario: LiveUIPlaybackScenario,
+        apiClient: any JellyfinAPIClientProtocol
+    ) async throws -> MediaItem? {
+        let feed = try await apiClient.fetchHomeFeed(since: nil)
+        let resumeItems = feed.rows.first(where: { $0.kind == .continueWatching })?.items ?? []
+        for item in resumeItems {
+            let sources = try await apiClient.fetchPlaybackSources(itemID: item.id)
+            if sources.contains(where: { matches(source: $0, scenario: scenario) }) {
+                return item
+            }
+        }
+        return nil
+    }
+
+    static func matches(source: MediaSource, scenario: LiveUIPlaybackScenario) -> Bool {
+        let containers = Set(source.normalizedContainer
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        switch scenario {
+        case .directPlayMP4:
+            return !containers.isDisjoint(with: ["mp4", "mov", "m4v"])
+                && source.supportsDirectPlay
+                && !source.hasExplicitHDRorDVSignaling
+        case .directPlayHDRDolbyVisionLong:
+            return !containers.isDisjoint(with: ["mp4", "mov", "m4v"])
+                && source.supportsDirectPlay
+                && isDolbyVision(source)
+        case .sampleBufferMKV:
+            return !containers.isDisjoint(with: ["mkv", "matroska", "webm"])
+        }
+    }
+
+    private static func isDolbyVision(_ source: MediaSource) -> Bool {
+        let values = [
+            source.videoRange,
+            source.videoRangeType,
+            source.videoProfile,
+            source.videoCodec,
+        ]
+        .compactMap { $0?.lowercased() }
+        .joined(separator: " ")
+        return (source.dvProfile ?? 0) > 0
+            || values.contains("dovi")
+            || values.contains("dolby vision")
+            || values.contains("dvhe")
+            || values.contains("dvh1")
+    }
+}

@@ -13,7 +13,6 @@ import XCTest
 /// Skips gracefully when the gitignored e2e secrets are absent (so CI without secrets stays green).
 /// The simulator can decode H.264 (not the 4K DV originals), so it uses an H.264 movie.
 final class CacheLoaderLiveIntegrationTests: XCTestCase {
-    private static let envPath = "/Users/florian/Documents/Projet/ReelFin/.artifacts/secrets/reelfin-e2e.env"
     private static let h264ItemID = "61593e32518e85e691b2a8309d1d02ce" // 'American Assassin' 1080p H.264 MP4 ~5.2 Mbps (AVPlayer-openable)
 
     @MainActor
@@ -204,13 +203,7 @@ final class CacheLoaderLiveIntegrationTests: XCTestCase {
     // MARK: - Helpers
 
     private static func loadEnv() -> [String: String]? {
-        guard let text = try? String(contentsOfFile: envPath, encoding: .utf8) else { return nil }
-        var cfg: [String: String] = [:]
-        for line in text.split(separator: "\n") {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            guard !t.isEmpty, !t.hasPrefix("#"), let eq = t.firstIndex(of: "=") else { continue }
-            cfg[String(t[..<eq])] = String(t[t.index(after: eq)...]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-        }
+        let cfg = ProcessInfo.processInfo.environment
         return cfg.isEmpty ? nil : cfg
     }
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Fail ReelFin player E2E when runtime logs contain known broken playback signatures."""
 
 from __future__ import annotations

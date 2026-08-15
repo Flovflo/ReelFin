@@ -476,7 +476,7 @@ final class LocalMediaGatewayServerTests: XCTestCase {
     }
 
     @MainActor
-    func testGatewayURLCanReachReadyToPlayForGeneratedMP4() async throws {
+    func testGatewayURLExposesPlayableMetadataForGeneratedMP4() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let fixtureURL = directory.appendingPathComponent("fixture.mp4")
@@ -489,22 +489,31 @@ final class LocalMediaGatewayServerTests: XCTestCase {
             store: try MediaGatewayStore(directoryURL: directory),
             sessionConfiguration: makeMockSessionConfiguration()
         )
-        let server = LocalMediaGatewayServer(session: session)
+        let requestLog = GatewayRequestLog()
+        let server = LocalMediaGatewayServer(session: session) { method, range in
+            requestLog.append(method: method, range: range)
+        }
         let assetURL = try server.start()
         defer { server.stop(reason: "test_teardown_avplayer") }
 
+        // AVPlayerItem.status does not leave .unknown in the headless simulator for this fixture,
+        // including when the same bytes are loaded from file://. Asset metadata loading exercises
+        // the gateway through AVFoundation while keeping the assertion tied to its HTTP contract.
         let asset = AVURLAsset(url: assetURL, options: [AVURLAssetOverrideMIMETypeKey: "video/mp4"])
-        let item = AVPlayerItem(asset: asset)
-        let player = AVPlayer(playerItem: item)
-        player.playImmediately(atRate: 1)
-        defer { player.pause() }
+        async let playable = asset.load(.isPlayable)
+        async let duration = asset.load(.duration)
+        async let videoTracks = asset.loadTracks(withMediaType: .video)
+        async let audioTracks = asset.loadTracks(withMediaType: .audio)
+        let (isPlayable, loadedDuration, loadedVideoTracks, loadedAudioTracks) =
+            try await (playable, duration, videoTracks, audioTracks)
 
-        let didBecomeReady = await waitUntil(timeout: 5) {
-            item.status != .unknown
-        }
-
-        XCTAssertTrue(didBecomeReady)
-        XCTAssertEqual(item.status, .readyToPlay, item.error?.localizedDescription ?? "unknown AVPlayerItem error")
+        XCTAssertTrue(isPlayable)
+        XCTAssertTrue(loadedDuration.isNumeric)
+        XCTAssertGreaterThan(loadedDuration.seconds, 0)
+        XCTAssertEqual(loadedVideoTracks.count, 1)
+        XCTAssertEqual(loadedAudioTracks.count, 1)
+        XCTAssertTrue(requestLog.requests.contains { $0.method == "GET" && $0.range.contains("offset: 0") })
+        XCTAssertGreaterThan(MockOriginalMediaProtocol.rangeRequestCount, 0)
     }
 
     @MainActor
@@ -1291,24 +1300,8 @@ final class LocalMediaGatewayServerTests: XCTestCase {
     }
 
     private func loadEnvFile() -> [String: String] {
-        let envURL = URL(fileURLWithPath: "/Users/florian/Documents/Projet/ReelFin/.artifacts/secrets/reelfin-e2e.env")
-        guard let contents = try? String(contentsOf: envURL, encoding: .utf8) else { return [:] }
-        var values: [String: String] = [:]
-        for rawLine in contents.split(whereSeparator: \.isNewline) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=") else { continue }
-            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
-            var value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.count >= 2,
-               let first = value.first,
-               let last = value.last,
-               (first == "\"" && last == "\"") || (first == "'" && last == "'") {
-                value.removeFirst()
-                value.removeLast()
-            }
-            values[key] = value
-        }
-        return values
+        // The test runner supplies credentials only through its ephemeral environment.
+        return [:]
     }
 
     private func normalizedItemID(_ raw: String) -> String {
@@ -1332,6 +1325,26 @@ final class LocalMediaGatewayServerTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
         return await condition()
+    }
+}
+
+private final class GatewayRequestLog: @unchecked Sendable {
+    struct Request {
+        let method: String
+        let range: String
+    }
+
+    private let lock = NSLock()
+    private var storage: [Request] = []
+
+    var requests: [Request] {
+        lock.withLock { storage }
+    }
+
+    func append(method: String, range: String) {
+        lock.withLock {
+            storage.append(Request(method: method, range: range))
+        }
     }
 }
 

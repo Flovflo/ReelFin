@@ -63,9 +63,15 @@ public struct ReelFinRootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transaction { transaction in
+            if AppMetadata.current.isScreenshotModeEnabled {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
         .environment(\.reelFinDisplayDensity, displayDensity)
-        .task {
-            await viewModel.bootstrap()
+        .task(id: ObjectIdentifier(viewModel)) {
+            await viewModel.runRootLifecycle()
         }
     }
 
@@ -117,6 +123,7 @@ public struct ReelFinRootView: View {
         }
         // iOS 18 behavior to minimize the tab bar on scroll
         .tabBarMinimizeBehavior(.automatic)
+        .accessibilityIdentifier("root_tab_layout")
     }
 
     private var splitLayout: some View {
@@ -124,15 +131,19 @@ public struct ReelFinRootView: View {
             List(selection: $selectedSidebar) {
                 Label("Home", systemImage: "play.tv.fill")
                     .tag(SidebarDestination.home)
+                    .accessibilityIdentifier("root_sidebar_home")
                 Label("Search", systemImage: "magnifyingglass")
                     .tag(SidebarDestination.library)
+                    .accessibilityIdentifier("root_sidebar_search")
                 Label("Settings", systemImage: "gearshape.fill")
                     .tag(SidebarDestination.settings)
+                    .accessibilityIdentifier("root_sidebar_settings")
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .background(ReelFinTheme.pageGradient)
             .navigationTitle("ReelFin")
+            .accessibilityIdentifier("root_sidebar")
         } detail: {
             Group {
                 switch selectedSidebar ?? .home {
@@ -154,11 +165,11 @@ public struct ReelFinRootView: View {
             }
         }
         .tint(ReelFinTheme.accent)
+        .accessibilityIdentifier("root_split_layout")
     }
 
     private var shouldUseSplitLayout: Bool {
         RootLayoutPlatformPolicy.shouldUseSplitLayout(
-            isScreenshotMode: AppMetadata.current.isScreenshotModeEnabled,
             isRegularHorizontalSizeClass: horizontalSizeClass == .regular,
             isPadIdiom: UIDevice.current.userInterfaceIdiom == .pad,
             isMacCatalyst: RootLayoutPlatformPolicy.isMacCatalystRuntime

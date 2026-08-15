@@ -1,4 +1,5 @@
-import PlaybackEngine
+@testable import PlaybackEngine
+import NativeMediaCore
 import Shared
 import XCTest
 
@@ -883,10 +884,213 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         XCTAssertFalse(resolved.isAdaptiveStream)
         XCTAssertTrue(resolved.requiresNativePlayback)
         XCTAssertTrue(resolved.preservesOriginalVideo)
+
+        let nativeConfig = NativePlayerConfig(
+            enabled: true,
+            surfacePreference: .customPlayer
+        )
+        let nativeController = NativePlayerPlaybackController(
+            apiClient: client,
+            byteSourceFactory: { url, _ in EmptyNativeHandoffByteSource(url: url) }
+        )
+        _ = try? await nativeController.prepare(
+            itemID: "item-resolver-mkv-hevc",
+            configuration: ServerConfiguration(
+                serverURL: URL(string: "https://example.com")!,
+                nativePlayerConfig: nativeConfig
+            ),
+            session: UserSession(userID: "user-1", username: "Flo", token: "token-1"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: nil
+        )
+
         XCTAssertEqual(
             client.playbackSourceRequestCount,
             1,
-            "MKV native handoff must reuse the first source resolution, not request a destructive H.264 fallback"
+            "custom-to-native handoff must carry its original resolution instead of fetching PlaybackInfo twice"
+        )
+    }
+
+    func testNativeOriginalHandoffReusesFromStartResolutionAndPreservesResumeSeek() async throws {
+        let itemID = "native-handoff-resume-mismatch-\(UUID().uuidString)"
+        let source = MediaSource(
+            id: "source-\(itemID)",
+            itemID: itemID,
+            name: "MKV HEVC source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            supportsDirectPlay: false,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/Videos/\(itemID)/master.m3u8")
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: [itemID: [source]])
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+        _ = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: nil)
+        let nativeConfig = NativePlayerConfig(enabled: true, surfacePreference: .customPlayer)
+        let nativeController = NativePlayerPlaybackController(
+            apiClient: client,
+            byteSourceFactory: { url, _ in EmptyNativeHandoffByteSource(url: url) }
+        )
+
+        let resumeTicks: Int64 = 7_910_000_000
+        let snapshot = try await nativeController.prepare(
+            itemID: itemID,
+            configuration: ServerConfiguration(
+                serverURL: URL(string: "https://example.com")!,
+                nativePlayerConfig: nativeConfig
+            ),
+            session: UserSession(userID: "user-1", username: "Flo", token: "token-1"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: resumeTicks
+        )
+
+        XCTAssertEqual(client.playbackSourceRequestCount, 1)
+        XCTAssertEqual(try XCTUnwrap(snapshot.startTimeSeconds), 791, accuracy: 0.001)
+    }
+
+    func testNativeHandoffDoesNotCrossAuthenticatedSessions() async throws {
+        let itemID = "native-handoff-session-mismatch-\(UUID().uuidString)"
+        let source = MediaSource(
+            id: "source-\(itemID)",
+            itemID: itemID,
+            name: "MKV HEVC source",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            supportsDirectPlay: false,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/Videos/\(itemID)/master.m3u8")
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: [itemID: [source]])
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+        _ = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: nil)
+        client.setSession(UserSession(userID: "user-2", username: "Other", token: "token-2"))
+        let nativeConfig = NativePlayerConfig(enabled: true, surfacePreference: .customPlayer)
+        let nativeController = NativePlayerPlaybackController(
+            apiClient: client,
+            byteSourceFactory: { url, _ in EmptyNativeHandoffByteSource(url: url) }
+        )
+
+        _ = try? await nativeController.prepare(
+            itemID: itemID,
+            configuration: ServerConfiguration(
+                serverURL: URL(string: "https://example.com")!,
+                nativePlayerConfig: nativeConfig
+            ),
+            session: UserSession(userID: "user-2", username: "Other", token: "token-2"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: nil
+        )
+
+        XCTAssertEqual(client.playbackSourceRequestCount, 2)
+    }
+
+    func testNativeHandoffRemainsClaimableBeyondThirtySecondsForFullAndFocusWarmups() async throws {
+        let clock = NativeHandoffTestClock()
+        let store = NativeOriginalSourceHandoffStore(capacity: 4, now: { clock.value })
+        let session = PlaybackCoordinator.AuthenticatedSessionScope(
+            server: "https://example.com", userID: "user-1", token: "token-1"
+        )
+        let fullKey = NativeOriginalSourceHandoffStore.Key(
+            itemID: "full", startTimeTicks: 7_910_000_000, session: session
+        )
+        let focusKey = NativeOriginalSourceHandoffStore.Key(
+            itemID: "focus", startTimeTicks: nil, session: session
+        )
+        await store.offer(source: nativeHandoffSource(itemID: "full"), for: fullKey)
+        await store.offer(source: nativeHandoffSource(itemID: "focus"), for: focusKey)
+
+        clock.advance(by: 31)
+
+        let full = await store.consume(for: fullKey)
+        let focusResume = await store.consume(for: .init(
+            itemID: "focus", startTimeTicks: 7_910_000_000, session: session
+        ))
+        XCTAssertEqual(full?.itemID, "full")
+        XCTAssertEqual(focusResume?.itemID, "focus")
+    }
+
+    func testNativeHandoffStoreEvictsOldestClaimAtHardCapacity() async throws {
+        let itemIDs = (0..<65).map { "native-capacity-\($0)-\(UUID().uuidString)" }
+        let sources = Dictionary(uniqueKeysWithValues: itemIDs.map { itemID in
+            (itemID, [MediaSource(
+                id: "source-\(itemID)", itemID: itemID, name: "MKV", container: "mkv",
+                videoCodec: "hevc", audioCodec: "eac3", supportsDirectPlay: false,
+                supportsDirectStream: true,
+                directStreamURL: URL(string: "https://example.com/Videos/\(itemID)/master.m3u8")
+            )])
+        })
+        let client = MockPlaybackAPIClient(configuration: server, sources: sources)
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+        for itemID in itemIDs {
+            _ = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: nil)
+        }
+        let nativeConfig = NativePlayerConfig(enabled: true, surfacePreference: .customPlayer)
+        let controller = NativePlayerPlaybackController(
+            apiClient: client,
+            byteSourceFactory: { url, _ in EmptyNativeHandoffByteSource(url: url) }
+        )
+        _ = try await controller.prepare(
+            itemID: itemIDs[0],
+            configuration: ServerConfiguration(serverURL: URL(string: "https://example.com")!, nativePlayerConfig: nativeConfig),
+            session: UserSession(userID: "user-1", username: "Flo", token: "token-1"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: nil
+        )
+
+        XCTAssertEqual(client.playbackSourceRequestCount, 66)
+    }
+
+    func testTrustedNativeHandoffDoesNotProbeOrDemuxBeforeSurfaceOpens() async throws {
+        let itemID = "native-no-double-probe-\(UUID().uuidString)"
+        let source = MediaSource(
+            id: "source-\(itemID)", itemID: itemID, name: "MKV", container: "mkv",
+            videoCodec: "hevc", audioCodec: "eac3", supportsDirectPlay: false,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/Videos/\(itemID)/master.m3u8"),
+            audioTracks: [
+                MediaTrack(id: "track-8", title: "Jellyfin Audio", codec: "eac3", isDefault: true, index: 8)
+            ],
+            subtitleTracks: [
+                MediaTrack(id: "track-12", title: "Jellyfin Subtitle", codec: "srt", isDefault: true, index: 12)
+            ]
+        )
+        let client = MockPlaybackAPIClient(configuration: server, sources: [itemID: [source]])
+        let resolver = JellyfinOriginalSourceResolver(coordinator: PlaybackCoordinator(apiClient: client))
+        _ = try await resolver.resolveOriginal(itemID: itemID, startTimeTicks: nil)
+        let counter = NativeHandoffByteSourceFactoryCounter()
+        let nativeConfig = NativePlayerConfig(enabled: true, surfacePreference: .customPlayer)
+        let controller = NativePlayerPlaybackController(
+            apiClient: client,
+            byteSourceFactory: { url, _ in
+                counter.increment()
+                return EmptyNativeHandoffByteSource(url: url)
+            }
+        )
+        let snapshot = try await controller.prepare(
+            itemID: itemID,
+            configuration: ServerConfiguration(serverURL: URL(string: "https://example.com")!, nativePlayerConfig: nativeConfig),
+            session: UserSession(userID: "user-1", username: "Flo", token: "token-1"),
+            nativeConfig: nativeConfig,
+            startTimeTicks: nil
+        )
+
+        XCTAssertEqual(counter.value, 0)
+        XCTAssertEqual(snapshot.surface, .sampleBuffer)
+        XCTAssertNotNil(snapshot.playbackURL)
+        XCTAssertTrue(snapshot.audioTracks.isEmpty, "unverified Jellyfin stream IDs must not reach an EBML TrackNumber selector")
+        XCTAssertTrue(snapshot.subtitleTracks.isEmpty, "the surface publishes verified EBML subtitle IDs after its only open")
+        XCTAssertEqual(snapshot.audioTrackDisplayHints.map(\.id), ["track-8"])
+        XCTAssertEqual(snapshot.subtitleTrackDisplayHints.map(\.id), ["track-12"])
+    }
+
+    private func nativeHandoffSource(itemID: String) -> MediaSource {
+        MediaSource(
+            id: "source-\(itemID)", itemID: itemID, name: "MKV", container: "mkv",
+            videoCodec: "hevc", audioCodec: "eac3", supportsDirectPlay: false,
+            supportsDirectStream: true,
+            directStreamURL: URL(string: "https://example.com/Videos/\(itemID)/master.m3u8")
         )
     }
 
@@ -1225,6 +1429,37 @@ final class PlaybackDecisionEngineTests: XCTestCase {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         return (components?.queryItems ?? []).map { $0.name.lowercased() }
     }
+}
+
+private actor EmptyNativeHandoffByteSource: MediaByteSource {
+    nonisolated let url: URL
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func read(range: ByteRange) async throws -> Data {
+        _ = range
+        return Data()
+    }
+
+    func size() async throws -> Int64? { 0 }
+    func metrics() async -> MediaAccessMetrics { MediaAccessMetrics() }
+    func cancel() async {}
+}
+
+private final class NativeHandoffByteSourceFactoryCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
+}
+
+private final class NativeHandoffTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var uptime: TimeInterval = 0
+    var value: TimeInterval { lock.withLock { uptime } }
+    func advance(by interval: TimeInterval) { lock.withLock { uptime += interval } }
 }
 
 private final class PlaybackCoordinatorTestAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {

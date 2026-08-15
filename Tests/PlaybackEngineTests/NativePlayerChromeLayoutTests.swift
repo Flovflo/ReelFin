@@ -895,6 +895,52 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(counter.count, 2)
     }
 
+    func testLiveUIPlaybackScenarioIsClosedAndMatchesServerFixtureCapabilities() {
+        XCTAssertEqual(LiveUIPlaybackScenario(rawValue: "directplay-mp4"), .directPlayMP4)
+        XCTAssertEqual(LiveUIPlaybackScenario(rawValue: "directplay-hdr-dv-long"), .directPlayHDRDolbyVisionLong)
+        XCTAssertEqual(LiveUIPlaybackScenario(rawValue: "samplebuffer-mkv"), .sampleBufferMKV)
+        XCTAssertNil(LiveUIPlaybackScenario(rawValue: "8930e2b5481eeaec213595eda347443b"))
+
+        let directPlaySource = MediaSource(
+            id: "fixture-source-a",
+            itemID: "fixture-item-a",
+            name: "Fixture A",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let dolbyVisionSource = MediaSource(
+            id: "fixture-source-b",
+            itemID: "fixture-item-b",
+            name: "Fixture B",
+            container: "mov,mp4",
+            videoCodec: "hvc1",
+            audioCodec: "eac3",
+            videoBitDepth: 10,
+            videoRangeType: "DOVIWithHDR10",
+            dvProfile: 8,
+            supportsDirectPlay: true,
+            supportsDirectStream: true
+        )
+        let matroskaSource = MediaSource(
+            id: "fixture-source-c",
+            itemID: "fixture-item-c",
+            name: "Fixture C",
+            container: "mkv",
+            videoCodec: "hevc",
+            audioCodec: "eac3",
+            supportsDirectPlay: false,
+            supportsDirectStream: true
+        )
+
+        XCTAssertTrue(LiveUIPlaybackFixtureResolver.matches(source: directPlaySource, scenario: .directPlayMP4))
+        XCTAssertFalse(LiveUIPlaybackFixtureResolver.matches(source: dolbyVisionSource, scenario: .directPlayMP4))
+        XCTAssertTrue(LiveUIPlaybackFixtureResolver.matches(source: dolbyVisionSource, scenario: .directPlayHDRDolbyVisionLong))
+        XCTAssertTrue(LiveUIPlaybackFixtureResolver.matches(source: matroskaSource, scenario: .sampleBufferMKV))
+    }
+
     func testTVTrackPopoverUsesCompactRightSideMetrics() {
         let layout = NativePlayerTrackMenuLayout.tvOS
 

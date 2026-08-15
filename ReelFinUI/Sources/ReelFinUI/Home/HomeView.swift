@@ -2009,50 +2009,19 @@ struct HomeView: View {
 #endif
 
 #if os(iOS) || os(tvOS)
-    private var liveUITestTargetItemID: String? {
-        if let argumentValue = liveUITestArgumentValue(after: "-reelfin-live-ui-open-target") {
-            return normalizedLiveUITestItemID(argumentValue)
-        }
+    private var liveUITestScenario: LiveUIPlaybackScenario? {
+#if DEBUG
         guard isLiveUITestDirectTargetOpenEnabled else { return nil }
-        let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_TARGET_ITEM_ID"] ?? ""
-        return normalizedLiveUITestItemID(rawValue)
+        let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_TARGET_SCENARIO"] ?? ""
+        return LiveUIPlaybackScenario(rawValue: rawValue)
+#else
+        return nil
+#endif
     }
 
     private var isLiveUITestDirectTargetOpenEnabled: Bool {
-        if liveUITestArgumentValue(after: "-reelfin-live-ui-open-target") != nil {
-            return true
-        }
         let rawValue = ProcessInfo.processInfo.environment["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] ?? ""
         return ["1", "true", "yes", "on"].contains(rawValue.lowercased())
-    }
-
-    private func liveUITestArgumentValue(after flag: String) -> String? {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard
-            let flagIndex = arguments.firstIndex(of: flag),
-            arguments.indices.contains(arguments.index(after: flagIndex))
-        else {
-            return nil
-        }
-        let rawValue = arguments[arguments.index(after: flagIndex)]
-        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedValue.isEmpty ? nil : trimmedValue
-    }
-
-    private func normalizedLiveUITestItemID(_ rawValue: String) -> String? {
-        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedValue.isEmpty else { return nil }
-
-        let patterns = [
-            #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
-            #"[0-9a-fA-F]{32}"#
-        ]
-        for pattern in patterns {
-            if let range = trimmedValue.range(of: pattern, options: .regularExpression) {
-                return trimmedValue[range].filter { $0 != "-" }.lowercased()
-            }
-        }
-        return trimmedValue
     }
 
     @MainActor
@@ -2079,19 +2048,25 @@ struct HomeView: View {
             return
         }
 
-        guard let itemID = liveUITestTargetItemID else { return }
+        guard let scenario = liveUITestScenario else { return }
         liveUITestTargetOpenAttempted = true
 
         do {
-            let item = try await dependencies.detailRepository.refreshItem(id: itemID)
+            guard let item = try await LiveUIPlaybackFixtureResolver.resolve(
+                scenario: scenario,
+                apiClient: dependencies.apiClient
+            ) else {
+                AppLog.ui.error("live_ui_target.open_failed scenario=\(scenario.rawValue, privacy: .public) errorType=fixture_unavailable")
+                return
+            }
             selectedDetailNamespace = nil
             selectedDetailTransitionSourceID = nil
             selectedDetailContextItems = [item]
             selectedDetailContextTitle = "Live UI Target"
-            AppLog.ui.info("live_ui_target.open item=\(AppLogFormat.shortIdentifier(item.id), privacy: .public)")
+            AppLog.ui.info("live_ui_target.open scenario=\(scenario.rawValue, privacy: .public)")
             presentDetail(item)
         } catch {
-            AppLog.ui.error("live_ui_target.open_failed item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            AppLog.ui.error("live_ui_target.open_failed scenario=\(scenario.rawValue, privacy: .public) errorType=target_unavailable")
         }
     }
 #endif
@@ -2243,6 +2218,21 @@ struct HomeView: View {
     @MainActor
     private func startHomeCustomPlayback(request: PlaybackLaunchRequest) {
         let item = request.item
+        let startTicks = request.startPosition(for: .custom) == .resumeIfAvailable
+            ? request.resumePositionTicks
+            : nil
+        if customPrewarmer?.consumeReadyNativeHandoff(
+            itemID: item.id,
+            startTimeTicks: startTicks
+        ) == true {
+            AppLog.playback.notice(
+                "home.player.native_handoff — status=ready item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
+            )
+            Task { @MainActor in
+                await startHomeLegacyPlayback(request: request, forceNativeOriginalPlayback: true)
+            }
+            return
+        }
         guard let store = try? CustomPlaybackEngine.sharedStore() else {
             playbackErrorMessage = "Cache local indisponible."
             return
@@ -2265,7 +2255,7 @@ struct HomeView: View {
         engine.onRequiresNativePlayback = { [weak engine] in
             guard let engine, customEngine === engine else { return }
             AppLog.playback.notice(
-                "home.player.native_handoff — item=\(item.id.prefix(8), privacy: .public)"
+                "home.player.native_handoff — item=\(AppLogFormat.correlationIdentifier(item.id, domain: .media), privacy: .public)"
             )
             Task { @MainActor in
                 await startHomeLegacyPlayback(
@@ -2287,9 +2277,7 @@ struct HomeView: View {
         )
         engine.load(
             itemID: item.id,
-            startTimeTicks: request.startPosition(for: .custom) == .resumeIfAvailable
-                ? request.resumePositionTicks
-                : nil,
+            startTimeTicks: startTicks,
             autoPlay: true
         )
     }

@@ -37,6 +37,10 @@ public enum AppError: LocalizedError, Sendable {
     }
 }
 
+public enum SessionInvalidationEvent: Sendable, Equatable {
+    case unauthorized
+}
+
 public struct ImageRequestConsumerID: Hashable, Sendable {
     public let rawValue: UUID
 
@@ -63,6 +67,8 @@ public protocol SettingsStoreProtocol: AnyObject, Sendable {
 }
 
 public protocol JellyfinAPIClientProtocol: AnyObject, Sendable {
+    var sessionInvalidations: AsyncStream<SessionInvalidationEvent> { get }
+
     func currentConfiguration() async -> ServerConfiguration?
     func currentSession() async -> UserSession?
 
@@ -150,6 +156,12 @@ public protocol SyncEngineProtocol: AnyObject, Sendable {
 }
 
 public extension JellyfinAPIClientProtocol {
+    var sessionInvalidations: AsyncStream<SessionInvalidationEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
     func fetchNextUpEpisodes(limit _: Int) async throws -> [MediaItem] {
         []
     }

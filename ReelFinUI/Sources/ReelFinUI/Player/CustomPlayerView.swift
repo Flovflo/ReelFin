@@ -146,6 +146,9 @@ struct CustomPlayerView: View {
     @State private var launchIsSlow = false
     @State private var subtitleSelectionMemory = NativePlayerSubtitleSelectionMemory()
     private let slowLaunchThresholdSeconds: UInt64 = 15
+#if os(iOS)
+    @State private var isTrackPickerPresented = false
+#endif
 #if os(tvOS)
     @FocusState private var isSkipActionFocused: Bool
     @FocusState private var isRemoteInputFocused: Bool
@@ -187,6 +190,11 @@ struct CustomPlayerView: View {
 #endif
             }
             subtitleCueOverlay
+#if os(iOS)
+            if !isLaunching, engine.bufferingState.phase != .failed {
+                iosCustomPlayerChrome
+            }
+#endif
             skipOverlay
             overlay
 #if os(tvOS)
@@ -321,7 +329,108 @@ struct CustomPlayerView: View {
             }
 #endif
         }
+#if os(iOS)
+        .sheet(isPresented: $isTrackPickerPresented) {
+            TrackPickerView(
+                controls: customPlaybackControls,
+                onSelect: { selection in
+                    switch selection {
+                    case let .audio(trackID):
+                        engine.selectAudioTrack(id: trackID)
+                    case let .subtitle(trackID):
+                        engine.subtitles.select(trackID: trackID)
+                    }
+                }
+            )
+        }
+#endif
     }
+
+#if os(iOS)
+    private var customPlaybackControls: PlaybackControlsModel {
+        let audio = PlaybackControlsModel.customAudioOptions(from: engine.audioTracks)
+        let subtitles: [PlaybackTrackOption]
+        if engine.subtitles.availableTracks.isEmpty {
+            subtitles = []
+        } else {
+            subtitles = [
+                PlaybackTrackOption(
+                    trackID: nil,
+                    title: "Désactivés",
+                    badge: nil,
+                    iconName: "captions.bubble",
+                    isSelected: engine.subtitles.activeTrackID == nil
+                )
+            ] + engine.subtitles.availableTracks.map { track in
+                PlaybackTrackOption(
+                    trackID: track.id,
+                    title: track.label,
+                    badge: nil,
+                    iconName: "captions.bubble",
+                    isSelected: engine.subtitles.activeTrackID == track.id
+                )
+            }
+        }
+        return PlaybackControlsModel(audioOptions: audio, subtitleOptions: subtitles)
+    }
+
+    /// AVPlayerViewController's controls auto-hide on their own but do not provide a reliable
+    /// dismissal affordance for this full-screen custom host. Keep an explicit close button and
+    /// expose the custom engine's external tracks in the same sheet used by the native player.
+    private var iosCustomPlayerChrome: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Button(action: requestDismissal) {
+                    Image(systemName: "xmark")
+                        .font(.headline.weight(.bold))
+                        .frame(width: 38, height: 38)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel("Fermer le lecteur")
+                .accessibilityIdentifier("custom_player_dismiss_button")
+
+                Spacer()
+
+                if customPlaybackControls.hasSelectableTracks {
+                    Button {
+                        isTrackPickerPresented = true
+                    } label: {
+                        Label("Pistes", systemImage: "captions.bubble")
+                            .font(.callout.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("custom_player_tracks_button")
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+
+            if let message = customSelectionStatusMessage {
+                HStack(spacing: 8) {
+                    if engine.subtitles.pendingTrackID != nil || engine.pendingAudioTrackID != nil {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(message)
+                        .font(.callout.weight(.medium))
+                        .multilineTextAlignment(.center)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.black.opacity(0.65), in: Capsule())
+                .accessibilityIdentifier("custom_player_track_status")
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var customSelectionStatusMessage: String? {
+        engine.subtitles.selectionStatusMessage ?? engine.audioSelectionStatusMessage
+    }
+#endif
 
     @ViewBuilder
     private var overlay: some View {
@@ -914,22 +1023,27 @@ struct CustomPlayerView: View {
 
     private var customPlaybackControls: PlaybackControlsModel {
         let audio = PlaybackControlsModel.customAudioOptions(from: engine.audioTracks)
-        let subtitles = [
-            PlaybackTrackOption(
-                trackID: nil,
-                title: "Désactivés",
-                badge: nil,
-                iconName: "captions.bubble",
-                isSelected: engine.subtitles.activeTrackID == nil
-            )
-        ] + engine.subtitles.availableTracks.map { track in
-            PlaybackTrackOption(
-                trackID: track.id,
-                title: track.label,
-                badge: nil,
-                iconName: "captions.bubble",
-                isSelected: engine.subtitles.activeTrackID == track.id
-            )
+        let subtitles: [PlaybackTrackOption]
+        if engine.subtitles.availableTracks.isEmpty {
+            subtitles = []
+        } else {
+            subtitles = [
+                PlaybackTrackOption(
+                    trackID: nil,
+                    title: "Désactivés",
+                    badge: nil,
+                    iconName: "captions.bubble",
+                    isSelected: engine.subtitles.activeTrackID == nil
+                )
+            ] + engine.subtitles.availableTracks.map { track in
+                PlaybackTrackOption(
+                    trackID: track.id,
+                    title: track.label,
+                    badge: nil,
+                    iconName: "captions.bubble",
+                    isSelected: engine.subtitles.activeTrackID == track.id
+                )
+            }
         }
         return PlaybackControlsModel(audioOptions: audio, subtitleOptions: subtitles)
     }

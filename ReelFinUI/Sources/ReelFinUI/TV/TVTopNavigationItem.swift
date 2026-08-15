@@ -1,4 +1,5 @@
 #if os(tvOS)
+import Shared
 import SwiftUI
 
 struct TVTopNavigationItem: View {
@@ -81,6 +82,21 @@ struct TVTopNavigationItem: View {
 
     @ViewBuilder
     private var selectedCapsule: some View {
+        if AppMetadata.current.isScreenshotModeEnabled {
+            selectedCapsuleShape
+        } else {
+            selectedCapsuleShape
+                .shadow(
+                    color: .black.opacity(isFocused ? 0.24 : 0.18),
+                    radius: 14,
+                    x: 0,
+                    y: 8
+                )
+                .matchedGeometryEffect(id: "tv-top-nav-highlight", in: highlightNamespace)
+        }
+    }
+
+    private var selectedCapsuleShape: some View {
         Capsule(style: .continuous)
             .fill(Color.white.opacity(isSelected ? 0.94 : 0.82))
             .overlay {
@@ -97,13 +113,6 @@ struct TVTopNavigationItem: View {
                 Capsule(style: .continuous)
                     .stroke(Color.white.opacity(isFocused ? 0.42 : 0.20), lineWidth: 1)
             }
-            .shadow(
-                color: .black.opacity(isFocused ? 0.24 : 0.18),
-                radius: 14,
-                x: 0,
-                y: 8
-            )
-            .matchedGeometryEffect(id: "tv-top-nav-highlight", in: highlightNamespace)
     }
 }
 #endif

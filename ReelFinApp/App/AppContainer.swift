@@ -25,7 +25,12 @@ final class AppContainer {
     init() {
         let settingsStore = DefaultSettingsStore()
         let tokenStore = KeychainTokenStore()
-        let apiClient = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settingsStore)
+        let imagePipeline = DefaultImagePipeline()
+        let apiClient = JellyfinAPIClient(
+            tokenStore: tokenStore,
+            settingsStore: settingsStore,
+            imagePipeline: imagePipeline
+        )
         Self.applyUITestResetIfNeeded(settingsStore: settingsStore, tokenStore: tokenStore)
 
         self.settingsStore = settingsStore
@@ -46,7 +51,7 @@ final class AppContainer {
             }
         }
 
-        imagePipeline = DefaultImagePipeline()
+        self.imagePipeline = imagePipeline
         episodeReleaseNotificationManager = SystemEpisodeReleaseNotificationManager(settingsStore: settingsStore)
         episodeReleaseTracker = DefaultEpisodeReleaseTracker(
             apiClient: apiClient,

@@ -76,8 +76,6 @@ public struct HLSManifestBuilder: Sendable {
 
         if endList {
             lines.append("#EXT-X-PLAYLIST-TYPE:VOD")
-        } else {
-            lines.append("#EXT-X-PLAYLIST-TYPE:EVENT")
         }
         lines.append("#EXT-X-MAP:URI=\"\(initSegmentURI)\"")
 

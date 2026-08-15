@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Probe explicit Jellyfin items used to validate ReelFin playback routes."""
 
 from __future__ import annotations

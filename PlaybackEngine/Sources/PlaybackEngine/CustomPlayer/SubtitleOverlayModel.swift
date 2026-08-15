@@ -30,6 +30,13 @@ public final class SubtitleOverlayModel {
     public private(set) var currentCue: String?
     public private(set) var loadErrorMessage: String?
 
+    /// User-facing state for the track picker. A selection remains visibly pending until the
+    /// sidecar has been downloaded and parsed; failures are never mistaken for a successful tap.
+    public var selectionStatusMessage: String? {
+        if pendingTrackID != nil { return "Chargement des sous-titres…" }
+        return loadErrorMessage
+    }
+
     struct TimedCue {
         let start: Double
         let end: Double
@@ -40,6 +47,7 @@ public final class SubtitleOverlayModel {
     private var loadTask: Task<Void, Never>?
     private let cueLoader: @Sendable (URL) async -> [TimedCue]?
     var onLoadFailure: ((String) -> Void)?
+    private var lastObservedTimeSeconds: Double = 0
     /// Cache of the last lookup index — cues are sorted and playback is monotonic, so lookup is
     /// O(1) amortized instead of a scan per tick.
     private var lookupIndex = 0
@@ -88,11 +96,13 @@ public final class SubtitleOverlayModel {
             self.cues = parsed
             self.currentCue = nil
             self.lookupIndex = 0
+            self.updateTime(self.lastObservedTimeSeconds)
         }
     }
 
     /// Called by the engine's periodic time observer with the TITLE position.
     public func updateTime(_ seconds: Double) {
+        lastObservedTimeSeconds = seconds
         guard !cues.isEmpty else {
             if currentCue != nil { currentCue = nil }
             return

@@ -15,7 +15,7 @@ This folder keeps the repo-level documentation tied to the app, release process,
 
 ## Media Assets
 
-- `AppStore/Screenshots/`: curated iPhone and Apple TV storefront captures used for manual App Store upload when maintained in-repo
+- `Docs/Media/AppStoreReady/`: curated iPhone, iPad, and Apple TV storefront captures used for manual App Store upload
 - [`Media/reelfin-transition.gif`](Media/reelfin-transition.gif): README animation asset generated from the current mock UI
 
 ## Legal And Support Pages

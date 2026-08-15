@@ -18,10 +18,33 @@ public struct PlaybackPerformanceMetrics: Sendable {
     }
 }
 
+struct NativeSampleBufferStartupWatchdogState: Equatable {
+    private(set) var armedSessionID: String?
+
+    mutating func arm(sessionID: String) {
+        armedSessionID = sessionID
+    }
+
+    mutating func cancel(sessionID: String) -> Bool {
+        guard armedSessionID == sessionID else { return false }
+        armedSessionID = nil
+        return true
+    }
+
+    mutating func consumeTimeout(sessionID: String) -> Bool {
+        cancel(sessionID: sessionID)
+    }
+
+    mutating func reset() {
+        armedSessionID = nil
+    }
+}
+
 public struct PlaybackTransportState: Sendable, Equatable {
     public var availableAudioTracks: [MediaTrack]
     public var availableSubtitleTracks: [MediaTrack]
     public var selectedAudioTrackID: String?
+    public var pendingAudioTrackID: String?
     public var selectedSubtitleTrackID: String?
     public var activeSkipSuggestion: PlaybackSkipSuggestion?
     public var trickplayManifest: TrickplayManifest?
@@ -31,6 +54,7 @@ public struct PlaybackTransportState: Sendable, Equatable {
         availableAudioTracks: [MediaTrack] = [],
         availableSubtitleTracks: [MediaTrack] = [],
         selectedAudioTrackID: String? = nil,
+        pendingAudioTrackID: String? = nil,
         selectedSubtitleTrackID: String? = nil,
         activeSkipSuggestion: PlaybackSkipSuggestion? = nil,
         trickplayManifest: TrickplayManifest? = nil,
@@ -39,6 +63,7 @@ public struct PlaybackTransportState: Sendable, Equatable {
         self.availableAudioTracks = availableAudioTracks
         self.availableSubtitleTracks = availableSubtitleTracks
         self.selectedAudioTrackID = selectedAudioTrackID
+        self.pendingAudioTrackID = pendingAudioTrackID
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
         self.activeSkipSuggestion = activeSkipSuggestion
         self.trickplayManifest = trickplayManifest
@@ -277,6 +302,9 @@ public final class PlaybackSessionController {
     public private(set) var selectedAudioTrackID: String? {
         didSet { scheduleTransportStateSnapshotUpdate() }
     }
+    public private(set) var pendingAudioTrackID: String? {
+        didSet { scheduleTransportStateSnapshotUpdate() }
+    }
     public private(set) var selectedSubtitleTrackID: String? {
         didSet { scheduleTransportStateSnapshotUpdate() }
     }
@@ -285,9 +313,12 @@ public final class PlaybackSessionController {
     public private(set) var isNativePlayerActive = false
     public private(set) var nativePlayerPlaybackSurface: NativePlayerPlaybackSurface = .sampleBuffer
     public private(set) var nativePlayerDiagnosticsOverlayLines: [String] = []
+    public private(set) var nativePlayerEvidenceContext: NativePlayerEvidenceContext?
     public private(set) var nativePlayerPlaybackURL: URL?
     public private(set) var nativePlayerPlaybackHeaders: [String: String] = [:]
     public private(set) var nativePlayerStartTimeSeconds: Double?
+    public private(set) var nativePlayerAudioTrackDisplayHints: [MediaTrack] = []
+    public private(set) var nativePlayerSubtitleTrackDisplayHints: [MediaTrack] = []
     public private(set) var currentPlaybackPlan: PlaybackPlan?
     public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
     public private(set) var metrics = PlaybackPerformanceMetrics()
@@ -295,6 +326,7 @@ public final class PlaybackSessionController {
     public private(set) var playbackHealth = PlaybackHealthSnapshot()
     public private(set) var fallbackRecommendation: PlaybackFallbackRecommendation?
     public private(set) var startupTrace = PlaybackStartupTrace()
+    public private(set) var startupStageTrace = PlaybackStartupStageTrace(sessionID: "none")
     public private(set) var isExternalPlaybackActive = false
     public internal(set) var playbackErrorMessage: String?
     public internal(set) var activeSkipSuggestion: PlaybackSkipSuggestion? {
@@ -390,6 +422,7 @@ public final class PlaybackSessionController {
     private var lastFailureReason: String?
     private var lastRecoverySuggestion: String?
     private var playbackLogSessionID = "none"
+    private var hasPlayerSurfacePresented = false
     private let audioSelector = AudioCompatibilitySelector()
     private let subtitlePolicy = SubtitleCompatibilityPolicy()
     private let assetURLValidator = AssetURLValidator()
@@ -429,7 +462,7 @@ public final class PlaybackSessionController {
     }
 
     nonisolated static func makePlaybackLogSessionID(itemID: String) -> String {
-        "\(AppLogFormat.shortIdentifier(itemID))-\(UUID().uuidString.prefix(6))"
+        AppLogFormat.randomSessionIdentifier()
     }
 
     nonisolated static func playbackLogScope(
@@ -439,7 +472,7 @@ public final class PlaybackSessionController {
     ) -> String {
         var parts = [
             "session=\(sessionID)",
-            "item=\(AppLogFormat.shortIdentifier(itemID))"
+            "media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media))"
         ]
         if let attempt {
             parts.append("attempt=\(attempt)")
@@ -449,6 +482,48 @@ public final class PlaybackSessionController {
 
     private func playbackLogScope(attempt: Int? = nil) -> String {
         Self.playbackLogScope(sessionID: playbackLogSessionID, itemID: currentItemID, attempt: attempt)
+    }
+
+    private func markStartupStage(_ stage: String) {
+        let sample = startupStageTrace.mark(stage)
+        AppLog.playback.notice(
+            "playback.startup.stage — session=\(self.startupStageTrace.sessionID, privacy: .public) build=\(self.startupStageTrace.build, privacy: .public) platform=\(self.startupStageTrace.platform, privacy: .public) stage=\(stage, privacy: .public) elapsedMs=\(sample.elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+    }
+
+    public func markPlayerSurfacePresented() {
+        hasPlayerSurfacePresented = true
+        guard playbackLogSessionID != "none" else { return }
+        guard !startupStageTrace.samples.contains(where: { $0.stage == "player-presented" }) else { return }
+        markStartupStage("player-presented")
+    }
+
+    public func markNativeSampleBufferFirstFrame() {
+        guard isNativePlayerActive,
+              nativePlayerPlaybackSurface == .sampleBuffer
+        else { return }
+        commitFirstFrame(
+            currentSeconds: currentTime,
+            avPlayerItem: nil,
+            diagnosticsSource: "sample-buffer"
+        )
+    }
+
+    public func applyNativeSampleBufferTracks(
+        audio: [MediaTrack],
+        subtitles: [MediaTrack],
+        selectedAudioTrackID discoveredAudioTrackID: String?,
+        selectedSubtitleTrackID discoveredSubtitleTrackID: String?
+    ) {
+        guard isNativePlayerActive, nativePlayerPlaybackSurface == .sampleBuffer else { return }
+        availableAudioTracks = audio
+        availableSubtitleTracks = subtitles
+        if selectedAudioTrackID == nil || !audio.contains(where: { $0.id == selectedAudioTrackID }) {
+            selectedAudioTrackID = discoveredAudioTrackID
+        }
+        if selectedSubtitleTrackID == nil || !subtitles.contains(where: { $0.id == selectedSubtitleTrackID }) {
+            selectedSubtitleTrackID = discoveredSubtitleTrackID
+        }
     }
 
     private func isActivePlaybackTarget(itemID: String) -> Bool {
@@ -465,6 +540,10 @@ public final class PlaybackSessionController {
     private var ttffResolveInterval: SignpostInterval?
     private var ttffFirstBytesInterval: SignpostInterval?
     private var startupWatchdogTask: Task<Void, Never>?
+    private var nativeSampleBufferStartupWatchdog = NativeSampleBufferStartupWatchdogState()
+    var isNativeSampleBufferStartupWatchdogArmed: Bool {
+        nativeSampleBufferStartupWatchdog.armedSessionID == playbackLogSessionID
+    }
     private var decodedFrameWatchdogTask: Task<Void, Never>?
     private var videoOutputPollTask: Task<Void, Never>?
     private var remoteProgressReportTask: Task<Void, Never>?
@@ -581,6 +660,7 @@ public final class PlaybackSessionController {
             availableAudioTracks: availableAudioTracks,
             availableSubtitleTracks: availableSubtitleTracks,
             selectedAudioTrackID: selectedAudioTrackID,
+            pendingAudioTrackID: pendingAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             activeSkipSuggestion: activeSkipSuggestion,
             trickplayManifest: activeTrickplayManifest,
@@ -633,6 +713,7 @@ public final class PlaybackSessionController {
         startPosition: PlaybackStartPosition = .resumeIfAvailable,
         forceNativeOriginalPlayback: Bool = false
     ) async throws {
+        lastPreparedSelection = nil
         currentItemID = item.id
         playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
         stopLocalMediaGateway(reason: "new_load")
@@ -677,16 +758,25 @@ public final class PlaybackSessionController {
         playbackHealth = playbackHealthMonitor.snapshot()
         fallbackRecommendation = nil
         startupTrace = PlaybackStartupTrace(userTappedPlayAt: loadStartDate)
+        startupStageTrace = PlaybackStartupStageTrace(sessionID: playbackLogSessionID)
+        markStartupStage("load-started")
+        if hasPlayerSurfacePresented {
+            markStartupStage("player-presented")
+        }
         playbackErrorMessage = nil
         isNativePlayerActive = false
         nativePlayerPlaybackSurface = .sampleBuffer
         nativePlayerDiagnosticsOverlayLines = []
+        nativePlayerEvidenceContext = nil
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
+        nativePlayerAudioTrackDisplayHints = []
+        nativePlayerSubtitleTrackDisplayHints = []
         currentPlaybackPlan = nil
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
+        nativeSampleBufferStartupWatchdog.reset()
         decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
@@ -782,6 +872,7 @@ public final class PlaybackSessionController {
             let resumeTimeTicks: Int64? = initialResumeSecs > 0 ? Int64(initialResumeSecs * 10_000_000) : nil
 
             if playbackConfig.nativePlayerConfig.enabled {
+                markStartupStage("native-resolution-started")
                 AppLog.playback.notice(
                     "nativeplayer.route.selected — \(self.playbackLogScope(), privacy: .public) surfacePreference=\(playbackConfig.nativePlayerConfig.surfacePreference.rawValue, privacy: .public) legacyCoordinator=false avPlayerItem=pending avPlayerViewController=pending profile=\(self.activeTranscodeProfile.rawValue, privacy: .public)"
                 )
@@ -791,6 +882,7 @@ public final class PlaybackSessionController {
                     startTimeTicks: resumeTimeTicks,
                     autoPlay: autoPlay
                 )
+                markStartupStage("native-resolution-applied")
                 ttffInfoInterval?.end(name: "ttff_playback_info", message: "native_player_info_received")
                 ttffInfoInterval = nil
                 ttffResolveInterval?.end(name: "ttff_url_resolution", message: "native_player_prepared")
@@ -1658,7 +1750,7 @@ public final class PlaybackSessionController {
            ),
            NativePlayerRouteGuard.validateOriginalPlaybackURL(warmedSelection.assetURL).isEmpty {
             AppLog.playback.notice(
-                "nativeplayer.warmup.selection.hit — \(self.playbackLogScope(), privacy: .public) source=\(warmedSelection.source.id, privacy: .public)"
+                "nativeplayer.warmup.selection.hit — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(warmedSelection.source.id, domain: .source), privacy: .public)"
             )
             let snapshot = NativePlayerPlaybackController.makeAppleNativeSnapshot(
                 selection: warmedSelection,
@@ -1710,7 +1802,8 @@ public final class PlaybackSessionController {
                     ],
                     routeDescription: "NativeEngine(failed)",
                     playbackErrorMessage: message
-                )
+                ),
+                armStartupWatchdog: false
             )
         }
     }
@@ -1813,9 +1906,12 @@ public final class PlaybackSessionController {
         isNativePlayerActive = false
         nativePlayerPlaybackSurface = .appleNative
         nativePlayerDiagnosticsOverlayLines = []
+        nativePlayerEvidenceContext = nil
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
+        nativePlayerAudioTrackDisplayHints = []
+        nativePlayerSubtitleTrackDisplayHints = []
         await nativeBridgeSession?.invalidate()
         nativeBridgeSession = nil
         syntheticHLSSession = nil
@@ -1894,6 +1990,7 @@ public final class PlaybackSessionController {
             isNativePlayerActive = false
             nativePlayerPlaybackSurface = .appleNative
             nativePlayerDiagnosticsOverlayLines = []
+            nativePlayerEvidenceContext = nil
             nativePlayerPlaybackURL = nil
             nativePlayerPlaybackHeaders = [:]
             nativePlayerStartTimeSeconds = nil
@@ -2057,7 +2154,7 @@ public final class PlaybackSessionController {
             }
             return
         }
-        applyNativePlayerSnapshot(snapshot)
+        applyNativePlayerSnapshot(snapshot, armStartupWatchdog: autoPlay)
     }
 
     private func makeStartupPreheatTask(
@@ -2185,7 +2282,7 @@ public final class PlaybackSessionController {
 
     private func logPrestartEvidenceSkipped(selection: PlaybackAssetSelection, reason: String) {
         AppLog.playback.info(
-            "playback.prestart.evidence.skipped — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=\(reason, privacy: .public)"
+            "playback.prestart.evidence.skipped — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(selection.source.id, domain: .source), privacy: .public) reason=\(reason, privacy: .public)"
         )
     }
 
@@ -2302,18 +2399,25 @@ public final class PlaybackSessionController {
         case serverBaseline(PlaybackServerNetworkBaseline.Result?)
     }
 
-    private func applyNativePlayerSnapshot(_ snapshot: NativePlayerPlaybackSnapshot) {
+    private func applyNativePlayerSnapshot(
+        _ snapshot: NativePlayerPlaybackSnapshot,
+        armStartupWatchdog: Bool
+    ) {
         isNativePlayerActive = true
         nativePlayerPlaybackSurface = snapshot.surface
         nativePlayerDiagnosticsOverlayLines = snapshot.overlayLines
+        nativePlayerEvidenceContext = snapshot.evidenceContext
         nativePlayerPlaybackURL = snapshot.playbackURL
         nativePlayerPlaybackHeaders = snapshot.playbackHeaders
         nativePlayerStartTimeSeconds = snapshot.startTimeSeconds
+        nativePlayerAudioTrackDisplayHints = snapshot.audioTrackDisplayHints
+        nativePlayerSubtitleTrackDisplayHints = snapshot.subtitleTrackDisplayHints
         routeDescription = snapshot.routeDescription
         playbackErrorMessage = snapshot.playbackErrorMessage
         availableAudioTracks = snapshot.audioTracks
         availableSubtitleTracks = snapshot.subtitleTracks
         selectedAudioTrackID = snapshot.selectedAudioTrackID
+        pendingAudioTrackID = nil
         selectedSubtitleTrackID = snapshot.selectedSubtitleTrackID
         playMethodForReporting = "NativeEngine"
         debugInfo = PlaybackDebugInfo(
@@ -2325,6 +2429,9 @@ public final class PlaybackSessionController {
             bitrate: nil,
             playMethod: "NativeEngine"
         )
+        if armStartupWatchdog, snapshot.surface == .sampleBuffer, snapshot.playbackErrorMessage == nil {
+            scheduleNativeSampleBufferStartupWatchdog()
+        }
         endTransportStateSnapshotBatch(commitNow: true)
     }
 
@@ -2364,7 +2471,7 @@ public final class PlaybackSessionController {
         }
         guard isActivePlaybackTarget(itemID: selection.source.itemID) else {
             AppLog.playback.warning(
-                "playback.asset.stale_prepare_skipped — \(Self.playbackLogScope(sessionID: self.playbackLogSessionID, itemID: selection.source.itemID), privacy: .public) activeItem=\(self.currentItemID.map { AppLogFormat.shortIdentifier($0) } ?? "none", privacy: .public)"
+                "playback.asset.stale_prepare_skipped — \(Self.playbackLogScope(sessionID: self.playbackLogSessionID, itemID: selection.source.itemID), privacy: .public) activeMedia=\(AppLogFormat.correlationIdentifier(self.currentItemID, domain: .media), privacy: .public)"
             )
             return
         }
@@ -2379,6 +2486,7 @@ public final class PlaybackSessionController {
         lastPreparedSelection = selection
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
+        nativeSampleBufferStartupWatchdog.reset()
         decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
@@ -2492,14 +2600,18 @@ public final class PlaybackSessionController {
             ?? availableAudioTracks.first
         selectedAudioTrackID = preferredAudioTrack?.id
         playbackProof.sourceAudioTrackSelected = preferredAudioTrack?.title
-        let selectedAudioTitle = preferredAudioTrack?.title ?? "none"
-        let selectedAudioLanguage = preferredAudioTrack?.language ?? "?"
         let selectedAudioDefault = preferredAudioTrack?.isDefault ?? false
         PlayerDeepEvidenceSink.append(
-            "playback.audio.selection — \(playbackLogScope()) track='\(selectedAudioTitle)' lang='\(selectedAudioLanguage)' codec=\(audioSelection.selectedCodec) default=\(selectedAudioDefault) reason=\(audioSelection.reason)"
+            event: .audioSelection,
+            session: playbackLogSessionID,
+            media: currentItemID.map { AppLogFormat.correlationIdentifier($0, domain: .media) },
+            fields: [
+                .codec: .category(.normalized(audioSelection.selectedCodec)),
+                .isDefault: .boolean(selectedAudioDefault),
+            ]
         )
         AppLog.playback.info(
-            "playback.audio.selection — \(self.playbackLogScope(), privacy: .public) track='\(preferredAudioTrack?.title ?? "none", privacy: .public)' lang='\(preferredAudioTrack?.language ?? "?", privacy: .public)' codec=\(audioSelection.selectedCodec, privacy: .public) default=\(preferredAudioTrack?.isDefault ?? false, privacy: .public) reason=\(audioSelection.reason, privacy: .public)"
+            "playback.audio.selection — \(self.playbackLogScope(), privacy: .public) codec=\(audioSelection.selectedCodec, privacy: .public) default=\(selectedAudioDefault, privacy: .public) reason=\(audioSelection.reason, privacy: .public)"
         )
         if audioSelection.trueHDWasDeprioritized {
             AppLog.playback.notice("\(PlaybackFailureReason.trueHDDeprioritizedForNativePath.localizedDescription, privacy: .public)")
@@ -2529,11 +2641,11 @@ public final class PlaybackSessionController {
                     subtitleTrack: track
                 )
                 AppLog.playback.warning(
-                    "playback.subtitle.auto_blocked — \(self.playbackLogScope(), privacy: .public) track='\(track.title, privacy: .public)' guarantee=\(self.routeGuarantees.userVisibleSummary, privacy: .public)"
+                    "playback.subtitle.auto_blocked — \(self.playbackLogScope(), privacy: .public) track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public) guarantee=\(self.routeGuarantees.userVisibleSummary, privacy: .public)"
                 )
             } else {
                 AppLog.playback.info(
-                    "playback.subtitle.selection — \(self.playbackLogScope(), privacy: .public) track='\(track.title, privacy: .public)' lang='\(track.language ?? "?", privacy: .public)' default=\(track.isDefault, privacy: .public) forced=\(track.isForced, privacy: .public)"
+                    "playback.subtitle.selection — \(self.playbackLogScope(), privacy: .public) track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public) default=\(track.isDefault, privacy: .public) forced=\(track.isForced, privacy: .public)"
                 )
             }
         }
@@ -2891,11 +3003,11 @@ public final class PlaybackSessionController {
             if let manifest {
                 let widths = manifest.variants.map(\.width).map(String.init).joined(separator: ",")
                 AppLog.playback.info(
-                    "playback.trickplay.loaded — \(self.playbackLogScope(), privacy: .public) source=\(manifest.sourceID ?? "item", privacy: .public) widths=[\(widths, privacy: .public)]"
+                    "playback.trickplay.loaded — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(manifest.sourceID, domain: .source), privacy: .public) widths=[\(widths, privacy: .public)]"
                 )
             } else {
                 AppLog.playback.info(
-                    "playback.trickplay.unavailable — \(self.playbackLogScope(), privacy: .public) requestedSource=\(sourceID, privacy: .public)"
+                    "playback.trickplay.unavailable — \(self.playbackLogScope(), privacy: .public) requestedSource=\(AppLogFormat.correlationIdentifier(sourceID, domain: .source), privacy: .public)"
                 )
             }
 
@@ -2973,6 +3085,7 @@ public final class PlaybackSessionController {
         availableAudioTracks = []
         availableSubtitleTracks = []
         selectedAudioTrackID = nil
+        pendingAudioTrackID = nil
         selectedSubtitleTrackID = nil
         routeDescription = ""
         debugInfo = nil
@@ -2983,9 +3096,12 @@ public final class PlaybackSessionController {
         playbackErrorMessage = nil
         isNativePlayerActive = false
         nativePlayerDiagnosticsOverlayLines = []
+        nativePlayerEvidenceContext = nil
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
+        nativePlayerAudioTrackDisplayHints = []
+        nativePlayerSubtitleTrackDisplayHints = []
         playbackProof = PlaybackProofSnapshot()
         currentMediaItem = nil
         nextEpisodeQueue = []
@@ -3041,6 +3157,7 @@ public final class PlaybackSessionController {
 
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
+        nativeSampleBufferStartupWatchdog.reset()
         decodedFrameWatchdogTask?.cancel()
         decodedFrameWatchdogTask = nil
         videoOutputPollTask?.cancel()
@@ -3166,7 +3283,9 @@ public final class PlaybackSessionController {
 
     private func selectAudioTrack(_ track: MediaTrack) async {
         if isNativePlayerActive && nativePlayerPlaybackSurface == .sampleBuffer {
-            selectedAudioTrackID = track.id
+            guard selectedAudioTrackID != track.id,
+                  pendingAudioTrackID != track.id else { return }
+            pendingAudioTrackID = track.id
             AppLog.playback.info("nativeplayer.audio.selection_changed — status=requested")
             return
         }
@@ -3179,7 +3298,7 @@ public final class PlaybackSessionController {
             if let optionIndex = PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) {
                 item.select(options[optionIndex], in: group)
                 selectedAudioTrackID = track.id
-                AppLog.playback.info("Audio track switched natively: '\(track.title, privacy: .public)'")
+                AppLog.playback.info("Audio track switched natively track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public)")
                 return
             }
         }
@@ -3192,6 +3311,21 @@ public final class PlaybackSessionController {
             return
         }
         await reloadForAudioTrack(track)
+    }
+
+    public func commitNativeAudioTrackSelection(id: String) {
+        guard isNativePlayerActive,
+              nativePlayerPlaybackSurface == .sampleBuffer,
+              pendingAudioTrackID == id else { return }
+        selectedAudioTrackID = id
+        pendingAudioTrackID = nil
+        commitTransportStateSnapshotNow()
+    }
+
+    public func failNativeAudioTrackSelection(id: String) {
+        guard pendingAudioTrackID == id else { return }
+        pendingAudioTrackID = nil
+        commitTransportStateSnapshotNow()
     }
 
     /// Reload the current stream with a different AudioStreamIndex.
@@ -3227,7 +3361,7 @@ public final class PlaybackSessionController {
         guard let newURL = components.url else { return }
 
         AppLog.playback.info(
-            "Audio reload: track='\(track.title, privacy: .public)' index=\(track.index, privacy: .public)"
+            "Audio reload track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public) index=\(track.index, privacy: .public)"
         )
 
         var assetOptions: [String: Any] = [:]
@@ -3275,7 +3409,7 @@ public final class PlaybackSessionController {
                 sourceIs4K: currentSource?.isLikely4K == true
             ) {
                 AppLog.playback.warning(
-                    "\(PlaybackFailureReason.subtitleWouldForceDestructiveTranscode.localizedDescription, privacy: .public) subtitle=\(track.title, privacy: .public)"
+                    "\(PlaybackFailureReason.subtitleWouldForceDestructiveTranscode.localizedDescription, privacy: .public) track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public)"
                 )
                 if let currentSource {
                     fallbackRecommendation = PlaybackFallbackRecommendationFactory.subtitleBurnInRecommendation(
@@ -3295,7 +3429,7 @@ public final class PlaybackSessionController {
                 if let optionIndex = PlaybackTrackMatcher.bestOptionIndex(for: track, options: descriptors) {
                     item.select(options[optionIndex], in: group)
                     selectedSubtitleTrackID = id
-                    AppLog.playback.info("Subtitle track switched natively: '\(track.title, privacy: .public)'")
+                    AppLog.playback.info("Subtitle track switched natively track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public)")
                     return
                 }
             }
@@ -3304,7 +3438,7 @@ public final class PlaybackSessionController {
             //    Reload via Jellyfin's HLS direct-stream endpoint with the subtitle injected
             //    in the manifest (SubtitleStreamIndex + SubtitleMethod=Hls).
             AppLog.playback.info(
-                "Subtitle '\(track.title, privacy: .public)' not in AVMediaSelectionGroup — reloading via HLS sidecar"
+                "Subtitle track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public) not in AVMediaSelectionGroup — reloading via HLS sidecar"
             )
             await reloadForSubtitleTrack(track)
         } else {
@@ -3369,7 +3503,7 @@ public final class PlaybackSessionController {
         guard let hlsURL = components.url else { return }
 
         AppLog.playback.info(
-            "Subtitle reload via HLS: track='\(track.title, privacy: .public)' index=\(track.index, privacy: .public)"
+            "Subtitle reload via HLS track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public) index=\(track.index, privacy: .public)"
         )
 
         let currentSeconds = player.currentTime().seconds.isFinite ? max(0, player.currentTime().seconds) : 0
@@ -3971,8 +4105,22 @@ public final class PlaybackSessionController {
         if !avkitReadyForDisplay {
             guard size.width > 1, size.height > 1 else { return }
         }
+        commitFirstFrame(
+            currentSeconds: currentSeconds,
+            avPlayerItem: currentItem,
+            diagnosticsSource: "avplayer"
+        )
+    }
+
+    private func commitFirstFrame(
+        currentSeconds: Double,
+        avPlayerItem: AVPlayerItem?,
+        diagnosticsSource: String
+    ) {
+        guard !hasMarkedFirstFrame else { return }
         let firstFrameDate = Date()
         hasMarkedFirstFrame = true
+        _ = nativeSampleBufferStartupWatchdog.cancel(sessionID: playbackLogSessionID)
         self.firstFrameDate = firstFrameDate
         playbackErrorMessage = nil
         startupWatchdogTask?.cancel()
@@ -3986,26 +4134,55 @@ public final class PlaybackSessionController {
         playbackHealth = playbackHealthMonitor.recordStartup(firstFrameMs: totalTTFFMs)
         playbackProof.healthState = playbackHealth.state.rawValue
         startupTrace.firstFrameAt = firstFrameDate
+        if !startupStageTrace.samples.contains(where: { $0.stage == "first-frame" }) {
+            markStartupStage("first-frame")
+        }
         publishHealthFallbackIfNeeded()
         playbackDiagnostics.recordStartupTrace(startupTrace, guarantees: routeGuarantees)
         PlayerDeepEvidenceSink.append(
-            "avplayer.first-frame — \(playbackLogScope()) elapsedMs=\(String(format: "%.1f", playerStartupMs)) currentTime=\(String(format: "%.3f", currentSeconds))"
+            event: .firstFrame,
+            session: playbackLogSessionID,
+            media: currentItemID.map { AppLogFormat.correlationIdentifier($0, domain: .media) },
+            fields: [
+                .elapsedMilliseconds: .decimal(playerStartupMs),
+                .currentSeconds: .decimal(currentSeconds),
+            ]
         )
-        AppLog.nativeBridge.notice("[NB-DIAG] avplayer.first-frame — \(self.playbackLogScope(), privacy: .public) elapsedMs=\(playerStartupMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
-        emitLocalHLSStartupSummary(avplayerResult: "firstFrame")
-        firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
-        firstFrameInterval = nil
+        AppLog.nativeBridge.notice("[NB-DIAG] playback.first-frame — \(self.playbackLogScope(), privacy: .public) source=\(diagnosticsSource, privacy: .public) elapsedMs=\(playerStartupMs, format: .fixed(precision: 1)) currentTime=\(currentSeconds, format: .fixed(precision: 3))")
+        if avPlayerItem != nil {
+            emitLocalHLSStartupSummary(avplayerResult: "firstFrame")
+            firstFrameInterval?.end(name: "avplayer_first_frame", message: "first_frame_rendered")
+            firstFrameInterval = nil
+        }
         ttffPipelineInterval?.end(name: "ttff_total", message: "complete")
         ttffPipelineInterval = nil
-        applyDeferredResumeSeekIfNeeded()
+        if avPlayerItem != nil {
+            applyDeferredResumeSeekIfNeeded()
+        }
         rememberWorkingProfileForCurrentItem()
-        applyDirectPlaySteadyStateBufferingIfNeeded()
+        if avPlayerItem != nil {
+            applyDirectPlaySteadyStateBufferingIfNeeded()
+        }
 
         // Structured TTFF pipeline summary
         let method = playMethodForReporting
         let profile = activeTranscodeProfile.rawValue
         PlayerDeepEvidenceSink.append(
-            "playback.ttff — \(playbackLogScope()) totalMs=\(String(format: "%.1f", totalTTFFMs)) infoMs=\(String(format: "%.1f", ttffInfoMs)) resolveMs=\(String(format: "%.1f", ttffResolveMs)) readyMs=\(String(format: "%.1f", ttffReadyMs)) playerMs=\(String(format: "%.1f", playerStartupMs)) method=\(method) profile=\(profile) route=\(routeGuarantees.startupClass.rawValue) videoIntegrity=\(routeGuarantees.videoIntegrity.rawValue) hdrIntegrity=\(routeGuarantees.hdrIntegrity.rawValue)"
+            event: .ttff,
+            session: playbackLogSessionID,
+            media: currentItemID.map { AppLogFormat.correlationIdentifier($0, domain: .media) },
+            fields: [
+                .totalMilliseconds: .decimal(totalTTFFMs),
+                .infoMilliseconds: .decimal(ttffInfoMs),
+                .resolveMilliseconds: .decimal(ttffResolveMs),
+                .readyMilliseconds: .decimal(ttffReadyMs),
+                .playerMilliseconds: .decimal(playerStartupMs),
+                .method: .category(.normalized(method)),
+                .profile: .category(.normalized(profile)),
+                .route: .category(.normalized(routeGuarantees.startupClass.rawValue)),
+                .videoIntegrity: .category(.normalized(routeGuarantees.videoIntegrity.rawValue)),
+                .hdrIntegrity: .category(.normalized(routeGuarantees.hdrIntegrity.rawValue)),
+            ]
         )
         AppLog.playback.info(
             "playback.ttff — \(self.playbackLogScope(), privacy: .public) totalMs=\(totalTTFFMs, format: .fixed(precision: 1)) infoMs=\(self.ttffInfoMs, format: .fixed(precision: 1)) resolveMs=\(self.ttffResolveMs, format: .fixed(precision: 1)) readyMs=\(self.ttffReadyMs, format: .fixed(precision: 1)) playerMs=\(playerStartupMs, format: .fixed(precision: 1)) method=\(method, privacy: .public) profile=\(profile, privacy: .public) route=\(self.routeGuarantees.startupClass.rawValue, privacy: .public) videoIntegrity=\(self.routeGuarantees.videoIntegrity.rawValue, privacy: .public) hdrIntegrity=\(self.routeGuarantees.hdrIntegrity.rawValue, privacy: .public)"
@@ -4015,7 +4192,9 @@ public final class PlaybackSessionController {
             NativeBridgeFailureCache.clearFailure(itemID: itemID)
         }
 
-        applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for: currentItem)
+        if let avPlayerItem {
+            applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for: avPlayerItem)
+        }
     }
 
     private func applyStartupSubtitleSelectionAfterFirstFrameIfNeeded(for item: AVPlayerItem) {
@@ -4039,7 +4218,7 @@ public final class PlaybackSessionController {
             case .skipExternal(let trackID):
                 if let track = self.availableSubtitleTracks.first(where: { $0.id == trackID }) {
                     AppLog.playback.info(
-                        "playback.subtitle.reload_skipped — \(self.playbackLogScope(), privacy: .public) track='\(track.title, privacy: .public)' reason=external_startup_reload_after_first_frame"
+                        "playback.subtitle.reload_skipped — \(self.playbackLogScope(), privacy: .public) track=\(AppLogFormat.correlationIdentifier(track.id, domain: .track), privacy: .public) reason=external_startup_reload_after_first_frame"
                     )
                 }
             case .none:
@@ -4149,7 +4328,7 @@ public final class PlaybackSessionController {
             localMediaGatewayDisabledSourceIDs.insert(preparedSelection.source.id)
             stopLocalMediaGateway(reason: "directplay_recovery_transport_failure")
             AppLog.playback.warning(
-                "playback.cache.gateway.bypassed — \(self.playbackLogScope(), privacy: .public) source=\(preparedSelection.source.id, privacy: .public) reason=directplay_recovery_transport_failure"
+                "playback.cache.gateway.bypassed — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(preparedSelection.source.id, domain: .source), privacy: .public) reason=directplay_recovery_transport_failure"
             )
         }
 
@@ -4290,7 +4469,7 @@ public final class PlaybackSessionController {
             )
             stopLocalMediaGateway(reason: "gateway_wrap_prevented")
             AppLog.playback.error(
-                "playback.cache.gateway.wrap_prevented — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=local_gateway_upstream"
+                "playback.cache.gateway.wrap_prevented — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(selection.source.id, domain: .source), privacy: .public) reason=local_gateway_upstream"
             )
             return remoteSelection
         }
@@ -4301,7 +4480,7 @@ public final class PlaybackSessionController {
         guard !localMediaGatewayDisabledSourceIDs.contains(selection.source.id) else {
             stopLocalMediaGateway(reason: "gateway_session_disabled")
             AppLog.playback.info(
-                "playback.cache.gateway.skipped — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=session_disabled"
+                "playback.cache.gateway.skipped — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(selection.source.id, domain: .source), privacy: .public) reason=session_disabled"
             )
             return selection
         }
@@ -4351,7 +4530,7 @@ public final class PlaybackSessionController {
     ) -> PlaybackAssetSelection {
         guard LocalMediaGatewayURLPolicy.isSupportedRemoteURL(selection.assetURL) else {
             AppLog.playback.error(
-                "playback.cache.gateway.wrap_prevented — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=unsupported_upstream"
+                "playback.cache.gateway.wrap_prevented — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(selection.source.id, domain: .source), privacy: .public) reason=unsupported_upstream"
             )
             return selection
         }
@@ -4380,14 +4559,14 @@ public final class PlaybackSessionController {
             localMediaGatewayRemoteSelection = selection
             localMediaGatewayLocalSelection = updated
             AppLog.playback.notice(
-                "playback.cache.gateway.selected — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) mode=\(configuration.mediaCacheMode.rawValue, privacy: .public) cachedBytes=\(cachedBytes, privacy: .public) host=127.0.0.1"
+                "playback.cache.gateway.selected — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(selection.source.id, domain: .source), privacy: .public) mode=\(configuration.mediaCacheMode.rawValue, privacy: .public) cachedBytes=\(cachedBytes, privacy: .public) host=loopback"
             )
             updated.routeGuarantees = resolvedRouteGuarantees(for: updated)
             return updated
         } catch {
             stopLocalMediaGateway(reason: "gateway_start_failed")
             AppLog.playback.warning(
-                "playback.cache.gateway.unavailable — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
+                "playback.cache.gateway.unavailable — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(selection.source.id, domain: .source), privacy: .public) errorType=local_gateway_unavailable"
             )
             return selection
         }
@@ -5551,13 +5730,30 @@ public final class PlaybackSessionController {
         let event = item.accessLog()?.events.last
         let audioTrack = selectedAudioTrackForEvidence()
         let audioCodec = audioTrack?.codec ?? currentSource?.audioCodec ?? "unknown"
-        let audioID = audioTrack?.id ?? selectedAudioTrackID ?? "none"
-        let audioTitle = audioTrack?.title ?? "none"
         PlayerDeepEvidenceSink.append(
-            "playback.deep.tick — \(playbackLogScope()) current=\(String(format: "%.3f", currentSeconds)) delta=\(String(format: "%.3f", delta)) rate=\(player.rate) timeControl=\(status) waitingReason=\(waitingReason) itemStatus=\(lastPlayerItemStatus) likely=\(likely) buffered=\(String(format: "%.1f", buffered)) ranges=\(ranges) droppedFrames=\(metrics.droppedFrames) observedBitrate=\(playbackProof.observedBitrate ?? 0) accessObservedBitrate=\(Int(event?.observedBitrate ?? 0)) accessIndicatedBitrate=\(Int(event?.indicatedBitrate ?? 0)) accessStalls=\(event?.numberOfStalls ?? 0) accessTransferDuration=\(String(format: "%.3f", event?.transferDuration ?? 0)) audioID=\(audioID) audioCodec=\(audioCodec) audioTrack='\(audioTitle)' method=\(playMethodForReporting)"
+            event: .avPlayerTick,
+            session: playbackLogSessionID,
+            media: currentItemID.map { AppLogFormat.correlationIdentifier($0, domain: .media) },
+            fields: [
+                .currentSeconds: .decimal(currentSeconds),
+                .deltaSeconds: .decimal(delta),
+                .rate: .decimal(Double(player.rate)),
+                .timeControl: .category(.normalized(status)),
+                .itemStatus: .category(.normalized(lastPlayerItemStatus)),
+                .likelyToKeepUp: .boolean(likely),
+                .bufferedSeconds: .decimal(buffered),
+                .droppedFrames: .integer(Int64(metrics.droppedFrames)),
+                .observedBitrate: .integer(Int64(playbackProof.observedBitrate ?? 0)),
+                .accessObservedBitrate: .integer(Int64(event?.observedBitrate ?? 0)),
+                .accessIndicatedBitrate: .integer(Int64(event?.indicatedBitrate ?? 0)),
+                .accessStalls: .integer(Int64(event?.numberOfStalls ?? 0)),
+                .accessTransferSeconds: .decimal(event?.transferDuration ?? 0),
+                .codec: .category(.normalized(audioCodec)),
+                .method: .category(.normalized(playMethodForReporting)),
+            ]
         )
         AppLog.playback.info(
-            "playback.deep.tick — \(self.playbackLogScope(), privacy: .public) current=\(currentSeconds, format: .fixed(precision: 3)) delta=\(delta, format: .fixed(precision: 3)) rate=\(self.player.rate, privacy: .public) timeControl=\(status, privacy: .public) waitingReason=\(waitingReason, privacy: .public) itemStatus=\(self.lastPlayerItemStatus, privacy: .public) likely=\(likely, privacy: .public) buffered=\(buffered, format: .fixed(precision: 1)) ranges=\(ranges, privacy: .public) droppedFrames=\(self.metrics.droppedFrames, privacy: .public) observedBitrate=\(self.playbackProof.observedBitrate ?? 0, privacy: .public) accessObservedBitrate=\(Int(event?.observedBitrate ?? 0), privacy: .public) accessIndicatedBitrate=\(Int(event?.indicatedBitrate ?? 0), privacy: .public) accessStalls=\(event?.numberOfStalls ?? 0, privacy: .public) accessTransferDuration=\(event?.transferDuration ?? 0, format: .fixed(precision: 3)) audioID=\(audioID, privacy: .public) audioCodec=\(audioCodec, privacy: .public) audioTrack='\(audioTitle, privacy: .public)' method=\(self.playMethodForReporting, privacy: .public)"
+            "playback.deep.tick — \(self.playbackLogScope(), privacy: .public) current=\(currentSeconds, format: .fixed(precision: 3)) delta=\(delta, format: .fixed(precision: 3)) rate=\(self.player.rate, privacy: .public) timeControl=\(status, privacy: .public) waitingReason=\(waitingReason, privacy: .public) itemStatus=\(self.lastPlayerItemStatus, privacy: .public) likely=\(likely, privacy: .public) buffered=\(buffered, format: .fixed(precision: 1)) ranges=\(ranges, privacy: .public) droppedFrames=\(self.metrics.droppedFrames, privacy: .public) observedBitrate=\(self.playbackProof.observedBitrate ?? 0, privacy: .public) accessObservedBitrate=\(Int(event?.observedBitrate ?? 0), privacy: .public) accessIndicatedBitrate=\(Int(event?.indicatedBitrate ?? 0), privacy: .public) accessStalls=\(event?.numberOfStalls ?? 0, privacy: .public) accessTransferDuration=\(event?.transferDuration ?? 0, format: .fixed(precision: 3)) audioCodec=\(audioCodec, privacy: .public) method=\(self.playMethodForReporting, privacy: .public)"
         )
     }
 
@@ -5637,6 +5833,57 @@ public final class PlaybackSessionController {
                 self.playbackErrorMessage = "No video frame received. Try changing quality or source."
             }
         }
+    }
+
+    private func scheduleNativeSampleBufferStartupWatchdog() {
+        startupWatchdogTask?.cancel()
+        let sessionID = playbackLogSessionID
+        let itemID = currentItemID
+        nativeSampleBufferStartupWatchdog.arm(sessionID: sessionID)
+        startupWatchdogTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let delay = self.startupWatchdogDelayNanoseconds()
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            await self.handleNativeSampleBufferStartupWatchdogTimeout(
+                sessionID: sessionID,
+                itemID: itemID
+            )
+        }
+    }
+
+    func expireNativeSampleBufferStartupWatchdogNow() async {
+        await handleNativeSampleBufferStartupWatchdogTimeout(
+            sessionID: playbackLogSessionID,
+            itemID: currentItemID
+        )
+    }
+
+    private func handleNativeSampleBufferStartupWatchdogTimeout(
+        sessionID: String,
+        itemID: String?
+    ) async {
+        guard nativeSampleBufferStartupWatchdog.consumeTimeout(sessionID: sessionID),
+                  self.playbackLogSessionID == sessionID,
+                  self.currentItemID == itemID,
+                  self.isNativePlayerActive,
+                  self.nativePlayerPlaybackSurface == .sampleBuffer,
+                  !self.hasMarkedFirstFrame
+        else { return }
+
+        let reason = StartupFailureReason.readyButNoVideoFrame
+        playbackErrorMessage = "No video frame received from the native player. Retrying playback."
+        playbackHealth = playbackHealthMonitor.markRouteFailed()
+        playbackProof.healthState = playbackHealth.state.rawValue
+        playbackDiagnostics.recordHealth(playbackHealth)
+        markStartupStage("first-frame-timeout")
+        AppLog.playback.error(
+            "nativeplayer.sampleBuffer.startup_timeout — \(self.playbackLogScope(), privacy: .public) reason=\(reason.rawValue, privacy: .public)"
+        )
+        _ = await attemptRecoveryPreservingDirectPlay(
+            reason: reason.rawValue,
+            userMessage: "No native video frame was rendered. Retrying playback."
+        )
     }
 
     private func scheduleDecodedFrameWatchdog() {
@@ -5818,7 +6065,7 @@ public final class PlaybackSessionController {
                 localMediaGatewayDisabledSourceIDs.insert(selection.source.id)
                 stopLocalMediaGateway(reason: "directplay_recovery_transport_failure")
                 AppLog.playback.warning(
-                    "playback.cache.gateway.bypassed — \(self.playbackLogScope(), privacy: .public) source=\(selection.source.id, privacy: .public) reason=directplay_avfoundation_transport_failure"
+                    "playback.cache.gateway.bypassed — \(self.playbackLogScope(), privacy: .public) source=\(AppLogFormat.correlationIdentifier(selection.source.id, domain: .source), privacy: .public) reason=directplay_avfoundation_transport_failure"
                 )
                 AppLog.playback.warning(
                     "playback.directplay.same_route_recovery_skipped — \(self.playbackLogScope(), privacy: .public) reason=\(reason, privacy: .public) failureDomain=\(self.lastFailureDomain ?? "unknown", privacy: .public) failureCode=\(self.lastFailureCode ?? 0, privacy: .public)"
@@ -5897,7 +6144,7 @@ public final class PlaybackSessionController {
         if isLocalSyntheticHLSParseFailure(error) {
             if let itemID = currentItemID {
                 NativeBridgeFailureCache.recordFailure(itemID: itemID)
-                AppLog.nativeBridge.error("[NB-DIAG] hls.parse.failure — disabling NativeBridge for item=\(itemID, privacy: .public)")
+                AppLog.nativeBridge.error("[NB-DIAG] hls.parse.failure — disabling NativeBridge for media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
             }
             return await attemptRecovery(
                 reason: "nativebridge_packaging_failure",
@@ -5925,7 +6172,7 @@ public final class PlaybackSessionController {
         AppLog.playback.error("Recovery budget exhausted. Last error: \(message, privacy: .public)")
         if playMethodForReporting == "NativeBridge", let itemID = currentItemID {
             NativeBridgeFailureCache.recordFailure(itemID: itemID)
-            AppLog.nativeBridge.notice("Native Bridge temporarily disabled for item \(itemID, privacy: .public)")
+            AppLog.nativeBridge.notice("Native Bridge temporarily disabled for media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public)")
         }
         if strictQualityIsActive {
             playbackErrorMessage = "Cannot play in HDR/DV without downgrade."
@@ -6899,6 +7146,14 @@ public final class PlaybackSessionController {
     }
 
     private func nativeCoordinatorFallbackReason(forRecoveryReason reason: String) -> String? {
+        if Self.shouldAllowSampleBufferCoordinatorFallback(
+            reason: reason,
+            isNativePlayerActive: isNativePlayerActive,
+            nativeSurface: nativePlayerPlaybackSurface
+        ) {
+            return reason
+        }
+
         if Self.shouldAllowNativeModeCoordinatorFallback(
             reason: reason,
             rootReason: nativeModeCoordinatorFallbackRootReason
@@ -7980,8 +8235,29 @@ public final class PlaybackSessionController {
 
         if updated != playbackProof {
             playbackProof = updated
+            let resolution = updated.decodedResolution.split(separator: "x", maxSplits: 1)
+            let width = resolution.first.flatMap { Int64($0) } ?? 0
+            let height = resolution.count == 2 ? Int64(resolution[1]) ?? 0 : 0
             PlayerDeepEvidenceSink.append(
-                "playback.proof — \(playbackLogScope()) resolution=\(updated.decodedResolution) codec=\(updated.codecFourCC) bitDepth=\(updated.bitDepth ?? 0) hdr=\(updated.hdrTransfer) dv=\(updated.dolbyVisionActive) method=\(updated.playbackMethod) profile=\(updated.transcodeProfile ?? "n/a") srcBitrate=\(updated.sourceBitrate ?? 0) container=\(updated.sourceContainer ?? "n/a") dvProfile=\(updated.dvProfile ?? 0) dvLevel=\(updated.dvLevel ?? 0) videoRange=\(updated.videoRangeType ?? "n/a") observedBitrate=\(updated.observedBitrate ?? 0)"
+                event: .playbackProof,
+                session: playbackLogSessionID,
+                media: currentItemID.map { AppLogFormat.correlationIdentifier($0, domain: .media) },
+                fields: [
+                    .width: .integer(width),
+                    .height: .integer(height),
+                    .codec: .category(.normalized(updated.codecFourCC)),
+                    .bitDepth: .integer(Int64(updated.bitDepth ?? 0)),
+                    .hdr: .category(.normalized(updated.hdrTransfer)),
+                    .dolbyVision: .boolean(updated.dolbyVisionActive),
+                    .method: .category(.normalized(updated.playbackMethod)),
+                    .profile: .category(.normalized(updated.transcodeProfile)),
+                    .sourceBitrate: .integer(Int64(updated.sourceBitrate ?? 0)),
+                    .container: .category(.normalized(updated.sourceContainer)),
+                    .dolbyVisionProfile: .integer(Int64(updated.dvProfile ?? 0)),
+                    .dolbyVisionLevel: .integer(Int64(updated.dvLevel ?? 0)),
+                    .videoRange: .category(.normalized(updated.videoRangeType)),
+                    .observedBitrate: .integer(Int64(updated.observedBitrate ?? 0)),
+                ]
             )
             AppLog.playback.info(
                 "playback.proof — \(self.playbackLogScope(), privacy: .public) resolution=\(updated.decodedResolution, privacy: .public) codec=\(updated.codecFourCC, privacy: .public) bitDepth=\(updated.bitDepth ?? 0, privacy: .public) hdr=\(updated.hdrTransfer, privacy: .public) dv=\(updated.dolbyVisionActive, privacy: .public) method=\(updated.playbackMethod, privacy: .public) profile=\(updated.transcodeProfile ?? "n/a", privacy: .public) srcBitrate=\(updated.sourceBitrate ?? 0, privacy: .public) container=\(updated.sourceContainer ?? "n/a", privacy: .public) dvProfile=\(updated.dvProfile ?? 0, privacy: .public) dvLevel=\(updated.dvLevel ?? 0, privacy: .public) videoRange=\(updated.videoRangeType ?? "n/a", privacy: .public) observedBitrate=\(updated.observedBitrate ?? 0, privacy: .public)"
@@ -8731,22 +9007,8 @@ public final class PlaybackSessionController {
 
     nonisolated static func redactedPlaylistURIForLog(_ uri: String?) -> String {
         guard let uri, !uri.isEmpty else { return "none" }
-        guard var components = URLComponents(string: uri),
-              let queryItems = components.queryItems,
-              !queryItems.isEmpty
-        else {
-            return uri
-        }
-
-        let sensitiveNames: Set<String> = [
-            "api_key", "apikey", "token", "access_token", "x-emby-token", "authorization"
-        ]
-        components.queryItems = queryItems.map { item in
-            sensitiveNames.contains(item.name.lowercased())
-                ? URLQueryItem(name: item.name, value: "REDACTED")
-                : item
-        }
-        return components.string ?? uri
+        guard let url = URL(string: uri) else { return "invalid-url" }
+        return url.reelfinLogString
     }
 
     nonisolated static func directPlayRecoverySelection(
@@ -8864,6 +9126,15 @@ public final class PlaybackSessionController {
         default:
             return false
         }
+    }
+
+    nonisolated static func shouldAllowSampleBufferCoordinatorFallback(
+        reason: String,
+        isNativePlayerActive: Bool,
+        nativeSurface: NativePlayerPlaybackSurface
+    ) -> Bool {
+        guard isNativePlayerActive, nativeSurface == .sampleBuffer else { return false }
+        return StartupFailureReason(rawValue: reason) == .readyButNoVideoFrame
     }
 
     nonisolated static func shouldUseProfileFallbackAfterSameRouteDirectPlayRecoveryFailure(reason: String) -> Bool {

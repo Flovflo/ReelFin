@@ -153,12 +153,12 @@ public actor PlaybackCoordinator {
                     }
                 }
                 AppLog.playback.notice(
-                    "playback.source.container_pref_preserves_subtitles — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) tracks=\(textTracks.count, privacy: .public)"
+                    "playback.source.container_pref_preserves_subtitles — media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) tracks=\(textTracks.count, privacy: .public)"
                 )
             }
         }
         AppLog.playback.notice(
-            "playback.source.container_pref — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) kept=\(matching.count, privacy: .public)/\(sources.count, privacy: .public) preferred=\(preferred.joined(separator: ","), privacy: .public)"
+            "playback.source.container_pref — media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) kept=\(matching.count, privacy: .public)/\(sources.count, privacy: .public) preferred=\(preferred.joined(separator: ","), privacy: .public)"
         )
         return matching
     }
@@ -202,7 +202,7 @@ public actor PlaybackCoordinator {
         if nativeConfig.enabled,
            nativeEngineFallbackReason == StartupFailureReason.directPlayPostStartStall.rawValue {
             AppLog.playback.error(
-                "nativeplayer.route.guard.blocked — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) reason=Direct Play post-start stalls must keep the current Direct Play item."
+                "nativeplayer.route.guard.blocked — media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) reason=Direct Play post-start stalls must keep the current Direct Play item."
             )
             throw NativePlayerRouteViolation.legacyPlaybackCoordinator
         }
@@ -214,13 +214,13 @@ public actor PlaybackCoordinator {
             let reason = NativePlayerRouteGuard.firstViolationDescription(for: proof)
                 ?? NativePlayerRouteViolation.legacyPlaybackCoordinator.localizedDescription
             AppLog.playback.error(
-                "nativeplayer.route.guard.blocked — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) reason=\(reason, privacy: .public)"
+                "nativeplayer.route.guard.blocked — media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) reason=\(reason, privacy: .public)"
             )
             throw NativePlayerRouteViolation.legacyPlaybackCoordinator
         }
         if nativeConfig.enabled, let nativeEngineFallbackReason {
             AppLog.playback.notice(
-                "nativeplayer.route.guard.recovery_override — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) reason=\(nativeEngineFallbackReason, privacy: .public) profile=\(transcodeProfile.rawValue, privacy: .public)"
+                "nativeplayer.route.guard.recovery_override — media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) reason=\(nativeEngineFallbackReason, privacy: .public) profile=\(transcodeProfile.rawValue, privacy: .public)"
             )
         }
 
@@ -464,7 +464,7 @@ public actor PlaybackCoordinator {
         }
         let bitrateLabel = debug.bitrate.map(String.init) ?? "unknown"
         AppLog.playback.info(
-            "playback.selection — item=\(AppLogFormat.shortIdentifier(itemID), privacy: .public) method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) hdr=\(debug.hdrMode.rawValue, privacy: .public) bitrate=\(bitrateLabel, privacy: .public) profile=\(profileLabel, privacy: .public) guarantee=\(routeGuarantees.userVisibleSummary, privacy: .public) url=\(assetURL.reelfinCompactLogString, privacy: .public)"
+            "playback.selection — media=\(AppLogFormat.correlationIdentifier(itemID, domain: .media), privacy: .public) method=\(debug.playMethod, privacy: .public) container=\(debug.container, privacy: .public) video=\(debug.videoCodec, privacy: .public) audio=\(debug.audioMode, privacy: .public) hdr=\(debug.hdrMode.rawValue, privacy: .public) bitrate=\(bitrateLabel, privacy: .public) profile=\(profileLabel, privacy: .public) guarantee=\(routeGuarantees.userVisibleSummary, privacy: .public) url=\(assetURL.reelfinCompactLogString, privacy: .public)"
         )
 
         return PlaybackAssetSelection(

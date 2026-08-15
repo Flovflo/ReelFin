@@ -48,6 +48,119 @@ actor ImageTaskRegistry {
     }
 }
 
+actor ImageLoadLimiter {
+    enum Transition: Sendable {
+        case queued(UUID)
+        case willGrant(UUID)
+    }
+
+    private var availablePermits: Int
+    private var waiting: [UUID: CheckedContinuation<UUID, Error>] = [:]
+    private var granted: Set<UUID> = []
+    private let transitionObserver: (@Sendable (Transition) -> Void)?
+
+    init(
+        maximumConcurrentLoads: Int,
+        transitionObserver: (@Sendable (Transition) -> Void)? = nil
+    ) {
+        availablePermits = maximumConcurrentLoads
+        self.transitionObserver = transitionObserver
+    }
+
+    func acquire() async throws -> UUID {
+        let identifier = UUID()
+        let grantedIdentifier = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard availablePermits > 0 else {
+                    waiting[identifier] = continuation
+                    transitionObserver?(.queued(identifier))
+                    return
+                }
+                availablePermits -= 1
+                granted.insert(identifier)
+                continuation.resume(returning: identifier)
+            }
+        } onCancel: {
+            Task { await self.cancel(identifier) }
+        }
+        do {
+            try Task.checkCancellation()
+            return grantedIdentifier
+        } catch {
+            release(grantedIdentifier)
+            throw error
+        }
+    }
+
+    func release(_ identifier: UUID) {
+        guard granted.remove(identifier) != nil else { return }
+        grantNextOrReturnPermit()
+    }
+
+    private func cancel(_ identifier: UUID) {
+        if let continuation = waiting.removeValue(forKey: identifier) {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        guard granted.remove(identifier) != nil else { return }
+        grantNextOrReturnPermit()
+    }
+
+    private func grantNextOrReturnPermit() {
+        if let identifier = waiting.keys.first, let continuation = waiting.removeValue(forKey: identifier) {
+            granted.insert(identifier)
+            transitionObserver?(.willGrant(identifier))
+            continuation.resume(returning: identifier)
+        } else {
+            availablePermits += 1
+        }
+    }
+}
+
+public struct ImagePipelineLimits: Sendable {
+    public var maximumEncodedBytes: Int
+    public var maximumPixelCount: Int64
+    public var maximumConcurrentLoads: Int
+
+    public init(
+        maximumEncodedBytes: Int = 12 * 1_024 * 1_024,
+        maximumPixelCount: Int64 = 40_000_000,
+        maximumConcurrentLoads: Int = 4
+    ) {
+        self.maximumEncodedBytes = max(maximumEncodedBytes, 1)
+        self.maximumPixelCount = max(maximumPixelCount, 1)
+        self.maximumConcurrentLoads = max(maximumConcurrentLoads, 1)
+    }
+}
+
+public protocol ImageDataDecoding: Sendable {
+    func decode(data: Data, maximumThumbnailPixelSize: Int) async -> UIImage?
+}
+
+public struct ImageIODecoder: ImageDataDecoding {
+    public init() {}
+
+    public func decode(data: Data, maximumThumbnailPixelSize: Int) async -> UIImage? {
+        await Task.detached(priority: .utility) {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+                return nil
+            }
+
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maximumThumbnailPixelSize
+            ]
+
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                return nil
+            }
+            return UIImage(cgImage: cgImage)
+        }.value
+    }
+}
+
 private final class ImageLoadTracker: @unchecked Sendable {
     var source: StaticString = "loaded"
 }
@@ -58,16 +171,24 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     private let urlSession: URLSession
     private let tokenStore: TokenStoreProtocol
     private let registry = ImageTaskRegistry()
+    private let limits: ImagePipelineLimits
+    private let loadLimiter: ImageLoadLimiter
+    private let decoder: any ImageDataDecoding
 
     public init(
         diskCache: LRUDiskCache? = nil,
         urlSession: URLSession? = nil,
         tokenStore: TokenStoreProtocol = KeychainTokenStore(),
-        memoryCapacity: Int = 220
+        memoryCapacity: Int = 220,
+        limits: ImagePipelineLimits = .init(),
+        decoder: any ImageDataDecoding = ImageIODecoder()
     ) {
         self.diskCache = diskCache ?? Self.makeDiskCache()
         self.urlSession = urlSession ?? Self.makeImageSession()
         self.tokenStore = tokenStore
+        self.limits = limits
+        self.loadLimiter = ImageLoadLimiter(maximumConcurrentLoads: limits.maximumConcurrentLoads)
+        self.decoder = decoder
         memoryCache.countLimit = memoryCapacity
         memoryCache.totalCostLimit = 130 * 1_024 * 1_024
     }
@@ -92,13 +213,13 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
 
         let fallbackURL = fileManager.temporaryDirectory.appendingPathComponent("ReelFinImageCache", isDirectory: true)
         if let cache = try? LRUDiskCache(directoryURL: fallbackURL, fileManager: fileManager) {
-            AppLog.caching.error("Falling back to temporary directory for image cache at \(fallbackURL.path, privacy: .public)")
+            AppLog.caching.error("Image cache location fallback=temporary")
             return cache
         }
 
         let emergencyURL = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         if let cache = try? LRUDiskCache(directoryURL: emergencyURL, fileManager: fileManager) {
-            AppLog.caching.fault("Image cache initialization required emergency fallback at \(emergencyURL.path, privacy: .public)")
+            AppLog.caching.fault("Image cache location fallback=emergency")
             return cache
         }
 
@@ -121,18 +242,28 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         let cacheKey = url.reelfinCacheKey
         let registered = await registry.existingOrRegisterTask(for: url, consumer: consumerID) {
             Task {
-                if let diskData = await self.diskCache.data(forKey: cacheKey),
-                   let image = await self.decodeImage(data: diskData, for: url) {
-                    tracker.source = "disk_hit"
-                    self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
-                    return image
+                let permit = try await self.loadLimiter.acquire()
+                defer { Task { await self.loadLimiter.release(permit) } }
+                try Task.checkCancellation()
+
+                if let diskData = await self.diskCache.data(forKey: cacheKey, maximumSizeBytes: self.limits.maximumEncodedBytes) {
+                    if self.isEncodedDataWithinLimit(diskData),
+                       let image = await self.decodeImage(data: diskData, for: url) {
+                        try Task.checkCancellation()
+                        tracker.source = "disk_hit"
+                        self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
+                        return image
+                    }
+                    await self.diskCache.remove(forKey: cacheKey)
                 }
 
                 let data = try await self.fetchImageData(url: url)
+                try Task.checkCancellation()
 
                 guard let image = await self.decodeImage(data: data, for: url) else {
                     throw AppError.decoding("Invalid image payload.")
                 }
+                try Task.checkCancellation()
 
                 tracker.source = "network_hit"
                 self.memoryCache.setObject(image, forKey: url as NSURL, cost: self.memoryCost(for: image))
@@ -165,32 +296,60 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
             request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
         }
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (bytes, response) = try await urlSession.bytes(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AppError.network("Invalid image response.")
         }
 
-        if (200 ..< 300).contains(httpResponse.statusCode) {
-            return data
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw AppError.network("Image request failed (\(httpResponse.statusCode))")
         }
 
-        if httpResponse.statusCode == 404 {
-            throw AppError.network("Image request failed (404)")
+        guard let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type")?.lowercased(),
+              contentType.split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces).hasPrefix("image/") == true
+        else {
+            throw AppError.network("Image response is not an image.")
         }
 
-        throw AppError.network("Image request failed (\(httpResponse.statusCode))")
+        if let rawContentLength = httpResponse.value(forHTTPHeaderField: "Content-Length"),
+           let contentLength = Int(rawContentLength), contentLength > limits.maximumEncodedBytes {
+            throw AppError.network("Image response exceeds the encoded-byte limit.")
+        }
+
+        var data = Data()
+        data.reserveCapacity(min(limits.maximumEncodedBytes, 64 * 1_024))
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < limits.maximumEncodedBytes else {
+                throw AppError.network("Image response exceeds the encoded-byte limit.")
+            }
+            data.append(byte)
+        }
+        return data
     }
 
     public func cachedImage(for url: URL) async -> UIImage? {
         if let image = memoryCache.object(forKey: url as NSURL) {
             return image
         }
-        guard let data = await diskCache.data(forKey: url.reelfinCacheKey) else {
+        guard let permit = try? await loadLimiter.acquire() else {
+            return nil
+        }
+        defer { Task { await self.loadLimiter.release(permit) } }
+        guard let data = await diskCache.data(forKey: url.reelfinCacheKey, maximumSizeBytes: limits.maximumEncodedBytes) else {
+            return nil
+        }
+        guard !Task.isCancelled else { return nil }
+        guard isEncodedDataWithinLimit(data) else {
+            await diskCache.remove(forKey: url.reelfinCacheKey)
             return nil
         }
         guard let image = await decodeImage(data: data, for: url) else {
+            guard !Task.isCancelled else { return nil }
+            await diskCache.remove(forKey: url.reelfinCacheKey)
             return nil
         }
+        guard !Task.isCancelled else { return nil }
         memoryCache.setObject(image, forKey: url as NSURL, cost: memoryCost(for: image))
         return image
     }
@@ -221,25 +380,36 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     }
 
     private func decodeImage(data: Data, for url: URL) async -> UIImage? {
-        let maxPixelSize = max(requestedPixelSize(for: url), 320)
-        return await Task.detached(priority: .utility) {
-            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-                return UIImage(data: data)
-            }
+        guard !Task.isCancelled else { return nil }
+        guard isPixelCountWithinLimit(data: data) else {
+            return nil
+        }
+        let maximumThumbnailPixelSize = min(
+            max(requestedPixelSize(for: url), 320),
+            max(Int(Double(limits.maximumPixelCount).squareRoot()), 1)
+        )
+        let image = await decoder.decode(data: data, maximumThumbnailPixelSize: maximumThumbnailPixelSize)
+        guard !Task.isCancelled else { return nil }
+        return image
+    }
 
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-            ]
+    private func isEncodedDataWithinLimit(_ data: Data) -> Bool {
+        data.count <= limits.maximumEncodedBytes
+    }
 
-            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
-                return UIImage(cgImage: cgImage)
-            }
+    private func isPixelCountWithinLimit(data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.int64Value,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.int64Value,
+              width > 0,
+              height > 0
+        else {
+            return false
+        }
 
-            return UIImage(data: data)
-        }.value
+        let (pixelCount, overflow) = width.multipliedReportingOverflow(by: height)
+        return !overflow && pixelCount <= limits.maximumPixelCount
     }
 
     private func requestedPixelSize(for url: URL) -> Int {

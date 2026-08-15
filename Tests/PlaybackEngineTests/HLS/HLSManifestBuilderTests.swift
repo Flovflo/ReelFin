@@ -43,7 +43,6 @@ final class HLSManifestBuilderTests: XCTestCase {
         #EXT-X-TARGETDURATION:3
         #EXT-X-MEDIA-SEQUENCE:0
         #EXT-X-INDEPENDENT-SEGMENTS
-        #EXT-X-PLAYLIST-TYPE:EVENT
         #EXT-X-MAP:URI="init.mp4"
         #EXTINF:1.519,
         segment_0.m4s

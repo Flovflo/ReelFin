@@ -6,11 +6,13 @@ import ReelFinUI
 import Shared
 import SyncEngine
 import Foundation
+import UIKit
 
 enum TVAppBootstrap {
     @MainActor
     static func makeDependencies(metadata: AppMetadata) -> ReelFinDependencies {
         if metadata.isMockModeEnabled || metadata.isScreenshotModeEnabled {
+            UIView.setAnimationsEnabled(!metadata.isScreenshotModeEnabled)
             let arguments = Set(ProcessInfo.processInfo.arguments)
             let shouldStartLoggedOut = arguments.contains(AppMetadata.mockLoggedOutArgument)
             return ReelFinPreviewFactory.appStoreDependencies(authenticated: !shouldStartLoggedOut)
@@ -38,7 +40,12 @@ final class TVAppContainer {
     init() {
         settingsStore = DefaultSettingsStore()
         tokenStore = KeychainTokenStore()
-        apiClient = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settingsStore)
+        let imagePipeline = DefaultImagePipeline()
+        apiClient = JellyfinAPIClient(
+            tokenStore: tokenStore,
+            settingsStore: settingsStore,
+            imagePipeline: imagePipeline
+        )
 
         do {
             repository = try GRDBMetadataRepository()
@@ -54,7 +61,7 @@ final class TVAppContainer {
             }
         }
 
-        imagePipeline = DefaultImagePipeline()
+        self.imagePipeline = imagePipeline
         episodeReleaseNotificationManager = NoopEpisodeReleaseNotificationManager()
         detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,

@@ -14,57 +14,107 @@ public struct MatroskaSegmentParser: Sendable {
         var offset = 0
         let ebml = try reader.readHeader(data: data, offset: offset)
         guard ebml.id == EBMLElementID.ebml else { throw EBMLError.invalidMatroska("missing EBML header") }
-        offset = payloadEnd(ebml)
+        offset = try reader.payloadRange(
+            for: ebml,
+            elementOffset: offset,
+            parentEnd: data.count,
+            dataCount: data.count
+        ).upperBound
         let segmentHeader = try reader.readHeader(data: data, offset: offset)
         guard segmentHeader.id == EBMLElementID.segment else { throw EBMLError.invalidMatroska("missing Segment") }
-        return try parseSegmentBody(data: data, segmentHeader: segmentHeader)
+        return try parseSegmentBody(data: data, segmentHeader: segmentHeader, elementOffset: offset)
     }
 
-    private func parseSegmentBody(data: Data, segmentHeader: EBMLElementHeader) throws -> MatroskaSegment {
+    private func parseSegmentBody(
+        data: Data,
+        segmentHeader: EBMLElementHeader,
+        elementOffset: Int
+    ) throws -> MatroskaSegment {
         var segment = MatroskaSegment()
         segment.segmentPayloadOffset = segmentHeader.payloadOffset
-        var offset = segmentHeader.payloadOffset
-        let end = segmentHeader.size.map { min(data.count, segmentHeader.payloadOffset + Int($0)) } ?? data.count
-        segment.segmentEndOffset = segmentHeader.size.map { segmentHeader.payloadOffset + Int($0) }
+        let logicalRange: Range<Int>
+        let logicalDataEnd: Int
+        if segmentHeader.size == nil {
+            logicalRange = try reader.payloadRange(
+                for: segmentHeader,
+                elementOffset: elementOffset,
+                parentEnd: data.count,
+                dataCount: data.count,
+                unknownSizeEnd: data.count
+            )
+            logicalDataEnd = data.count
+            segment.segmentEndOffset = nil
+        } else {
+            logicalRange = try reader.payloadRange(
+                for: segmentHeader,
+                elementOffset: elementOffset,
+                parentEnd: Int.max,
+                dataCount: Int.max
+            )
+            logicalDataEnd = Int.max
+            segment.segmentEndOffset = logicalRange.upperBound
+        }
+        let availableEnd = min(data.count, logicalRange.upperBound)
+        var offset = logicalRange.lowerBound
         segment.parsedUntilOffset = offset
-        while offset < end {
+        while offset < availableEnd {
             let child = try reader.readHeader(data: data, offset: offset)
-                let childEnd = payloadEnd(child, defaultEnd: end)
-            guard childEnd <= data.count else {
+            let declaredChildRange = try reader.payloadRange(
+                for: child,
+                elementOffset: offset,
+                parentEnd: logicalRange.upperBound,
+                dataCount: logicalDataEnd
+            )
+            guard declaredChildRange.upperBound <= data.count else {
                 if child.id == EBMLElementID.cluster {
                     if segment.firstClusterOffset == nil {
                         segment.firstClusterOffset = offset
                     }
                     segment.clusterRanges.append(
-                        MatroskaClusterRange(offset: offset, payloadOffset: child.payloadOffset, endOffset: childEnd)
+                        MatroskaClusterRange(
+                            offset: offset,
+                            payloadOffset: child.payloadOffset,
+                            endOffset: declaredChildRange.upperBound
+                        )
                     )
                 }
                 segment.parsedUntilOffset = offset
                 break
             }
+            let childRange = try reader.payloadRange(
+                for: child,
+                elementOffset: offset,
+                parentEnd: logicalRange.upperBound,
+                dataCount: data.count
+            )
             if child.id == EBMLElementID.seekHead {
-                segment.seekHead = seekHeadParser.parse(data: Data(data[child.payloadOffset..<childEnd]))
+                segment.seekHead = try seekHeadParser.parse(data: Data(data[childRange]))
             } else if child.id == EBMLElementID.info {
-                segment.info = try parseInfo(data: data, header: child)
+                segment.info = try parseInfo(data: data, payloadRange: childRange)
             } else if child.id == EBMLElementID.tracks {
-                segment.tracks = try trackParser.parseTracks(data: Data(data[child.payloadOffset..<childEnd]))
+                segment.tracks = try trackParser.parseTracks(data: Data(data[childRange]))
             } else if child.id == EBMLElementID.cues {
-                segment.cues = try cueParser.parseCues(data: Data(data[child.payloadOffset..<childEnd]))
+                segment.cues = try cueParser.parseCues(data: Data(data[childRange]))
             } else if child.id == EBMLElementID.cluster {
                 if segment.firstClusterOffset == nil {
                     segment.firstClusterOffset = offset
                 }
                 segment.clusterRanges.append(
-                    MatroskaClusterRange(offset: offset, payloadOffset: child.payloadOffset, endOffset: childEnd)
+                    MatroskaClusterRange(
+                        offset: offset,
+                        payloadOffset: child.payloadOffset,
+                        endOffset: childRange.upperBound
+                    )
                 )
                 segment.packets += try clusterParser.parseCluster(
                     data: data,
                     header: child,
+                    elementOffset: offset,
                     timecodeScale: segment.info.timecodeScale,
                     trackDefaultDurations: MatroskaTrackTiming.defaultDurations(for: segment.tracks)
                 )
             }
-            offset = childEnd
+            offset = childRange.upperBound
             segment.parsedUntilOffset = offset
         }
         applyTrackDurations(to: &segment)
@@ -83,28 +133,36 @@ public struct MatroskaSegmentParser: Sendable {
         }
     }
 
-    private func parseInfo(data: Data, header: EBMLElementHeader) throws -> MatroskaInfo {
+    private func parseInfo(data: Data, payloadRange: Range<Int>) throws -> MatroskaInfo {
         var info = MatroskaInfo()
-        var offset = header.payloadOffset
-        let end = payloadEnd(header)
-        while offset < end {
+        var offset = payloadRange.lowerBound
+        while offset < payloadRange.upperBound {
             let child = try reader.readHeader(data: data, offset: offset)
-            let childEnd = payloadEnd(child)
+            let childRange = try reader.payloadRange(
+                for: child,
+                elementOffset: offset,
+                parentEnd: payloadRange.upperBound,
+                dataCount: data.count
+            )
             if child.id == EBMLElementID.timecodeScale {
-                info.timecodeScale = Int64(try reader.readUInt(data: data, offset: child.payloadOffset, size: Int(child.size ?? 0)))
+                let scale = try reader.exactInt64(reader.readUInt(
+                    data: data,
+                    offset: childRange.lowerBound,
+                    size: childRange.count
+                ))
+                guard scale > 0 else {
+                    throw EBMLError.invalidMatroska("TimecodeScale must be positive")
+                }
+                info.timecodeScale = scale
             } else if child.id == EBMLElementID.duration {
-                info.duration = try reader.readFloat(data: data, offset: child.payloadOffset, size: Int(child.size ?? 0))
+                info.duration = try reader.readFloat(
+                    data: data,
+                    offset: childRange.lowerBound,
+                    size: childRange.count
+                )
             }
-            offset = childEnd
+            offset = childRange.upperBound
         }
         return info
-    }
-
-    private func payloadEnd(_ header: EBMLElementHeader) -> Int {
-        header.payloadOffset + Int(header.size ?? 0)
-    }
-
-    private func payloadEnd(_ header: EBMLElementHeader, defaultEnd: Int) -> Int {
-        header.size.map { header.payloadOffset + Int($0) } ?? defaultEnd
     }
 }

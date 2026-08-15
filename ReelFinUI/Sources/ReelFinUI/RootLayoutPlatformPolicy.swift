@@ -7,12 +7,10 @@ enum RootLayoutPlatformPolicy {
     }
 
     static func shouldUseSplitLayout(
-        isScreenshotMode: Bool,
         isRegularHorizontalSizeClass: Bool,
         isPadIdiom: Bool,
         isMacCatalyst: Bool
     ) -> Bool {
-        guard !isScreenshotMode else { return false }
         guard !isMacCatalyst else { return false }
         return isPadIdiom && isRegularHorizontalSizeClass
     }

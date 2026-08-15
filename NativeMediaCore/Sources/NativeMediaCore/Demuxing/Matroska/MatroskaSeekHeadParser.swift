@@ -5,60 +5,59 @@ public struct MatroskaSeekHeadParser: Sendable {
 
     public init() {}
 
-    public func parse(data: Data) -> [UInt32: UInt64] {
+    public func parse(data: Data) throws -> [UInt32: UInt64] {
         var entries: [UInt32: UInt64] = [:]
         var offset = 0
         while offset < data.count {
-            guard let header = try? reader.readHeader(data: data, offset: offset),
-                  let size = header.size,
-                  size >= 0,
-                  let sizeInt = Int(exactly: size) else {
-                break
-            }
-            let end = header.payloadOffset + sizeInt
-            guard end <= data.count else { break }
-            if header.id == EBMLElementID.seek,
-               let entry = parseSeekEntry(data: data, header: header) {
+            let header = try reader.readHeader(data: data, offset: offset)
+            let range = try reader.payloadRange(
+                for: header,
+                elementOffset: offset,
+                parentEnd: data.count,
+                dataCount: data.count
+            )
+            if header.id == EBMLElementID.seek {
+                let entry = try parseSeekEntry(data: data, payloadRange: range)
                 entries[entry.id] = entry.position
             }
-            guard end > offset else { break }
-            offset = end
+            offset = range.upperBound
         }
         return entries
     }
 
-    private func parseSeekEntry(data: Data, header: EBMLElementHeader) -> (id: UInt32, position: UInt64)? {
+    private func parseSeekEntry(data: Data, payloadRange: Range<Int>) throws -> (id: UInt32, position: UInt64) {
         var seekID: UInt32?
         var seekPosition: UInt64?
-        var offset = header.payloadOffset
-        let end = payloadEnd(header)
-        while offset < end {
-            guard let child = try? reader.readHeader(data: data, offset: offset),
-                  let size = child.size,
-                  size >= 0,
-                  let sizeInt = Int(exactly: size) else {
-                return nil
-            }
-            let childEnd = child.payloadOffset + sizeInt
-            guard childEnd <= data.count, childEnd <= end else { return nil }
+        var offset = payloadRange.lowerBound
+        while offset < payloadRange.upperBound {
+            let child = try reader.readHeader(data: data, offset: offset)
+            let childRange = try reader.payloadRange(
+                for: child,
+                elementOffset: offset,
+                parentEnd: payloadRange.upperBound,
+                dataCount: data.count
+            )
             if child.id == EBMLElementID.seekID {
-                seekID = readElementIDPayload(data: data, offset: child.payloadOffset, size: sizeInt)
+                seekID = try readElementIDPayload(data: data, range: childRange)
             } else if child.id == EBMLElementID.seekPosition {
-                seekPosition = try? reader.readUInt(data: data, offset: child.payloadOffset, size: sizeInt)
+                seekPosition = try reader.readUInt(
+                    data: data,
+                    offset: childRange.lowerBound,
+                    size: childRange.count
+                )
             }
-            guard childEnd > offset else { return nil }
-            offset = childEnd
+            offset = childRange.upperBound
         }
-        guard let seekID, let seekPosition else { return nil }
+        guard let seekID, let seekPosition else {
+            throw EBMLError.invalidMatroska("Seek entry is missing SeekID or SeekPosition")
+        }
         return (seekID, seekPosition)
     }
 
-    private func readElementIDPayload(data: Data, offset: Int, size: Int) -> UInt32? {
-        guard size > 0, size <= 4, offset + size <= data.count else { return nil }
-        return data[offset..<offset + size].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
-    }
-
-    private func payloadEnd(_ header: EBMLElementHeader) -> Int {
-        header.payloadOffset + Int(header.size ?? 0)
+    private func readElementIDPayload(data: Data, range: Range<Int>) throws -> UInt32 {
+        guard !range.isEmpty, range.count <= 4 else {
+            throw EBMLError.invalidElementSize
+        }
+        return data[range].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
     }
 }

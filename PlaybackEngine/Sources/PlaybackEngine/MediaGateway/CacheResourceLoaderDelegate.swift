@@ -43,14 +43,17 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
     private let pollInterval: UInt64 = 40_000_000      // 40 ms
     private let livenessDeadline: TimeInterval = 20
 
-    private let mapLock = NSLock()
-    private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private let taskRegistry = TokenTaskRegistry<ObjectIdentifier>()
     // Per active request: its current serve offset and whether it is currently STARVED (waiting for
     // bytes that aren't cached yet). The downloader fills the lowest starved offset first (unblock
     // the most-behind request — moov at startup, playback after), and only builds cushion ahead of
     // the furthest request when nothing is starved. This serves both AVPlayer's metadata read and
     // its far-ahead playback request with one connection, in the right order.
-    private var activeRequests: [ObjectIdentifier: (offset: Int64, waiting: Bool)] = [:]
+    private let playheadState = PlayheadTargetState<ObjectIdentifier>()
+    private let playheadPolicy = PlayheadPublicationPolicy()
+    private lazy var playheadCoordinator = PlayheadPublicationCoordinator(policy: playheadPolicy) { [downloader] target in
+        await downloader.setPlayhead(target)
+    }
 
     init(
         store: MediaGatewayStore,
@@ -77,11 +80,8 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
     }
 
     public func invalidate() {
-        mapLock.lock()
-        let inflight = tasks
-        tasks.removeAll()
-        mapLock.unlock()
-        for task in inflight.values { task.cancel() }
+        let inflight = taskRegistry.drain()
+        for task in inflight { task.cancel() }
         Task { await downloader.stop() }
     }
 
@@ -95,13 +95,15 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
             return false
         }
         let id = ObjectIdentifier(loadingRequest)
+        let reservation = taskRegistry.reserve(id)
+        let token = reservation.token
+        reservation.replacedTask?.cancel()
         let task = Task { [weak self] in
             await self?.handle(loadingRequest)
-            self?.removeTask(id)
+            self?.removeTask(id, token: token)
         }
-        mapLock.lock()
-        tasks[id] = task
-        mapLock.unlock()
+        let attached = taskRegistry.attach(task, key: id, token: token)
+        if !attached { task.cancel() }
         return true
     }
 
@@ -110,17 +112,14 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
         didCancel loadingRequest: AVAssetResourceLoadingRequest
     ) {
         let id = ObjectIdentifier(loadingRequest)
-        mapLock.lock()
-        let task = tasks.removeValue(forKey: id)
-        mapLock.unlock()
+        let task = taskRegistry.removeCurrent(key: id)
         task?.cancel()
         republishPlayhead(removing: id)
     }
 
-    private func removeTask(_ id: ObjectIdentifier) {
-        mapLock.lock()
-        tasks[id] = nil
-        mapLock.unlock()
+    private func removeTask(_ id: ObjectIdentifier, token: UUID) {
+        let removal = taskRegistry.remove(key: id, token: token)
+        guard removal.removed else { return }
         republishPlayhead(removing: id)
     }
 
@@ -128,30 +127,15 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
     /// lowest starved offset (unblock the most-behind request), or — if none starved — the furthest
     /// active offset (build cushion ahead of playback).
     private func publish(id: ObjectIdentifier, offset: Int64, waiting: Bool) async {
-        mapLock.lock()
-        activeRequests[id] = (offset, waiting)
-        let target = downloaderTargetLocked()
-        mapLock.unlock()
-        if let target { await downloader.setPlayhead(target) }
+        let publication = playheadState.update(key: id, offset: offset, waiting: waiting)
+        await playheadCoordinator.publish(publication)
     }
 
     /// Drop a finished/cancelled request and re-point the downloader (so a backward seek, after
     /// AVPlayer cancels the old forward request, lowers the target).
     private func republishPlayhead(removing id: ObjectIdentifier) {
-        mapLock.lock()
-        activeRequests[id] = nil
-        let target = downloaderTargetLocked()
-        mapLock.unlock()
-        if let target {
-            Task { await downloader.setPlayhead(target) }
-        }
-    }
-
-    /// Caller must hold `mapLock`.
-    private func downloaderTargetLocked() -> Int64? {
-        let starved = activeRequests.values.filter { $0.waiting }.map { $0.offset }
-        if let lowestStarved = starved.min() { return lowestStarved }
-        return activeRequests.values.map { $0.offset }.max()
+        let publication = playheadState.remove(key: id)
+        Task { await playheadCoordinator.publish(publication) }
     }
 
     // MARK: - Serving
@@ -175,7 +159,7 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
             // AVPlayer cancelled the request; nothing to finish. The download keeps running.
         } catch {
             AppLog.playback.warning(
-                "playback.cacheloader.serve.fail — item=\(self.key.itemID.prefix(8), privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
+                "playback.cacheloader.serve.fail — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) reason=\(error.localizedDescription, privacy: .public)"
             )
             if !loadingRequest.isCancelled && !loadingRequest.isFinished {
                 loadingRequest.finishLoading(with: error)
@@ -208,7 +192,7 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
                !data.isEmpty {
                 if waitedForFill {
                     AppLog.playback.notice(
-                        "playback.cacheloader.serve.resumed — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
+                        "playback.cacheloader.serve.resumed — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
                     )
                     waitedForFill = false
                 }
@@ -225,7 +209,7 @@ public final class CacheResourceLoaderDelegate: NSObject, AVAssetResourceLoaderD
             await publish(id: id, offset: offset, waiting: true)
             if !waitedForFill {
                 AppLog.playback.warning(
-                    "playback.cacheloader.serve.wait — item=\(self.key.itemID.prefix(8), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
+                    "playback.cacheloader.serve.wait — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) offsetMB=\(offset / 1_048_576, privacy: .public)"
                 )
                 waitedForFill = true
             }

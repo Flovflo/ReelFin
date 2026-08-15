@@ -139,7 +139,7 @@ public actor NativeBridgeSession: NativeBridgeResourceLoader.DataSource {
         let openMs = Date().timeIntervalSince(openStart) * 1000
         AppLog.nativeBridge.notice("[NB-DIAG] demuxer.open() completed in \(openMs, format: .fixed(precision: 1))ms — \(info.tracks.count) tracks, duration=\(info.durationNanoseconds)ns, seekable=\(info.seekable)")
         for t in info.tracks {
-            AppLog.nativeBridge.notice("[NB-DIAG]   track id=\(t.id) type=\(t.trackType.rawValue, privacy: .public) codec=\(t.codecName, privacy: .public) \(t.width.map { "\($0)x\(t.height ?? 0)" } ?? "") cpSize=\(t.codecPrivate?.count ?? 0)")
+            AppLog.nativeBridge.notice("[NB-DIAG]   track=\(AppLogFormat.correlationIdentifier(String(t.id), domain: .track), privacy: .public) type=\(t.trackType.rawValue, privacy: .public) codec=\(t.codecName, privacy: .public) \(t.width.map { "\($0)x\(t.height ?? 0)" } ?? "") cpSize=\(t.codecPrivate?.count ?? 0)")
         }
 
         AppLog.nativeBridge.notice("[NB-DIAG] generating init segment…")

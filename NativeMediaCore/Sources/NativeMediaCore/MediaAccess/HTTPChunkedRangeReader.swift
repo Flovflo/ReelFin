@@ -12,7 +12,10 @@ import Foundation
 /// and cancels the transfer as soon as `maxLength` bytes have been collected, so an
 /// unexpected `200` (server ignoring `Range`) can never pull a whole multi-GB file.
 public final class HTTPChunkedRangeReader: NSObject, @unchecked Sendable {
+    public typealias ResponseValidator = @Sendable (HTTPURLResponse) -> Bool
+
     private let maxLength: Int
+    private let responseValidator: ResponseValidator?
     private let lock = NSLock()
     private var buffer = Data()
     private var httpResponse: HTTPURLResponse?
@@ -20,8 +23,9 @@ public final class HTTPChunkedRangeReader: NSObject, @unchecked Sendable {
     private var pendingResult: Result<(Data, HTTPURLResponse), Error>?
     private var finished = false
 
-    private init(maxLength: Int) {
+    private init(maxLength: Int, responseValidator: ResponseValidator?) {
         self.maxLength = max(0, maxLength)
+        self.responseValidator = responseValidator
         super.init()
     }
 
@@ -30,10 +34,29 @@ public final class HTTPChunkedRangeReader: NSObject, @unchecked Sendable {
     public static func collect(
         request: URLRequest,
         configuration: URLSessionConfiguration,
-        maxLength: Int
+        maxLength: Int,
+        responseValidator: ResponseValidator? = nil
     ) async throws -> (Data, HTTPURLResponse) {
-        let reader = HTTPChunkedRangeReader(maxLength: maxLength)
+        let reader = HTTPChunkedRangeReader(
+            maxLength: maxLength,
+            responseValidator: responseValidator
+        )
         return try await reader.start(request: request, configuration: configuration)
+    }
+
+    /// Performs `request` on an existing session while routing this task's delegate callbacks to
+    /// the bounded reader. This preserves the session's connection pool across sequential ranges.
+    public static func collect(
+        request: URLRequest,
+        session: URLSession,
+        maxLength: Int,
+        responseValidator: ResponseValidator? = nil
+    ) async throws -> (Data, HTTPURLResponse) {
+        let reader = HTTPChunkedRangeReader(
+            maxLength: maxLength,
+            responseValidator: responseValidator
+        )
+        return try await reader.start(request: request, session: session)
     }
 
     private func start(
@@ -42,12 +65,24 @@ public final class HTTPChunkedRangeReader: NSObject, @unchecked Sendable {
     ) async throws -> (Data, HTTPURLResponse) {
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
+        return try await run(task: session.dataTask(with: request))
+    }
+
+    private func start(
+        request: URLRequest,
+        session: URLSession
+    ) async throws -> (Data, HTTPURLResponse) {
+        let task = session.dataTask(with: request)
+        task.delegate = self
+        return try await run(task: task)
+    }
+
+    private func run(task: URLSessionDataTask) async throws -> (Data, HTTPURLResponse) {
         // Create the task before installing the cancellation handler. If the surrounding
         // Task is already cancelled, `onCancel` runs immediately; cancelling the data task
         // (rather than invalidating the session) avoids "task created in a session that has
         // been invalidated" when the producer is cancelled — which happens routinely during
         // playback as AVPlayer closes connections once its buffer is full.
-        let task = session.dataTask(with: request)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 lock.lock()
@@ -99,6 +134,11 @@ extension HTTPChunkedRangeReader: URLSessionDataDelegate {
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
         if let http = response as? HTTPURLResponse {
+            if let responseValidator, !responseValidator(http) {
+                completionHandler(.cancel)
+                finish(.failure(MediaAccessError.httpStatus(http.statusCode)))
+                return
+            }
             lock.lock()
             httpResponse = http
             lock.unlock()

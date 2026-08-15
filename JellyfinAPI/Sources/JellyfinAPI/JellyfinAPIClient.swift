@@ -8,7 +8,52 @@ private struct HTTPStatusError: Error {
     let message: String
 }
 
+private final class SessionInvalidationBroadcaster: @unchecked Sendable {
+    private typealias Continuation = AsyncStream<SessionInvalidationEvent>.Continuation
+
+    private let lock = NSLock()
+    private var continuations: [UUID: Continuation] = [:]
+
+    func subscribe() -> AsyncStream<SessionInvalidationEvent> {
+        let identifier = UUID()
+        let subscription = AsyncStream<SessionInvalidationEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        subscription.continuation.onTermination = { [weak self] _ in
+            self?.removeContinuation(for: identifier)
+        }
+
+        lock.lock()
+        continuations[identifier] = subscription.continuation
+        lock.unlock()
+
+        return subscription.stream
+    }
+
+    func yield(_ event: SessionInvalidationEvent) {
+        lock.lock()
+        let subscribers = Array(continuations.values)
+        lock.unlock()
+
+        for continuation in subscribers {
+            continuation.yield(event)
+        }
+    }
+
+    private func removeContinuation(for identifier: UUID) {
+        lock.lock()
+        continuations[identifier] = nil
+        lock.unlock()
+    }
+}
+
 public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
+    public nonisolated var sessionInvalidations: AsyncStream<SessionInvalidationEvent> {
+        sessionInvalidationBroadcaster.subscribe()
+    }
+
+    private nonisolated let sessionInvalidationBroadcaster = SessionInvalidationBroadcaster()
+
     private enum ItemFields {
         static let trickplay = ["Trickplay"]
         static let home = [
@@ -48,6 +93,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     private let tokenStore: TokenStoreProtocol
     private let settingsStore: SettingsStoreProtocol
     private let urlSession: URLSession
+    private let imagePipeline: (any ImagePipelineProtocol)?
     private let retryPolicy: RetryPolicy
     private let clientName: String
     private let deviceName: String
@@ -65,11 +111,19 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
     private var configuration: ServerConfiguration?
     private var activeSession: UserSession?
+    private struct PendingQuickConnect: Equatable {
+        let generation: UInt64
+        let normalizedServerURL: URL
+        let secret: String
+    }
+    private var quickConnectGeneration: UInt64 = 0
+    private var pendingQuickConnect: PendingQuickConnect?
 
     public init(
         tokenStore: TokenStoreProtocol = KeychainTokenStore(),
         settingsStore: SettingsStoreProtocol = DefaultSettingsStore(),
         session: URLSession = .shared,
+        imagePipeline: (any ImagePipelineProtocol)? = nil,
         retryPolicy: RetryPolicy = .init(),
         clientName: String = "ReelFin",
         deviceName: String = "iOS",
@@ -79,6 +133,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
         self.tokenStore = tokenStore
         self.settingsStore = settingsStore
         self.urlSession = session
+        self.imagePipeline = imagePipeline
         self.retryPolicy = retryPolicy
         self.clientName = clientName
         self.deviceName = deviceName
@@ -138,70 +193,194 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func signOut() async {
+        invalidatePendingQuickConnect()
         activeSession = nil
         settingsStore.lastSession = nil
         try? tokenStore.clearToken()
         await deduplicator.cancelAll()
     }
 
+    private func invalidateCurrentSessionAsUnauthorized() async {
+        guard activeSession != nil else { return }
+        activeSession = nil
+        settingsStore.lastSession = nil
+        try? tokenStore.clearToken()
+        sessionInvalidationBroadcaster.yield(.unauthorized)
+        await deduplicator.cancelAll()
+    }
+
     // MARK: - Quick Connect
 
     public func initiateQuickConnect(serverURL: URL) async throws -> QuickConnectState {
-        let url = try buildURL(baseURL: serverURL, path: "QuickConnect/Initiate", query: [])
+        invalidatePendingQuickConnect()
+        let generation = quickConnectGeneration
+        let normalizedServerURL = try normalizedQuickConnectServerURL(serverURL)
+
+        let url = try buildURL(baseURL: normalizedServerURL, path: "QuickConnect/Initiate", query: [])
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
         request.timeoutInterval = 10
-        let data = try await send(request, dedupe: false)
-        let dto = try decoder.decode(QuickConnectInitiateResponseDTO.self, from: data)
-        // Persist the server URL so pollQuickConnect can reach it without requiring a separate configure() call
-        if configuration == nil {
-            configuration = ServerConfiguration(serverURL: serverURL)
-            settingsStore.serverConfiguration = configuration
+        let data: Data
+        do {
+            data = try await send(request, dedupe: false)
+        } catch {
+            try Task.checkCancellation()
+            throw error
         }
+        try Task.checkCancellation()
+        guard generation == quickConnectGeneration else {
+            throw AppError.unauthenticated
+        }
+        let dto = try decoder.decode(QuickConnectInitiateResponseDTO.self, from: data)
+        try Task.checkCancellation()
+        pendingQuickConnect = PendingQuickConnect(
+            generation: generation,
+            normalizedServerURL: normalizedServerURL,
+            secret: dto.secret
+        )
         return QuickConnectState(code: dto.code, secret: dto.secret)
     }
 
     public func pollQuickConnect(secret: String) async throws -> UserSession? {
-        // serverURL is taken from configuration if available, or derived from the stored server config.
-        // This is called only after initiateQuickConnect which validates the URL.
-        guard let serverURL = configuration?.serverURL ?? settingsStore.serverConfiguration?.serverURL else {
-            throw AppError.invalidServerURL
+        guard
+            let pending = pendingQuickConnect,
+            pending.generation == quickConnectGeneration,
+            pending.secret == secret
+        else {
+            throw AppError.unauthenticated
         }
         let url = try buildURL(
-            baseURL: serverURL,
+            baseURL: pending.normalizedServerURL,
             path: "QuickConnect/Connect",
-            query: [URLQueryItem(name: "Secret", value: secret)]
+            query: [URLQueryItem(name: "Secret", value: pending.secret)]
         )
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(embyAuthorizationHeader(token: nil), forHTTPHeaderField: "X-Emby-Authorization")
         req.timeoutInterval = 10
-        let data = try await send(req, dedupe: false)
+        let data: Data
+        do {
+            data = try await send(req, dedupe: false)
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
+        try Task.checkCancellation()
+        try requireCurrentQuickConnect(pending)
         let dto = try decoder.decode(QuickConnectAuthResponseDTO.self, from: data)
         guard dto.authenticated else {
             return nil
         }
-        // Exchange the secret for a full user session via /Users/AuthenticateWithQuickConnect
-        let exchangeBody = QuickConnectAuthRequestDTO(secret: secret)
-        let sessionDTO: AuthenticateResponseDTO = try await requestWithBaseURL(
-            baseURL: serverURL,
-            path: "Users/AuthenticateWithQuickConnect",
-            method: "POST",
-            body: exchangeBody
-        )
-        let session = UserSession(userID: sessionDTO.user.id, username: sessionDTO.user.name, token: sessionDTO.accessToken)
-        activeSession = session
-        // Also persist configuration so subsequent API calls work
-        if configuration == nil {
-            configuration = ServerConfiguration(serverURL: serverURL)
-            settingsStore.serverConfiguration = configuration
+        try Task.checkCancellation()
+        let exchangeBody = QuickConnectAuthRequestDTO(secret: pending.secret)
+        let sessionDTO: AuthenticateResponseDTO
+        do {
+            sessionDTO = try await requestWithBaseURL(
+                baseURL: pending.normalizedServerURL,
+                path: "Users/AuthenticateWithQuickConnect",
+                method: "POST",
+                body: exchangeBody
+            )
+        } catch {
+            try Task.checkCancellation()
+            throw error
         }
-        settingsStore.lastSession = session
+        try Task.checkCancellation()
+        try requireCurrentQuickConnect(pending)
+
+        let session = UserSession(userID: sessionDTO.user.id, username: sessionDTO.user.name, token: sessionDTO.accessToken)
+        let authenticatedConfiguration = configurationForSuccessfulQuickConnect(
+            serverURL: pending.normalizedServerURL
+        )
+
+        try Task.checkCancellation()
         try tokenStore.saveToken(sessionDTO.accessToken)
+        configuration = authenticatedConfiguration
+        settingsStore.serverConfiguration = authenticatedConfiguration
+        activeSession = session
+        settingsStore.lastSession = session
+        invalidatePendingQuickConnect()
         return session
+    }
+
+    private func invalidatePendingQuickConnect() {
+        quickConnectGeneration &+= 1
+        pendingQuickConnect = nil
+    }
+
+    private func requireCurrentQuickConnect(_ pending: PendingQuickConnect) throws {
+        guard pendingQuickConnect == pending, quickConnectGeneration == pending.generation else {
+            throw AppError.unauthenticated
+        }
+    }
+
+    private func configurationForSuccessfulQuickConnect(serverURL: URL) -> ServerConfiguration {
+        guard
+            var existing = configuration,
+            (try? normalizedQuickConnectServerURL(existing.serverURL)) == serverURL
+        else {
+            return ServerConfiguration(serverURL: serverURL)
+        }
+
+        existing.serverURL = serverURL
+        return existing
+    }
+
+    private func normalizedQuickConnectServerURL(_ serverURL: URL) throws -> URL {
+        guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else {
+            throw AppError.invalidServerURL
+        }
+
+        guard
+            let rawScheme = components.scheme,
+            let rawHost = components.host,
+            !rawHost.isEmpty,
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil
+        else {
+            throw AppError.invalidServerURL
+        }
+
+        let scheme = rawScheme.lowercased()
+        guard scheme == "http" || scheme == "https" else {
+            throw AppError.invalidServerURL
+        }
+
+        components.scheme = scheme
+        components.host = rawHost.lowercased()
+        if (scheme == "https" && components.port == 443) || (scheme == "http" && components.port == 80) {
+            components.port = nil
+        }
+
+        var basePath = components.percentEncodedPath
+        let pathSegments = basePath.split(separator: "/", omittingEmptySubsequences: false)
+        for encodedSegment in pathSegments {
+            guard let decodedSegment = String(encodedSegment).removingPercentEncoding else {
+                throw AppError.invalidServerURL
+            }
+            guard
+                decodedSegment != ".",
+                decodedSegment != "..",
+                !decodedSegment.contains("/"),
+                !decodedSegment.contains("\\")
+            else {
+                throw AppError.invalidServerURL
+            }
+        }
+        while basePath.hasSuffix("/") {
+            basePath.removeLast()
+        }
+        components.percentEncodedPath = basePath
+
+        guard let normalizedURL = components.url else {
+            throw AppError.invalidServerURL
+        }
+        return normalizedURL
     }
 
     /// Sends a request using an explicit base URL (used before configuration is set).
@@ -734,8 +913,9 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func prefetchImages(for items: [MediaItem]) async {
-        // Speculative prefetching: Generate the most likely artwork requests up front.
-        // This warms the server-side cache and improves perceived detail-page readiness.
+        // The app owns the authenticated image transport/cache. Keep API URL selection here,
+        // but never bypass its validation, byte limits, decode bounds, or deduplication.
+        var imageURLs = Set<URL>()
         for item in items {
             guard !Task.isCancelled else { return }
             let imageTargets: [(itemID: String, type: JellyfinImageType, width: Int, quality: Int)] = [
@@ -754,13 +934,12 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
                     continue
                 }
 
-                var request = URLRequest(url: imageURL, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 10)
-                if let token = activeSession?.token, !token.isEmpty {
-                    request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
-                }
-                _ = try? await urlSession.data(for: request)
+                imageURLs.insert(imageURL)
             }
         }
+
+        guard !Task.isCancelled else { return }
+        await imagePipeline?.prefetch(urls: Array(imageURLs))
     }
 
     public func reportPlayback(progress: PlaybackProgressUpdate) async throws {
@@ -902,7 +1081,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             data = try await send(request, dedupe: dedupe, retryPolicy: retryPolicy)
         } catch AppError.unauthenticated {
             if requiresAuth, activeSession?.token == requestToken {
-                await signOut()
+                await invalidateCurrentSessionAsUnauthorized()
             }
             throw AppError.unauthenticated
         }

@@ -1,32 +1,119 @@
-#!/usr/bin/env python3
-"""Fail ReelFin player E2E when logs lack continuous playback evidence."""
+"""Validate ReelFin's typed, opaque deep playback JSONL evidence."""
 
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
-KEY_VALUE_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_]*)=('[^']*'|\"[^\"]*\"|[^\s]+)")
+OPAQUE_CORRELATION_RE = re.compile(r"^[0-9a-f]{16}$")
 SECRET_URL_RE = re.compile(r"https?://\S+")
 SECRET_API_KEY_RE = re.compile(
     r"(?i)\bapi_key=(?!(?:REDACTED|<redacted>|%3Credacted%3E)(?:\b|&))[^&\s]+"
 )
 
+EVENT_FIELDS: dict[str, dict[str, type | tuple[type, ...]]] = {
+    "plan": {
+        "canStart": bool,
+        "demuxer": str,
+        "videoBackend": str,
+        "audioBackend": str,
+    },
+    "routeSelection": {
+        "route": str,
+        "avPlayerItem": bool,
+        "avPlayerViewController": bool,
+        "serverTranscodeUsed": bool,
+    },
+    "audioSelection": {"codec": str, "isDefault": bool},
+    "firstFrame": {"elapsedMilliseconds": (int, float), "currentSeconds": (int, float)},
+    "ttff": {
+        "totalMilliseconds": (int, float),
+        "infoMilliseconds": (int, float),
+        "resolveMilliseconds": (int, float),
+        "readyMilliseconds": (int, float),
+        "playerMilliseconds": (int, float),
+        "method": str,
+        "profile": str,
+        "route": str,
+        "videoIntegrity": str,
+        "hdrIntegrity": str,
+    },
+    "avPlayerTick": {
+        "currentSeconds": (int, float),
+        "deltaSeconds": (int, float),
+        "rate": (int, float),
+        "timeControl": str,
+        "itemStatus": str,
+        "likelyToKeepUp": bool,
+        "bufferedSeconds": (int, float),
+        "droppedFrames": int,
+        "observedBitrate": int,
+        "accessObservedBitrate": int,
+        "accessIndicatedBitrate": int,
+        "accessStalls": int,
+        "accessTransferSeconds": (int, float),
+        "codec": str,
+        "method": str,
+    },
+    "playbackProof": {
+        "width": int,
+        "height": int,
+        "codec": str,
+        "bitDepth": int,
+        "hdr": str,
+        "dolbyVision": bool,
+        "method": str,
+        "profile": str,
+        "sourceBitrate": int,
+        "container": str,
+        "dolbyVisionProfile": int,
+        "dolbyVisionLevel": int,
+        "videoRange": str,
+        "observedBitrate": int,
+    },
+    "sampleBufferTick": {
+        "currentSeconds": (int, float),
+        "deltaSeconds": (int, float),
+        "state": str,
+        "videoPackets": int,
+        "audioPackets": int,
+        "audioSamples": int,
+        "audioRenderer": str,
+        "droppedFrames": int,
+        "audioUnderruns": int,
+        "audioRebuffers": int,
+        "avDriftMilliseconds": (int, float),
+        "hdr": str,
+        "dolbyVisionProfile": int,
+    },
+}
+
+CATEGORIES = {
+    "unknown", "none", "directPlay", "directStream", "transcode", "native",
+    "avPlayer", "sampleBuffer", "matroska", "mp4", "mpegts", "videoToolbox",
+    "sampleBufferAudioRenderer", "hevc", "hvc1", "h264", "avc1", "eac3",
+    "ac3", "aac", "truehd", "opus", "flac", "playing", "paused", "waiting",
+    "readyToPlay", "failed", "pq", "hlg", "sdr", "hdr10", "dolbyVision",
+    "originalVideo", "originalHDR", "watchableSDR", "preserved", "converted",
+    "unavailable",
+}
+
+COMMON_FIELDS = {"event", "session", "media", "source", "timestampMilliseconds"}
+
 
 @dataclass(frozen=True)
-class RequiredAVPlayerItem:
-    item_id: str
+class RequiredAVPlayerScenario:
+    scenario: str
     min_observed_seconds: float
     min_ticks: int = 3
     require_dv: bool = False
     require_hdr: bool = False
-
-    @property
-    def label(self) -> str:
-        return short_item_id(self.item_id)
 
 
 @dataclass(frozen=True)
@@ -35,7 +122,7 @@ class EvidenceConfig:
     min_ticks: int = 3
     require_dv: bool = False
     require_samplebuffer: bool = False
-    required_avplayer_items: tuple[RequiredAVPlayerItem, ...] = ()
+    required_avplayer_scenarios: tuple[RequiredAVPlayerScenario, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,8 +133,9 @@ class Finding:
 
 @dataclass
 class AVPlayerSessionEvidence:
+    scenario: str
     session_id: str
-    item_id: str | None = None
+    media_correlation: str
     has_first_frame: bool = False
     has_ttff: bool = False
     audio_codec: str | None = None
@@ -58,44 +146,28 @@ class AVPlayerSessionEvidence:
     waiting_ticks: int = 0
     zero_buffer_ticks: int = 0
     stalled_ticks: int = 0
-    rebuffer_waits: int = 0
-    rebuffer_ready: int = 0
-    rebuffer_timeout: int = 0
 
     @property
     def observed_seconds(self) -> float:
-        if len(self.ticks) < 2:
-            return 0.0
-        return max(self.ticks) - min(self.ticks)
+        return max(self.ticks) - min(self.ticks) if len(self.ticks) >= 2 else 0.0
 
     @property
     def has_audio(self) -> bool:
-        if self.audio_codec is None:
-            return False
-        return self.audio_codec.lower() not in {"", "none", "unknown", "n/a"}
-
-    @property
-    def has_dv(self) -> bool:
-        return self.proof_dv
-
-    @property
-    def has_proof(self) -> bool:
-        return self.proof_method is not None
-
-    @property
-    def unresolved_rebuffer_waits(self) -> int:
-        return max(0, self.rebuffer_waits - self.rebuffer_ready)
+        return (self.audio_codec or "") not in {"", "none", "unknown", "unavailable"}
 
     @property
     def has_hdr(self) -> bool:
-        return (self.proof_hdr or "").lower() not in {"", "unknown", "sdr", "n/a", "none"}
+        return (self.proof_hdr or "") not in {"", "none", "unknown", "sdr", "unavailable"}
 
 
 @dataclass
 class SampleBufferEvidence:
-    has_route: bool = False
+    scenario: str
+    session_id: str
+    media_correlation: str
+    source_correlation: str
     has_plan: bool = False
-    has_benchmark_contract: bool = False
+    has_route: bool = False
     tick_count: int = 0
     has_video_packets: bool = False
     has_audio_packets: bool = False
@@ -104,28 +176,19 @@ class SampleBufferEvidence:
     audio_rebuffers: int = 0
 
     @property
-    def has_audio(self) -> bool:
-        return self.has_audio_packets and self.has_audio_renderer
+    def has_plan_and_route(self) -> bool:
+        return self.has_plan and self.has_route
 
     @property
-    def is_complete(self) -> bool:
-        return (
-            self.has_route
-            and self.has_plan
-            and self.has_benchmark_contract
-            and self.tick_count > 0
-            and self.has_video_packets
-            and self.has_audio
-            and self.audio_underruns == 0
-            and self.audio_rebuffers == 0
-        )
+    def has_audio(self) -> bool:
+        return self.has_audio_packets and self.has_audio_renderer
 
 
 @dataclass
 class EvidenceResult:
     findings: list[Finding]
     avplayer_sessions: dict[str, AVPlayerSessionEvidence]
-    samplebuffer: SampleBufferEvidence
+    samplebuffer_sessions: dict[str, SampleBufferEvidence]
 
     @property
     def avplayer_session_count(self) -> int:
@@ -133,7 +196,7 @@ class EvidenceResult:
 
     @property
     def samplebuffer_tick_count(self) -> int:
-        return self.samplebuffer.tick_count
+        return sum(session.tick_count for session in self.samplebuffer_sessions.values())
 
     def finding_labels(self) -> list[str]:
         return [finding.label for finding in self.findings]
@@ -144,49 +207,19 @@ def redact_sensitive(text: str) -> str:
     return SECRET_URL_RE.sub("<redacted-url>", text)
 
 
-def short_item_id(value: str | None) -> str:
-    return (value or "")[:8]
-
-
-def matches_item(observed: str | None, expected: str) -> bool:
-    if not observed:
-        return False
-    return observed == expected or observed == short_item_id(expected) or short_item_id(observed) == short_item_id(expected)
-
-
-def strip_quotes(value: str | None) -> str | None:
-    if value is None:
-        return None
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
-
-
-def parse_key_values(line: str) -> dict[str, str]:
-    return {key: strip_quotes(value) or "" for key, value in KEY_VALUE_RE.findall(line)}
-
-
-def parse_float(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        parsed = float(value)
-    except ValueError:
-        return None
-    return parsed if parsed == parsed and parsed not in {float("inf"), float("-inf")} else None
-
-
-def parse_int(value: str | None) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(float(value))
-    except ValueError:
-        return None
-
-
 def truthy(value: str | None) -> bool:
     return (value or "").lower() in {"true", "1", "yes"}
+
+
+def scenario_for_file(path: Path) -> str:
+    name = path.name.lower()
+    if "hdr-dv-long" in name:
+        return "directplay-hdr-dv-long"
+    if "samplebuffer" in name:
+        return "samplebuffer-mkv"
+    if name == "ios-live-ui-runtime.stream" or "directplay-mp4" in name:
+        return "directplay-mp4"
+    return path.stem
 
 
 def iter_log_files(paths: list[Path]) -> list[Path]:
@@ -197,127 +230,149 @@ def iter_log_files(paths: list[Path]) -> list[Path]:
         elif path.is_dir():
             files.extend(sorted(path.rglob("*.log")))
             files.extend(sorted(path.rglob("*.stream")))
+            files.extend(sorted(path.rglob("*.jsonl")))
     return [file for file in files if file.name != "deep-playback-evidence.log"]
 
 
-def update_avplayer_session(
+def is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
+def valid_typed_record(record: object) -> bool:
+    if not isinstance(record, dict):
+        return False
+    event = record.get("event")
+    session = record.get("session")
+    media = record.get("media")
+    source = record.get("source")
+    if event not in EVENT_FIELDS or not isinstance(session, str) or not OPAQUE_CORRELATION_RE.fullmatch(session):
+        return False
+    for correlation in (media, source):
+        if correlation is not None and (
+            not isinstance(correlation, str) or not OPAQUE_CORRELATION_RE.fullmatch(correlation)
+        ):
+            return False
+    if "timestampMilliseconds" in record and not isinstance(record["timestampMilliseconds"], int):
+        return False
+    allowed_fields = EVENT_FIELDS[event]
+    if not set(record).issubset(COMMON_FIELDS.union(allowed_fields)):
+        return False
+    for name, value in record.items():
+        if name in COMMON_FIELDS:
+            continue
+        expected = allowed_fields[name]
+        if expected in {(int, float), (float, int)}:
+            if not is_number(value):
+                return False
+        elif expected is int:
+            if not isinstance(value, int) or isinstance(value, bool):
+                return False
+        elif not isinstance(value, expected):
+            return False
+        if expected is str and value not in CATEGORIES:
+            return False
+    return True
+
+
+def update_avplayer(
     sessions: dict[str, AVPlayerSessionEvidence],
-    line: str,
+    scenario: str,
+    record: dict[str, Any],
 ) -> None:
-    fields = parse_key_values(line)
-    session_id = fields.get("session")
-    if session_id is None:
+    media = record.get("media")
+    if not isinstance(media, str):
         return
-
-    session = sessions.setdefault(session_id, AVPlayerSessionEvidence(session_id=session_id))
-    session.item_id = fields.get("item") or session.item_id
-
-    if "avplayer.first-frame" in line:
+    session_id = record["session"]
+    key = f"{scenario}:{session_id}:{media}"
+    session = sessions.setdefault(key, AVPlayerSessionEvidence(scenario, session_id, media))
+    event = record["event"]
+    if event == "firstFrame":
         session.has_first_frame = True
-    elif "playback.ttff" in line:
+    elif event == "ttff":
         session.has_ttff = True
-    elif "playback.audio.selection" in line:
-        session.audio_codec = fields.get("codec") or session.audio_codec
-    elif "playback.proof" in line:
-        session.proof_dv = truthy(fields.get("dv")) or session.proof_dv
-        session.proof_hdr = fields.get("hdr") or session.proof_hdr
-        session.proof_method = fields.get("method") or session.proof_method
-    elif "playback.deep.tick" in line:
-        current = parse_float(fields.get("current"))
-        if current is not None:
-            session.ticks.append(current)
-        session.audio_codec = fields.get("audioCodec") or session.audio_codec
-        buffered = parse_float(fields.get("buffered"))
-        rate = parse_float(fields.get("rate"))
-        time_control = (fields.get("timeControl") or "").lower()
-        if buffered is not None and buffered <= 0.05:
-            session.zero_buffer_ticks += 1
-        if time_control == "waiting":
+    elif event == "audioSelection":
+        session.audio_codec = record.get("codec") or session.audio_codec
+    elif event == "playbackProof":
+        session.proof_dv = bool(record.get("dolbyVision")) or session.proof_dv
+        session.proof_hdr = record.get("hdr") or session.proof_hdr
+        session.proof_method = record.get("method") or session.proof_method
+    elif event == "avPlayerTick":
+        current = record.get("currentSeconds")
+        if is_number(current):
+            session.ticks.append(float(current))
+        session.audio_codec = record.get("codec") or session.audio_codec
+        buffered = record.get("bufferedSeconds")
+        rate = record.get("rate")
+        waiting = record.get("timeControl") == "waiting"
+        zero_buffer = is_number(buffered) and float(buffered) <= 0.05
+        if waiting:
             session.waiting_ticks += 1
-        if time_control == "waiting" or ((rate or 0) <= 0 and buffered is not None and buffered <= 0.05):
+        if zero_buffer:
+            session.zero_buffer_ticks += 1
+        if waiting or (is_number(rate) and float(rate) <= 0 and zero_buffer):
             session.stalled_ticks += 1
-    elif "playback.directplay.poststart_rebuffer.wait" in line:
-        session.rebuffer_waits += 1
-    elif "playback.directplay.poststart_rebuffer.ready" in line:
-        session.rebuffer_ready += 1
-    elif "playback.directplay.poststart_rebuffer.timeout" in line:
-        session.rebuffer_timeout += 1
 
 
-def update_samplebuffer_evidence(samplebuffer: SampleBufferEvidence, line: str) -> None:
-    fields = parse_key_values(line)
-    if "nativeplayer.sampleBuffer.route.selected" in line:
-        samplebuffer.has_route = True
+def update_samplebuffer(
+    sessions: dict[str, SampleBufferEvidence],
+    scenario: str,
+    record: dict[str, Any],
+) -> None:
+    media = record.get("media")
+    source = record.get("source")
+    if not isinstance(media, str) or not isinstance(source, str):
         return
-
-    if "nativeplayer.playbackPlan.created" in line:
-        video = (fields.get("video") or "").lower()
-        audio = (fields.get("audio") or "").lower()
-        can_start = truthy(fields.get("canStart"))
-        samplebuffer.has_plan = samplebuffer.has_plan or (
-            can_start
-            and video not in {"", "none", "missing", "unavailable"}
-            and audio not in {"", "none", "missing", "unavailable"}
-        )
-        return
-
-    if "NativeEngine+AVSampleBufferDisplayLayer" in line and "mkv_original" in line and "PASS" in line:
-        audio_match = re.search(r"\baudio=([^\s]+)", line)
-        audio = audio_match.group(1).lower() if audio_match else ""
-        samplebuffer.has_benchmark_contract = audio not in {"", "unknown", "none", "n/a"}
-        return
-
-    if "nativeplayer.deep.tick" not in line:
-        return
-
-    samplebuffer.tick_count += 1
-    video_packets = parse_int(fields.get("videoPackets"))
-    audio_packets = parse_int(fields.get("audioPackets"))
-    audio_samples = parse_int(fields.get("audioSamples"))
-    audio_renderer = (fields.get("audioRenderer") or "").lower()
-    samplebuffer.has_video_packets = samplebuffer.has_video_packets or (video_packets or 0) > 0
-    samplebuffer.has_audio_packets = samplebuffer.has_audio_packets or (audio_packets or 0) > 0 or (audio_samples or 0) > 0
-    samplebuffer.has_audio_renderer = samplebuffer.has_audio_renderer or "avsamplebufferaudiorenderer" in audio_renderer
-    samplebuffer.audio_underruns += parse_int(fields.get("audioUnderruns")) or 0
-    samplebuffer.audio_rebuffers += parse_int(fields.get("audioRebuffers")) or 0
+    session_id = record["session"]
+    key = f"{scenario}:{session_id}:{media}:{source}"
+    evidence = sessions.setdefault(key, SampleBufferEvidence(scenario, session_id, media, source))
+    event = record["event"]
+    if event == "plan" and record.get("canStart") is True:
+        video = record.get("videoBackend")
+        audio = record.get("audioBackend")
+        if video not in {None, "none", "unknown", "unavailable"} and audio not in {None, "none", "unknown", "unavailable"}:
+            evidence.has_plan = True
+    elif event == "routeSelection" and record.get("route") == "sampleBuffer":
+        evidence.has_route = True
+    elif event == "sampleBufferTick":
+        evidence.tick_count += 1
+        evidence.has_video_packets |= int(record.get("videoPackets", 0)) > 0
+        evidence.has_audio_packets |= int(record.get("audioPackets", 0)) > 0 or int(record.get("audioSamples", 0)) > 0
+        evidence.has_audio_renderer |= record.get("audioRenderer") == "sampleBufferAudioRenderer"
+        evidence.audio_underruns += int(record.get("audioUnderruns", 0))
+        evidence.audio_rebuffers += int(record.get("audioRebuffers", 0))
 
 
-def scan_files(paths: list[Path]) -> tuple[dict[str, AVPlayerSessionEvidence], SampleBufferEvidence, list[Finding]]:
-    sessions: dict[str, AVPlayerSessionEvidence] = {}
-    samplebuffer = SampleBufferEvidence()
+def scan_files(
+    paths: list[Path],
+) -> tuple[dict[str, AVPlayerSessionEvidence], dict[str, SampleBufferEvidence], bool, list[Finding]]:
+    avplayer: dict[str, AVPlayerSessionEvidence] = {}
+    samplebuffer: dict[str, SampleBufferEvidence] = {}
+    benchmark_contract = False
     findings: list[Finding] = []
-
     for log_file in iter_log_files(paths):
+        scenario = scenario_for_file(log_file)
         try:
             lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError as error:
-            findings.append(Finding("read_error", f"{log_file}: {error}"))
+        except OSError:
+            findings.append(Finding("read_error", f"{log_file}: evidence file could not be read"))
             continue
-
         for line_number, line in enumerate(lines, start=1):
+            if "NativeEngine+AVSampleBufferDisplayLayer" in line and "mkv_original" in line and "PASS" in line:
+                benchmark_contract = "audio=unknown" not in line and "audio=none" not in line
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
             try:
-                if "Playback stalled." in line:
-                    findings.append(Finding("runtime_playback_stalled", f"{log_file}:{line_number}: {redact_sensitive(line.strip())}"))
-
-                if (
-                    "avplayer.first-frame" in line
-                    or "playback.ttff" in line
-                    or "playback.audio.selection" in line
-                    or "playback.proof" in line
-                    or "playback.deep.tick" in line
-                    or "playback.directplay.poststart_rebuffer." in line
-                ):
-                    update_avplayer_session(sessions, line)
-                update_samplebuffer_evidence(samplebuffer, line)
-            except Exception as error:  # pragma: no cover - defensive log parser guard.
-                findings.append(
-                    Finding(
-                        "parse_error",
-                        f"{log_file}:{line_number}: {error}: {redact_sensitive(line.strip())}",
-                    )
-                )
-
-    return sessions, samplebuffer, findings
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                findings.append(Finding("invalid_deep_evidence_schema", f"{log_file}:{line_number}: rejected typed evidence record"))
+                continue
+            if not valid_typed_record(record):
+                findings.append(Finding("invalid_deep_evidence_schema", f"{log_file}:{line_number}: rejected typed evidence record"))
+                continue
+            update_avplayer(avplayer, scenario, record)
+            update_samplebuffer(samplebuffer, scenario, record)
+    return avplayer, samplebuffer, benchmark_contract, findings
 
 
 def validate_avplayer_session(
@@ -327,237 +382,128 @@ def validate_avplayer_session(
     require_dv: bool,
     require_hdr: bool,
     label_prefix: str,
-    item_label: str | None = None,
 ) -> Finding | None:
-    subject = item_label or session.session_id
+    subject = f"scenario {session.scenario} session {session.session_id} media {session.media_correlation}"
     if not session.has_first_frame or not session.has_ttff:
-        return Finding(
-            f"{label_prefix}_startup_evidence_incomplete",
-            f"AVPlayer session {session.session_id} for {subject} lacks first-frame or TTFF evidence.",
-        )
+        return Finding(f"{label_prefix}_startup_evidence_incomplete", f"{subject} lacks first-frame or TTFF evidence")
     if not session.has_audio:
-        return Finding(
-            f"{label_prefix}_audio_evidence_missing",
-            f"AVPlayer session {session.session_id} for {subject} has no concrete audio codec selection.",
-        )
-    if not session.has_proof:
-        return Finding(
-            f"{label_prefix}_playback_proof_missing",
-            f"AVPlayer session {session.session_id} for {subject} has no playback.proof line.",
-        )
-    if require_dv and not session.has_dv:
-        return Finding(
-            f"{label_prefix}_dolby_vision_evidence_missing",
-            f"AVPlayer session {session.session_id} for {subject} did not report dv=true.",
-        )
+        return Finding(f"{label_prefix}_audio_evidence_missing", f"{subject} has no concrete audio codec")
+    if session.proof_method is None:
+        return Finding(f"{label_prefix}_playback_proof_missing", f"{subject} lacks playback proof")
+    if require_dv and not session.proof_dv:
+        return Finding(f"{label_prefix}_dolby_vision_evidence_missing", f"{subject} did not report Dolby Vision")
     if require_hdr and not session.has_hdr:
-        return Finding(
-            f"{label_prefix}_hdr_evidence_missing",
-            f"AVPlayer session {session.session_id} for {subject} did not report HDR evidence.",
-        )
+        return Finding(f"{label_prefix}_hdr_evidence_missing", f"{subject} did not report HDR")
     if len(session.ticks) < min_ticks:
-        return Finding(
-            f"{label_prefix}_deep_ticks_below_minimum",
-            f"AVPlayer session {session.session_id} for {subject} has {len(session.ticks)} ticks; need {min_ticks}.",
-        )
+        return Finding(f"{label_prefix}_deep_ticks_below_minimum", f"{subject} has {len(session.ticks)} ticks; need {min_ticks}")
     if session.observed_seconds < min_observed_seconds:
-        return Finding(
-            f"{label_prefix}_observed_progress_below_minimum",
-            f"AVPlayer session {session.session_id} for {subject} advanced {session.observed_seconds:.1f}s; need {min_observed_seconds:.1f}s.",
-        )
-    if session.rebuffer_timeout > 0:
-        return Finding(
-            f"{label_prefix}_poststart_rebuffer_timeout",
-            f"AVPlayer session {session.session_id} for {subject} hit {session.rebuffer_timeout} post-start rebuffer timeout(s).",
-        )
-    if session.unresolved_rebuffer_waits > 0:
-        return Finding(
-            f"{label_prefix}_poststart_rebuffer_unresolved",
-            f"AVPlayer session {session.session_id} for {subject} has {session.unresolved_rebuffer_waits} post-start rebuffer wait(s) without ready recovery.",
-        )
+        return Finding(f"{label_prefix}_observed_progress_below_minimum", f"{subject} advanced {session.observed_seconds:.1f}s; need {min_observed_seconds:.1f}s")
     if session.stalled_ticks >= 2:
-        return Finding(
-            f"{label_prefix}_stalled_ticks",
-            f"AVPlayer session {session.session_id} for {subject} reported {session.stalled_ticks} waiting/zero-buffer deep tick(s).",
-        )
+        return Finding(f"{label_prefix}_stalled_ticks", f"{subject} reported {session.stalled_ticks} stalled ticks")
     if session.zero_buffer_ticks >= 2:
-        return Finding(
-            f"{label_prefix}_zero_buffer_ticks",
-            f"AVPlayer session {session.session_id} for {subject} reported {session.zero_buffer_ticks} zero-buffer deep tick(s).",
-        )
+        return Finding(f"{label_prefix}_zero_buffer_ticks", f"{subject} reported {session.zero_buffer_ticks} zero-buffer ticks")
     return None
 
 
-def validate_required_avplayer_item(
-    sessions: dict[str, AVPlayerSessionEvidence],
-    requirement: RequiredAVPlayerItem,
-) -> Finding | None:
-    matching = [
-        session for session in sessions.values()
-        if matches_item(session.item_id, requirement.item_id)
-    ]
-    if not matching:
-        return Finding(
-            "required_avplayer_session_missing",
-            f"No AVPlayer evidence found for required item {requirement.label}.",
-        )
-
-    candidates = sorted(
-        matching,
-        key=lambda session: (
-            session.observed_seconds,
-            len(session.ticks),
-            session.has_first_frame,
-            session.has_ttff,
-            session.has_audio,
-            session.has_dv,
-        ),
-        reverse=True,
-    )
-    best_failure: Finding | None = None
-    for session in candidates:
-        failure = validate_avplayer_session(
-            session,
-            min_observed_seconds=requirement.min_observed_seconds,
-            min_ticks=requirement.min_ticks,
-            require_dv=requirement.require_dv,
-            require_hdr=requirement.require_hdr,
-            label_prefix="required_avplayer",
-            item_label=requirement.label,
-        )
-        if failure is None:
-            return None
-        best_failure = best_failure or failure
-    return best_failure
-
-
 def evaluate_paths(paths: list[Path], config: EvidenceConfig) -> EvidenceResult:
-    sessions, samplebuffer, findings = scan_files(paths)
-    playable_sessions = [
-        session for session in sessions.values()
-        if session.has_first_frame or session.has_ttff or session.ticks
-    ]
+    avplayer, samplebuffer, benchmark_contract, findings = scan_files(paths)
+    playable = [session for session in avplayer.values() if session.has_first_frame or session.has_ttff or session.ticks]
 
-    for session in playable_sessions:
-        if session.rebuffer_timeout > 0:
-            findings.append(
-                Finding(
-                    "avplayer_poststart_rebuffer_timeout",
-                    f"AVPlayer session {session.session_id} hit {session.rebuffer_timeout} post-start rebuffer timeout(s).",
-                )
-            )
-        elif session.unresolved_rebuffer_waits > 0:
-            findings.append(
-                Finding(
-                    "avplayer_poststart_rebuffer_unresolved",
-                    f"AVPlayer session {session.session_id} has {session.unresolved_rebuffer_waits} post-start rebuffer wait(s) without ready recovery.",
-                )
-            )
-
-    for requirement in config.required_avplayer_items:
-        failure = validate_required_avplayer_item(sessions, requirement)
-        if failure is not None:
-            findings.append(failure)
-
-    if not playable_sessions:
-        findings.append(Finding("avplayer_session_evidence_missing", "No AVPlayer first-frame/TTFF/tick evidence found."))
-    elif not config.required_avplayer_items:
-        valid_session = False
-        tickiest_session = max(playable_sessions, key=lambda session: len(session.ticks))
-        for session in playable_sessions:
-            if validate_avplayer_session(
+    for requirement in config.required_avplayer_scenarios:
+        candidates = [session for session in playable if session.scenario == requirement.scenario]
+        if not candidates:
+            findings.append(Finding("required_avplayer_scenario_missing", f"No AVPlayer evidence found for scenario {requirement.scenario}"))
+            continue
+        failures = [
+            validate_avplayer_session(
                 session,
-                min_observed_seconds=config.min_observed_seconds,
-                min_ticks=config.min_ticks,
-                require_dv=False,
-                require_hdr=False,
-                label_prefix="avplayer",
-            ) is None:
-                valid_session = True
-                break
+                requirement.min_observed_seconds,
+                requirement.min_ticks,
+                requirement.require_dv,
+                requirement.require_hdr,
+                "required_avplayer",
+            )
+            for session in candidates
+        ]
+        if all(failure is not None for failure in failures):
+            findings.append(next(failure for failure in failures if failure is not None))
 
-        if not valid_session:
-            if len(tickiest_session.ticks) < config.min_ticks:
-                findings.append(
-                    Finding(
-                        "avplayer_deep_ticks_below_minimum",
-                        f"Best AVPlayer session {tickiest_session.session_id} has {len(tickiest_session.ticks)} ticks; need {config.min_ticks}.",
-                    )
-                )
-            elif tickiest_session.observed_seconds < config.min_observed_seconds:
-                findings.append(
-                    Finding(
-                        "avplayer_observed_progress_below_minimum",
-                        f"Best AVPlayer session {tickiest_session.session_id} advanced {tickiest_session.observed_seconds:.1f}s; need {config.min_observed_seconds:.1f}s.",
-                    )
-                )
-            elif not tickiest_session.has_audio:
-                findings.append(
-                    Finding(
-                        "avplayer_audio_evidence_missing",
-                        f"Best AVPlayer session {tickiest_session.session_id} has no concrete audio codec selection.",
-                    )
-                )
-            elif not tickiest_session.has_proof:
-                findings.append(
-                    Finding(
-                        "avplayer_playback_proof_missing",
-                        f"Best AVPlayer session {tickiest_session.session_id} has no playback.proof line.",
-                    )
-                )
-            else:
-                findings.append(
-                    Finding(
-                        "avplayer_startup_evidence_incomplete",
-                        f"Best AVPlayer session {tickiest_session.session_id} lacks first-frame or TTFF evidence.",
-                    )
-                )
+    if not playable:
+        findings.append(Finding("avplayer_session_evidence_missing", "No typed AVPlayer evidence found"))
+    elif not config.required_avplayer_scenarios:
+        failures = [
+            validate_avplayer_session(session, config.min_observed_seconds, config.min_ticks, False, False, "avplayer")
+            for session in playable
+        ]
+        if all(failure is not None for failure in failures):
+            findings.append(next(failure for failure in failures if failure is not None))
 
-    if config.require_dv and not any(session.has_dv for session in sessions.values()):
-        findings.append(Finding("dolby_vision_evidence_missing", "No playback.proof line reported dv=true."))
+    if config.require_dv and not any(session.proof_dv for session in playable):
+        findings.append(Finding("dolby_vision_evidence_missing", "No typed playback proof reported Dolby Vision"))
 
     if config.require_samplebuffer:
-        if not samplebuffer.has_route:
-            findings.append(Finding("samplebuffer_route_evidence_missing", "No nativeplayer.sampleBuffer.route.selected line found."))
-        if not samplebuffer.has_plan:
-            findings.append(Finding("samplebuffer_plan_evidence_missing", "No successful nativeplayer.playbackPlan.created line with video and audio backends found."))
-        if not samplebuffer.has_benchmark_contract:
-            findings.append(Finding("samplebuffer_benchmark_contract_missing", "No mkv_original NativeEngine+AVSampleBufferDisplayLayer benchmark pass with audio codec found."))
-        if samplebuffer.tick_count == 0:
-            findings.append(Finding("samplebuffer_deep_tick_missing", "No nativeplayer.deep.tick line found."))
-        if samplebuffer.tick_count > 0 and not samplebuffer.has_video_packets:
-            findings.append(Finding("samplebuffer_video_packet_evidence_missing", "Sample-buffer ticks did not report video packets."))
-        if samplebuffer.tick_count > 0 and not samplebuffer.has_audio:
-            findings.append(Finding("samplebuffer_audio_evidence_missing", "Sample-buffer ticks did not report audio packets/samples and renderer."))
-        if samplebuffer.audio_underruns > 0:
-            findings.append(Finding("samplebuffer_audio_underrun", f"Sample-buffer audio underruns: {samplebuffer.audio_underruns}."))
-        if samplebuffer.audio_rebuffers > 0:
-            findings.append(Finding("samplebuffer_audio_rebuffer", f"Sample-buffer audio rebuffers: {samplebuffer.audio_rebuffers}."))
+        complete = [evidence for evidence in samplebuffer.values() if evidence.has_plan_and_route and evidence.tick_count]
+        if not complete:
+            findings.append(Finding(
+                "samplebuffer_correlated_evidence_missing",
+                "No scenario/session/media/source has a correlated sample-buffer plan, route, and tick",
+            ))
+        if not any(evidence.has_plan_and_route for evidence in samplebuffer.values()):
+            findings.append(Finding("samplebuffer_plan_route_evidence_missing", "No scenario/session/media/source has a correlated sample-buffer plan and route"))
+        if not benchmark_contract:
+            findings.append(Finding("samplebuffer_benchmark_contract_missing", "No sample-buffer benchmark contract pass found"))
+        if not any(evidence.tick_count for evidence in samplebuffer.values()):
+            findings.append(Finding("samplebuffer_deep_tick_missing", "No typed sample-buffer tick found"))
+        if complete and not any(evidence.has_video_packets for evidence in complete):
+            findings.append(Finding("samplebuffer_video_packet_evidence_missing", "Sample-buffer ticks did not report video packets"))
+        if complete and not any(evidence.has_audio for evidence in complete):
+            findings.append(Finding("samplebuffer_audio_evidence_missing", "Sample-buffer ticks did not report audio packets/samples and renderer"))
+        underruns = sum(evidence.audio_underruns for evidence in complete)
+        rebuffers = sum(evidence.audio_rebuffers for evidence in complete)
+        if underruns:
+            findings.append(Finding("samplebuffer_audio_underrun", f"Sample-buffer audio underruns: {underruns}"))
+        if rebuffers:
+            findings.append(Finding("samplebuffer_audio_rebuffer", f"Sample-buffer audio rebuffers: {rebuffers}"))
 
-    return EvidenceResult(findings=findings, avplayer_sessions=sessions, samplebuffer=samplebuffer)
+    return EvidenceResult(findings, avplayer, samplebuffer)
+
+
+def parse_required_avplayer_scenario(
+    spec: str,
+    default_min_observed_seconds: float,
+    default_min_ticks: int,
+) -> RequiredAVPlayerScenario:
+    parts = spec.split(":")
+    scenario = parts[0].strip()
+    if not scenario or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", scenario):
+        raise argparse.ArgumentTypeError("--require-avplayer-scenario needs a safe scenario label")
+    return RequiredAVPlayerScenario(
+        scenario=scenario,
+        min_observed_seconds=float(parts[1]) if len(parts) > 1 and parts[1] else default_min_observed_seconds,
+        min_ticks=int(parts[2]) if len(parts) > 2 and parts[2] else default_min_ticks,
+        require_dv=truthy(parts[3]) if len(parts) > 3 else False,
+        require_hdr=truthy(parts[4]) if len(parts) > 4 else False,
+    )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate ReelFin deep player evidence from live E2E logs.")
+    parser = argparse.ArgumentParser(description="Validate ReelFin typed deep player evidence")
     parser.add_argument("paths", nargs="+", type=Path)
     parser.add_argument("--min-observed-seconds", type=float, default=20.0)
     parser.add_argument("--min-ticks", type=int, default=3)
     parser.add_argument("--require-dv", action="store_true")
     parser.add_argument("--require-samplebuffer", action="store_true")
     parser.add_argument(
-        "--require-avplayer-item",
+        "--require-avplayer-scenario",
         action="append",
         default=[],
-        metavar="ITEM[:SECONDS[:TICKS[:DV[:HDR]]]]",
-        help="Require AVPlayer evidence for a specific item. ITEM may be full or short id.",
+        metavar="SCENARIO[:SECONDS[:TICKS[:DV[:HDR]]]]",
     )
     args = parser.parse_args()
-
-    required_avplayer_items = tuple(
-        parse_required_avplayer_item(spec, args.min_observed_seconds, args.min_ticks)
-        for spec in args.require_avplayer_item
+    required = tuple(
+        parse_required_avplayer_scenario(spec, args.min_observed_seconds, args.min_ticks)
+        for spec in args.require_avplayer_scenario
     )
-
     result = evaluate_paths(
         args.paths,
         EvidenceConfig(
@@ -565,19 +511,15 @@ def main() -> int:
             min_ticks=args.min_ticks,
             require_dv=args.require_dv,
             require_samplebuffer=args.require_samplebuffer,
-            required_avplayer_items=required_avplayer_items,
+            required_avplayer_scenarios=required,
         ),
     )
-
     if result.findings:
         print("FAIL player deep playback evidence")
         for finding in result.findings:
             print(f"  - {finding.label}: {redact_sensitive(finding.message)}")
         return 1
-
-    best_progress = 0.0
-    if result.avplayer_sessions:
-        best_progress = max(session.observed_seconds for session in result.avplayer_sessions.values())
+    best_progress = max((session.observed_seconds for session in result.avplayer_sessions.values()), default=0.0)
     print(
         "PASS player deep playback evidence "
         f"avplayerSessions={result.avplayer_session_count} "
@@ -585,36 +527,6 @@ def main() -> int:
         f"sampleBufferTicks={result.samplebuffer_tick_count}"
     )
     return 0
-
-
-def parse_required_avplayer_item(
-    spec: str,
-    default_min_observed_seconds: float,
-    default_min_ticks: int,
-) -> RequiredAVPlayerItem:
-    parts = spec.split(":")
-    item_id = parts[0].strip()
-    if not item_id:
-        raise argparse.ArgumentTypeError("--require-avplayer-item needs a non-empty item id")
-    min_seconds = default_min_observed_seconds
-    min_ticks = default_min_ticks
-    require_dv = False
-    require_hdr = False
-    if len(parts) > 1 and parts[1]:
-        min_seconds = float(parts[1])
-    if len(parts) > 2 and parts[2]:
-        min_ticks = int(parts[2])
-    if len(parts) > 3 and parts[3]:
-        require_dv = truthy(parts[3])
-    if len(parts) > 4 and parts[4]:
-        require_hdr = truthy(parts[4])
-    return RequiredAVPlayerItem(
-        item_id=item_id,
-        min_observed_seconds=min_seconds,
-        min_ticks=min_ticks,
-        require_dv=require_dv,
-        require_hdr=require_hdr,
-    )
 
 
 if __name__ == "__main__":

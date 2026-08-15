@@ -130,7 +130,7 @@ final class CacheProxySession {
         self.localURL = url
         Task { await downloader.primeStart() }
         AppLog.playback.notice(
-            "customplayer.cacheproxy.start — item=\(self.key.itemID.prefix(8), privacy: .public) local=\(url.reelfinCompactLogString, privacy: .public) reservoirTargetSec=\(self.config.targetReservoirSeconds, format: .fixed(precision: 0)) aheadBudgetMB=\(aheadBudget / 1_048_576, privacy: .public) srcMbps=\(self.sourceBitrate / 1_000_000, privacy: .public)"
+            "customplayer.cacheproxy.start — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) \(LocalPlaybackServerSecurity.logProjection(for: .media), privacy: .public) reservoirTargetSec=\(self.config.targetReservoirSeconds, format: .fixed(precision: 0)) aheadBudgetMB=\(aheadBudget / 1_048_576, privacy: .public) srcMbps=\(self.sourceBitrate / 1_000_000, privacy: .public)"
         )
         return url
     }
@@ -194,7 +194,7 @@ final class CacheProxySession {
             endingBefore: cutoff, key: key, protectingHeadBytes: config.protectedHeadBytes)) ?? 0
         if freed > 0 {
             AppLog.playback.notice(
-                "customplayer.cache.evict_behind — item=\(self.key.itemID.prefix(8), privacy: .public) freedMB=\(freed / 1_048_576, privacy: .public) cutoffMB=\(cutoff / 1_048_576, privacy: .public)"
+                "customplayer.cache.evict_behind — item=\(AppLogFormat.correlationIdentifier(self.key.itemID, domain: .media), privacy: .public) freedMB=\(freed / 1_048_576, privacy: .public) cutoffMB=\(cutoff / 1_048_576, privacy: .public)"
             )
         }
     }

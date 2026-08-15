@@ -44,6 +44,10 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         XCTAssertTrue(snapshot.overlayLines.contains("serverTranscodeUsed=false"))
         XCTAssertTrue(snapshot.overlayLines.contains("nativeProbe=false"))
         XCTAssertTrue(snapshot.overlayLines.contains("renderer=AVPlayerViewController"))
+        XCTAssertTrue(snapshot.overlayLines.contains(
+            "mediaSource=\(AppLogFormat.correlationIdentifier("source-1", domain: .source))"
+        ))
+        XCTAssertFalse(snapshot.overlayLines.joined(separator: "\n").contains("source-1"))
         XCTAssertFalse(snapshot.overlayLines.joined().contains("byteSource=HTTPRangeByteSource"))
         XCTAssertFalse(snapshot.overlayLines.joined().contains("MP4Demuxer"))
         XCTAssertEqual(apiClient.lastPlaybackInfoOptions?.allowTranscoding, false)
@@ -85,6 +89,10 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         XCTAssertEqual(snapshot.surface, .sampleBuffer)
         XCTAssertEqual(snapshot.playbackURL?.path, streamURL.path)
         XCTAssertNil(snapshot.applePlaybackSelection)
+        let evidenceContext = try XCTUnwrap(snapshot.evidenceContext)
+        XCTAssertEqual(evidenceContext.media, AppLogFormat.correlationIdentifier(itemID, domain: .media))
+        XCTAssertEqual(evidenceContext.source, AppLogFormat.correlationIdentifier("source-force-custom", domain: .source))
+        XCTAssertEqual(evidenceContext.session.count, 16)
         XCTAssertTrue(snapshot.overlayLines.contains { $0.contains("renderer=AVSampleBufferDisplayLayer") })
         XCTAssertFalse(snapshot.overlayLines.joined().contains("AVPlayerViewController"))
     }
@@ -203,6 +211,16 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
             XCTFail("Expected Direct Play route")
         }
         XCTAssertEqual(selection.headers["X-Emby-Token"], "secret")
+
+        let snapshot = NativePlayerPlaybackController.makeAppleNativeSnapshot(
+            selection: selection,
+            session: UserSession(userID: "user", username: "user", token: "secret"),
+            startTimeTicks: nil
+        )
+        XCTAssertTrue(snapshot.overlayLines.contains(
+            "mediaSource=\(AppLogFormat.correlationIdentifier("source-secret", domain: .source))"
+        ))
+        XCTAssertFalse(snapshot.overlayLines.joined(separator: "\n").contains("source-secret"))
     }
 
     func testPrepareRoutesDolbyVisionMOVToAppleNativePlaybackWithoutProbe() async throws {
@@ -329,6 +347,9 @@ final class NativePlayerPlaybackControllerEndToEndTests: XCTestCase {
         XCTAssertEqual(snapshot.audioTracks.map(\.id), ["2"])
         XCTAssertEqual(snapshot.audioTracks.first?.title, "French AAC")
         XCTAssertEqual(snapshot.audioTracks.first?.language, "fra")
+        XCTAssertEqual(snapshot.audioTrackDisplayHints.first?.title, "French AAC")
+        XCTAssertEqual(snapshot.audioTrackDisplayHints.first?.language, "fra")
+        XCTAssertEqual(snapshot.audioTrackDisplayHints.first?.codec, "aac")
         XCTAssertEqual(snapshot.selectedAudioTrackID, "2")
         XCTAssertGreaterThan(snapshot.overlayLines.videoPacketCount, 0)
         XCTAssertGreaterThan(snapshot.overlayLines.audioPacketCount, 0)

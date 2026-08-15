@@ -16,8 +16,9 @@ final class TVSearchViewModel: ObservableObject {
     private let dependencies: ReelFinDependencies
     private var searchTask: Task<Void, Never>?
 
-    init(dependencies: ReelFinDependencies) {
+    init(dependencies: ReelFinDependencies, initialQuery: String = "") {
         self.dependencies = dependencies
+        query = initialQuery
     }
 
     func search() {
@@ -88,7 +89,12 @@ struct TVSearchView: View {
 
     init(dependencies: ReelFinDependencies) {
         self.dependencies = dependencies
-        _viewModel = StateObject(wrappedValue: TVSearchViewModel(dependencies: dependencies))
+        _viewModel = StateObject(
+            wrappedValue: TVSearchViewModel(
+                dependencies: dependencies,
+                initialQuery: Self.storefrontSearchQuery(arguments: ProcessInfo.processInfo.arguments)
+            )
+        )
     }
 
     var body: some View {
@@ -115,6 +121,12 @@ struct TVSearchView: View {
         }
         .onChange(of: viewModel.query) { _, _ in
             viewModel.search()
+        }
+        .task {
+            if !viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !viewModel.hasSearched {
+                viewModel.search()
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(
@@ -338,6 +350,15 @@ private extension TVSearchView {
     func activateSearch() {
         isSearchBarFocused = true
         searchActivationToken += 1
+    }
+
+    static func storefrontSearchQuery(arguments: [String]) -> String {
+        guard arguments.contains(AppMetadata.screenshotModeArgument),
+              let flagIndex = arguments.firstIndex(of: "-reelfin-storefront-search-query"),
+              arguments.indices.contains(flagIndex + 1) else {
+            return ""
+        }
+        return arguments[flagIndex + 1]
     }
 }
 

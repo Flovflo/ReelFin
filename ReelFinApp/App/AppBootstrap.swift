@@ -12,6 +12,12 @@ enum AppBootstrap {
             UIView.setAnimationsEnabled(!metadata.isScreenshotModeEnabled)
 #endif
             let arguments = Set(ProcessInfo.processInfo.arguments)
+            if metadata.isScreenshotModeEnabled,
+               arguments.contains("-reelfin-reset-screenshot-defaults"),
+               let bundleIdentifier = Bundle.main.bundleIdentifier
+            {
+                UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
+            }
             let shouldStartLoggedOut = arguments.contains(AppMetadata.mockLoggedOutArgument)
             return ReelFinPreviewFactory.appStoreDependencies(authenticated: !shouldStartLoggedOut)
         }

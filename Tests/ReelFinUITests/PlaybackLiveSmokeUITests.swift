@@ -10,14 +10,11 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
     }
 
     private enum PlaybackLiveSmokeError: Error, LocalizedError {
-        case explicitTargetNotVisible(String)
         case requiredControlMissing(String)
         case requiredMenuMissing(String)
 
         var errorDescription: String? {
             switch self {
-            case .explicitTargetNotVisible(let itemID):
-                return "Explicit live UI target item \(itemID.prefix(8)) was not visible in Home; refusing fallback playback."
             case .requiredControlMissing(let label):
                 return "Expected required live player control '\(label)' to be visible."
             case .requiredMenuMissing(let identifier):
@@ -192,10 +189,10 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         XCTAssertTrue(waitForHome(in: app))
         dismissCredentialSavePromptIfNeeded(in: app, timeout: 1)
 
-        if shouldOpenExplicitTargetDirectly() {
+        if shouldOpenScenarioTargetDirectly() {
             XCTAssertTrue(
                 waitForDetail(in: app, timeout: 45),
-                "Expected the app to open the explicit live UI target detail."
+                "Expected the app to resolve and open the live UI scenario detail."
             )
         } else {
             let targetCard = try selectCard(in: app, preferredKinds: preferredKinds, scenario: scenario)
@@ -523,7 +520,7 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         return ["1", "true", "yes", "on"].contains(value.lowercased())
     }
 
-    private func shouldOpenExplicitTargetDirectly() -> Bool {
+    private func shouldOpenScenarioTargetDirectly() -> Bool {
         let value = loadEnvironmentValues()["REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY"] ?? ""
         return ["1", "true", "yes", "on"].contains(value.lowercased())
     }
@@ -533,16 +530,6 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         preferredKinds: [String],
         scenario: String
     ) throws -> XCUIElement {
-        if let explicitItemID = explicitTargetItemID() {
-            let explicitCandidate = app.buttons.matching(
-                NSPredicate(format: "identifier CONTAINS %@", explicitItemID)
-            ).firstMatch
-            if explicitCandidate.waitForExistence(timeout: 30) {
-                return explicitCandidate
-            }
-            throw PlaybackLiveSmokeError.explicitTargetNotVisible(explicitItemID)
-        }
-
         for kind in preferredKinds {
             let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_\(kind)_")
             let candidates = app.buttons.matching(predicate)
@@ -637,30 +624,6 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
         }
 
         return carousel.exists || favoriteButton.exists || watchedButton.exists
-    }
-
-    private func explicitTargetItemID() -> String? {
-        let environment = loadEnvironmentValues()
-        for key in ["REELFIN_LIVE_UI_TARGET_ITEM_ID", "TEST_DIRECTPLAY_MP4_ITEM_ID"] {
-            guard let raw = environment[key], !raw.isEmpty else { continue }
-            if let normalized = normalizedItemID(raw) {
-                return normalized
-            }
-        }
-        return nil
-    }
-
-    private func normalizedItemID(_ raw: String) -> String? {
-        let patterns = [
-            #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
-            #"[0-9a-fA-F]{32}"#
-        ]
-        for pattern in patterns {
-            if let range = raw.range(of: pattern, options: .regularExpression) {
-                return raw[range].filter { $0 != "-" }.lowercased()
-            }
-        }
-        return nil
     }
 
     private func tapElement(_ element: XCUIElement) {
@@ -841,11 +804,8 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             // the test process so a real-device user's player preference is never touched.
             app.launchArguments += ["-settings.useCustomPlayerEngine", "NO"]
         }
-        if shouldOpenExplicitTargetDirectly(), let targetItemID = explicitTargetItemID() {
-            app.launchArguments += ["-reelfin-live-ui-open-target", targetItemID]
-        }
         for key in [
-            "REELFIN_LIVE_UI_TARGET_ITEM_ID",
+            "REELFIN_LIVE_UI_TARGET_SCENARIO",
             "REELFIN_LIVE_UI_OPEN_TARGET_DIRECTLY",
             "REELFIN_LIVE_UI_FORCE_LEGACY",
             "REELFIN_NATIVE_PLAYER",
@@ -862,13 +822,18 @@ final class PlaybackLiveSmokeUITests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        var values = readEnvFile(repoRoot.appendingPathComponent(".artifacts/secrets/reelfin-e2e.env"))
+        var values: [String: String] = [:]
         ProcessInfo.processInfo.environment.forEach { key, value in
             values[key] = value
         }
         let liveUITargetURL = repoRoot.appendingPathComponent(".artifacts/player-e2e/live-ui-target.env")
         if isFreshLiveUITargetEnv(liveUITargetURL) {
             readEnvFile(liveUITargetURL).forEach { key, value in
+                // This short-lived scenario file is intentionally control-only. Credentials
+                // must arrive only through the private process environment or secrets file.
+                guard !key.uppercased().contains("PASSWORD"),
+                      !key.uppercased().contains("TOKEN"),
+                      !key.uppercased().contains("SECRET") else { return }
                 values[key] = value
             }
         }

@@ -77,7 +77,7 @@ public enum NativePlayerRouteGuard {
             || lowerPath.contains("/master.m3u8")
             || lowerPath.contains("/main.m3u8")
         if isHLSPlaylist {
-            violations.append(.hlsPlaylistURL(url.path))
+            violations.append(.hlsPlaylistURL(url.reelfinLogString))
         }
 
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -100,17 +100,17 @@ public enum NativePlayerRouteGuard {
         let loweredValue = value?.lowercased()
         switch loweredName {
         case "transcodereasons":
-            return .forbiddenTranscodeQueryItem(name: name, value: value)
+            return .forbiddenTranscodeQueryItem(name: loweredName, value: nil)
         case "videocodec" where queryValueContains(loweredValue, token: "h264"):
-            return .forbiddenTranscodeQueryItem(name: name, value: value)
+            return .forbiddenTranscodeQueryItem(name: loweredName, value: nil)
         case "audiocodec" where queryValueContains(loweredValue, token: "aac"):
-            return .forbiddenTranscodeQueryItem(name: name, value: value)
+            return .forbiddenTranscodeQueryItem(name: loweredName, value: nil)
         case "allowvideostreamcopy" where loweredValue == "false":
-            return .forbiddenTranscodeQueryItem(name: name, value: value)
+            return .forbiddenTranscodeQueryItem(name: loweredName, value: nil)
         case "allowaudiostreamcopy" where loweredValue == "false":
-            return .forbiddenTranscodeQueryItem(name: name, value: value)
+            return .forbiddenTranscodeQueryItem(name: loweredName, value: nil)
         case "requireavc" where loweredValue == "true":
-            return .forbiddenTranscodeQueryItem(name: name, value: value)
+            return .forbiddenTranscodeQueryItem(name: loweredName, value: nil)
         default:
             return nil
         }

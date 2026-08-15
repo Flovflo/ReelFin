@@ -12,11 +12,18 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
     let startTimeSeconds: Double
     let seekRequest: NativePlayerSeekRequest?
     let selectedAudioTrackID: String?
+    let pendingAudioTrackID: String?
     let selectedSubtitleTrackID: String?
+    let audioTrackDisplayHints: [Shared.MediaTrack]
+    let subtitleTrackDisplayHints: [Shared.MediaTrack]
     let baseDiagnostics: [String]
     @Binding var isPaused: Bool
     let onDiagnostics: ([String]) -> Void
     let onPlaybackTime: (Double) -> Void
+    let onAudioSelectionApplied: (String) -> Void
+    let onAudioSelectionFailed: (String) -> Void
+    let onFirstVideoFrame: () -> Void
+    let onTracksDiscovered: ([Shared.MediaTrack], [Shared.MediaTrack], String?, String?) -> Void
 
     func makeUIViewController(context: Context) -> NativeMatroskaSampleBufferPlayerController {
         let controller = NativeMatroskaSampleBufferPlayerController()
@@ -27,11 +34,18 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
             startTimeSeconds: startTimeSeconds,
             seekRequest: seekRequest,
             selectedAudioTrackID: selectedAudioTrackID,
+            pendingAudioTrackID: pendingAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
+            audioTrackDisplayHints: audioTrackDisplayHints,
+            subtitleTrackDisplayHints: subtitleTrackDisplayHints,
             baseDiagnostics: baseDiagnostics,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
-            onPlaybackTime: onPlaybackTime
+            onPlaybackTime: onPlaybackTime,
+            onAudioSelectionApplied: onAudioSelectionApplied,
+            onAudioSelectionFailed: onAudioSelectionFailed,
+            onFirstVideoFrame: onFirstVideoFrame,
+            onTracksDiscovered: onTracksDiscovered
         )
         return controller
     }
@@ -44,11 +58,18 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
             startTimeSeconds: startTimeSeconds,
             seekRequest: seekRequest,
             selectedAudioTrackID: selectedAudioTrackID,
+            pendingAudioTrackID: pendingAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
+            audioTrackDisplayHints: audioTrackDisplayHints,
+            subtitleTrackDisplayHints: subtitleTrackDisplayHints,
             baseDiagnostics: baseDiagnostics,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
-            onPlaybackTime: onPlaybackTime
+            onPlaybackTime: onPlaybackTime,
+            onAudioSelectionApplied: onAudioSelectionApplied,
+            onAudioSelectionFailed: onAudioSelectionFailed,
+            onFirstVideoFrame: onFirstVideoFrame,
+            onTracksDiscovered: onTracksDiscovered
         )
     }
 
@@ -144,8 +165,172 @@ private struct NativeMatroskaRestartConfiguration {
     let container: ContainerFormat
     let targetSeconds: Double
     let selectedAudioTrackID: String?
+    let committedAudioTrackID: String?
+    let pendingAudioTrackID: String?
     let selectedSubtitleTrackID: String?
     let isPaused: Bool
+}
+
+struct NativeMatroskaAudioSwitchRequest {
+    let id: Int
+    let selectedAudioTrackID: String
+    let requestedAtUptime: TimeInterval
+}
+
+struct NativeMatroskaAudioSwitchState {
+    private(set) var appliedTrackID: String?
+    private(set) var pendingRequest: NativeMatroskaAudioSwitchRequest?
+    private var latestRequestID = 0
+
+    mutating func setInitialAppliedTrack(_ id: String?) {
+        appliedTrackID = id
+    }
+
+    mutating func request(trackID: String, uptime: TimeInterval) -> Bool {
+        guard pendingRequest?.selectedAudioTrackID != trackID,
+              appliedTrackID != trackID else { return false }
+        latestRequestID += 1
+        pendingRequest = .init(id: latestRequestID, selectedAudioTrackID: trackID, requestedAtUptime: uptime)
+        return true
+    }
+
+    mutating func takePending() -> NativeMatroskaAudioSwitchRequest? {
+        defer { pendingRequest = nil }
+        return pendingRequest
+    }
+
+    mutating func takeOrCreatePending(trackID: String, uptime: TimeInterval) -> NativeMatroskaAudioSwitchRequest? {
+        if pendingRequest?.selectedAudioTrackID == trackID {
+            return takePending()
+        }
+        guard request(trackID: trackID, uptime: uptime) else { return nil }
+        return takePending()
+    }
+
+    func isCurrent(_ request: NativeMatroskaAudioSwitchRequest, selectedTrackID: String?) -> Bool {
+        latestRequestID == request.id && selectedTrackID == request.selectedAudioTrackID
+    }
+
+    mutating func commitFirstSample(_ request: NativeMatroskaAudioSwitchRequest, selectedTrackID: String?) -> Bool {
+        guard isCurrent(request, selectedTrackID: selectedTrackID) else { return false }
+        appliedTrackID = request.selectedAudioTrackID
+        return true
+    }
+}
+
+enum NativeMatroskaPendingAudioDecodeOutcome {
+    case decoded(DecodedAudioFrame?)
+    case restored(NativeMediaCore.MediaTrack, any AudioDecoder)
+}
+
+struct NativeMatroskaPendingAudioDecodeRecovery {
+    static func decode(
+        packet: MediaPacket,
+        decoder: any AudioDecoder,
+        pendingRequest: NativeMatroskaAudioSwitchRequest?,
+        fallback: () async -> (NativeMediaCore.MediaTrack, any AudioDecoder)?
+    ) async throws -> NativeMatroskaPendingAudioDecodeOutcome {
+        do {
+            return .decoded(try await decoder.decode(packet: packet))
+        } catch {
+            guard pendingRequest != nil, let fallback = await fallback() else { throw error }
+            return .restored(fallback.0, fallback.1)
+        }
+    }
+}
+
+struct NativeMatroskaPendingAudioFirstSampleBudget {
+    private let maxSelectedPackets: Int
+    private let maxTotalPackets: Int
+    private var selectedPackets = 0
+    private var totalPackets = 0
+
+    init(maxSelectedPackets: Int = 32, maxTotalPackets: Int = 256) {
+        self.maxSelectedPackets = max(1, maxSelectedPackets)
+        self.maxTotalPackets = max(1, maxTotalPackets)
+    }
+
+    mutating func observePacket(isSelectedAudio: Bool, producedSample: Bool) -> Bool {
+        totalPackets += 1
+        if isSelectedAudio { selectedPackets += 1 }
+        if producedSample { return false }
+        return selectedPackets >= maxSelectedPackets || totalPackets >= maxTotalPackets
+    }
+
+    func expiresAtEndOfStream(hasPendingRequest: Bool) -> Bool { hasPendingRequest }
+}
+
+struct NativeMatroskaDiscoveredTracks {
+    let audio: [Shared.MediaTrack]
+    let subtitles: [Shared.MediaTrack]
+    let selectedAudioTrackID: String?
+    let selectedSubtitleTrackID: String?
+
+    static func make(
+        stream: DemuxerStreamInfo,
+        requestedAudioTrackID: String?,
+        requestedSubtitleTrackID: String?,
+        audioDisplayHints: [Shared.MediaTrack] = [],
+        subtitleDisplayHints: [Shared.MediaTrack] = []
+    ) -> NativeMatroskaDiscoveredTracks {
+        let nativeAudio = stream.tracks.filter { $0.kind == .audio }
+        let nativeSubtitles = stream.tracks.filter { $0.kind == .subtitle }
+        let selectedAudio = requestedAudioTrackID.flatMap { id in
+            nativeAudio.first { "\($0.trackId)" == id }
+        } ?? nativeAudio.first(where: \.isDefault) ?? nativeAudio.first
+        let selectedSubtitle = requestedSubtitleTrackID.flatMap { id in
+            nativeSubtitles.first { "\($0.trackId)" == id }
+        } ?? nativeSubtitles.first(where: \.isDefault)
+        return NativeMatroskaDiscoveredTracks(
+            audio: nativeAudio.enumerated().map {
+                Self.presentable($0.element, hint: $0.offset < audioDisplayHints.count ? audioDisplayHints[$0.offset] : nil)
+            },
+            subtitles: nativeSubtitles.enumerated().map {
+                Self.presentable($0.element, hint: $0.offset < subtitleDisplayHints.count ? subtitleDisplayHints[$0.offset] : nil)
+            },
+            selectedAudioTrackID: selectedAudio.map { "\($0.trackId)" },
+            selectedSubtitleTrackID: selectedSubtitle.map { "\($0.trackId)" }
+        )
+    }
+
+    private static func presentable(
+        _ track: NativeMediaCore.MediaTrack,
+        hint: Shared.MediaTrack?
+    ) -> Shared.MediaTrack {
+        Shared.MediaTrack(
+            id: "\(track.trackId)",
+            title: hint?.title ?? track.title ?? "\(track.kind.rawValue.capitalized) \(track.trackId)",
+            language: hint?.language ?? track.language,
+            codec: hint?.codec ?? track.codec,
+            isDefault: hint?.isDefault ?? track.isDefault,
+            isForced: hint?.isForced ?? track.isForced,
+            index: track.trackId
+        )
+    }
+}
+
+enum NativeSampleBufferRenderEvent {
+    case playbackTime
+    case audioEnqueued
+    case videoEnqueued
+}
+
+struct NativeFirstVideoFrameSignal {
+    private var generation: Int?
+    private var didEmit = false
+
+    mutating func begin(generation: Int) {
+        self.generation = generation
+        didEmit = false
+    }
+
+    mutating func shouldEmit(event: NativeSampleBufferRenderEvent, generation: Int) -> Bool {
+        guard event == .videoEnqueued,
+              self.generation == generation,
+              !didEmit else { return false }
+        didEmit = true
+        return true
+    }
 }
 
 private final class NativeMatroskaActiveByteSource {
@@ -179,6 +364,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private let audioQueue = DispatchQueue(label: "reelfin.nativeplayer.mkv.audio", qos: .userInitiated)
     private let renderQueueKey = DispatchSpecificKey<String>()
     private let metricsLock = NSLock()
+    private let firstVideoFrameSignalLock = NSLock()
     private let playbackStateLock = NSLock()
     private let generationLock = NSLock()
     private let bufferPolicy = NativePlaybackBufferPolicy.matroska
@@ -192,15 +378,23 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private var currentStartTimeSeconds: Double = 0
     private var currentSelectedAudioTrackID: String?
     private var currentSelectedSubtitleTrackID: String?
+    private var audioTrackDisplayHints: [Shared.MediaTrack] = []
+    private var subtitleTrackDisplayHints: [Shared.MediaTrack] = []
     private var appliedSeekRequestID: Int?
     private var pendingForwardSeekRequest: NativePlayerSeekRequest?
     private var baseDiagnostics: [String] = []
     private var onDiagnostics: (([String]) -> Void)?
     private var onPlaybackTime: ((Double) -> Void)?
+    private var onAudioSelectionApplied: ((String) -> Void)?
+    private var onAudioSelectionFailed: ((String) -> Void)?
+    private var onFirstVideoFrame: (() -> Void)?
+    private var onTracksDiscovered: (([Shared.MediaTrack], [Shared.MediaTrack], String?, String?) -> Void)?
     private var playbackTask: Task<Void, Never>?
     private var retirementTask: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
     private var pendingRestartConfiguration: NativeMatroskaRestartConfiguration?
+    private var audioSwitchState = NativeMatroskaAudioSwitchState()
+    private var firstVideoFrameSignal = NativeFirstVideoFrameSignal()
     private var seekCommitPolicy = NativePlayerSeekCommitPolicy()
     private var readerGeneration = NativeMatroskaPlaybackGeneration()
     private var invalidatedCallbackGenerations: Set<Int> = []
@@ -238,6 +432,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private(set) var restartCoordinatorStartCount = 0
     private(set) var maximumConcurrentReaderCount = 0
     private(set) var callbackCountAfterDismantle = 0
+    private(set) var audioSwitchRequestCount = 0
+    private(set) var audioOnlyFlushCount = 0
     private(set) var teardownEvents: [NativeMatroskaTeardownEvent] = []
     var teardownEventObserver: ((NativeMatroskaTeardownEvent) -> Void)?
     var beforePlaybackTaskCancellation: (() async -> Void)?
@@ -254,6 +450,11 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     var pendingRestartIsPaused: Bool { pendingRestartConfiguration?.isPaused ?? pendingPause }
     var pendingRestartSelectedAudioTrackID: String? { pendingRestartConfiguration?.selectedAudioTrackID }
     var pendingRestartSelectedSubtitleTrackID: String? { pendingRestartConfiguration?.selectedSubtitleTrackID }
+    var pendingRestartPendingAudioTrackID: String? { pendingRestartConfiguration?.pendingAudioTrackID }
+    var playbackClockSeconds: Double { synchronizer.currentTime().matroskaSafeSeconds }
+    var videoSampleCount: Int {
+        metricsLock.withLock { metrics.videoPrimedPacketCount }
+    }
 
     init(byteSourceFactory: @escaping NativeMatroskaByteSourceFactory = {
         HTTPRangeByteSource(url: $0, headers: $1)
@@ -314,21 +515,35 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         startTimeSeconds: Double,
         seekRequest: NativePlayerSeekRequest?,
         selectedAudioTrackID: String?,
+        pendingAudioTrackID: String? = nil,
         selectedSubtitleTrackID: String?,
+        audioTrackDisplayHints: [Shared.MediaTrack] = [],
+        subtitleTrackDisplayHints: [Shared.MediaTrack] = [],
         baseDiagnostics: [String],
         isPaused: Bool,
         onDiagnostics: @escaping ([String]) -> Void,
-        onPlaybackTime: @escaping (Double) -> Void
+        onPlaybackTime: @escaping (Double) -> Void,
+        onAudioSelectionApplied: @escaping (String) -> Void = { _ in },
+        onAudioSelectionFailed: @escaping (String) -> Void = { _ in },
+        onFirstVideoFrame: @escaping () -> Void = {},
+        onTracksDiscovered: @escaping ([Shared.MediaTrack], [Shared.MediaTrack], String?, String?) -> Void = { _, _, _, _ in }
     ) {
         self.baseDiagnostics = baseDiagnostics
         self.onDiagnostics = onDiagnostics
         self.onPlaybackTime = onPlaybackTime
+        self.onAudioSelectionApplied = onAudioSelectionApplied
+        self.onAudioSelectionFailed = onAudioSelectionFailed
+        self.onFirstVideoFrame = onFirstVideoFrame
+        self.onTracksDiscovered = onTracksDiscovered
+        self.audioTrackDisplayHints = audioTrackDisplayHints
+        self.subtitleTrackDisplayHints = subtitleTrackDisplayHints
         pendingPause = isPaused
         isTornDown = false
         let sourceChanged = currentURL != url || currentHeaders != headers || currentContainer != container
-        let selectionChanged = currentSelectedAudioTrackID != selectedAudioTrackID
-            || currentSelectedSubtitleTrackID != selectedSubtitleTrackID
-        currentSelectedAudioTrackID = selectedAudioTrackID
+        let desiredAudioTrackID = pendingAudioTrackID ?? selectedAudioTrackID
+        let audioSelectionChanged = currentSelectedAudioTrackID != desiredAudioTrackID
+        let subtitleSelectionChanged = currentSelectedSubtitleTrackID != selectedSubtitleTrackID
+        currentSelectedAudioTrackID = desiredAudioTrackID
         currentSelectedSubtitleTrackID = selectedSubtitleTrackID
         if sourceChanged {
             currentURL = url
@@ -336,14 +551,40 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             currentContainer = container
             currentStartTimeSeconds = startTimeSeconds
             appliedSeekRequestID = seekRequest?.id
-            startPlayback(url: url, headers: headers, container: container, startTimeSeconds: startTimeSeconds, selectedAudioTrackID: selectedAudioTrackID, selectedSubtitleTrackID: selectedSubtitleTrackID)
+            startPlayback(url: url, headers: headers, container: container, startTimeSeconds: startTimeSeconds, selectedAudioTrackID: desiredAudioTrackID, committedAudioTrackID: selectedAudioTrackID, pendingAudioTrackID: pendingAudioTrackID, selectedSubtitleTrackID: selectedSubtitleTrackID)
         } else if let seekRequest, appliedSeekRequestID != seekRequest.id {
-            handleSeekRequest(seekRequest, url: url, headers: headers, container: container, selectedAudioTrackID: selectedAudioTrackID, selectedSubtitleTrackID: selectedSubtitleTrackID)
-        } else if selectionChanged {
-            startPlayback(url: url, headers: headers, container: container, startTimeSeconds: currentPlaybackSecondsForRestart(), selectedAudioTrackID: selectedAudioTrackID, selectedSubtitleTrackID: selectedSubtitleTrackID)
+            if audioSelectionChanged, let desiredAudioTrackID {
+                requestAudioTrackSwitch(to: desiredAudioTrackID)
+            }
+            handleSeekRequest(
+                seekRequest,
+                url: url,
+                headers: headers,
+                container: container,
+                selectedAudioTrackID: desiredAudioTrackID,
+                committedAudioTrackID: selectedAudioTrackID,
+                pendingAudioTrackID: pendingAudioTrackID,
+                selectedSubtitleTrackID: selectedSubtitleTrackID
+            )
+        } else if subtitleSelectionChanged {
+            startPlayback(url: url, headers: headers, container: container, startTimeSeconds: currentPlaybackSecondsForRestart(), selectedAudioTrackID: desiredAudioTrackID, committedAudioTrackID: selectedAudioTrackID, pendingAudioTrackID: pendingAudioTrackID, selectedSubtitleTrackID: selectedSubtitleTrackID)
+        } else if audioSelectionChanged, let desiredAudioTrackID {
+            requestAudioTrackSwitch(to: desiredAudioTrackID)
         }
         setPaused(isPaused)
         publishDiagnostics(generation: currentReaderGeneration)
+    }
+
+    private func requestAudioTrackSwitch(to selectedAudioTrackID: String) {
+        let shouldEnqueue = playbackStateLock.withLock {
+            audioSwitchState.request(
+                trackID: selectedAudioTrackID,
+                uptime: ProcessInfo.processInfo.systemUptime
+            )
+        }
+        guard shouldEnqueue else { return }
+        audioSwitchRequestCount += 1
+        AppLog.playback.info("nativeplayer.audio.selection_changed — status=requested")
     }
 
     private func beginReaderStart() -> Int {
@@ -406,6 +647,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         headers: [String: String],
         container: ContainerFormat,
         selectedAudioTrackID: String?,
+        committedAudioTrackID: String?,
+        pendingAudioTrackID: String?,
         selectedSubtitleTrackID: String?
     ) {
         appliedSeekRequestID = seekRequest.id
@@ -418,6 +661,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 container: container,
                 startTimeSeconds: seekRequest.targetSeconds,
                 selectedAudioTrackID: selectedAudioTrackID,
+                committedAudioTrackID: committedAudioTrackID,
+                pendingAudioTrackID: pendingAudioTrackID,
                 selectedSubtitleTrackID: selectedSubtitleTrackID
             )
         }
@@ -476,6 +721,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         container: ContainerFormat,
         startTimeSeconds: Double,
         selectedAudioTrackID: String?,
+        committedAudioTrackID: String? = nil,
+        pendingAudioTrackID: String? = nil,
         selectedSubtitleTrackID: String?
     ) {
         let shouldStartCoordinator = seekCommitPolicy.enqueueRestart(targetSeconds: startTimeSeconds)
@@ -492,6 +739,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             container: container,
             targetSeconds: max(0, startTimeSeconds),
             selectedAudioTrackID: selectedAudioTrackID,
+            committedAudioTrackID: committedAudioTrackID,
+            pendingAudioTrackID: pendingAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             isPaused: pendingPause
         )
@@ -530,6 +779,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         readerGeneration generation: Int
     ) {
         guard ownsCallbacks(from: generation) else { return }
+        firstVideoFrameSignalLock.withLock {
+            firstVideoFrameSignal.begin(generation: generation)
+        }
         currentStartTimeSeconds = configuration.targetSeconds
         playbackStateLock.lock()
         playbackCanRun = false
@@ -563,6 +815,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 container: configuration.container,
                 startTimeSeconds: configuration.targetSeconds,
                 selectedAudioTrackID: configuration.selectedAudioTrackID,
+                committedAudioTrackID: configuration.committedAudioTrackID,
+                pendingAudioTrackID: configuration.pendingAudioTrackID,
                 selectedSubtitleTrackID: configuration.selectedSubtitleTrackID,
                 generation: generation
             )
@@ -676,6 +930,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         container: ContainerFormat,
         startTimeSeconds: Double,
         selectedAudioTrackID: String?,
+        committedAudioTrackID: String?,
+        pendingAudioTrackID: String?,
         selectedSubtitleTrackID: String?,
         generation: Int
     ) async {
@@ -688,6 +944,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             container: container,
             startTimeSeconds: startTimeSeconds,
             selectedAudioTrackID: selectedAudioTrackID,
+            committedAudioTrackID: committedAudioTrackID,
+            pendingAudioTrackID: pendingAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             generation: generation
         )
@@ -705,6 +963,8 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         container: ContainerFormat,
         startTimeSeconds: Double,
         selectedAudioTrackID: String?,
+        committedAudioTrackID: String?,
+        pendingAudioTrackID: String?,
         selectedSubtitleTrackID: String?,
         generation: Int
     ) async -> Bool {
@@ -714,6 +974,21 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             let stream = try await demuxer.open()
             try Task.checkCancellation()
             guard ownsCallbacks(from: generation) else { return false }
+            let discoveredTracks = NativeMatroskaDiscoveredTracks.make(
+                stream: stream,
+                requestedAudioTrackID: selectedAudioTrackID,
+                requestedSubtitleTrackID: selectedSubtitleTrackID,
+                audioDisplayHints: audioTrackDisplayHints,
+                subtitleDisplayHints: subtitleTrackDisplayHints
+            )
+            currentSelectedAudioTrackID = discoveredTracks.selectedAudioTrackID
+            currentSelectedSubtitleTrackID = discoveredTracks.selectedSubtitleTrackID
+            onTracksDiscovered?(
+                discoveredTracks.audio,
+                discoveredTracks.subtitles,
+                discoveredTracks.selectedAudioTrackID,
+                discoveredTracks.selectedSubtitleTrackID
+            )
             if startTimeSeconds > 0 {
                 try await demuxer.seek(to: CMTime(seconds: startTimeSeconds, preferredTimescale: 1000))
                 try Task.checkCancellation()
@@ -723,23 +998,47 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 throw NativeMatroskaSampleBufferPlayerError.noVideoTrack
             }
             videoHDRMetadata = videoTrack.hdrMetadata
-            let audioTrack = Self.selectedTrack(
+            var audioTrack = Self.selectedTrack(
                 kind: .audio,
                 in: stream,
-                selectedID: selectedAudioTrackID
+                selectedID: discoveredTracks.selectedAudioTrackID
             )
             let subtitleTrack = Self.selectedSubtitleTrack(
                 in: stream,
-                selectedID: selectedSubtitleTrackID
+                selectedID: discoveredTracks.selectedSubtitleTrackID
             )
             let videoDecoder = try VideoDecoderFactory().makeDecoder(for: videoTrack)
             try await videoDecoder.configure(track: videoTrack)
             try Task.checkCancellation()
             guard ownsCallbacks(from: generation) else { return false }
-            let audioDecoder = await makeAudioDecoder(audioTrack, generation: generation)
+            var audioDecoder = await makeAudioDecoder(audioTrack, generation: generation)
             try Task.checkCancellation()
             guard ownsCallbacks(from: generation) else { return false }
+            let pendingDecoderFailed = pendingAudioTrackID != nil && audioDecoder == nil
+            if pendingDecoderFailed,
+               let fallbackTrack = Self.fallbackAudioTrackAfterPendingDecoderFailure(
+                   in: stream,
+                   committedAudioTrackID: committedAudioTrackID,
+                   pendingAudioTrackID: pendingAudioTrackID
+               ) {
+                audioTrack = fallbackTrack
+                audioDecoder = await makeAudioDecoder(fallbackTrack, generation: generation)
+                try Task.checkCancellation()
+                guard ownsCallbacks(from: generation) else { return false }
+            }
             markReaderActive(generation)
+            var initialPendingAudioRequest: NativeMatroskaAudioSwitchRequest? = playbackStateLock.withLock {
+                audioSwitchState.setInitialAppliedTrack(committedAudioTrackID ?? audioTrack.map { "\($0.trackId)" })
+                guard let pendingAudioTrackID else { return nil }
+                return audioSwitchState.takeOrCreatePending(
+                    trackID: pendingAudioTrackID,
+                    uptime: ProcessInfo.processInfo.systemUptime
+                )
+            }
+            if pendingDecoderFailed, let request = initialPendingAudioRequest {
+                failAudioSwitch(request)
+                initialPendingAudioRequest = nil
+            }
             resetPlaybackReadiness(hasAudio: audioDecoder != nil)
 
             updateMetrics {
@@ -761,6 +1060,13 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 subtitleTrack: subtitleTrack,
                 videoDecoder: videoDecoder,
                 audioDecoder: audioDecoder,
+                initialPendingAudioRequest: initialPendingAudioRequest,
+                initialFallbackAudioTrack: Self.fallbackAudioTrackAfterPendingDecoderFailure(
+                    in: stream,
+                    committedAudioTrackID: committedAudioTrackID,
+                    pendingAudioTrackID: pendingAudioTrackID
+                ),
+                availableTracks: stream.tracks,
                 startTimeSeconds: startTimeSeconds,
                 generation: generation
             )
@@ -848,13 +1154,48 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         subtitleTrack: NativeMediaCore.MediaTrack?,
         videoDecoder: any VideoDecoder,
         audioDecoder: (any AudioDecoder)?,
+        initialPendingAudioRequest: NativeMatroskaAudioSwitchRequest?,
+        initialFallbackAudioTrack: NativeMediaCore.MediaTrack?,
+        availableTracks: [NativeMediaCore.MediaTrack],
         startTimeSeconds: Double,
         generation: Int
     ) async throws {
+        var activeAudioTrack = audioTrack
+        var activeAudioDecoder = audioDecoder
+        var audioSwitchAwaitingFirstSample = initialPendingAudioRequest
+        var audioSwitchFallback: (track: NativeMediaCore.MediaTrack?, decoder: (any AudioDecoder)?)?
+        var pendingFirstSampleBudget = initialPendingAudioRequest.map { _ in NativeMatroskaPendingAudioFirstSampleBudget() }
         var forwardSeekState: NativeMatroskaForwardSeekState? = startTimeSeconds > 0
             ? NativeMatroskaForwardSeekState(targetSeconds: startTimeSeconds)
             : nil
         while !Task.isCancelled, ownsCallbacks(from: generation) {
+            if let request = takePendingAudioSwitchRequest() {
+                guard let requestedTrack = Self.selectedTrack(
+                    kind: .audio,
+                    in: DemuxerStreamInfo(container: .matroska, tracks: availableTracks),
+                    selectedID: request.selectedAudioTrackID
+                ), "\(requestedTrack.trackId)" == request.selectedAudioTrackID,
+                let requestedDecoder = await makeAudioDecoder(requestedTrack, generation: generation)
+                else {
+                    if let fallback = audioSwitchFallback {
+                        activeAudioTrack = fallback.track
+                        activeAudioDecoder = fallback.decoder
+                        audioSwitchFallback = nil
+                        audioSwitchAwaitingFirstSample = nil
+                    }
+                    failAudioSwitch(request)
+                    continue
+                }
+                guard isCurrentAudioSwitchRequest(request) else { continue }
+                if audioSwitchFallback == nil {
+                    audioSwitchFallback = (activeAudioTrack, activeAudioDecoder)
+                }
+                prepareAudioRendererForTrackSwitch(generation: generation)
+                activeAudioTrack = requestedTrack
+                activeAudioDecoder = requestedDecoder
+                audioSwitchAwaitingFirstSample = request
+                pendingFirstSampleBudget = NativeMatroskaPendingAudioFirstSampleBudget()
+            }
             if let request = takePendingForwardSeekRequest() {
                 try await demuxer.seek(to: CMTime(seconds: request.targetSeconds, preferredTimescale: 1000))
                 try Task.checkCancellation()
@@ -866,33 +1207,147 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             guard let packet = try await demuxer.readNextPacket() else { break }
             try Task.checkCancellation()
             guard ownsCallbacks(from: generation) else { return }
+            let isSelectedAudioPacket = packet.trackID == activeAudioTrack?.trackId
+            let packetBudgetExpired: Bool
+            if var budget = pendingFirstSampleBudget {
+                packetBudgetExpired = budget.observePacket(
+                    isSelectedAudio: isSelectedAudioPacket,
+                    producedSample: false
+                )
+                pendingFirstSampleBudget = budget
+            } else {
+                packetBudgetExpired = false
+            }
             if var state = forwardSeekState {
                 let shouldSkip = state.shouldSkip(
                     packet,
                     videoTrackID: videoTrack.trackId,
-                    audioTrackID: audioTrack?.trackId,
+                    audioTrackID: activeAudioTrack?.trackId,
                     subtitleTrackID: subtitleTrack?.trackId
                 )
                 forwardSeekState = state
-                if shouldSkip { continue }
+                if shouldSkip {
+                    if packetBudgetExpired, let request = audioSwitchAwaitingFirstSample {
+                        if let fallback = await audioFallback(
+                            existing: audioSwitchFallback,
+                            initialTrack: initialFallbackAudioTrack,
+                            generation: generation
+                        ) {
+                            activeAudioTrack = fallback.track
+                            activeAudioDecoder = fallback.decoder
+                            prepareAudioRendererForTrackSwitch(generation: generation)
+                        }
+                        failAudioSwitch(request)
+                        audioSwitchAwaitingFirstSample = nil
+                        audioSwitchFallback = nil
+                        pendingFirstSampleBudget = nil
+                    }
+                    continue
+                }
+            }
+            if packetBudgetExpired, !isSelectedAudioPacket,
+               let request = audioSwitchAwaitingFirstSample {
+                if let fallback = await audioFallback(
+                    existing: audioSwitchFallback,
+                    initialTrack: initialFallbackAudioTrack,
+                    generation: generation
+                ) {
+                    activeAudioTrack = fallback.track
+                    activeAudioDecoder = fallback.decoder
+                    prepareAudioRendererForTrackSwitch(generation: generation)
+                }
+                failAudioSwitch(request)
+                audioSwitchAwaitingFirstSample = nil
+                audioSwitchFallback = nil
+                pendingFirstSampleBudget = nil
             }
             if packet.trackID == videoTrack.trackId {
                 guard let frame = try await videoDecoder.decode(packet: packet), let sample = frame.sampleBuffer else { continue }
                 try Task.checkCancellation()
                 guard ownsCallbacks(from: generation) else { return }
                 try await queueVideo(sample, generation: generation)
-            } else if packet.trackID == audioTrack?.trackId, let audioDecoder {
-                guard let frame = try await audioDecoder.decode(packet: packet), let sample = frame.sampleBuffer else { continue }
+            } else if packet.trackID == activeAudioTrack?.trackId, let decoderForPacket = activeAudioDecoder {
+                let outcome = try await NativeMatroskaPendingAudioDecodeRecovery.decode(
+                    packet: packet,
+                    decoder: decoderForPacket,
+                    pendingRequest: audioSwitchAwaitingFirstSample,
+                    fallback: { [weak self] in
+                        guard let self else { return nil }
+                        guard let fallback = await self.audioFallback(
+                            existing: audioSwitchFallback,
+                            initialTrack: initialFallbackAudioTrack,
+                            generation: generation
+                        ), let track = fallback.track, let decoder = fallback.decoder else { return nil }
+                        return (track, decoder)
+                    }
+                )
+                let frame: DecodedAudioFrame?
+                switch outcome {
+                case let .decoded(decoded):
+                    frame = decoded
+                case let .restored(track, decoder):
+                    guard let request = audioSwitchAwaitingFirstSample else { continue }
+                    activeAudioTrack = track
+                    activeAudioDecoder = decoder
+                    audioSwitchFallback = nil
+                    audioSwitchAwaitingFirstSample = nil
+                    pendingFirstSampleBudget = nil
+                    prepareAudioRendererForTrackSwitch(generation: generation)
+                    failAudioSwitch(request)
+                    continue
+                }
+                guard let frame, let sample = frame.sampleBuffer else {
+                    if packetBudgetExpired {
+                        if let request = audioSwitchAwaitingFirstSample {
+                            if let fallback = await audioFallback(
+                                existing: audioSwitchFallback,
+                                initialTrack: initialFallbackAudioTrack,
+                                generation: generation
+                            ) {
+                                activeAudioTrack = fallback.track
+                                activeAudioDecoder = fallback.decoder
+                                prepareAudioRendererForTrackSwitch(generation: generation)
+                            }
+                            failAudioSwitch(request)
+                        }
+                        audioSwitchAwaitingFirstSample = nil
+                        audioSwitchFallback = nil
+                        pendingFirstSampleBudget = nil
+                    }
+                    continue
+                }
                 try Task.checkCancellation()
                 guard ownsCallbacks(from: generation) else { return }
                 try await queueAudio(sample, generation: generation)
+                if let request = audioSwitchAwaitingFirstSample,
+                   isCurrentAudioSwitchRequest(request) {
+                    commitAppliedAudioSwitch(request)
+                    audioSwitchAwaitingFirstSample = nil
+                    audioSwitchFallback = nil
+                    pendingFirstSampleBudget = nil
+                }
             } else if packet.trackID == subtitleTrack?.trackId {
                 recordSubtitlePacket(packet, generation: generation)
             }
         }
+        if let request = audioSwitchAwaitingFirstSample,
+           pendingFirstSampleBudget?.expiresAtEndOfStream(hasPendingRequest: true) == true {
+            failAudioSwitch(request)
+        }
         guard ownsCallbacks(from: generation) else { return }
         updateMetrics { if $0.state != "failed" { $0.state = "ended" } }
         publishDiagnostics(generation: generation)
+    }
+
+    private func audioFallback(
+        existing: (track: NativeMediaCore.MediaTrack?, decoder: (any AudioDecoder)?)?,
+        initialTrack: NativeMediaCore.MediaTrack?,
+        generation: Int
+    ) async -> (track: NativeMediaCore.MediaTrack?, decoder: (any AudioDecoder)?)? {
+        if let existing, existing.track != nil, existing.decoder != nil { return existing }
+        guard let initialTrack,
+              let decoder = await makeAudioDecoder(initialTrack, generation: generation) else { return nil }
+        return (initialTrack, decoder)
     }
 
     private func takePendingForwardSeekRequest() -> NativePlayerSeekRequest? {
@@ -901,6 +1356,51 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         let request = pendingForwardSeekRequest
         pendingForwardSeekRequest = nil
         return request
+    }
+
+    private func takePendingAudioSwitchRequest() -> NativeMatroskaAudioSwitchRequest? {
+        playbackStateLock.withLock {
+            audioSwitchState.takePending()
+        }
+    }
+
+    private func isCurrentAudioSwitchRequest(_ request: NativeMatroskaAudioSwitchRequest) -> Bool {
+        playbackStateLock.withLock {
+            audioSwitchState.isCurrent(request, selectedTrackID: currentSelectedAudioTrackID)
+        }
+    }
+
+    private func commitAppliedAudioSwitch(_ request: NativeMatroskaAudioSwitchRequest) {
+        guard playbackStateLock.withLock({
+            audioSwitchState.commitFirstSample(request, selectedTrackID: currentSelectedAudioTrackID)
+        }) else { return }
+        let elapsed = max(0, ProcessInfo.processInfo.systemUptime - request.requestedAtUptime)
+        AppLog.playback.info(
+            "nativeplayer.audio.selection_changed — status=applied elapsedMs=\(elapsed * 1_000, format: .fixed(precision: 1))"
+        )
+        onAudioSelectionApplied?(request.selectedAudioTrackID)
+    }
+
+    private func failAudioSwitch(_ request: NativeMatroskaAudioSwitchRequest) {
+        guard isCurrentAudioSwitchRequest(request) else { return }
+        AppLog.playback.error("nativeplayer.audio.selection_changed — status=failed")
+        onAudioSelectionFailed?(request.selectedAudioTrackID)
+    }
+
+    private func prepareAudioRendererForTrackSwitch(generation: Int) {
+        precondition(Thread.isMainThread, "Matroska audio switching is coordinated on the main actor")
+        audioRenderer.stopRequestingMediaData()
+        audioQueue.sync {}
+        audioSamples.removeAll()
+        audioRenderer.flush()
+        audioOnlyFlushCount += 1
+        audioTimingNormalizer.reset()
+        audioStartupWatchdog.reset()
+        audioStarvationGate.reset()
+        audioRenderer.requestMediaDataWhenReady(on: audioQueue) { [weak self] in
+            guard let self else { return }
+            self.drainAudioQueueNow(generation: generation)
+        }
     }
 
     private func queueVideo(_ sample: CMSampleBuffer, generation: Int) async throws {
@@ -1016,6 +1516,15 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             applyPreferredDisplayCriteriaIfNeeded(from: sample)
             displayLayer.enqueue(sample)
             recordVideoSample(sample, generation: generation)
+            let shouldEmitFirstFrame = firstVideoFrameSignalLock.withLock {
+                firstVideoFrameSignal.shouldEmit(event: .videoEnqueued, generation: generation)
+            }
+            if shouldEmitFirstFrame {
+                Task { @MainActor [weak self] in
+                    guard let self, self.ownsCallbacks(from: generation) else { return }
+                    self.onFirstVideoFrame?()
+                }
+            }
         }
         guard ownsCallbacks(from: generation) else { return }
         refreshQueueMetrics()
@@ -1030,6 +1539,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             guard ownsCallbacks(from: generation) else { return }
             hadAudio = true
             audioRenderer.enqueue(sample)
+            _ = firstVideoFrameSignalLock.withLock {
+                firstVideoFrameSignal.shouldEmit(event: .audioEnqueued, generation: generation)
+            }
             recordAudioSample(sample, generation: generation)
             if handleAudioRendererFailureIfNeeded(generation: generation) { return }
         }
@@ -1385,6 +1897,9 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         snapshot.videoAheadSeconds = bufferDecision.videoAheadSeconds
         snapshot.audioAheadSeconds = bufferDecision.audioAheadSeconds
         renderActiveSubtitles()
+        _ = firstVideoFrameSignalLock.withLock {
+            firstVideoFrameSignal.shouldEmit(event: .playbackTime, generation: generation)
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self, self.ownsCallbacks(from: generation) else { return }
             self.recordCallbackDelivery()
@@ -1414,6 +1929,18 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             return true
         default:
             return false
+        }
+    }
+
+    static func fallbackAudioTrackAfterPendingDecoderFailure(
+        in stream: DemuxerStreamInfo,
+        committedAudioTrackID: String?,
+        pendingAudioTrackID: String?
+    ) -> NativeMediaCore.MediaTrack? {
+        guard let committedAudioTrackID,
+              committedAudioTrackID != pendingAudioTrackID else { return nil }
+        return stream.tracks.first {
+            $0.kind == .audio && "\($0.trackId)" == committedAudioTrackID
         }
     }
 

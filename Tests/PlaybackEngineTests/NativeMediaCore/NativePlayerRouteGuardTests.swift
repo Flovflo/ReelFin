@@ -15,14 +15,8 @@ final class NativePlayerRouteGuardTests: XCTestCase {
         let master = try XCTUnwrap(URL(string: "https://jellyfin.example/videos/item/master.m3u8"))
         let main = try XCTUnwrap(URL(string: "https://jellyfin.example/videos/item/main.m3u8"))
 
-        XCTAssertEqual(
-            NativePlayerRouteGuard.validateOriginalPlaybackURL(master),
-            [.hlsPlaylistURL("/videos/item/master.m3u8")]
-        )
-        XCTAssertEqual(
-            NativePlayerRouteGuard.validateOriginalPlaybackURL(main),
-            [.hlsPlaylistURL("/videos/item/main.m3u8")]
-        )
+        assertSingleSanitizedPlaylistViolation(NativePlayerRouteGuard.validateOriginalPlaybackURL(master), host: "jellyfin.example")
+        assertSingleSanitizedPlaylistViolation(NativePlayerRouteGuard.validateOriginalPlaybackURL(main), host: "jellyfin.example")
     }
 
     func testBlocksLoopbackLocalHLSInStrictNativeMode() throws {
@@ -30,7 +24,7 @@ final class NativePlayerRouteGuardTests: XCTestCase {
 
         let violations = NativePlayerRouteGuard.validateOriginalPlaybackURL(url)
 
-        XCTAssertEqual(violations, [.hlsPlaylistURL("/master.m3u8")])
+        assertSingleSanitizedPlaylistViolation(violations, host: "127.0.0.1:49152")
     }
 
     func testBlocksAllKnownJellyfinTranscodeQueryItems() throws {
@@ -38,13 +32,13 @@ final class NativePlayerRouteGuardTests: XCTestCase {
 
         let violations = NativePlayerRouteGuard.validateOriginalPlaybackURL(url)
 
-        XCTAssertTrue(violations.contains(.hlsPlaylistURL("/videos/item/main.m3u8")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "VideoCodec", value: "h264")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "AudioCodec", value: "aac")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "TranscodeReasons", value: "ContainerNotSupported")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "AllowVideoStreamCopy", value: "false")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "AllowAudioStreamCopy", value: "false")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "RequireAvc", value: "true")))
+        XCTAssertEqual(violations.count, 7)
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "videocodec", value: nil)))
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "audiocodec", value: nil)))
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "transcodereasons", value: nil)))
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "allowvideostreamcopy", value: nil)))
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "allowaudiostreamcopy", value: nil)))
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "requireavc", value: nil)))
     }
 
     func testBlocksCodecListsThatContainForcedH264OrAAC() throws {
@@ -52,8 +46,8 @@ final class NativePlayerRouteGuardTests: XCTestCase {
 
         let violations = NativePlayerRouteGuard.validateOriginalPlaybackURL(url)
 
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "VideoCodec", value: "hevc,h264")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "AudioCodec", value: "eac3,aac")))
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "videocodec", value: nil)))
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "audiocodec", value: nil)))
     }
 
     func testBlocksLegacyPlaybackSurfacesForNativeRoute() throws {
@@ -71,8 +65,11 @@ final class NativePlayerRouteGuardTests: XCTestCase {
         XCTAssertTrue(violations.contains(.avPlayerItemCreation))
         XCTAssertTrue(violations.contains(.avPlayerViewControllerSurface))
         XCTAssertTrue(violations.contains(.forceH264TranscodeProfile))
-        XCTAssertTrue(violations.contains(.hlsPlaylistURL("/videos/item/master.m3u8")))
-        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "VideoCodec", value: "h264")))
+        XCTAssertTrue(violations.contains { violation in
+            guard case .hlsPlaylistURL(let projection) = violation else { return false }
+            return projection.hasPrefix("https://jellyfin.example path=")
+        })
+        XCTAssertTrue(violations.contains(.forbiddenTranscodeQueryItem(name: "videocodec", value: nil)))
     }
 
     func testServerTranscodeBlockedReasonIsExplicit() {
@@ -80,6 +77,19 @@ final class NativePlayerRouteGuardTests: XCTestCase {
             NativePlayerRouteViolation.serverTranscodeBlockedByConfig.localizedDescription,
             "Native engine mode blocks Jellyfin server transcode because allowServerTranscodeFallback=false."
         )
+    }
+
+    private func assertSingleSanitizedPlaylistViolation(
+        _ violations: [NativePlayerRouteViolation],
+        host: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard case .hlsPlaylistURL(let projection) = violations.first, violations.count == 1 else {
+            return XCTFail("Expected one HLS playlist violation, got \(violations)", file: file, line: line)
+        }
+        XCTAssertTrue(projection.hasPrefix("\(host.hasPrefix("127.") ? "http" : "https")://\(host) path="), projection, file: file, line: line)
+        XCTAssertFalse(projection.contains("m3u8"), projection, file: file, line: line)
     }
 
     func testRuntimeOverrideForcesOriginalOnlyNativeMode() {

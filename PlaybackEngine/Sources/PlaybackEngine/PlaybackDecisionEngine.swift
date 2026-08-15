@@ -520,7 +520,7 @@ public struct AssetURLValidator: Sendable {
         if scheme == "http" || scheme == "https" || scheme == "file" || scheme == NativeBridgeResourceLoader.customScheme {
             return nil
         }
-        return .unsupportedAssetURL(url.absoluteString)
+        return .unsupportedAssetURL(url.reelfinLogString)
     }
 }
 

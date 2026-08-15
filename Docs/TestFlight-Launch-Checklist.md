@@ -4,7 +4,7 @@
 
 - [ ] Run `scripts/preflight_testflight_release.sh`
 - [ ] Run `xcodegen generate` after any `project.yml` change
-- [ ] Confirm the beta 1 binary is version `0.1` build `11` or newer
+- [ ] Confirm both platform binaries are exactly version `1.0` build `17`
 - [ ] Build the `ReelFin` scheme for iOS simulator
 - [ ] Run the unit and UI tests you intend to rely on for the beta
 - [ ] Refresh `README.md` media if the storefront UI changed materially
@@ -26,23 +26,25 @@
 - [ ] Create an External TestFlight group for public beta testers
 - [ ] Enable a public invitation link for the external group after TestFlight App Review approval
 - [ ] Beta App Description:
-  `ReelFin is a native beta client for self-hosted Jellyfin servers on iPhone and Apple TV.`
+  `ReelFin is a native beta client for self-hosted Jellyfin servers on iPhone, iPad, and Apple TV.`
 - [ ] Feedback Email:
   `florian.taffin.pro@gmail.com`
 - [ ] What to Test:
-  `Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone and Apple TV.`
+  `Sign in to a Jellyfin server, browse Home and Search, open detail pages, and validate playback start, resume state, subtitle selection, and playback stability on iPhone, iPad, and Apple TV.`
 - [ ] Upload the current screenshots if you want them visible in TestFlight
 
 ## Media sanity check
 
-- [ ] Confirm any manually uploaded TestFlight/App Store screenshots match the current iPhone and Apple TV UI
+- [ ] Confirm any manually uploaded TestFlight/App Store screenshots match the current iPhone, iPad, and Apple TV UI
+- [ ] Confirm the 13-inch iPad set is portrait `2064x2752`, uses the native split layout, and contains fictional data only
 - [ ] Confirm `Docs/Media/reelfin-transition.gif` still reflects the app flow shown in `README.md`
 - [ ] Confirm screenshot and README media use fictional or licensed library data only
 
 ## Beta App Review
 
-- [ ] Copy the structure from [Docs/AppReview-Notes.md](/Users/florian/Documents/Projet/ReelFin/Docs/AppReview-Notes.md) into App Store Connect and replace every field with live review data
-- [ ] Provide the built-in review demo server URL, username, and password from the review notes
+- [ ] Keep `Docs/AppReview-Notes.md` unpopulated and provide the server URL, username, and password only through ephemeral `REELFIN_REVIEW_SERVER_URL`, `REELFIN_REVIEW_USERNAME`, and `REELFIN_REVIEW_PASSWORD` environment inputs
+- [ ] Run `scripts/preflight_testflight_release.sh --review-credentials-readiness` without command tracing before updating App Store Connect
+- [ ] Transfer the three ephemeral values directly into App Store Connect without printing them or retaining a populated local file
 - [ ] Make sure the review account can access at least one movie and one series in the built-in demo library
 
 ## Compliance

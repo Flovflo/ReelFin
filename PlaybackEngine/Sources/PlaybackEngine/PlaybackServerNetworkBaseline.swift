@@ -83,14 +83,14 @@ public enum PlaybackServerNetworkBaseline {
                 networkScope: defaultNetworkScope
             )
             AppLog.playback.info(
-                "playback.server_baseline.done — item=\(selection.source.itemID.prefix(8), privacy: .public) bytes=\(result.byteCount, privacy: .public) elapsed=\(result.elapsedSeconds, format: .fixed(precision: 3)) bitrate=\(Int(result.observedBitrate), privacy: .public)"
+                "playback.server_baseline.done — item=\(AppLogFormat.correlationIdentifier(selection.source.itemID, domain: .media), privacy: .public) bytes=\(result.byteCount, privacy: .public) elapsed=\(result.elapsedSeconds, format: .fixed(precision: 3)) bitrate=\(Int(result.observedBitrate), privacy: .public)"
             )
             return result
         } catch where isCancellation(error) {
             return nil
         } catch {
             AppLog.playback.debug(
-                "playback.server_baseline.skipped — item=\(selection.source.itemID.prefix(8), privacy: .public) errorType=\(String(describing: type(of: error)), privacy: .public)"
+                "playback.server_baseline.skipped — item=\(AppLogFormat.correlationIdentifier(selection.source.itemID, domain: .media), privacy: .public) errorType=\(String(describing: type(of: error)), privacy: .public)"
             )
             return nil
         }

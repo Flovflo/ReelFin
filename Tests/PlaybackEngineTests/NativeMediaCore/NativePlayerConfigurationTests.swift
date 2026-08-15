@@ -622,7 +622,7 @@ final class NativePlayerConfigurationTests: XCTestCase {
         controller.stopForDismantle()
     }
 
-    func testMatroskaTrackSelectionRestartsReaderAtCurrentSurface() {
+    func testMatroskaAudioTrackSelectionKeepsReaderAndVideoGeneration() {
         let controller = NativeMatroskaSampleBufferPlayerController()
         _ = controller.view
         let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
@@ -641,6 +641,8 @@ final class NativePlayerConfigurationTests: XCTestCase {
             onPlaybackTime: { _ in }
         )
         let generation = controller.playbackGeneration
+        let clock = controller.playbackClockSeconds
+        let videoSampleCount = controller.videoSampleCount
 
         controller.configure(
             url: url,
@@ -656,7 +658,269 @@ final class NativePlayerConfigurationTests: XCTestCase {
             onPlaybackTime: { _ in }
         )
 
-        XCTAssertEqual(controller.playbackGeneration, generation + 1)
+        controller.configure(
+            url: url,
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 0,
+            seekRequest: nil,
+            selectedAudioTrackID: "2",
+            selectedSubtitleTrackID: nil,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in }
+        )
+
+        XCTAssertEqual(
+            controller.playbackGeneration,
+            generation,
+            "audio selection must not restart the reader or flush/recreate the visible video pipeline"
+        )
+        XCTAssertEqual(controller.audioSwitchRequestCount, 1, "the same pending audio choice must be deduplicated")
+        XCTAssertFalse(controller.teardownEvents.contains(.renderersFlushed))
+        XCTAssertEqual(controller.videoSampleCount, videoSampleCount)
+        XCTAssertGreaterThanOrEqual(controller.playbackClockSeconds, clock)
+        controller.stopForDismantle()
+    }
+
+    func testMatroskaAudioSwitchLatestWinsAndCommitsOnlyOnFirstSample() throws {
+        var state = NativeMatroskaAudioSwitchState()
+        state.setInitialAppliedTrack("1")
+
+        XCTAssertTrue(state.request(trackID: "2", uptime: 10))
+        XCTAssertTrue(state.request(trackID: "3", uptime: 10.1))
+        let latest = try XCTUnwrap(state.takePending())
+
+        XCTAssertEqual(latest.selectedAudioTrackID, "3")
+        XCTAssertEqual(state.appliedTrackID, "1", "selection remains committed to audible track before first sample")
+        XCTAssertTrue(state.commitFirstSample(latest, selectedTrackID: "3"))
+        XCTAssertEqual(state.appliedTrackID, "3")
+    }
+
+    func testMatroskaRestartAtomicallyTransfersAlreadyPendingAudioRequest() throws {
+        var state = NativeMatroskaAudioSwitchState()
+        state.setInitialAppliedTrack("1")
+        XCTAssertTrue(state.request(trackID: "2", uptime: 10))
+
+        let transferred = try XCTUnwrap(state.takeOrCreatePending(trackID: "2", uptime: 11))
+
+        XCTAssertEqual(transferred.id, 1)
+        XCTAssertTrue(state.commitFirstSample(transferred, selectedTrackID: "2"))
+        XCTAssertEqual(state.appliedTrackID, "2")
+    }
+
+    func testMatroskaAudioSwitchDeduplicatesSamePendingTrack() {
+        var state = NativeMatroskaAudioSwitchState()
+        state.setInitialAppliedTrack("1")
+
+        XCTAssertTrue(state.request(trackID: "2", uptime: 10))
+        XCTAssertFalse(state.request(trackID: "2", uptime: 10.1))
+    }
+
+    func testMatroskaFailedAudioDecoderKeepsPreviouslyAppliedTrack() throws {
+        var state = NativeMatroskaAudioSwitchState()
+        state.setInitialAppliedTrack("1")
+        XCTAssertTrue(state.request(trackID: "unsupported", uptime: 10))
+
+        _ = try XCTUnwrap(state.takePending())
+
+        XCTAssertEqual(state.appliedTrackID, "1")
+        XCTAssertNil(state.pendingRequest)
+    }
+
+    func testMatroskaRestartFallsBackToCommittedAudioTrackWhenPendingDecoderFails() throws {
+        let committed = NativeMediaCore.MediaTrack(
+            id: "1", trackId: 1, kind: .audio, codec: "aac", codecID: "A_AAC"
+        )
+        let pending = NativeMediaCore.MediaTrack(
+            id: "2", trackId: 2, kind: .audio, codec: "unsupported", codecID: "A_UNSUPPORTED"
+        )
+        let stream = DemuxerStreamInfo(container: .matroska, tracks: [committed, pending])
+
+        let fallback = NativeMatroskaSampleBufferPlayerController.fallbackAudioTrackAfterPendingDecoderFailure(
+            in: stream,
+            committedAudioTrackID: "1",
+            pendingAudioTrackID: "2"
+        )
+
+        XCTAssertEqual(try XCTUnwrap(fallback).trackId, 1)
+    }
+
+    func testMatroskaPendingDecoderThrowAfterConfigureRestoresCommittedDecoder() async throws {
+        let pendingTrack = NativeMediaCore.MediaTrack(
+            id: "42", trackId: 42, kind: .audio, codec: "aac", codecID: "A_AAC"
+        )
+        let committedTrack = NativeMediaCore.MediaTrack(
+            id: "7", trackId: 7, kind: .audio, codec: "aac", codecID: "A_AAC"
+        )
+        let pendingDecoder = ConfiguredThenThrowingAudioDecoder()
+        let committedDecoder = SilentAudioDecoder()
+        try await pendingDecoder.configure(track: pendingTrack)
+        try await committedDecoder.configure(track: committedTrack)
+        let request = NativeMatroskaAudioSwitchRequest(id: 1, selectedAudioTrackID: "42", requestedAtUptime: 10)
+        let packet = MediaPacket(
+            trackID: 42,
+            timestamp: PacketTimestamp(pts: .zero),
+            isKeyframe: true,
+            data: Data([0x00])
+        )
+
+        let outcome = try await NativeMatroskaPendingAudioDecodeRecovery.decode(
+            packet: packet,
+            decoder: pendingDecoder,
+            pendingRequest: request,
+            fallback: { (committedTrack, committedDecoder) }
+        )
+
+        guard case let .restored(track, _) = outcome else {
+            return XCTFail("decode failure after configure must restore committed audio")
+        }
+        XCTAssertEqual(track.trackId, 7)
+    }
+
+    func testMatroskaPendingAudioFirstSampleBudgetExpiresOnNilSamplesAndEOF() {
+        var budget = NativeMatroskaPendingAudioFirstSampleBudget(maxSelectedPackets: 2, maxTotalPackets: 4)
+
+        XCTAssertFalse(budget.observePacket(isSelectedAudio: true, producedSample: false))
+        XCTAssertTrue(budget.observePacket(isSelectedAudio: true, producedSample: false))
+        XCTAssertTrue(budget.expiresAtEndOfStream(hasPendingRequest: true))
+    }
+
+    func testMatroskaPendingAudioFirstSampleBudgetCountsPacketsFromOtherTracks() {
+        var budget = NativeMatroskaPendingAudioFirstSampleBudget(maxSelectedPackets: 99, maxTotalPackets: 2)
+
+        XCTAssertFalse(budget.observePacket(isSelectedAudio: false, producedSample: false))
+        XCTAssertTrue(budget.observePacket(isSelectedAudio: false, producedSample: false))
+    }
+
+    func testMatroskaSurfacePublishesVerifiedEBMLTrackNumbersFromSingleOpen() async {
+        let factory = FinishedByteSourceFactory(data: RecordingByteSourceFactory.multiTrackMatroskaBootstrapData)
+        let controller = NativeMatroskaSampleBufferPlayerController { factory.make(url: $0, headers: $1) }
+        _ = controller.view
+        var discoveredAudio: [Shared.MediaTrack] = []
+        var discoveredSubtitles: [Shared.MediaTrack] = []
+        var selectedAudioID: String?
+        var selectedSubtitleID: String?
+        let audioDisplayHints = [
+            Shared.MediaTrack(
+                id: "track-8",
+                title: "Français Jellyfin",
+                language: "fra",
+                codec: "aac",
+                isDefault: false,
+                isForced: false,
+                index: 8
+            ),
+            Shared.MediaTrack(
+                id: "track-15",
+                title: "English Jellyfin",
+                language: "eng",
+                codec: "eac3",
+                isDefault: true,
+                isForced: false,
+                index: 15
+            ),
+        ]
+        let subtitleDisplayHints = [
+            Shared.MediaTrack(
+                id: "track-22",
+                title: "French Signs",
+                language: "fra",
+                codec: "subrip",
+                isDefault: true,
+                isForced: true,
+                index: 22
+            ),
+        ]
+
+        controller.configure(
+            url: URL(fileURLWithPath: "/tmp/native-multitrack.mkv"),
+            headers: [:],
+            container: .matroska,
+            startTimeSeconds: 0,
+            seekRequest: nil,
+            selectedAudioTrackID: nil,
+            selectedSubtitleTrackID: nil,
+            audioTrackDisplayHints: audioDisplayHints,
+            subtitleTrackDisplayHints: subtitleDisplayHints,
+            baseDiagnostics: [],
+            isPaused: false,
+            onDiagnostics: { _ in },
+            onPlaybackTime: { _ in },
+            onTracksDiscovered: { audio, subtitles, audioID, subtitleID in
+                discoveredAudio = audio
+                discoveredSubtitles = subtitles
+                selectedAudioID = audioID
+                selectedSubtitleID = subtitleID
+            }
+        )
+
+        let didDiscoverTracks = await waitUntil { discoveredAudio.count == 2 && discoveredSubtitles.count == 1 }
+        XCTAssertTrue(didDiscoverTracks)
+        XCTAssertEqual(discoveredAudio.map(\.id), ["7", "42"])
+        XCTAssertEqual(discoveredSubtitles.map(\.id), ["99"])
+        XCTAssertEqual(discoveredAudio.map(\.title), ["Français Jellyfin", "English Jellyfin"])
+        XCTAssertEqual(discoveredAudio.map(\.language), ["fra", "eng"])
+        XCTAssertEqual(discoveredAudio.map(\.codec), ["aac", "eac3"])
+        XCTAssertEqual(discoveredSubtitles.first?.title, "French Signs")
+        XCTAssertEqual(discoveredSubtitles.first?.language, "fra")
+        XCTAssertEqual(discoveredSubtitles.first?.codec, "subrip")
+        XCTAssertEqual(discoveredSubtitles.first?.isForced, true)
+        XCTAssertEqual(selectedAudioID, "42")
+        XCTAssertEqual(selectedSubtitleID, "99")
+        controller.stopForDismantle()
+    }
+
+    func testNativeFirstVideoFrameSignalIgnoresAudioTimeAndStaleGeneration() {
+        var signal = NativeFirstVideoFrameSignal()
+        signal.begin(generation: 7)
+
+        XCTAssertFalse(signal.shouldEmit(event: .playbackTime, generation: 7))
+        XCTAssertFalse(signal.shouldEmit(event: .audioEnqueued, generation: 7))
+        XCTAssertFalse(signal.shouldEmit(event: .videoEnqueued, generation: 6))
+        XCTAssertTrue(signal.shouldEmit(event: .videoEnqueued, generation: 7))
+        XCTAssertFalse(signal.shouldEmit(event: .videoEnqueued, generation: 7))
+    }
+
+    func testMatroskaAudioAndSubtitleChangeCarriesPendingAudioIntoRestart() {
+        let controller = NativeMatroskaSampleBufferPlayerController()
+        _ = controller.view
+        let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
+        controller.configure(
+            url: url, headers: [:], container: .matroska, startTimeSeconds: 0,
+            seekRequest: nil, selectedAudioTrackID: "1", selectedSubtitleTrackID: "10",
+            baseDiagnostics: [], isPaused: false, onDiagnostics: { _ in }, onPlaybackTime: { _ in }
+        )
+
+        controller.configure(
+            url: url, headers: [:], container: .matroska, startTimeSeconds: 0,
+            seekRequest: nil, selectedAudioTrackID: "1", pendingAudioTrackID: "2", selectedSubtitleTrackID: "11",
+            baseDiagnostics: [], isPaused: false, onDiagnostics: { _ in }, onPlaybackTime: { _ in }
+        )
+
+        XCTAssertEqual(controller.pendingRestartPendingAudioTrackID, "2")
+        controller.stopForDismantle()
+    }
+
+    func testMatroskaAudioAndSeekChangeStillQueuesAudioSwitch() {
+        let controller = NativeMatroskaSampleBufferPlayerController()
+        _ = controller.view
+        let url = URL(fileURLWithPath: "/tmp/native-\(UUID().uuidString).mkv")
+        controller.configure(
+            url: url, headers: [:], container: .matroska, startTimeSeconds: 0,
+            seekRequest: nil, selectedAudioTrackID: "1", selectedSubtitleTrackID: nil,
+            baseDiagnostics: [], isPaused: false, onDiagnostics: { _ in }, onPlaybackTime: { _ in }
+        )
+
+        controller.configure(
+            url: url, headers: [:], container: .matroska, startTimeSeconds: 0,
+            seekRequest: .init(id: 1, targetSeconds: 42), selectedAudioTrackID: "1", pendingAudioTrackID: "2", selectedSubtitleTrackID: nil,
+            baseDiagnostics: [], isPaused: false, onDiagnostics: { _ in }, onPlaybackTime: { _ in }
+        )
+
+        XCTAssertEqual(controller.audioSwitchRequestCount, 1)
+        XCTAssertEqual(controller.pendingRestartPendingAudioTrackID, "2")
         controller.stopForDismantle()
     }
 
@@ -1038,6 +1302,53 @@ private final class RecordingByteSourceFactory: @unchecked Sendable {
             + Data(tracks)
     }()
 
+    fileprivate static let multiTrackMatroskaBootstrapData: Data = {
+        let avcC: [UInt8] = [
+            0x01, 0x42, 0xE0, 0x1E, 0xFF, 0xE1,
+            0x00, 0x04, 0x67, 0x42, 0xE0, 0x1E,
+            0x01, 0x00, 0x02, 0x68, 0xCE
+        ]
+        let videoTrack = element([0xAE], payload:
+            element([0xD7], payload: [0x01]) +
+            element([0x83], payload: [0x01]) +
+            element([0x86], payload: Array("V_MPEG4/ISO/AVC".utf8)) +
+            element([0x63, 0xA2], payload: avcC)
+        )
+        let firstAudio = element([0xAE], payload:
+            element([0xD7], payload: [0x07]) +
+            element([0x83], payload: [0x02]) +
+            element([0x88], payload: [0x00]) +
+            element([0x86], payload: Array("A_AAC".utf8)) +
+            element([0xE1], payload:
+                element([0xB5], payload: doublePayload(48_000)) +
+                element([0x9F], payload: [0x02])
+            )
+        )
+        let defaultAudio = element([0xAE], payload:
+            element([0xD7], payload: [0x2A]) +
+            element([0x83], payload: [0x02]) +
+            element([0x88], payload: [0x01]) +
+            element([0x86], payload: Array("A_AAC".utf8)) +
+            element([0xE1], payload:
+                element([0xB5], payload: doublePayload(48_000)) +
+                element([0x9F], payload: [0x06])
+            )
+        )
+        let defaultSubtitle = element([0xAE], payload:
+            element([0xD7], payload: [0x63]) +
+            element([0x83], payload: [0x11]) +
+            element([0x88], payload: [0x01]) +
+            element([0x86], payload: Array("S_TEXT/UTF8".utf8))
+        )
+        let tracks = element(
+            [0x16, 0x54, 0xAE, 0x6B],
+            payload: videoTrack + firstAudio + defaultAudio + defaultSubtitle
+        )
+        return Data(element([0x1A, 0x45, 0xDF, 0xA3], payload: []))
+            + Data([0x18, 0x53, 0x80, 0x67, 0xFF])
+            + Data(tracks)
+    }()
+
     private static func element(_ id: [UInt8], payload: [UInt8]) -> [UInt8] {
         id + vintSize(payload.count) + payload
     }
@@ -1047,6 +1358,10 @@ private final class RecordingByteSourceFactory: @unchecked Sendable {
         return size < 127
             ? [UInt8(0x80 | size)]
             : [UInt8(0x40 | ((size >> 8) & 0x3F)), UInt8(size & 0xFF)]
+    }
+
+    private static func doublePayload(_ value: Double) -> [UInt8] {
+        withUnsafeBytes(of: value.bitPattern.bigEndian, Array.init)
     }
 }
 
@@ -1232,11 +1547,17 @@ private final class MatroskaLifecycleRecorder: @unchecked Sendable {
 }
 
 private final class FinishedByteSourceFactory: @unchecked Sendable {
+    private let data: Data
+
+    init(data: Data = RecordingByteSourceFactory.matroskaBootstrapData) {
+        self.data = data
+    }
+
     func make(url: URL, headers: [String: String]) -> any MediaByteSource {
         _ = headers
         return FinishedByteSource(
             url: url,
-            data: RecordingByteSourceFactory.matroskaBootstrapData
+            data: data
         )
     }
 }
@@ -1285,6 +1606,37 @@ private actor FinishedByteSource: MediaByteSource {
     func size() async throws -> Int64? { Int64(data.count) }
     func cancel() async { cancelCount += 1 }
     func metrics() async -> MediaAccessMetrics { MediaAccessMetrics() }
+}
+
+private enum AudioDecoderFixtureError: Error {
+    case decodeFailed
+}
+
+private actor ConfiguredThenThrowingAudioDecoder: AudioDecoder {
+    private var configured = false
+
+    func configure(track: NativeMediaCore.MediaTrack) async throws {
+        _ = track
+        configured = true
+    }
+
+    func decode(packet: MediaPacket) async throws -> DecodedAudioFrame? {
+        _ = packet
+        guard configured else { throw AudioDecoderFixtureError.decodeFailed }
+        throw AudioDecoderFixtureError.decodeFailed
+    }
+
+    func diagnostics() async -> AudioDecodeDiagnostics {
+        AudioDecodeDiagnostics(codec: "aac", decoderBackend: "throwing-fixture")
+    }
+}
+
+private actor SilentAudioDecoder: AudioDecoder {
+    func configure(track: NativeMediaCore.MediaTrack) async throws { _ = track }
+    func decode(packet: MediaPacket) async throws -> DecodedAudioFrame? { nil }
+    func diagnostics() async -> AudioDecodeDiagnostics {
+        AudioDecodeDiagnostics(codec: "aac", decoderBackend: "silent-fixture")
+    }
 }
 
 private final class ProbePlaybackAPIClient: JellyfinAPIClientProtocol, @unchecked Sendable {

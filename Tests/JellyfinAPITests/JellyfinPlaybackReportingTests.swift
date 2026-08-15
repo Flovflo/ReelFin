@@ -128,6 +128,81 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         XCTAssertNil(tokenStore.storedToken)
     }
 
+    func testUnauthorizedResponseEmitsSessionInvalidation() async throws {
+        URLProtocolStub.requestHandler = { request in
+            (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 401,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!,
+                Data(#"{"error":"expired token"}"#.utf8)
+            )
+        }
+        let client = makeUnauthorizedClient()
+        let received = expectation(description: "Current session invalidation")
+        let events = client.sessionInvalidations
+        let consumer = Task {
+            for await event in events {
+                XCTAssertEqual(event, .unauthorized)
+                received.fulfill()
+                return
+            }
+        }
+        defer { consumer.cancel() }
+
+        do {
+            _ = try await client.fetchPlaybackSources(itemID: "movie-1")
+            XCTFail("Expected the expired session to be rejected")
+        } catch AppError.unauthenticated {}
+
+        await fulfillment(of: [received], timeout: 1)
+    }
+
+    func testSessionInvalidationCanResubscribeAfterConsumerCancellation() async throws {
+        URLProtocolStub.requestHandler = { request in
+            (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 401,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!,
+                Data(#"{"error":"expired token"}"#.utf8)
+            )
+        }
+        let client = makeUnauthorizedClient()
+        let firstStarted = expectation(description: "First invalidation consumer started")
+        let firstEvents = client.sessionInvalidations
+        let firstConsumer = Task {
+            firstStarted.fulfill()
+            for await _ in firstEvents {}
+        }
+
+        await fulfillment(of: [firstStarted], timeout: 1)
+        firstConsumer.cancel()
+        await firstConsumer.value
+
+        let received = expectation(description: "Replacement invalidation consumer")
+        let secondEvents = client.sessionInvalidations
+        let secondConsumer = Task {
+            for await event in secondEvents {
+                XCTAssertEqual(event, .unauthorized)
+                received.fulfill()
+                return
+            }
+        }
+        defer { secondConsumer.cancel() }
+
+        do {
+            _ = try await client.fetchPlaybackSources(itemID: "movie-1")
+            XCTFail("Expected the expired session to be rejected")
+        } catch AppError.unauthenticated {}
+
+        await fulfillment(of: [received], timeout: 1)
+    }
+
     func testStaleUnauthorizedResponseDoesNotInvalidateNewSession() async throws {
         let gate = StaleUnauthorizedGate()
         let configuration = URLSessionConfiguration.ephemeral
@@ -164,6 +239,16 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         )
         let tokenStore = PlaybackReportingTokenStore(storedToken: "token-1")
         let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
+        let unexpected = expectation(description: "No session invalidation for stale unauthorized response")
+        unexpected.isInverted = true
+        let events = client.sessionInvalidations
+        let consumer = Task {
+            for await _ in events {
+                unexpected.fulfill()
+                return
+            }
+        }
+        defer { consumer.cancel() }
 
         let staleRequest = Task {
             try await client.fetchPlaybackSources(itemID: "movie-1")
@@ -186,6 +271,7 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         XCTAssertEqual(currentSession, replacement)
         XCTAssertEqual(settings.lastSession, replacement)
         XCTAssertEqual(tokenStore.storedToken, "token-2")
+        await fulfillment(of: [unexpected], timeout: 0.15)
     }
 
     func testPublicUnauthorizedResponseDoesNotInvalidateExistingSession() async throws {
@@ -211,6 +297,16 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         )
         let tokenStore = PlaybackReportingTokenStore(storedToken: original.token)
         let client = JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
+        let unexpected = expectation(description: "No session invalidation for public unauthorized response")
+        unexpected.isInverted = true
+        let events = client.sessionInvalidations
+        let consumer = Task {
+            for await _ in events {
+                unexpected.fulfill()
+                return
+            }
+        }
+        defer { consumer.cancel() }
 
         do {
             _ = try await client.authenticate(
@@ -225,7 +321,20 @@ final class JellyfinPlaybackReportingTests: XCTestCase {
         XCTAssertEqual(currentSession, original)
         XCTAssertEqual(settings.lastSession, original)
         XCTAssertEqual(tokenStore.storedToken, original.token)
+        await fulfillment(of: [unexpected], timeout: 0.15)
     }
+}
+
+private func makeUnauthorizedClient() -> JellyfinAPIClient {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [URLProtocolStub.self]
+    let session = URLSession(configuration: configuration)
+    let settings = PlaybackReportingSettingsStore(
+        serverConfiguration: ServerConfiguration(serverURL: URL(string: "https://example.com")!),
+        lastSession: UserSession(userID: "user-1", username: "Flo", token: "token-1")
+    )
+    let tokenStore = PlaybackReportingTokenStore(storedToken: "token-1")
+    return JellyfinAPIClient(tokenStore: tokenStore, settingsStore: settings, session: session)
 }
 
 private actor StaleUnauthorizedGate {

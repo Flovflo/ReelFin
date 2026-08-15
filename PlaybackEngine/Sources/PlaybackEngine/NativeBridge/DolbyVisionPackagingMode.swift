@@ -13,7 +13,7 @@ public enum DolbyVisionPackagingMode: String, Sendable, CaseIterable {
     /// - hvcC: present
     /// - dvcC: present inside `hvc1` (for DV-aware devices)
     /// - ftyp brands: iso5 iso6 mp41 hvc1 dby1
-    /// - CODECS: `hvc1.2.4.L153.B0,ec-3`
+    /// - CODECS: fully qualified `hvc1.*` derived from `hvcC`, plus audio
     /// - SUPPLEMENTAL-CODECS: `dvh1.PP.LL/db1p`
     /// - VIDEO-RANGE: PQ
     /// - RPU NALs: KEPT
@@ -21,17 +21,16 @@ public enum DolbyVisionPackagingMode: String, Sendable, CaseIterable {
     /// - Ceiling: DV best-effort
     case dvProfile81Compatible
 
-    /// Mode B — Pure HDR10 fallback, no DV signaling at all.
+    /// Mode B — Source-range fallback with no DV signaling.
     ///
-    /// - Sample entry: `hvc1`
+    /// - Sample entry: effective source `hvc1`/`hev1`
     /// - hvcC: present
     /// - dvcC: absent
-    /// - CODECS: `hvc1.2.4.L153.B0,ec-3`
+    /// - CODECS: fully qualified `hvc1.*`/`hev1.*` derived from `hvcC`, plus audio
     /// - SUPPLEMENTAL-CODECS: none
-    /// - VIDEO-RANGE: PQ
+    /// - VIDEO-RANGE: explicit PQ/HLG, or omitted for SDR
     /// - RPU NALs: STRIPPED
-    /// - Floor: HDR10
-    /// - Ceiling: HDR10
+    /// - Floor/Ceiling: source-derived SDR or HDR
     case hdr10OnlyFallback
 
     /// Mode C — Strict primary DV signaling (experimental, less compatible for P8.1).
@@ -97,7 +96,7 @@ public struct VideoSampleEntryStrategy: Sendable, Equatable {
 
 /// Describes exactly what the HLS master playlist must emit.
 public struct HLSMasterSignaling: Sendable, Equatable {
-    /// Primary CODECS string, e.g. `"hvc1.2.4.L153.B0,ec-3"`.
+    /// Primary CODECS string, e.g. a fully qualified source-derived `hvc1.*` plus audio.
     public let codecs: String
 
     /// SUPPLEMENTAL-CODECS string, e.g. `"dvh1.08.06/db1p"`, or nil.

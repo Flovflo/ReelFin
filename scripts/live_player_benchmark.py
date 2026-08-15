@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Benchmark real Jellyfin original streams used by the ReelFin player."""
 
 from __future__ import annotations
