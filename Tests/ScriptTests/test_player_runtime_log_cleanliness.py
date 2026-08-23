@@ -98,6 +98,38 @@ class PlayerRuntimeLogCleanlinessTests(unittest.TestCase):
             )
         )
 
+    def test_ignores_expected_loopback_teardown_from_deterministic_playback_tests(self) -> None:
+        line = (
+            '), NSLocalizedDescription=Could not connect to the server., '
+            'NSErrorFailingURLStringKey=http://127.0.0.1:55924/media/item.mp4'
+        )
+
+        self.assertTrue(
+            runtime_clean.is_ignorable_line(
+                "LOCAL_GATEWAY_LOOPBACK_FAILURE",
+                line,
+                runtime_clean.LogContext(ignores_ios_simulator_hdr_dv_render_noise=False),
+                pathlib.Path("xcodebuild-playback-tests.log"),
+            )
+        )
+
+    def test_ignores_expected_loopback_refusal_match_from_deterministic_playback_tests(self) -> None:
+        text = (
+            "Connection refused] 2026-08-08 xctest[47565:14415988] "
+            "nw_endpoint_flow_failed_with_error [C1 127.0.0.1"
+        )
+        label, pattern = runtime_clean.FORBIDDEN_TEXT_REGEXES[0]
+        match = pattern.search(text)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertTrue(
+            runtime_clean.is_ignorable_text_match(
+                label,
+                match,
+                pathlib.Path("xcodebuild-playback-tests.log"),
+            )
+        )
+
     def test_suffix_live_ui_logs_ignore_simulator_render_noise_after_successful_playback(self) -> None:
         text = """
 playback.proof - session=dv1 item=657b41c0 hdr=PQ dv=true method=DirectPlay

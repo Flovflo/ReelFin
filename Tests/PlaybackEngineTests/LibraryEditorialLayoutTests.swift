@@ -108,6 +108,15 @@ final class LibraryEditorialLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains(".fill(ReelFinTheme.editorialOpaqueFallback)\n                .mask { blurMask }"))
     }
 
+    func testTransparentBlurCachesItsEffectAcrossScrollDrivenUpdates() throws {
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Components/TransparentBlurView.swift"
+        )
+
+        XCTAssertTrue(source.contains("appliedStyle"))
+        XCTAssertTrue(source.contains("context.coordinator.appliedStyle != style"))
+    }
+
     func testAlwaysVisibleStickyHeaderDoesNotRequestScrollTracking() {
         XCTAssertFalse(StickyBlurHeaderVisibility.always.requiresScrollTracking)
         XCTAssertTrue(

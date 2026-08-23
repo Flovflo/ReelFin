@@ -24,6 +24,7 @@ struct PlayerView: View {
                     startTimeSeconds: session.nativePlayerStartTimeSeconds,
                     item: item,
                     diagnostics: session.nativePlayerDiagnosticsOverlayLines,
+                    sourceBitrateBps: session.nativePlayerSourceBitrateBps,
                     errorMessage: session.playbackErrorMessage,
                     transportState: session.transportState,
                     onSelectTrack: handleNativePlaybackControlSelection,

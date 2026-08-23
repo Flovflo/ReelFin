@@ -14,6 +14,7 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
     let selectedAudioTrackID: String?
     let selectedSubtitleTrackID: String?
     let baseDiagnostics: [String]
+    let sourceBitrateBps: Int?
     @Binding var isPaused: Bool
     let onDiagnostics: ([String]) -> Void
     let onPlaybackTime: (Double) -> Void
@@ -29,6 +30,7 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
             selectedAudioTrackID: selectedAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             baseDiagnostics: baseDiagnostics,
+            sourceBitrateBps: sourceBitrateBps,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
             onPlaybackTime: onPlaybackTime
@@ -46,6 +48,7 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
             selectedAudioTrackID: selectedAudioTrackID,
             selectedSubtitleTrackID: selectedSubtitleTrackID,
             baseDiagnostics: baseDiagnostics,
+            sourceBitrateBps: sourceBitrateBps,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
             onPlaybackTime: onPlaybackTime
@@ -182,14 +185,16 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private let playbackStateLock = NSLock()
     private let generationLock = NSLock()
     private let bufferPolicy = NativePlaybackBufferPolicy.matroska
-    private let videoSamples = NativeSampleBufferQueue(capacity: 180)
-    private let audioSamples = NativeSampleBufferQueue(capacity: 320)
+    private var videoSamples = NativeSampleBufferQueue(capacity: NativeSampleQueueCapacityPolicy.baseline.videoFrames)
+    private var audioSamples = NativeSampleBufferQueue(capacity: NativeSampleQueueCapacityPolicy.baseline.audioPackets)
+    private var sampleQueueCapacity = NativeSampleQueueCapacityPolicy.baseline
     private var audioStarvationGate = NativeAudioStarvationGate(minimumStarvationDuration: 0.75)
 
     private var currentURL: URL?
     private var currentHeaders: [String: String] = [:]
     private var currentContainer: ContainerFormat = .matroska
     private var currentStartTimeSeconds: Double = 0
+    private var currentSourceBitrateBps: Int?
     private var currentSelectedAudioTrackID: String?
     private var currentSelectedSubtitleTrackID: String?
     private var appliedSeekRequestID: Int?
@@ -220,6 +225,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private var rebufferingForAudio = false
     private var consecutiveAudioStarvationTicks = 0
     private var reportedAudioStarvation = false
+    private var audioAheadLowActive = false
     private var audioTimingNormalizer = NativeAudioTimingNormalizer()
     private var videoDrainTimer: DispatchSourceTimer?
     private var pauseStateGate = NativePauseStateGate()
@@ -316,6 +322,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         selectedAudioTrackID: String?,
         selectedSubtitleTrackID: String?,
         baseDiagnostics: [String],
+        sourceBitrateBps: Int? = nil,
         isPaused: Bool,
         onDiagnostics: @escaping ([String]) -> Void,
         onPlaybackTime: @escaping (Double) -> Void
@@ -323,6 +330,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         self.baseDiagnostics = baseDiagnostics
         self.onDiagnostics = onDiagnostics
         self.onPlaybackTime = onPlaybackTime
+        currentSourceBitrateBps = sourceBitrateBps
         pendingPause = isPaused
         isTornDown = false
         let sourceChanged = currentURL != url || currentHeaders != headers || currentContainer != container
@@ -547,6 +555,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         pauseStateGate.reset()
         videoSamples.removeAll()
         audioSamples.removeAll()
+        applyAdaptiveSampleQueueCapacityIfNeeded()
         videoHDRMetadata = nil
         resetPreferredDisplayCriteria()
         metricsLock.lock()
@@ -567,6 +576,30 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
                 generation: generation
             )
         }
+    }
+
+    /// Queues are empty here (beginPlayback path), so swapping storage is safe. Deeper
+    /// queues on high-bitrate originals absorb network jitter without touching renderers.
+    private static var isTVOSPlatform: Bool {
+#if os(tvOS)
+        true
+#else
+        false
+#endif
+    }
+
+    private func applyAdaptiveSampleQueueCapacityIfNeeded() {
+        let next = NativeSampleQueueCapacityPolicy.capacity(
+            sourceBitrateBps: currentSourceBitrateBps,
+            isTVOS: Self.isTVOSPlatform
+        )
+        guard next != sampleQueueCapacity else { return }
+        sampleQueueCapacity = next
+        videoSamples = NativeSampleBufferQueue(capacity: next.videoFrames)
+        audioSamples = NativeSampleBufferQueue(capacity: next.audioPackets)
+        AppLog.playback.notice(
+            "nativeplayer.queue.capacity — videoFrames=\(next.videoFrames, privacy: .public) audioPackets=\(next.audioPackets, privacy: .public) sourceBitrateBps=\(self.currentSourceBitrateBps ?? 0, privacy: .public)"
+        )
     }
 
     private func startOrReuseRetirement() -> Task<Void, Never>? {
@@ -1056,6 +1089,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         rebufferingForAudio = false
         consecutiveAudioStarvationTicks = 0
         reportedAudioStarvation = false
+        audioAheadLowActive = false
         audioStarvationGate.reset()
         playbackStateLock.unlock()
         updateMetrics {
@@ -1384,6 +1418,12 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         )
         snapshot.videoAheadSeconds = bufferDecision.videoAheadSeconds
         snapshot.audioAheadSeconds = bufferDecision.audioAheadSeconds
+        recordAudioAheadLowTelemetry(
+            audioAheadSeconds: bufferDecision.audioAheadSeconds,
+            videoAheadSeconds: bufferDecision.videoAheadSeconds,
+            needsAudio: snapshot.requiresAudioForBuffering,
+            isPlaying: isRunningPlayback()
+        )
         renderActiveSubtitles()
         DispatchQueue.main.async { [weak self] in
             guard let self, self.ownsCallbacks(from: generation) else { return }
@@ -1399,6 +1439,32 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private func recordCallbackDelivery() {
         if isTornDown {
             callbackCountAfterDismantle += 1
+        }
+    }
+
+    /// Pre-starvation early warning: logged once per drain episode while the audio
+    /// cushion is still audible. Hysteresis lives in NativePlaybackBufferPolicy so a
+    /// hovering ahead value cannot flap the signal. Telemetry-only — playback is never
+    /// paused from here; the gateway's throughput escalation is the corrective path.
+    private func recordAudioAheadLowTelemetry(
+        audioAheadSeconds: Double,
+        videoAheadSeconds: Double,
+        needsAudio: Bool,
+        isPlaying: Bool
+    ) {
+        playbackStateLock.lock()
+        let decision = bufferPolicy.audioAheadLow(
+            audioAheadSeconds: audioAheadSeconds,
+            needsAudio: needsAudio,
+            isPlaying: isPlaying,
+            wasLow: audioAheadLowActive
+        )
+        audioAheadLowActive = decision.isLow
+        playbackStateLock.unlock()
+        if decision.transitionedToLow {
+            AppLog.playback.warning(
+                "nativeplayer.audio.ahead_low — audioAhead=\(audioAheadSeconds, privacy: .public) videoAhead=\(videoAheadSeconds, privacy: .public)"
+            )
         }
     }
 

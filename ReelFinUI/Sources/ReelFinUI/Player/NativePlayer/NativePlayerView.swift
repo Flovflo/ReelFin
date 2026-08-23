@@ -10,6 +10,7 @@ struct NativePlayerView: View {
     let startTimeSeconds: Double?
     let item: MediaItem
     let diagnostics: [String]
+    let sourceBitrateBps: Int?
     let errorMessage: String?
     let transportState: PlaybackTransportState
     let onSelectTrack: (PlaybackControlSelection) -> Void
@@ -32,8 +33,8 @@ struct NativePlayerView: View {
     @State private var activeInformationPanel: NativePlayerInformationPanel?
     @State private var showsDiagnostics = false
     @State private var isChromeUserActive = true
-#if os(tvOS)
     @State private var isChromeExplicitlyHidden = false
+#if os(tvOS)
     @State private var isCircularScrubbing = false
     @State private var circularScrubCancelRequestToken: UInt = 0
 #endif
@@ -54,19 +55,23 @@ struct NativePlayerView: View {
 #endif
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        // Parsed once per publication; every consumer below reads typed fields
+        // instead of re-scanning the raw diagnostic rows.
+        let diagnosticsModel = NativePlayerDiagnosticsModel(baseRows: diagnostics, liveRows: liveDiagnostics)
+        return ZStack(alignment: .topLeading) {
             if let playbackURL, routeViolation == nil {
                 Group {
-                    if isPacketDemuxedContainer {
+                    if diagnosticsModel.isPacketDemuxedContainer {
                         NativeMatroskaSampleBufferPlayerView(
                             url: playbackURL,
                             headers: playbackHeaders,
-                            container: containerFormat,
+                            container: diagnosticsModel.containerFormat,
                             startTimeSeconds: resolvedStartTime,
                             seekRequest: seekRequest,
                             selectedAudioTrackID: transportState.selectedAudioTrackID,
                             selectedSubtitleTrackID: transportState.selectedSubtitleTrackID,
                             baseDiagnostics: diagnostics,
+                            sourceBitrateBps: sourceBitrateBps,
                             isPaused: $isPaused,
                             onDiagnostics: handleDiagnostics,
                             onPlaybackTime: handlePlaybackTime
@@ -88,6 +93,12 @@ struct NativePlayerView: View {
             } else {
                 Color.black.ignoresSafeArea()
             }
+#if os(iOS)
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(perform: handleBackgroundTap)
+                .ignoresSafeArea()
+#endif
 #if os(tvOS)
             NativePlayerRemoteInputLayer(
                 isEnabled: !shouldShowChrome,
@@ -113,7 +124,7 @@ struct NativePlayerView: View {
                     circularScrubCancelRequestToken: playerCircularScrubCancelRequestToken,
                     playbackTime: displayPlaybackTime,
                     durationSeconds: durationSeconds,
-                    isBuffering: isBuffering,
+                    isBuffering: diagnosticsModel.isBuffering,
                     onSeekRelative: seekRelative,
                     onSeekAbsolute: seekAbsolute,
                     onInteraction: revealChrome,
@@ -203,14 +214,6 @@ struct NativePlayerView: View {
             }
 #endif
         }
-        .contentShape(Rectangle())
-#if os(iOS)
-        .onTapGesture {
-            activeTrackMenu = nil
-            activeInformationPanel = nil
-            revealChrome()
-        }
-#endif
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native_engine_player_screen")
         .onAppear {
@@ -369,11 +372,9 @@ struct NativePlayerView: View {
     }
 
     private var shouldShowChrome: Bool {
-#if os(tvOS)
         if isChromeExplicitlyHidden, activeTrackMenu == nil, activeInformationPanel == nil {
             return false
         }
-#endif
         return activeTrackMenu != nil || activeInformationPanel != nil || NativePlayerChromeVisibilityPolicy.shouldShowChrome(
             isUserActive: isChromeUserActive,
             isPaused: isPaused,
@@ -705,11 +706,34 @@ struct NativePlayerView: View {
         activeTrackMenu = nil
         activeInformationPanel = nil
         isChromeUserActive = false
-#if os(tvOS)
         isChromeExplicitlyHidden = true
+#if os(tvOS)
         focusRemoteInputWhenChromeHidden()
 #endif
     }
+
+#if os(iOS)
+    private func handleBackgroundTap() {
+        if activeTrackMenu != nil || activeInformationPanel != nil {
+            activeTrackMenu = nil
+            activeInformationPanel = nil
+            revealChrome()
+            return
+        }
+        switch NativePlayerChromeVisibilityPolicy.backgroundTapAction(
+            isChromeVisible: shouldShowChrome,
+            hasError: visibleErrorMessage != nil,
+            isPinnedForAutomation: keepsChromeVisibleForAutomation
+        ) {
+        case .hide:
+            hideChrome()
+        case .reveal:
+            revealChrome()
+        case .ignore:
+            break
+        }
+    }
+#endif
 
     private var videoQualityLabel: String {
         if let hdrLine = activeDiagnostics.first(where: { $0.hasPrefix("hdr=") }),
@@ -837,8 +861,8 @@ struct NativePlayerView: View {
 
     private func revealChrome() {
         isChromeUserActive = true
-#if os(tvOS)
         isChromeExplicitlyHidden = false
+#if os(tvOS)
         releaseRemoteInputFocus()
 #endif
         scheduleChromeAutoHide()

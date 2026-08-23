@@ -1,31 +1,89 @@
-# Project: ReelFin
+# CLAUDE.md
 
-## Quick Reference
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-- Platform: iOS 26+ for iPhone and iPad
-- UI: SwiftUI
-- Playback stack: AVFoundation, AVKit, VideoToolbox
-- Project generation: `project.yml` is the source of truth
-- Architecture: modular app with `ReelFinApp`, `ReelFinUI`, `PlaybackEngine`, `JellyfinAPI`, `DataStore`, `ImageCache`, `SyncEngine`, and `Shared`
+## Project Summary
 
-## Engineering Priorities
+ReelFin is a native iPhone and iPad Jellyfin client built with SwiftUI and Apple playback frameworks. The repo is organized as a modular XcodeGen project with a single source of truth in `project.yml`.
 
-1. Keep playback Apple-native. Do not add third-party media engines or private playback APIs.
-2. Preserve deterministic playback behavior and documented fallback profiles.
-3. Avoid broad rewrites when a module-scoped fix is enough.
-4. Keep docs, package versions, and supported platforms aligned with `project.yml`.
-5. Treat `build/`, `.artifacts/`, `.claude/`, logs, and user state as local artifacts.
+## Source Of Truth
 
-## Before Editing Playback
+- `project.yml`: XcodeGen configuration. Update this file first when targets, dependencies, or schemes change.
+- `ReelFin.xcodeproj`: generated project output. Regenerate instead of hand-editing when possible.
 
-- Read `Docs/Playback-Architecture-Current.md`.
-- Respect the direct-play-first model and fallback profile ordering.
-- Maintain or extend tests when touching planning, HLS generation, remuxing, or subtitle logic.
+## Repository Map
+
+- `ReelFinApp/`: app entry point and bootstrap wiring
+- `ReelFinUI/`: SwiftUI screens, themes, and view models
+- `PlaybackEngine/`: playback planning, local HLS, native bridge, subtitles
+- `JellyfinAPI/`: Jellyfin networking client and DTO decoding
+- `DataStore/`: GRDB-backed metadata persistence
+- `ImageCache/`: memory + disk image pipeline
+- `SyncEngine/`: background sync orchestration
+- `Shared/`: domain models, protocols, settings, logging
+- `Tests/`: unit and UI tests
+- `Docs/`: product, playback, and App Store support documents
+- `scripts/`: maintenance scripts kept in the repo on purpose
+- `AppStore/Screenshots/`: curated screenshots for release assets
 
 ## Build And Test
 
 ```bash
 xcodegen generate
-xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
-xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1'
+xcodebuild build -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFinTV -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=26.2'
+xcodebuild -showdestinations -project ReelFin.xcodeproj -scheme ReelFin
+xcodebuild -showdestinations -project ReelFin.xcodeproj -scheme ReelFinTV
 ```
+
+Run a single test class or method by appending `-only-testing:<TestTarget>/<TestClass>` (or `<TestClass>/<testName>`), e.g.:
+
+```bash
+xcodebuild test -project ReelFin.xcodeproj -scheme ReelFin \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3.1' \
+  -only-testing:PlaybackEngineTests/PlaybackSessionControllerTrackReloadTests
+```
+
+## Lint, Format, Typecheck
+
+```bash
+# No repo-native SwiftLint, SwiftFormat, or standalone typecheck command is configured today.
+# Treat a successful xcodebuild build/test pass as the effective syntax and typecheck gate.
+```
+
+## Profiling And Performance Probes
+
+```bash
+scripts/run_player_ui_probe.sh
+scripts/run_playback_qa_loop.sh
+python3 scripts/test_tvos_profile.py
+```
+
+## Guardrails
+
+- Keep the playback path Apple-native. Do not add third-party media engines or private playback APIs.
+- Prefer changes in the smallest relevant module instead of cross-cutting edits.
+- Preserve async/await and actor isolation patterns in API and playback code.
+- Treat `build/`, `.artifacts/`, `.claude/`, logs, and user-state files as local-only artifacts.
+- Keep docs aligned with `project.yml`, especially supported platforms, package versions, and test commands.
+- Preserve the current dirty worktree unless a user explicitly asks to revert it.
+- Treat launch, focus, playback startup, and cache regressions as release blockers.
+- Do not move hot-path behavior behind silent fallbacks that hide correctness failures.
+
+## Do-Not-Break Rules
+
+- Logged-out launch must reach auth/onboarding without a root spinner.
+- Authenticated launch must be able to paint cached Home content before network sync completes.
+- tvOS focus handoff must not depend on fixed sleeps as the primary success path.
+- Playback warmup and observer work must remain cancelable and scoped to the active item/session.
+- Speculative artwork prefetch must not bypass authenticated image loading or poison cache keys.
+
+## Performance Definition Of Done
+
+- `xcodegen generate` succeeds after source changes.
+- `ReelFin` and `ReelFinTV` build on the current local simulator runtimes.
+- Targeted tests covering launch/auth state, Home loading, Library loading, playback, and tvOS focus still pass.
+- New hot-path async work is latest-wins, cancelable, and does not broaden `MainActor` usage.
+- Launch, sync, focus, playback, and artwork prefetch changes are recorded in `PLANS.md` and `OPTIMIZATION_AUDIT.md`.

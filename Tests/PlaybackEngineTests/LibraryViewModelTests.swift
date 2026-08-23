@@ -8,6 +8,91 @@ private typealias SharedLibraryView = Shared.LibraryView
 
 @MainActor
 final class LibraryViewModelTests: XCTestCase {
+    func testManualRefreshReloadsCurrentCriteriaAndLeavesRefreshInactive() async throws {
+        let initialSeries = MediaItem(
+            id: "initial-series",
+            name: "Initial Series",
+            mediaType: .series,
+            libraryID: "shows"
+        )
+        let refreshedSeries = MediaItem(
+            id: "refreshed-series",
+            name: "Refreshed Series",
+            mediaType: .series,
+            libraryID: "shows"
+        )
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: Self.libraryViews,
+            itemsByViewID: [:],
+            libraryFetchPlans: [
+                .immediate([initialSeries]),
+                .immediate([refreshedSeries])
+            ]
+        )
+        let repository = LibraryViewModelRepositoryStub(views: Self.libraryViews)
+        let viewModel = LibraryViewModel(
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        viewModel.selectedFilter = .series
+        viewModel.sortMode = .title
+        await viewModel.loadInitial()
+        await viewModel.manualRefresh()
+
+        let queries = await apiClient.recordedQueries()
+        XCTAssertEqual(queries.map(\.page), [0, 0])
+        XCTAssertEqual(queries.last?.mediaType, .series)
+        XCTAssertEqual(queries.last?.sortBy, .sortName)
+        XCTAssertFalse(queries.last?.sortDescending ?? true)
+        XCTAssertEqual(viewModel.items.map(\.id), [refreshedSeries.id])
+        XCTAssertFalse(viewModel.isRefreshing)
+    }
+
+    func testManualRefreshCancelsPaginationAndRejectsItsStaleResponse() async throws {
+        let initialPage = Self.makeItems(
+            prefix: "initial-movie",
+            count: 48,
+            mediaType: .movie,
+            libraryID: "movies"
+        )
+        let stalePage = [
+            MediaItem(id: "stale-page", name: "Stale Page", mediaType: .movie, libraryID: "movies")
+        ]
+        let refreshedPage = [
+            MediaItem(id: "refreshed-page", name: "Refreshed Page", mediaType: .movie, libraryID: "movies")
+        ]
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: Self.libraryViews,
+            itemsByViewID: [:],
+            libraryFetchPlans: [
+                .immediate(initialPage),
+                .suspended,
+                .suspended
+            ]
+        )
+        let repository = LibraryViewModelRepositoryStub(views: Self.libraryViews)
+        let viewModel = LibraryViewModel(
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        await viewModel.loadInitial()
+        let stalePaginationTask = try XCTUnwrap(viewModel.submitPaginationIfNeeded())
+        await apiClient.waitForLibraryFetchCount(2)
+
+        let refreshTask = Task { @MainActor in
+            await viewModel.manualRefresh()
+        }
+        await apiClient.waitForLibraryFetchCount(3)
+        await apiClient.resumeLibraryFetch(at: 2, returning: refreshedPage)
+        await refreshTask.value
+
+        await apiClient.resumeLibraryFetch(at: 1, returning: stalePage)
+        await stalePaginationTask.value
+
+        XCTAssertEqual(viewModel.items.map(\.id), [refreshedPage[0].id])
+        XCTAssertFalse(viewModel.isRefreshing)
+    }
+
     func testLoadInitialAggregatesMovieLibrariesDiscoveredFromJellyfinViews() async throws {
         let apiClient = LibraryViewModelAPIClientStub(
             views: [
@@ -81,6 +166,67 @@ final class LibraryViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.items.map(\.id), [dolbyVisionCopy.id])
         let playbackSourceItemIDs = await apiClient.recordedPlaybackSourceItemIDs()
         XCTAssertEqual(playbackSourceItemIDs, [])
+    }
+
+    func testSearchFiltersCachedItemsToSelectedMediaTypeBeforeMergingRemoteResults() async throws {
+        let cachedSeries = MediaItem(
+            id: "silo-series",
+            name: "Silo",
+            mediaType: .series,
+            year: 2023,
+            libraryID: "shows"
+        )
+        let cachedSeason = MediaItem(
+            id: "silo-season-1",
+            name: "Season 1",
+            mediaType: .season,
+            year: 2023,
+            parentID: cachedSeries.id,
+            seriesName: cachedSeries.name
+        )
+        let cachedEpisode = MediaItem(
+            id: "silo-episode-1",
+            name: "La fête de la Liberté",
+            mediaType: .episode,
+            year: 2023,
+            parentID: cachedSeries.id,
+            seriesName: cachedSeries.name
+        )
+        let cachedMovie = MediaItem(
+            id: "silo-related-movie",
+            name: "Silo: The Movie",
+            mediaType: .movie,
+            year: 2023,
+            libraryID: "movies"
+        )
+        let refreshedSeries = MediaItem(
+            id: cachedSeries.id,
+            name: cachedSeries.name,
+            overview: "Remote detail",
+            mediaType: .series,
+            year: cachedSeries.year,
+            runtimeTicks: Int64(45 * 60) * 10_000_000,
+            posterTag: "remote-poster",
+            libraryID: "shows"
+        )
+        let apiClient = LibraryViewModelAPIClientStub(
+            views: Self.libraryViews,
+            itemsByViewID: [:],
+            libraryFetchPlans: [.immediate([refreshedSeries])]
+        )
+        let repository = LibraryViewModelRepositoryStub(
+            views: Self.libraryViews,
+            searchPlans: [.immediate([cachedEpisode, cachedSeason, cachedSeries, cachedMovie])]
+        )
+        let viewModel = LibraryViewModel(
+            dependencies: makeDependencies(apiClient: apiClient, repository: repository)
+        )
+
+        viewModel.searchQuery = "silo"
+        viewModel.selectedFilter = .series
+        await viewModel.loadInitial()
+
+        XCTAssertEqual(viewModel.items.map(\.id), [cachedSeries.id])
     }
 
     func testLatestCriteriaWinsWhenOlderRemoteFetchFinishesLast() async throws {

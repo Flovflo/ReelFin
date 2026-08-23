@@ -136,7 +136,8 @@ final class MockOriginalMediaProtocol: URLProtocol {
             .map(String.init)
         guard parts.count == 2,
               let start = Int(parts[0]),
-              start >= 0 else { return nil }
+              start >= 0,
+              start < upperBound else { return nil }
         let requestedEnd: Int
         if parts[1].isEmpty {
             requestedEnd = max(0, upperBound - 1)

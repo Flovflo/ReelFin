@@ -8,6 +8,60 @@ import XCTest
 /// external subtitle track building, and the subtitle cue pipeline.
 final class CustomPlayerSupportTests: XCTestCase {
     @MainActor
+    func testNaturalEndResolvesNextEpisodeWhenCustomPlayerQueueIsInitiallyEmpty() async throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CustomNextEpisode.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+
+        let store = try MediaGatewayStore(
+            directoryURL: storeDirectory,
+            configuration: MediaGatewayStore.Configuration(maxBytes: 1_000_000)
+        )
+        let currentEpisode = MediaItem(
+            id: "episode-1",
+            name: "Pilot",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 1,
+            parentIndexNumber: 1
+        )
+        let nextEpisode = MediaItem(
+            id: "episode-2",
+            name: "Episode 2",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 2,
+            parentIndexNumber: 1
+        )
+        let engine = CustomPlaybackEngine(
+            resolver: UnusedCustomSourceResolver(),
+            store: store
+        )
+        defer { engine.stop() }
+
+        engine.currentMediaItem = currentEpisode
+        engine.nextEpisodeQueue = []
+        var providerCallCount = 0
+        engine.nextEpisodeQueueProvider = { _ in
+            providerCallCount += 1
+            return [nextEpisode]
+        }
+        var advancedItemID: String?
+        engine.onPlayNext = { item, _ in advancedItemID = item.id }
+        engine.load(itemID: currentEpisode.id, autoPlay: false)
+
+        engine.debugHandlePlaybackEnded()
+        engine.debugHandlePlaybackEnded()
+
+        let didAdvance = await waitUntil(timeout: 1) {
+            advancedItemID == nextEpisode.id
+        }
+        XCTAssertTrue(didAdvance)
+        XCTAssertEqual(providerCallCount, 1, "Duplicate end notifications must share one advance.")
+    }
+
+    @MainActor
     func testLoadedIntroMarkersImmediatelyPublishSkipSuggestionAtResumePosition() async throws {
         let storeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("SkipMarkers.\(UUID().uuidString)", isDirectory: true)

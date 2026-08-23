@@ -210,6 +210,13 @@ enum HomeEditorialPresentationPolicy {
     static let focusedShadowYOffset: CGFloat = 18
     static let stickyChromeRevealThreshold: CGFloat = 0.82
 
+    static func iosHeroHeight(compact: Bool, accessibilitySize: Bool) -> CGFloat {
+        if compact {
+            return accessibilitySize ? 520 : 430
+        }
+        return accessibilitySize ? 680 : 600
+    }
+
     static func focusedMediaGlass(
         isFocused: Bool,
         reduceTransparency: Bool

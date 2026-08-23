@@ -97,6 +97,12 @@ enum NativePlayerSampleBufferSkipPolicy {
 struct NativePlayerChromeVisibilityPolicy: Equatable {
     static let autoHideDelaySeconds = 3.5
 
+    enum BackgroundTapAction: Equatable {
+        case hide
+        case reveal
+        case ignore
+    }
+
     static func shouldShowChrome(
         isUserActive: Bool,
         isPaused: Bool,
@@ -116,6 +122,15 @@ struct NativePlayerChromeVisibilityPolicy: Equatable {
         isPinnedForAutomation: Bool = false
     ) -> Bool {
         !isPinnedForAutomation && !isPaused && !isBuffering && !showsDiagnostics && !hasError
+    }
+
+    static func backgroundTapAction(
+        isChromeVisible: Bool,
+        hasError: Bool,
+        isPinnedForAutomation: Bool
+    ) -> BackgroundTapAction {
+        guard !hasError, !isPinnedForAutomation else { return .ignore }
+        return isChromeVisible ? .hide : .reveal
     }
 }
 

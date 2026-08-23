@@ -32,6 +32,7 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
     public var subtitleTracks: [Shared.MediaTrack]
     public var selectedAudioTrackID: String?
     public var selectedSubtitleTrackID: String?
+    public var sourceBitrateBps: Int?
 
     public init(
         overlayLines: [String],
@@ -46,7 +47,8 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
         audioTracks: [Shared.MediaTrack] = [],
         subtitleTracks: [Shared.MediaTrack] = [],
         selectedAudioTrackID: String? = nil,
-        selectedSubtitleTrackID: String? = nil
+        selectedSubtitleTrackID: String? = nil,
+        sourceBitrateBps: Int? = nil
     ) {
         self.overlayLines = overlayLines
         self.routeDescription = routeDescription
@@ -61,6 +63,7 @@ public struct NativePlayerPlaybackSnapshot: Sendable {
         self.subtitleTracks = subtitleTracks
         self.selectedAudioTrackID = selectedAudioTrackID
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
+        self.sourceBitrateBps = sourceBitrateBps
     }
 }
 
@@ -328,7 +331,8 @@ public actor NativePlayerPlaybackController {
             audioTracks: audio,
             subtitleTracks: subtitles,
             selectedAudioTrackID: audio.first(where: \.isDefault)?.id ?? audio.first?.id,
-            selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id
+            selectedSubtitleTrackID: subtitles.first(where: \.isDefault)?.id,
+            sourceBitrateBps: resolution.mediaSource.bitrate
         )
         }
     }

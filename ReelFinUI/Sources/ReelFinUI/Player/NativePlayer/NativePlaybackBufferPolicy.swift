@@ -46,6 +46,11 @@ struct NativePlaybackBufferDecision: Equatable {
     var requiredAudioPrimedPacketCount: Int
 }
 
+struct NativeAudioAheadLowDecision: Equatable {
+    var isLow: Bool
+    var transitionedToLow: Bool
+}
+
 struct NativePlaybackBufferPolicy: Equatable {
     var fastStartVideoAheadSeconds: Double
     var fastStartAudioAheadSeconds: Double
@@ -55,6 +60,11 @@ struct NativePlaybackBufferPolicy: Equatable {
     var rebufferVideoAheadSeconds: Double
     var rebufferAudioAheadSeconds: Double
     var audioStarvationAheadSeconds: Double
+    // Pre-starvation early warning: fired while the audio cushion still renders but is
+    // draining toward an underrun. Recovery threshold sits above the warning threshold
+    // so the signal does not flap while ahead hovers around the boundary.
+    var audioAheadLowWarningSeconds: Double
+    var audioAheadLowRecoverySeconds: Double
     var initialAudioPrimedPacketCount: Int
     var rebufferAudioPrimedPacketCount: Int
     var maximumAudioStartupWaitSeconds: Double
@@ -68,6 +78,8 @@ struct NativePlaybackBufferPolicy: Equatable {
         rebufferVideoAheadSeconds: 4.0,
         rebufferAudioAheadSeconds: 6.0,
         audioStarvationAheadSeconds: 0.05,
+        audioAheadLowWarningSeconds: 2.0,
+        audioAheadLowRecoverySeconds: 3.5,
         initialAudioPrimedPacketCount: 32,
         rebufferAudioPrimedPacketCount: 32,
         maximumAudioStartupWaitSeconds: 4.0
@@ -125,6 +137,23 @@ struct NativePlaybackBufferPolicy: Equatable {
             referenceTime: snapshot.playbackTime
         )
         return audioAhead < audioStarvationAheadSeconds
+    }
+
+    /// Early-warning evaluation for a draining audio cushion. Telemetry-only: the
+    /// result never pauses playback — it surfaces `nativeplayer.audio.ahead_low`
+    /// while there is still time for the byte-source layer to deepen its prefetch.
+    func audioAheadLow(
+        audioAheadSeconds: Double,
+        needsAudio: Bool,
+        isPlaying: Bool,
+        wasLow: Bool
+    ) -> NativeAudioAheadLowDecision {
+        guard needsAudio, isPlaying else {
+            return NativeAudioAheadLowDecision(isLow: false, transitionedToLow: false)
+        }
+        let threshold = wasLow ? audioAheadLowRecoverySeconds : audioAheadLowWarningSeconds
+        let isLow = audioAheadSeconds < threshold
+        return NativeAudioAheadLowDecision(isLow: isLow, transitionedToLow: isLow && !wasLow)
     }
 
     private func ahead(pts: Double, queuedSeconds: Double, referenceTime: Double) -> Double {

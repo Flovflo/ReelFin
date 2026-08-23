@@ -130,6 +130,9 @@ public struct HeroCarouselView: View {
         .onChange(of: selectedItemValue) { _, _ in
             syncSelectionFromBinding()
         }
+        .onChange(of: itemIDs) { _, _ in
+            reconcileItems()
+        }
     }
 
     private func iosHeroCard(for item: MediaItem, index: Int, size: CGSize) -> some View {
@@ -166,6 +169,20 @@ public struct HeroCarouselView: View {
             Color.black
 
             backdropImage(for: item, size: size, artworkLayers: artworkLayers)
+                .scaleEffect(1.035)
+                // Keep central faces out from under the Dynamic Island while preserving the
+                // full-bleed editorial treatment. The black canvas above reads as native chrome.
+                .offset(y: 44)
+
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0.46), location: 0),
+                    .init(color: .clear, location: 0.20)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
 
             Rectangle()
                 .fill(
@@ -188,7 +205,7 @@ public struct HeroCarouselView: View {
         size: CGSize,
         artworkLayers: [HeroArtworkLoadingLayer]
     ) -> some View {
-        VStack(alignment: .center, spacing: 18) {
+        VStack(alignment: .center, spacing: 14) {
             EditorialMediaIdentityView(
                 style: .iosHero,
                 item: item,
@@ -204,7 +221,7 @@ public struct HeroCarouselView: View {
             heroActionButtons(for: item, immersive: false)
         }
         .padding(.horizontal, horizontalPadding)
-        .padding(.bottom, 58)
+        .padding(.bottom, 44)
         .frame(width: max(size.width - (horizontalPadding * 2), 0), alignment: .center)
     }
 
@@ -290,6 +307,9 @@ public struct HeroCarouselView: View {
         }
         .onChange(of: selectedItemValue) { _, _ in
             syncSelectionFromBinding()
+        }
+        .onChange(of: itemIDs) { _, _ in
+            reconcileItems()
         }
     }
 
@@ -558,6 +578,10 @@ public struct HeroCarouselView: View {
         selectedItemID?.wrappedValue
     }
 
+    private var itemIDs: [String] {
+        items.map(\.id)
+    }
+
     private func syncSelectionFromBinding() {
         guard
             let selectedItemValue,
@@ -567,6 +591,25 @@ public struct HeroCarouselView: View {
             return
         }
         currentIndex = newIndex
+    }
+
+    private func reconcileItems() {
+        guard !items.isEmpty else {
+            currentIndex = 0
+            selectedItemID?.wrappedValue = nil
+            return
+        }
+
+        if let selectedItemValue,
+           let selectedIndex = items.firstIndex(where: { $0.id == selectedItemValue }) {
+            currentIndex = selectedIndex
+            return
+        }
+
+        currentIndex = min(max(currentIndex, 0), items.count - 1)
+        let item = items[currentIndex]
+        selectedItemID?.wrappedValue = item.id
+        onVisibleItemChange?(item)
     }
 
     private func transitionID(for item: MediaItem) -> String {
@@ -653,10 +696,13 @@ public struct HeroCarouselView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "play.fill")
                             Text(primaryActionTitle(for: item))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
                         }
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .padding(.horizontal, 28)
-                        .frame(minHeight: 58)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .padding(.horizontal, horizontalSizeClass == .compact ? 18 : 26)
+                        .frame(minHeight: 52)
+                        .layoutPriority(1)
                         .foregroundStyle(
                             reduceTransparency
                                 ? Color.black
@@ -704,8 +750,8 @@ public struct HeroCarouselView: View {
         Button(action: action) {
             heroCircleSurface(isActive: isActive) {
                 Image(systemName: symbol)
-                    .font(.system(size: 22, weight: .bold))
-                    .frame(width: 58, height: 58)
+                    .font(.system(size: 20, weight: .bold))
+                    .frame(width: 52, height: 52)
                     .foregroundStyle(ReelFinTheme.editorialPrimaryText)
             }
             .contentShape(Circle())
@@ -849,10 +895,10 @@ public struct HeroCarouselView: View {
         #if os(tvOS)
         return 880
         #else
-        if horizontalSizeClass == .compact {
-            return dynamicTypeSize.isAccessibilitySize ? 560 : 470
-        }
-        return dynamicTypeSize.isAccessibilitySize ? 720 : 660
+        return HomeEditorialPresentationPolicy.iosHeroHeight(
+            compact: horizontalSizeClass == .compact,
+            accessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
         #endif
     }
 
@@ -860,7 +906,7 @@ public struct HeroCarouselView: View {
         #if os(tvOS)
         return 28
         #else
-        return 24
+        return 16
         #endif
     }
 

@@ -38,10 +38,7 @@ struct EpisodeCardArtworkView: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             CachedRemoteImage(
-                itemID: episode.id,
-                type: .primary,
-                width: Int(width * 2),
-                quality: 80,
+                request: ArtworkRequest.make(for: episode, role: .episodeStill),
                 contentMode: .fill,
                 apiClient: apiClient,
                 imagePipeline: imagePipeline

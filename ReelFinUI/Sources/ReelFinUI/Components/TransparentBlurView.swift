@@ -12,6 +12,7 @@ struct TransparentBlurView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIVisualEffectView {
         let view = UIVisualEffectView(effect: UIBlurEffect(style: style))
+        context.coordinator.appliedStyle = style
         view.clipsToBounds = true
         view.backgroundColor = .clear
         view.layer.backgroundColor = UIColor.clear.cgColor
@@ -24,7 +25,10 @@ struct TransparentBlurView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
-        uiView.effect = UIBlurEffect(style: style)
+        if context.coordinator.appliedStyle != style {
+            uiView.effect = UIBlurEffect(style: style)
+            context.coordinator.appliedStyle = style
+        }
         uiView.backgroundColor = .clear
         uiView.layer.backgroundColor = UIColor.clear.cgColor
 
@@ -56,6 +60,7 @@ struct TransparentBlurView: UIViewRepresentable {
 
     final class Coordinator {
         var didStripTint = false
+        var appliedStyle: UIBlurEffect.Style?
     }
 }
 #endif

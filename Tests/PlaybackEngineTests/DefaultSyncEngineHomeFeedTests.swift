@@ -62,7 +62,10 @@ final class DefaultSyncEngineHomeFeedTests: XCTestCase {
         await syncEngine.sync(reason: .manualRefresh)
         try await waitUntil { await prefetcher.batches.count == 1 }
 
-        let requests = await prefetcher.batches[0]
+        guard let requests = await prefetcher.batches.first else {
+            XCTFail("Expected one artwork prefetch batch after manual refresh")
+            return
+        }
         let expectedFeaturedRequests = [
             ArtworkRequest.make(for: featured, role: .heroLow),
             ArtworkRequest.make(for: featured, role: .heroHigh)
@@ -73,7 +76,7 @@ final class DefaultSyncEngineHomeFeedTests: XCTestCase {
             requests.map(\.profile),
             [.heroBackdropLow, .heroBackdropHigh, .landscapeRail, .landscapeRail, .posterRow]
         )
-        XCTAssertEqual(requests.map(\.type), [.backdrop, .backdrop, .backdrop, .primary, .primary])
+        XCTAssertEqual(requests.map(\.type), [.backdrop, .backdrop, .backdrop, .backdrop, .primary])
     }
 
     func testStartingNewPrefetchCancelsPreviousPrefetchTask() async throws {

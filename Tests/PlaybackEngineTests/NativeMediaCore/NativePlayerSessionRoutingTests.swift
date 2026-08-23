@@ -6,6 +6,101 @@ import XCTest
 
 @MainActor
 final class NativePlayerSessionRoutingTests: XCTestCase {
+    func testNaturalEpisodeEndResolvesAndLoadsFollowerWhenInitialQueueIsEmpty() async throws {
+        let defaultsKey = NativePlayerRuntimeDefaults.enabledKey
+        let previousOverride = UserDefaults.standard.object(forKey: defaultsKey)
+        UserDefaults.standard.set(true, forKey: defaultsKey)
+        defer {
+            if let previousOverride {
+                UserDefaults.standard.set(previousOverride, forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let currentEpisode = MediaItem(
+            id: "episode-1",
+            name: "Pilot",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 1,
+            parentIndexNumber: 1
+        )
+        let nextEpisode = MediaItem(
+            id: "episode-2",
+            name: "Episode 2",
+            mediaType: .episode,
+            parentID: "series-1",
+            indexNumber: 2,
+            parentIndexNumber: 1
+        )
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let streamURL = root.appendingPathComponent("Videos/episode-1/stream.mp4")
+        let nextStreamURL = root.appendingPathComponent("Videos/episode-2/stream.mp4")
+        try FileManager.default.createDirectory(
+            at: streamURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try await MP4PlaybackFixture.makeTinyH264AACMP4(at: streamURL)
+        try FileManager.default.createDirectory(
+            at: nextStreamURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.copyItem(at: streamURL, to: nextStreamURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = MediaSource(
+            id: "source-1",
+            itemID: currentEpisode.id,
+            name: "Original",
+            fileSize: Int64(
+                (try? FileManager.default.attributesOfItem(atPath: streamURL.path)[.size] as? NSNumber)?.intValue ?? 0
+            ),
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "aac",
+            supportsDirectPlay: false,
+            supportsDirectStream: false
+        )
+        let apiClient = NativeSessionRoutingAPIClient(
+            configuration: ServerConfiguration(
+                serverURL: root,
+                nativePlayerConfig: NativePlayerConfig(
+                    enabled: false,
+                    allowServerTranscodeFallback: true
+                )
+            ),
+            source: source
+        )
+        let controller = PlaybackSessionController(
+            apiClient: apiClient,
+            repository: NativeSessionRoutingRepository(),
+            progressPersistenceEnabled: false
+        )
+        controller.nextEpisodeQueueProvider = { _ in [nextEpisode] }
+
+        try await controller.load(
+            item: currentEpisode,
+            autoPlay: false,
+            upNextEpisodes: []
+        )
+        let currentPlayerItem = try XCTUnwrap(controller.player.currentItem)
+
+        NotificationCenter.default.post(
+            name: .AVPlayerItemDidPlayToEndTime,
+            object: currentPlayerItem
+        )
+
+        let advanced = await waitUntil(timeout: 1) {
+            controller.currentItemID == nextEpisode.id
+                && controller.player.currentItem !== currentPlayerItem
+        }
+        XCTAssertTrue(advanced)
+        XCTAssertEqual(controller.currentMediaItem?.id, nextEpisode.id)
+        controller.stop()
+    }
+
     func testNativeModeMigrationClearsStoredForceH264ProfilePins() {
         let suiteName = "NativePlayerSessionRoutingTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

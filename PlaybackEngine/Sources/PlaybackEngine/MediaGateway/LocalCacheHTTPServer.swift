@@ -16,6 +16,67 @@ import Shared
 /// The serve path NEVER opens a connection to the origin — that is the downloader's sole job. A
 /// request being cancelled (a seek) or AVPlayer closing the connection can never cut playback: the
 /// bytes are already on disk or arriving on the downloader's keep-alive parallel connections.
+final class LocalCacheConnectionTaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+    private var cancellationRequested = false
+
+    func attach(_ task: Task<Void, Never>) {
+        lock.lock()
+        let shouldCancel = cancellationRequested
+        if !shouldCancel {
+            self.task = task
+        }
+        lock.unlock()
+
+        if shouldCancel {
+            task.cancel()
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancellationRequested = true
+        let task = self.task
+        lock.unlock()
+        task?.cancel()
+    }
+}
+
+final class LocalCacheConnectionTaskRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var boxes: [ObjectIdentifier: LocalCacheConnectionTaskBox] = [:]
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return boxes.count
+    }
+
+    func register(_ connectionID: ObjectIdentifier) -> LocalCacheConnectionTaskBox {
+        let box = LocalCacheConnectionTaskBox()
+        lock.lock()
+        boxes[connectionID] = box
+        lock.unlock()
+        return box
+    }
+
+    func remove(_ connectionID: ObjectIdentifier, matching box: LocalCacheConnectionTaskBox) {
+        lock.lock()
+        if boxes[connectionID] === box {
+            boxes[connectionID] = nil
+        }
+        lock.unlock()
+    }
+
+    func cancelAll() {
+        lock.lock()
+        let boxes = Array(boxes.values)
+        lock.unlock()
+        boxes.forEach { $0.cancel() }
+    }
+}
+
 final class LocalCacheHTTPServer: @unchecked Sendable {
     private let store: MediaGatewayStore
     private let downloader: OriginDownloader
@@ -52,7 +113,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
     // idle keep-alive connections + their Tasks suspended forever → the cross-replay socket/memory
     // leak that produced the "memory warning before the next play starts" → jetsam.)
     private var activeConnections: [ObjectIdentifier: NWConnection] = [:]
-    private var connectionTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private let connectionTaskRegistry = LocalCacheConnectionTaskRegistry()
 
     // Per active serve loop: its current offset + whether it is STARVED (waiting for bytes not yet
     // cached). The downloader fills the lowest starved offset first (unblock the most-behind reader —
@@ -112,13 +173,11 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         listener = nil
         lock.lock()
         let conns = Array(activeConnections.values)
-        let tasks = Array(connectionTasks.values)
         activeConnections.removeAll()
-        connectionTasks.removeAll()
         lock.unlock()
+        connectionTaskRegistry.cancelAll()
         // Cancelling the connection unblocks its parked `receive` → the handle Task exits its loop.
         for connection in conns { connection.cancel() }
-        for task in tasks { task.cancel() }
         // The on-demand session is the process-shared MediaOriginTransport.onDemand — deliberately
         // NOT invalidated here (its whole point is to outlive plays); its in-flight requests for
         // this serve just complete or time out into a closed socket.
@@ -133,12 +192,10 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         listener?.cancel()
         lock.lock()
         let conns = Array(activeConnections.values)
-        let tasks = Array(connectionTasks.values)
         activeConnections.removeAll()
-        connectionTasks.removeAll()
         lock.unlock()
+        connectionTaskRegistry.cancelAll()
         for connection in conns { connection.cancel() }
-        for task in tasks { task.cancel() }
         // onDemandSession is the process-shared transport — never invalidated (see stop()).
         let downloader = self.downloader
         Task { await downloader.stop() }
@@ -155,6 +212,9 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
         connection.start(queue: queue)
         let cid = ObjectIdentifier(connection)
         lock.lock(); activeConnections[cid] = connection; lock.unlock()
+        // Register before creating the task. Otherwise a connection that finishes immediately can
+        // run its defer before the completed task is inserted into the registry.
+        let taskBox = connectionTaskRegistry.register(cid)
         let task = Task { [weak self] in
             guard let self else { connection.cancel(); return }
             // Deregister + close when this connection's serving ends (client closed, error, or
@@ -163,8 +223,8 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                 connection.cancel()
                 self.lock.lock()
                 self.activeConnections[cid] = nil
-                self.connectionTasks[cid] = nil
                 self.lock.unlock()
+                self.connectionTaskRegistry.remove(cid, matching: taskBox)
             }
             // HTTP/1.1 keep-alive: serve sequential requests on ONE connection so AVPlayer reuses a
             // single socket for its ranged reads (instead of opening a new connection per range — which
@@ -193,7 +253,7 @@ final class LocalCacheHTTPServer: @unchecked Sendable {
                 if !keepAlive { return }
             }
         }
-        lock.lock(); connectionTasks[cid] = task; lock.unlock()
+        taskBox.attach(task)
     }
 
     /// Accumulate bytes until the end of the HTTP header block (`\r\n\r\n`). GET/HEAD have no body,

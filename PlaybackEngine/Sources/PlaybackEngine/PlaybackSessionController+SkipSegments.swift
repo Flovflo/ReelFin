@@ -43,7 +43,7 @@ extension PlaybackSessionController {
         )
     }
 
-    func playNextEpisode() async -> Bool {
+    func playNextEpisode(finishingCurrentPlayback: Bool = true) async -> Bool {
         guard currentMediaItem?.mediaType == .episode,
               let nextEpisode = nextEpisodeQueue.first else {
             return false
@@ -51,10 +51,21 @@ extension PlaybackSessionController {
 
         let remainingQueue = Array(nextEpisodeQueue.dropFirst())
 
-        await finishCurrentPlayback()
+        if finishingCurrentPlayback {
+            await finishCurrentPlayback()
+        }
+
+        guard !Task.isCancelled else { return false }
 
         do {
             try await load(item: nextEpisode, autoPlay: true, upNextEpisodes: remainingQueue)
+            if remainingQueue.isEmpty, let nextEpisodeQueueProvider {
+                let replenishedQueue = await nextEpisodeQueueProvider(nextEpisode)
+                replaceNextEpisodeQueue(
+                    replenishedQueue,
+                    forCurrentItemID: nextEpisode.id
+                )
+            }
             return true
         } catch {
             playbackErrorMessage = error.localizedDescription

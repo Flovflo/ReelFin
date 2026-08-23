@@ -31,6 +31,7 @@ final class LibraryViewModel {
     var selectedFilter: MediaType = .movie
     var sortMode: SortMode = .recent
     private(set) var isLoadingPage = false
+    private(set) var isRefreshing = false
     var selectedItem: MediaItem?
 
     private let dependencies: ReelFinDependencies
@@ -134,6 +135,15 @@ final class LibraryViewModel {
     }
 
     func loadInitial() async {
+        let task = submitCriteria()
+        await task.value
+    }
+
+    func manualRefresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         let task = submitCriteria()
         await task.value
     }
@@ -404,7 +414,8 @@ final class LibraryViewModel {
     }
 
     private func sorted(_ values: [MediaItem], criteria: LibraryCriteria) -> [MediaItem] {
-        let unique = deduped(values)
+        let matchingType = values.filter { $0.mediaType == criteria.filter }
+        let unique = deduped(matchingType)
         switch criteria.sortMode {
         case .recent:
             return unique.sorted {
@@ -418,10 +429,23 @@ final class LibraryViewModel {
     }
 
     private func deduped(_ values: [MediaItem]) -> [MediaItem] {
+        var byID: [String: MediaItem] = [:]
+        var orderedIDs: [String] = []
+
+        for item in values {
+            if let existing = byID[item.id] {
+                byID[item.id] = Self.preferredItem(between: existing, and: item)
+                continue
+            }
+
+            byID[item.id] = item
+            orderedIDs.append(item.id)
+        }
+
         var grouped: [String: MediaItem] = [:]
         var orderedKeys: [String] = []
 
-        for item in values {
+        for item in orderedIDs.compactMap({ byID[$0] }) {
             let key = canonicalKey(for: item)
             if let existing = grouped[key] {
                 grouped[key] = Self.preferredItem(between: existing, and: item)

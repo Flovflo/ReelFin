@@ -138,6 +138,27 @@ actor LocalMediaGatewayPrefetcher {
         }
     }
 
+    /// Re-anchors the ahead prefetch at the current playback offset after sustained
+    /// weak throughput. Replaces any in-flight schedule so the cache refills from
+    /// where the reader actually is instead of where the last schedule expected it.
+    /// Debouncing lives in PlaybackPrefetchEscalationPolicy at the session layer.
+    func escalate(currentOffset: Int64, reason: String) {
+        guard currentOffset >= 0 else { return }
+        if let activeTask, !activeTask.isCancelled {
+            activeTask.cancel()
+        }
+        activeTask = nil
+        activeTaskStartOffset = currentOffset
+        activeTaskEndOffset = nil
+        activeTaskPriority = .streamingPlayback
+        AppLog.playback.notice(
+            "playback.cache.prefetch.escalate — item=\(self.key.itemID.prefix(8), privacy: .public) source=\(self.key.sourceID.prefix(8), privacy: .public) offset=\(currentOffset, privacy: .public) reason=\(reason, privacy: .public)"
+        )
+        activeTask = Task { [weak self] in
+            await self?.prefetch(startOffset: currentOffset)
+        }
+    }
+
     func cancel() {
         activeTask?.cancel()
         activeTask = nil

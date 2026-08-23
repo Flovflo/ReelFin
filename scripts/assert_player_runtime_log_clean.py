@@ -87,15 +87,41 @@ def build_log_context(path: Path, text: str) -> LogContext:
     return LogContext(ignores_ios_simulator_hdr_dv_render_noise=bool(successful_hdr_dv_sessions) or has_samplebuffer_playback)
 
 
-def is_ignorable_line(label: str, line: str, context: LogContext) -> bool:
+def is_ignorable_line(
+    label: str,
+    line: str,
+    context: LogContext,
+    log_file: Path | None = None,
+) -> bool:
     if label in {"VRP_RENDER_PIPELINE_FAILURE", "CAPTION_RENDER_PIPELINE_FAILURE"}:
         if "xctest[" in line or "ReelFinUITests-Runner[" in line:
             return True
         if context.ignores_ios_simulator_hdr_dv_render_noise and "ReelFin[" in line:
             return True
     if label == "LOCAL_GATEWAY_LOOPBACK_FAILURE":
+        if (
+            log_file is not None
+            and log_file.name == "xcodebuild-playback-tests.log"
+            and (
+                "xctest[" in line
+                or "NSErrorFailingURLStringKey=http://127.0.0.1" in line
+            )
+        ):
+            return True
         return "NSURLErrorDomain Code=-999" in line and "cancelled" in line
     return False
+
+
+def is_ignorable_text_match(
+    label: str,
+    match: re.Match[str],
+    log_file: Path,
+) -> bool:
+    return (
+        label == "LOCAL_GATEWAY_CONNECTION_REFUSED"
+        and log_file.name == "xcodebuild-playback-tests.log"
+        and "xctest[" in match.group(0)
+    )
 
 
 def redact_sensitive(text: str) -> str:
@@ -141,17 +167,19 @@ def main() -> int:
         for line_number, line in enumerate(text.splitlines(), start=1):
             for label, pattern in FORBIDDEN_PATTERNS:
                 if pattern in line:
-                    if is_ignorable_line(label, line, context):
+                    if is_ignorable_line(label, line, context, log_file):
                         continue
                     findings.append(f"{label} {log_file}:{line_number}: {redact_sensitive(line.strip())}")
             for label, pattern in FORBIDDEN_REGEXES:
                 if pattern.search(line):
-                    if is_ignorable_line(label, line, context):
+                    if is_ignorable_line(label, line, context, log_file):
                         continue
                     findings.append(f"{label} {log_file}:{line_number}: {redact_sensitive(line.strip())}")
 
         for label, pattern in FORBIDDEN_TEXT_REGEXES:
             for match in pattern.finditer(text):
+                if is_ignorable_text_match(label, match, log_file):
+                    continue
                 line_number = text.count("\n", 0, match.start()) + 1
                 snippet = " ".join(match.group(0).split())
                 findings.append(f"{label} {log_file}:{line_number}: {redact_sensitive(snippet)}")

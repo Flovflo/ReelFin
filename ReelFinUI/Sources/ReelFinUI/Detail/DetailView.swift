@@ -88,6 +88,7 @@ struct DetailView: View {
     @State private var playbackLaunchRouter = PlaybackLaunchEntryRouter()
     @State private var customPrewarmer: CustomPlayerPrewarmer?
     @State private var episodeFocusPrewarmTask: Task<Void, Never>?
+    @State private var episodeQueuePreparationTask: Task<Void, Never>?
     @State private var isLoadingPlayback = false
     @State private var hasAnimatedIn = false
     @State private var tvHeroRevealProgress: CGFloat = 0
@@ -213,6 +214,7 @@ struct DetailView: View {
 #if os(iOS)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
 #elseif os(tvOS)
         .toolbar(.hidden, for: .tabBar)
         .focusScope(tvDetailFocusScope)
@@ -237,8 +239,14 @@ struct DetailView: View {
 #if os(tvOS)
             setTopNavigationVisible?(true)
 #endif
+            let displayedItemID = viewModel.detail.item.id
+            Task {
+                await DetailPresentationTelemetry.shared.endNavigation(for: displayedItemID)
+            }
             // Walking away without playing frees the warm session (server + background fill).
             episodeFocusPrewarmTask?.cancel()
+            episodeQueuePreparationTask?.cancel()
+            episodeQueuePreparationTask = nil
             customPrewarmer?.discardIfUnused()
         }
         .onAppear {
@@ -980,6 +988,7 @@ struct DetailView: View {
 
     private func navigateToDetailItem(_ item: MediaItem, context: DetailNavigationContext? = nil) {
         let targetItemID = item.mediaType == .episode ? (item.parentID ?? item.id) : item.id
+        let previousItemID = viewModel.detail.item.id
         navigationContext = context ?? navigationContext
 #if os(tvOS)
         tvHeroRevealProgress = 0
@@ -997,6 +1006,7 @@ struct DetailView: View {
         viewModel.setDetailItem(detailItem, preferredEpisode: preferredEpisode)
 
         Task {
+            await DetailPresentationTelemetry.shared.endNavigation(for: previousItemID)
             await DetailPresentationTelemetry.shared.beginNavigation(for: targetItemID)
             await viewModel.load()
             await MainActor.run {
@@ -1252,6 +1262,12 @@ struct DetailView: View {
     ) {
         guard !isLoadingPlayback else { return }
         let session = dependencies.makePlaybackSession()
+        session.nextEpisodeQueueProvider = { episode in
+            await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: episode,
+                repository: dependencies.detailRepository
+            )
+        }
         let nextEpisodeQueue = item.mediaType == .episode ? viewModel.nextEpisodes(after: item) : []
 
 #if os(iOS)
@@ -1277,6 +1293,7 @@ struct DetailView: View {
                     forceNativeOriginalPlayback: forceNativeOriginalPlayback
                 )
                 isLoadingPlayback = false
+                refreshLegacyEpisodeQueue(for: item, session: session)
             } catch {
                 isLoadingPlayback = false
                 playerSession = nil
@@ -1289,9 +1306,9 @@ struct DetailView: View {
     /// NEW custom engine path (flag-gated): keep the original via the deep local cache, with a
     /// loading bar instead of cuts. Builds its own coordinator/resolver/store so the legacy path is
     /// untouched. Resumes primary play from the item's saved position.
-    /// Warms the primary playable item while the user reads the page, so tapping Play adopts a
-    /// ready pipeline (source resolved, localhost session up, cushion building) — perceived-instant
-    /// start. No-op when the custom player is disabled.
+    /// Resolve only while browsing. Starting the localhost proxy here used to fill tens of MB
+    /// before the hero appeared and could leave overlapping downloaders when Home and Detail each
+    /// owned a prewarmer. Play creates the one active cache session after adopting this resolution.
     private func ensureCustomPrewarmer() -> CustomPlayerPrewarmer? {
         guard dependencies.settingsStore.useCustomPlayerEngine else { return nil }
         if let existing = customPrewarmer { return existing }
@@ -1314,7 +1331,7 @@ struct DetailView: View {
         // bulk cache fill on the WRONG id, and the press-time consume() always missed. Wait for
         // NextUp to name the real episode (the .onChange above re-arms then).
         guard target.mediaType != .series else { return }
-        prewarmer.prewarm(itemID: target.id, startTimeTicks: target.playbackPositionTicks)
+        prewarmer.prewarmResolveOnly(itemID: target.id)
     }
 
     /// tvOS: focus dwelling on an episode card pre-resolves ITS playback (one PlaybackInfo, one at
@@ -1368,11 +1385,18 @@ struct DetailView: View {
         }
         engine.currentMediaItem = item
         engine.nextEpisodeQueue = item.mediaType == .episode ? viewModel.nextEpisodes(after: item) : []
+        engine.nextEpisodeQueueProvider = { episode in
+            await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: episode,
+                repository: dependencies.detailRepository
+            )
+        }
         engine.onPlayNext = { [weak engine] next, remaining in
             guard let engine else { return }
             engine.currentMediaItem = next
             engine.nextEpisodeQueue = remaining
             engine.load(itemID: next.id, startTimeTicks: nil, autoPlay: true)
+            refreshCustomEpisodeQueue(for: next, engine: engine)
         }
         playerSession = nil
         customEngine = engine
@@ -1383,6 +1407,43 @@ struct DetailView: View {
             DetailPlayerPresentation(item: item, content: .custom(engine))
         )
         engine.load(itemID: item.id, startTimeTicks: startTicks, autoPlay: true)
+        refreshCustomEpisodeQueue(for: item, engine: engine)
+    }
+
+    @MainActor
+    private func refreshCustomEpisodeQueue(
+        for item: MediaItem,
+        engine: CustomPlaybackEngine
+    ) {
+        episodeQueuePreparationTask?.cancel()
+        episodeQueuePreparationTask = Task { @MainActor [weak engine] in
+            let queue = await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: item,
+                repository: dependencies.detailRepository
+            )
+            guard let engine,
+                  customEngine === engine,
+                  engine.currentMediaItem?.id == item.id else {
+                return
+            }
+            engine.nextEpisodeQueue = queue
+        }
+    }
+
+    @MainActor
+    private func refreshLegacyEpisodeQueue(
+        for item: MediaItem,
+        session: PlaybackSessionController
+    ) {
+        episodeQueuePreparationTask?.cancel()
+        episodeQueuePreparationTask = Task { @MainActor [weak session] in
+            let queue = await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: item,
+                repository: dependencies.detailRepository
+            )
+            guard let session, playerSession === session else { return }
+            session.replaceNextEpisodeQueue(queue, forCurrentItemID: item.id)
+        }
     }
 
 #if os(tvOS)
@@ -1406,6 +1467,8 @@ struct DetailView: View {
 
     @MainActor
     private func handlePlayerDismissal() {
+        episodeQueuePreparationTask?.cancel()
+        episodeQueuePreparationTask = nil
         let stoppedProgress = playerSession?.stop()
         if let stoppedProgress {
             viewModel.applyStoppedPlaybackProgress(stoppedProgress)
@@ -4589,19 +4652,18 @@ private struct CastAvatarView: View {
                         .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
                 }
 
-            if person.primaryImageTag != nil {
-                CachedRemoteImage(
-                    request: ArtworkRequest.make(for: avatarArtworkItem, role: .avatar),
-                    contentMode: .fill,
-                    apiClient: apiClient,
-                    imagePipeline: imagePipeline
-                )
-                .clipShape(Circle())
-            } else {
-                Text(initials(for: person.name))
-                    .font(.system(size: monogramSize, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.82))
-            }
+            Text(initials(for: person.name))
+                .font(.system(size: monogramSize, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
+
+            CachedRemoteImage(
+                request: ArtworkRequest.make(for: avatarArtworkItem, role: .avatar),
+                contentMode: .fill,
+                apiClient: apiClient,
+                imagePipeline: imagePipeline,
+                showsPlaceholder: false
+            )
+            .clipShape(Circle())
         }
         .frame(width: avatarSize, height: avatarSize)
     }

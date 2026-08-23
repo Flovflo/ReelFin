@@ -223,7 +223,12 @@ struct LibraryView: View {
                 distance: LibraryHeaderPresentation.revealDistance,
                 minimumEffectOpacity: 0
             ),
-            opaqueFallbackRevealThreshold: LibraryHeaderPresentation.compactRevealThreshold
+            opaqueFallbackRevealThreshold: LibraryHeaderPresentation.compactRevealThreshold,
+            refreshAction: {
+                searchDebounceTask?.cancel()
+                searchDebounceTask = nil
+                await viewModel.manualRefresh()
+            }
         ) { quantizedRevealProgress in
             let transition = LibraryHeaderTransition.resolve(
                 revealProgress: quantizedRevealProgress
@@ -339,7 +344,7 @@ struct LibraryView: View {
             .padding(.horizontal, horizontalPadding)
             .padding(.bottom, 24)
 
-            if viewModel.isLoadingPage {
+            if viewModel.isLoadingPage && !viewModel.isRefreshing {
                 ProgressView()
                     .tint(.white)
                     .padding(.bottom, 16)
@@ -409,6 +414,8 @@ struct LibraryView: View {
                 .foregroundStyle(ReelFinTheme.editorialPrimaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
+                .frame(minHeight: 44, alignment: .center)
+                .contentShape(Rectangle())
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("library_sticky_blur_header")
 

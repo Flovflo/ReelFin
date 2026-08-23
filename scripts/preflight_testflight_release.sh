@@ -78,7 +78,7 @@ require_current_project_version_at_least() {
   local current
   current="$(awk '/CURRENT_PROJECT_VERSION:/ { print $2; exit }' "$ROOT_DIR/project.yml")"
 
-  if [[ "$current" == <-> && "$current" -ge "$minimum" ]]; then
+  if [[ "$current" =~ '^[0-9]+$' ]] && (( current >= minimum )); then
     pass "Build number is at least $minimum for beta distribution"
   else
     fail "Build number is at least $minimum for beta distribution"

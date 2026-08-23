@@ -339,6 +339,8 @@ public final class CustomPlaybackEngine {
     /// Item metadata + binge queue, provided by the host (drives episode skip/next semantics).
     public var currentMediaItem: MediaItem?
     public var nextEpisodeQueue: [MediaItem] = []
+    /// Resolves followers when natural completion wins the race against speculative queue setup.
+    public var nextEpisodeQueueProvider: ((MediaItem) async -> [MediaItem])?
     /// Fired to chain into the next episode (host reloads the engine with it + remaining queue).
     public var onPlayNext: ((MediaItem, [MediaItem]) -> Void)?
 
@@ -371,6 +373,8 @@ public final class CustomPlaybackEngine {
     private var sourceBitrateMbps: Double = 30
     private var resolvedMIMEType: String?
     private var loadTask: Task<Void, Never>?
+    private var naturalEndAdvanceTask: Task<Void, Never>?
+    private var naturallyEndedItemID: String?
     private var monitorTask: Task<Void, Never>?
     private var rebuildTask: Task<Void, Never>?
     private var stalledObserver: NSObjectProtocol?
@@ -505,6 +509,7 @@ public final class CustomPlaybackEngine {
     public func load(itemID: String, startTimeTicks: Int64? = nil, autoPlay: Bool = true) {
         teardown()
         currentItemID = itemID
+        naturallyEndedItemID = nil
         lastKnownTimeSeconds = Double(startTimeTicks ?? 0) / 10_000_000
         rebuildTimestamps = []
         didReportStop = false
@@ -612,6 +617,7 @@ public final class CustomPlaybackEngine {
             Task { await reporter.reportStopped(update) }
         }
         teardown()
+        nextEpisodeQueueProvider = nil
         bufferingState = .idle
         return progress
     }
@@ -1602,13 +1608,52 @@ public final class CustomPlaybackEngine {
             let update = progressUpdate(positionTicks: ticks, isPaused: false, isPlaying: false, didFinish: true)
             Task { await reporter.reportStopped(update) }
         }
+        guard let endedEpisode = currentMediaItem,
+              endedEpisode.mediaType == .episode else {
+            onPlaybackEnded?()
+            return
+        }
+        guard naturallyEndedItemID != endedEpisode.id else { return }
+        naturallyEndedItemID = endedEpisode.id
+
         // Binge chaining: an episode with a queued follower rolls straight into it.
-        if currentMediaItem?.mediaType == .episode, !nextEpisodeQueue.isEmpty {
+        if !nextEpisodeQueue.isEmpty {
             playNextEpisodeIfAvailable()
             return
         }
-        onPlaybackEnded?()
+
+        guard let nextEpisodeQueueProvider else {
+            onPlaybackEnded?()
+            return
+        }
+
+        let expectedGeneration = loadGeneration
+        naturalEndAdvanceTask?.cancel()
+        naturalEndAdvanceTask = Task { @MainActor [weak self] in
+            let resolvedQueue = await nextEpisodeQueueProvider(endedEpisode)
+            guard let self,
+                  !Task.isCancelled,
+                  self.loadGeneration == expectedGeneration,
+                  self.currentItemID == endedEpisode.id,
+                  self.currentMediaItem?.id == endedEpisode.id else {
+                return
+            }
+
+            self.nextEpisodeQueue = resolvedQueue.filter { $0.id != endedEpisode.id }
+            if self.nextEpisodeQueue.isEmpty {
+                self.onPlaybackEnded?()
+            } else {
+                self.playNextEpisodeIfAvailable()
+            }
+            self.naturalEndAdvanceTask = nil
+        }
     }
+
+#if DEBUG
+    func debugHandlePlaybackEnded() {
+        handlePlaybackEnded()
+    }
+#endif
 
     // MARK: - Audio session recovery
 
@@ -1634,26 +1679,28 @@ public final class CustomPlaybackEngine {
         audioInterruptionObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
         ) { [weak self] note in
-            guard let self, let info = note.userInfo,
-                  let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  let type = AVAudioSession.InterruptionType(rawValue: raw)
-            else { return }
+            Task { @MainActor [weak self] in
+                guard let self, let info = note.userInfo,
+                      let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      let type = AVAudioSession.InterruptionType(rawValue: raw)
+                else { return }
 
-            switch type {
-            case .began:
-                self.wasPlayingBeforeAudioInterruption =
-                    self.player.rate > 0 || self.player.timeControlStatus == .playing
-            case .ended:
-                let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
-                    .map(AVAudioSession.InterruptionOptions.init(rawValue:))
-                let decision = CustomPlayerAudioRecoveryPolicy.decision(
-                    for: .interruptionEnded(systemShouldResume: options?.contains(.shouldResume) ?? true),
-                    wasPlaying: self.wasPlayingBeforeAudioInterruption
-                )
-                self.wasPlayingBeforeAudioInterruption = false
-                self.scheduleAudioOutputRecovery(decision, reason: "interruption-ended")
-            @unknown default:
-                break
+                switch type {
+                case .began:
+                    self.wasPlayingBeforeAudioInterruption =
+                        self.player.rate > 0 || self.player.timeControlStatus == .playing
+                case .ended:
+                    let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
+                        .map(AVAudioSession.InterruptionOptions.init(rawValue:))
+                    let decision = CustomPlayerAudioRecoveryPolicy.decision(
+                        for: .interruptionEnded(systemShouldResume: options?.contains(.shouldResume) ?? true),
+                        wasPlaying: self.wasPlayingBeforeAudioInterruption
+                    )
+                    self.wasPlayingBeforeAudioInterruption = false
+                    self.scheduleAudioOutputRecovery(decision, reason: "interruption-ended")
+                @unknown default:
+                    break
+                }
             }
         }
 
@@ -1661,17 +1708,19 @@ public final class CustomPlaybackEngine {
         audioRouteChangeObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
         ) { [weak self] note in
-            guard let self,
-                  let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
-                  CustomPlayerAudioRecoveryPolicy.shouldRecoverRouteChange(reason)
-            else { return }
-            let wasPlaying = self.player.rate > 0 || self.player.timeControlStatus == .playing
-            let decision = CustomPlayerAudioRecoveryPolicy.decision(
-                for: .routeChanged,
-                wasPlaying: wasPlaying
-            )
-            self.scheduleAudioOutputRecovery(decision, reason: "route-\(raw)")
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                      let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+                      CustomPlayerAudioRecoveryPolicy.shouldRecoverRouteChange(reason)
+                else { return }
+                let wasPlaying = self.player.rate > 0 || self.player.timeControlStatus == .playing
+                let decision = CustomPlayerAudioRecoveryPolicy.decision(
+                    for: .routeChanged,
+                    wasPlaying: wasPlaying
+                )
+                self.scheduleAudioOutputRecovery(decision, reason: "route-\(raw)")
+            }
         }
 #endif
     }
@@ -1707,6 +1756,7 @@ public final class CustomPlaybackEngine {
 
     private func teardown() {
         loadTask?.cancel(); loadTask = nil
+        naturalEndAdvanceTask?.cancel(); naturalEndAdvanceTask = nil
         monitorTask?.cancel(); monitorTask = nil
         rebuildTask?.cancel(); rebuildTask = nil
         markersTask?.cancel(); markersTask = nil

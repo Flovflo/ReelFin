@@ -223,4 +223,92 @@ final class NativePlaybackBufferPolicyTests: XCTestCase {
         )
         XCTAssertFalse(policy.shouldRebufferAudio(snapshot: locallyBuffered, needsAudio: true, isPlaying: true))
     }
+
+    // MARK: - audioAheadLow early warning (hysteresis)
+
+    func testMatroskaAheadLowWarnsBelowSoftThresholdAndRecoversAboveHysteresis() {
+        let policy = NativePlaybackBufferPolicy.matroska
+
+        // Healthy cushion — no warning.
+        let healthy = policy.audioAheadLow(
+            audioAheadSeconds: 6.0,
+            needsAudio: true,
+            isPlaying: true,
+            wasLow: false
+        )
+        XCTAssertFalse(healthy.isLow)
+        XCTAssertFalse(healthy.transitionedToLow)
+
+        // Cushion drains below the soft threshold — fires once.
+        let drained = policy.audioAheadLow(
+            audioAheadSeconds: 1.5,
+            needsAudio: true,
+            isPlaying: true,
+            wasLow: false
+        )
+        XCTAssertTrue(drained.isLow)
+        XCTAssertTrue(drained.transitionedToLow)
+
+        // Still below the recovery threshold while low — stays low without re-firing.
+        let stillDraining = policy.audioAheadLow(
+            audioAheadSeconds: 1.2,
+            needsAudio: true,
+            isPlaying: true,
+            wasLow: true
+        )
+        XCTAssertTrue(stillDraining.isLow)
+        XCTAssertFalse(stillDraining.transitionedToLow)
+
+        // Between the warning and recovery thresholds the signal holds low
+        // (no flap) because recovery demands clearing the higher threshold.
+        let hovering = policy.audioAheadLow(
+            audioAheadSeconds: 2.5,
+            needsAudio: true,
+            isPlaying: true,
+            wasLow: true
+        )
+        XCTAssertTrue(hovering.isLow)
+        XCTAssertFalse(hovering.transitionedToLow)
+
+        // Above the recovery threshold — clears.
+        let recovered = policy.audioAheadLow(
+            audioAheadSeconds: 4.0,
+            needsAudio: true,
+            isPlaying: true,
+            wasLow: true
+        )
+        XCTAssertFalse(recovered.isLow)
+        XCTAssertFalse(recovered.transitionedToLow)
+
+        // After recovery, dipping between warning and recovery does NOT re-fire;
+        // only a fresh drop below the warning threshold does.
+        let shallowDip = policy.audioAheadLow(
+            audioAheadSeconds: 1.9,
+            needsAudio: true,
+            isPlaying: true,
+            wasLow: false
+        )
+        XCTAssertTrue(shallowDip.isLow)
+        XCTAssertTrue(shallowDip.transitionedToLow)
+    }
+
+    func testMatroskaAheadLowNeverFiresWithoutAudioOrWhilePaused() {
+        let policy = NativePlaybackBufferPolicy.matroska
+
+        let noAudio = policy.audioAheadLow(
+            audioAheadSeconds: 0.0,
+            needsAudio: false,
+            isPlaying: true,
+            wasLow: false
+        )
+        XCTAssertFalse(noAudio.isLow)
+
+        let paused = policy.audioAheadLow(
+            audioAheadSeconds: 0.0,
+            needsAudio: true,
+            isPlaying: false,
+            wasLow: false
+        )
+        XCTAssertFalse(paused.isLow)
+    }
 }

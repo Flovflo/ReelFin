@@ -5,6 +5,40 @@ import XCTest
 
 @MainActor
 final class CachedRemoteImageLoaderTests: XCTestCase {
+    func testKnownMissingLocalArtworkLoadsRemoteCandidateWithoutLocalProbe() async {
+        let remoteURL = URL(string: "https://image.tmdb.org/t/p/w780/backdrop.jpg")!
+        let remoteImage = makeImage(color: .purple)
+        var localResolutionCount = 0
+        var remoteResolutionCount = 0
+        let loader = CachedRemoteImageLoader(
+            resolveURL: { _ in
+                localResolutionCount += 1
+                return nil
+            },
+            resolveRemoteURL: { _ in
+                remoteResolutionCount += 1
+                return remoteURL
+            },
+            cachedImage: { url in url == remoteURL ? remoteImage : nil },
+            fetchImage: { _, _ in throw TestImageError.failed },
+            cancel: { _, _ in }
+        )
+        let descriptor = CachedRemoteImageDescriptor(
+            itemID: "tagless-series",
+            type: .backdrop,
+            width: 720,
+            quality: 82,
+            shouldProbeLocal: false
+        )
+
+        await loader.load(descriptor: descriptor)
+
+        XCTAssertTrue(loader.image === remoteImage)
+        XCTAssertFalse(loader.hasFailed)
+        XCTAssertEqual(localResolutionCount, 0)
+        XCTAssertEqual(remoteResolutionCount, 1)
+    }
+
     func testOldURLResolutionCannotAttachAfterNewGenerationStarts() async {
         let harness = ControlledImageLoadHarness()
         let loader = makeLoader(harness: harness)

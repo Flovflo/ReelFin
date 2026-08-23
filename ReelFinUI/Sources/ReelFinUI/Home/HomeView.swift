@@ -1098,6 +1098,7 @@ struct HomeView: View {
     @State private var playbackErrorMessage: String?
     @State private var liveUITestTargetOpenAttempted = false
     @State private var warmupTask: Task<Void, Never>?
+    @State private var episodeQueuePreparationTask: Task<Void, Never>?
     @State private var appleOptimizationStatuses: [String: ApplePlaybackOptimizationStatus] = [:]
 
 #if os(iOS)
@@ -2222,6 +2223,19 @@ struct HomeView: View {
         }
         engine.currentMediaItem = item
         engine.nextEpisodeQueue = []
+        engine.nextEpisodeQueueProvider = { episode in
+            await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: episode,
+                repository: dependencies.detailRepository
+            )
+        }
+        engine.onPlayNext = { [weak engine] next, remaining in
+            guard let engine else { return }
+            engine.currentMediaItem = next
+            engine.nextEpisodeQueue = remaining
+            engine.load(itemID: next.id, startTimeTicks: nil, autoPlay: true)
+            refreshCustomEpisodeQueue(for: next, engine: engine)
+        }
 
         playerSession = nil
         customEngine = engine
@@ -2238,6 +2252,7 @@ struct HomeView: View {
                 : nil,
             autoPlay: true
         )
+        refreshCustomEpisodeQueue(for: item, engine: engine)
     }
 
     @MainActor
@@ -2247,6 +2262,12 @@ struct HomeView: View {
     ) async {
         let item = request.item
         let session = dependencies.makePlaybackSession()
+        session.nextEpisodeQueueProvider = { episode in
+            await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: episode,
+                repository: dependencies.detailRepository
+            )
+        }
 #if os(iOS)
         OrientationManager.shared.prepareLandscapeForPlayerCoverPresentation()
 #endif
@@ -2265,10 +2286,47 @@ struct HomeView: View {
                 startPosition: request.startPosition(for: .legacy),
                 forceNativeOriginalPlayback: forceNativeOriginalPlayback
             )
+            refreshLegacyEpisodeQueue(for: item, session: session)
         } catch {
             playerSession = nil
             dismissHomePlayer()
             playbackErrorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func refreshCustomEpisodeQueue(
+        for item: MediaItem,
+        engine: CustomPlaybackEngine
+    ) {
+        episodeQueuePreparationTask?.cancel()
+        episodeQueuePreparationTask = Task { @MainActor [weak engine] in
+            let queue = await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: item,
+                repository: dependencies.detailRepository
+            )
+            guard let engine,
+                  customEngine === engine,
+                  engine.currentMediaItem?.id == item.id else {
+                return
+            }
+            engine.nextEpisodeQueue = queue
+        }
+    }
+
+    @MainActor
+    private func refreshLegacyEpisodeQueue(
+        for item: MediaItem,
+        session: PlaybackSessionController
+    ) {
+        episodeQueuePreparationTask?.cancel()
+        episodeQueuePreparationTask = Task { @MainActor [weak session] in
+            let queue = await EpisodePlaybackQueueResolver.loadFollowingEpisodes(
+                after: item,
+                repository: dependencies.detailRepository
+            )
+            guard let session, playerSession === session else { return }
+            session.replaceNextEpisodeQueue(queue, forCurrentItemID: item.id)
         }
     }
 
@@ -2291,10 +2349,9 @@ struct HomeView: View {
             guard let playbackItem = await optimizationPlaybackItem(for: item) else { return }
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                ensureHomeCustomPrewarmer()?.prewarm(
-                    itemID: playbackItem.id,
-                    startTimeTicks: playbackItem.playbackPositionTicks
-                )
+                // Browse-time work stays resolution-only. A bulk cache fill here competed with
+                // Home artwork/sync and could overlap Detail's separate prewarmer.
+                ensureHomeCustomPrewarmer()?.prewarmResolveOnly(itemID: playbackItem.id)
             }
             return
         }
@@ -2416,6 +2473,8 @@ struct HomeView: View {
 
     private func handleHomeDisappear() {
         warmupTask?.cancel()
+        episodeQueuePreparationTask?.cancel()
+        episodeQueuePreparationTask = nil
         if playerPresentation == nil {
             customPrewarmer?.discardIfUnused()
         }
@@ -2433,6 +2492,8 @@ struct HomeView: View {
 
     @MainActor
     private func handlePlayerDismissal() {
+        episodeQueuePreparationTask?.cancel()
+        episodeQueuePreparationTask = nil
         playerSession?.stop()
         playerSession = nil
         customEngine?.stop()

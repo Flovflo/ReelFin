@@ -288,6 +288,7 @@ public final class PlaybackSessionController {
     public private(set) var nativePlayerPlaybackURL: URL?
     public private(set) var nativePlayerPlaybackHeaders: [String: String] = [:]
     public private(set) var nativePlayerStartTimeSeconds: Double?
+    public private(set) var nativePlayerSourceBitrateBps: Int?
     public private(set) var currentPlaybackPlan: PlaybackPlan?
     public private(set) var runtimeHDRMode: HDRPlaybackMode = .unknown
     public private(set) var metrics = PlaybackPerformanceMetrics()
@@ -334,6 +335,8 @@ public final class PlaybackSessionController {
     var currentItemID: String?
     var currentMediaItem: MediaItem?
     var nextEpisodeQueue: [MediaItem] = []
+    public var nextEpisodeQueueProvider: ((MediaItem) async -> [MediaItem])?
+    private var isHandlingNaturalPlaybackEnd = false
     var mediaSegments: [MediaSegment] = []
     private var currentItemHasDolbyVision = false
     private var currentSource: MediaSource?
@@ -633,6 +636,7 @@ public final class PlaybackSessionController {
         startPosition: PlaybackStartPosition = .resumeIfAvailable,
         forceNativeOriginalPlayback: Bool = false
     ) async throws {
+        isHandlingNaturalPlaybackEnd = false
         currentItemID = item.id
         playbackLogSessionID = Self.makePlaybackLogSessionID(itemID: item.id)
         stopLocalMediaGateway(reason: "new_load")
@@ -684,6 +688,7 @@ public final class PlaybackSessionController {
         nativePlayerPlaybackURL = nil
         nativePlayerPlaybackHeaders = [:]
         nativePlayerStartTimeSeconds = nil
+        nativePlayerSourceBitrateBps = nil
         currentPlaybackPlan = nil
         startupWatchdogTask?.cancel()
         startupWatchdogTask = nil
@@ -2309,6 +2314,7 @@ public final class PlaybackSessionController {
         nativePlayerPlaybackURL = snapshot.playbackURL
         nativePlayerPlaybackHeaders = snapshot.playbackHeaders
         nativePlayerStartTimeSeconds = snapshot.startTimeSeconds
+        nativePlayerSourceBitrateBps = snapshot.sourceBitrateBps
         routeDescription = snapshot.routeDescription
         playbackErrorMessage = snapshot.playbackErrorMessage
         availableAudioTracks = snapshot.audioTracks
@@ -2989,6 +2995,7 @@ public final class PlaybackSessionController {
         playbackProof = PlaybackProofSnapshot()
         currentMediaItem = nil
         nextEpisodeQueue = []
+        nextEpisodeQueueProvider = nil
         mediaSegments = []
         activeSkipSuggestion = nil
         activeTrickplayManifest = nil
@@ -3242,8 +3249,13 @@ public final class PlaybackSessionController {
         lastPreparedSelection?.assetURL = newURL
         selectedAudioTrackID = track.id
 
-        if currentSeconds > 0 {
-            let seekTarget = CMTime(seconds: currentSeconds, preferredTimescale: 600)
+        let reloadPosition = Self.trackReloadPlaybackPosition(
+            currentPlayerTime: currentSeconds,
+            transcodeStartOffset: transcodeStartOffset,
+            reloadURL: newURL
+        )
+        if reloadPosition > 0 {
+            let seekTarget = CMTime(seconds: reloadPosition, preferredTimescale: 600)
             let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
             recordRequestedPlaybackPosition(currentSeconds + transcodeStartOffset)
             await player.seek(to: seekTarget, toleranceBefore: tolerance, toleranceAfter: tolerance)
@@ -3387,8 +3399,13 @@ public final class PlaybackSessionController {
         selectedSubtitleTrackID = track.id
 
         // Resume from the same timestamp after the reload.
-        if currentSeconds > 0 {
-            let target = CMTime(seconds: currentSeconds, preferredTimescale: 600)
+        let reloadPosition = Self.trackReloadPlaybackPosition(
+            currentPlayerTime: currentSeconds,
+            transcodeStartOffset: transcodeStartOffset,
+            reloadURL: hlsURL
+        )
+        if reloadPosition > 0 {
+            let target = CMTime(seconds: reloadPosition, preferredTimescale: 600)
             let tolerance = CMTime(seconds: 2.0, preferredTimescale: 600)
             recordRequestedPlaybackPosition(currentSeconds + transcodeStartOffset)
             await player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
@@ -3709,7 +3726,7 @@ public final class PlaybackSessionController {
             Task { @MainActor in
                 guard self.player.currentItem === item else { return }
                 self.isPlaying = false
-                await self.finishCurrentPlayback()
+                await self.handleNaturalPlaybackEnd()
             }
         }
 
@@ -7704,6 +7721,53 @@ public final class PlaybackSessionController {
         }
     }
 
+    private func handleNaturalPlaybackEnd() async {
+        guard !isHandlingNaturalPlaybackEnd else { return }
+        isHandlingNaturalPlaybackEnd = true
+
+        guard let endedEpisode = currentMediaItem,
+              endedEpisode.mediaType == .episode else {
+            await finishCurrentPlayback()
+            return
+        }
+
+        if !nextEpisodeQueue.isEmpty {
+            _ = await playNextEpisode()
+            return
+        }
+
+        await finishCurrentPlayback()
+
+        guard !Task.isCancelled,
+              currentItemID == endedEpisode.id,
+              let nextEpisodeQueueProvider else {
+            return
+        }
+
+        let resolvedQueue = await nextEpisodeQueueProvider(endedEpisode)
+        guard !Task.isCancelled, currentItemID == endedEpisode.id else { return }
+
+        replaceNextEpisodeQueue(
+            resolvedQueue,
+            forCurrentItemID: endedEpisode.id
+        )
+        if !nextEpisodeQueue.isEmpty {
+            _ = await playNextEpisode(finishingCurrentPlayback: false)
+        }
+    }
+
+    public func replaceNextEpisodeQueue(
+        _ episodes: [MediaItem],
+        forCurrentItemID expectedItemID: String
+    ) {
+        guard currentItemID == expectedItemID,
+              currentMediaItem?.mediaType == .episode else {
+            return
+        }
+        nextEpisodeQueue = episodes.filter { $0.id != expectedItemID }
+        updateActiveSkipSuggestion()
+    }
+
     private func tearDownCurrentItemObservers() {
         startupSubtitleSelectionTask?.cancel()
         startupSubtitleSelectionTask = nil
@@ -9262,6 +9326,20 @@ public final class PlaybackSessionController {
         return items.contains { item in
             resumeKeys.contains { $0.caseInsensitiveCompare(item.name) == .orderedSame }
         }
+    }
+
+    nonisolated static func trackReloadPlaybackPosition(
+        currentPlayerTime: Double,
+        transcodeStartOffset: Double,
+        reloadURL: URL
+    ) -> Double {
+        let current = currentPlayerTime.isFinite ? max(0, currentPlayerTime) : 0
+        guard transcodeStartOffset.isFinite,
+              transcodeStartOffset > 0,
+              !urlContainsServerStartTime(reloadURL) else {
+            return current
+        }
+        return current + transcodeStartOffset
     }
 
     nonisolated static func shouldResumePlaybackAfterTrackReload(

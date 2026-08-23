@@ -570,3 +570,64 @@
 - Add an iOS Settings overview using passive Liquid Glass with Reduce Transparency fallback. It summarizes live connection host, playback mode/quality, visible Home sections, and media-cache policy without adding navigation depth or glass to scrolling content.
 - Cold-cache authenticated evidence downloaded and persisted the real Silo primary WebP, rendered it in Search, dismissed the keyboard, opened Settings, and captured the overview on the preserved iPhone 17/iOS 26.5 Jellyfin session. Deterministic tests cover negative-cache reuse, tagless-prefetch rejection, loader failure publication, complementary header opacity, and mock Settings content.
 - Final result bundles are green on the installed 26.5 runtimes: iOS passed 1,157/1,168 with zero failures, 11 explicit skips, and zero runtime warnings; tvOS passed 51/51 with zero failures, skips, or runtime warnings. tvOS includes 23 auth/focus UI tests and ten authenticated live player journeys; the one transient focus-harness timeout from the first run passed immediately in isolation and the complete clean rerun passed all 51 tests.
+
+## Read-Only Remote Artwork Recovery Audit - 2026-07-29
+
+- Direct authenticated probes proved the blank artwork was not a QUIC/NAT64 queue failure: local Primary, Backdrop, Thumb, and Logo endpoints returned actual HTTP 404s for the affected Brooklyn Nine-Nine, Super Mario Galaxy, and Star City identities. Jellyfin's read-only remote-image endpoint simultaneously advertised 16–236 provider candidates for their owning movie/series identities, while episode identities advertised none.
+- Visible loading now uses four bounded stages: a metadata-confirmed local miss skips wasted local probes; unknown/local-tagged content retains authenticated Primary↔Backdrop fallback; a final read-only provider Primary↔Backdrop fallback resolves through the API actor; and the existing image pipeline owns cache lookup, transport, off-main ImageIO decode, cancellation, and publication. No network work moved onto `MainActor`.
+- Provider resolution is cached by item/type inside the API actor for 12 hours, with five-minute negative entries only after a successful empty response. Concurrent equal HTTP requests still pass through the existing request deduplicator. Network failures create no negative entry, and every loader suspension remains protected by task cancellation plus request-generation ownership.
+- TMDB payloads are rewritten from multi-megapixel originals to the smallest supported tier covering the requested profile, capped at `w1280` for hero backdrops. Cold-cache live evidence produced six provider files in the existing LRU cache; a warm launch painted directly from disk, and no second cache or detached decoding path was introduced.
+- Security regression coverage verifies same-origin Jellyfin images retain `X-Emby-Token` while `image.tmdb.org` receives no Jellyfin credential. Additional deterministic coverage locks provider type/limit query construction, resolution caching, tagless backdrop shape, local-probe elision, and remote loader publication. The authenticated simulator journey confirms Home, Continue Watching, series Detail, and episode cards render real artwork against the user's Jellyfin library.
+
+## Episode Still Cache And Duplicate Audit - 2026-07-29
+
+- The visible episode card and speculative warmup previously used different ad-hoc dimensions, producing different Jellyfin URLs and therefore different memory/disk cache keys. Both platforms now consume the canonical `.episodeStill` request (`Primary`, 560 px, quality 82), so a warmed image is the exact object the card requests.
+- A season now starts a cancelable latest-wins utility prefetch for its first six unique episode identities without awaiting it in the metadata or playback path. Visible loads still bypass speculative admission and adopt shared in-flight work through the existing image registry.
+- Season payloads are filtered in stable order by exact item ID and by `(parentIndexNumber, indexNumber)`. The regression fixture reproduces both the identical-ID duplicate and a second Jellyfin ID occupying S1E3, and verifies only one S1E3 plus S1E4 survives and is prefetched.
+- Focused validation passed 13 canonical-artwork/detail tests, 11 generation/cancellation loader tests, 13 disk/pipeline/prefetch tests, and 4 Jellyfin URL/provider tests. No cache capacity, API mutation, `MainActor` network work, playback routing, or untracked async image task was added.
+
+## Automatic Next Episode Continuity Audit - 2026-08-01
+
+- Root cause inspection found two independent gaps. Home explicitly assigned an empty custom-player queue and never installed `onPlayNext`; the Apple-native end observer always called `finishCurrentPlayback()` even when `nextEpisodeQueue` contained a follower.
+- Natural Apple-player completion now has a single-flight guard and calls the existing finish-then-load path for episodic queues. When completion arrives before initial queue preparation, it persists the ended episode once, resolves followers for that captured identity, rejects a stale result after dismissal or replacement, and loads the follower without reporting completion twice. A new load resets the end guard for the new item.
+- `EpisodePlaybackQueueResolver` reads the current season while followers remain and the immediate next season at a boundary, keeps stable server order as a fallback, and de-duplicates by ID plus `(season, episode)`. Missing series/season context or repository failure returns an empty queue without blocking playback.
+- Home and Detail start queue resolution alongside playback. Custom-player publication is guarded by engine identity, load generation, and current item ID; its duplicate end notifications share one late resolution. The native session accepts replacements only for its expected current item and refills when its remaining queue becomes empty. No detached task, fixed sleep, or playback fallback was added.
+- TDD evidence: the queue tests first failed because the resolver did not exist; native and custom natural-end regressions then failed with intentionally empty initial queues before their race fixes. Final targeted simulator evidence passed 4/4 tests: stable ordering and S1→S2 continuation without duplicates, unknown-current rejection, a real `AVPlayerItemDidPlayToEndTime` notification that resolved and replaced episode 1 with episode 2 from that empty queue, and custom-player late resolution with duplicate-end suppression. `xcodegen generate`, focused iOS testing, both simulator builds, and `git diff --check` passed.
+
+## Player Stability And Verification - 2026-08-08
+
+- Track reloads preserve resume position across audio/subtitle replacement when a new URL has no server start-time query; targeted regression tests cover offset and already-offset URLs.
+- Hero carousel identity reconciliation prevents stale selection and out-of-range indices during feed refresh, reorder, and empty transitions.
+- Live Jellyfin contracts passed for MP4, MKV, HDR, and Dolby Vision: 4/4 item probes, 4/4 benchmarks, 4/4 playback probes, and resume reporting. Real iOS movie/series UI smoke passed 2/2.
+- Targeted iOS playback tests passed 235/235; iOS and tvOS builds passed on Xcode-beta 27 with simulator runtimes 26.5. Runtime log scanning remains strict for real app/UI failures while excluding only deterministic xctest gateway teardown artifacts.
+- The TestFlight preflight Zsh numeric build guard was repaired and validated with shell syntax checks plus 23 Python script tests. Simulator evidence does not establish physical HDR/Dolby Vision display behavior.
+
+## Player Interaction And Series Navigation Audit - 2026-08-09
+
+- The custom player no longer re-arms its auto-hide timer when the background is tapped. A transparent hit target sits behind the controls and uses an explicit hide/reveal policy, preserving menu and transport-button interactions.
+- When Next Up is empty, series context selects the greatest available season and episode index instead of the first server-returned season and episode. Preferred-episode matching remains authoritative.
+- The iOS Detail root tab bar is hidden for the detail flow, preventing the Home/Settings/Search bar from covering episode cards and their interaction area.
+- Evidence: the targeted regression set passed 40/40, the live iOS movie/series UI smoke passed 2/2, and both iOS and tvOS simulator builds exited 0. Existing Swift actor-isolation and AVFoundation deprecation warnings remain.
+
+## Native Home And Library Refresh Audit - 2026-08-09
+
+- The Home refresh path already uses SwiftUI's native `.refreshable` through `StickyBlurHeader`; it remains the sync-backed path rather than duplicating fetch logic in the view.
+- Library uses the same scroll container and now binds its refresh action to a criteria request. Starting refresh increments the existing request generation, cancels pagination and older criteria tasks, and preserves latest-wins response ownership.
+- Refresh does not clear committed cards or show the pagination footer as a second progress indicator. This avoids a blank flash and reduces competing layout updates during the gesture.
+- Evidence: the two refresh regressions passed 2/2, the Home + Library view-model suite passed 17/17, `xcodegen generate` passed, and iOS/tvOS simulator builds exited 0. Existing Swift concurrency and AVFoundation deprecation warnings remain.
+
+## Authenticated Jellyfin Runtime Follow-Up - 2026-08-09
+
+- Live Search exposed a correctness/performance issue in the local-first merge: FTS results were not constrained by the active Movies/Shows filter, and same-ID cached/remote variants could survive canonical de-duplication when metadata completeness changed the key. Filtering before sorting and merging by exact Jellyfin ID prevents duplicate cards and unnecessary image work.
+- Detail fallback now skips empty newest seasons, reducing a dead-end interaction for fully watched series with placeholder/unreleased seasons. The Library refresh action cancels pending debounce work before starting a new generation.
+- Browser mirror testing confirmed the real simulator rotates playback to landscape; the integrated `serve-sim` frame remains portrait while the direct `simctl io` capture is correctly landscape. This is a mirror presentation limitation, not an app video-rotation defect.
+- Read-only subagent review still flags follow-up work: explicit Library load-error/retry state, refresh pagination preservation, sample-buffer PiP wiring, scroll-linked subtree isolation, and reducing full-screen blur/compositing during scroll. The latest-wins season tap race is covered by the deeper audit below.
+
+## Deep Multi-Simulator Stability Audit - 2026-08-09
+
+- The latest-wins season token prevents stale episode publications after rapid season taps. The queue resolver scans beyond empty season gaps, and the custom-player natural-end path can resolve a follower after the initial queue was still empty while rejecting stale playback generations.
+- Local cache connection bookkeeping now has a registration-before-task-creation boundary with a cancellation latch. This removes a real immediate-completion race in the `connectionTasks` table. Audio interruption and route notification work is explicitly re-entered on `MainActor`.
+- `TARGETED_DEVICE_FAMILY` is now `1,2`, iPad orientations are emitted from `project.yml`, and the universal iOS app was rebuilt and installed on iPad Pro 13. The Library sticky-header UI journey passed on that runtime. `TransparentBlurView` caches its applied style, avoiding repeated `UIVisualEffectView.effect` replacement on every scroll bucket.
+- Evidence from parallel agents: real Jellyfin probes/benchmarks 4/4 each; native playback 100/100; focused iPhone 17e playback 88/88; live series smoke 1/1; two stable memgraphs reported 0 leaks/0 bytes; no ReelFin crash in live logs. Focused local cache, layout, and sync tests passed 3/3; iPad sticky UI passed 1/1; iOS and tvOS builds passed.
+- Known limits are preserved: simulator Instruments hitches/Time Profiler did not yield a usable trace, and the sample-buffer PiP control is still not wired to an actual `AVPictureInPictureController`. Global XCTest runs were stopped after >20 minutes in UI waits; a separate iPad matrix also exposed fixture/test-harness crashes, now guarded against invalid array/range assumptions in the affected test helpers.
+- A fresh-login rerun on the iPhone 17 reached the credential submission but did not reach Home; a direct Jellyfin `AuthenticateByName` check with the local test configuration returned HTTP 401. This is recorded as invalid/expired test credentials, not as a playback or navigation failure; the existing authenticated-session playback evidence remains the valid live-server result.

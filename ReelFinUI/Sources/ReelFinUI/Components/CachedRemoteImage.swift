@@ -11,6 +11,7 @@ public struct CachedRemoteImage: View {
     private let type: JellyfinImageType
     private let width: Int
     private let quality: Int
+    private let shouldProbeLocal: Bool
     private let contentMode: CachedRemoteImageContentMode
     private let onImageLoaded: (() -> Void)?
     private let placeholderAnimationEnabled: Bool
@@ -30,6 +31,7 @@ public struct CachedRemoteImage: View {
         type = request.type
         width = request.profile.width
         quality = request.profile.quality
+        shouldProbeLocal = request.shouldProbeLocal
         self.contentMode = contentMode
         self.onImageLoaded = onImageLoaded
         placeholderAnimationEnabled = ShimmerAnimationPolicy.animationEnabled(
@@ -57,6 +59,7 @@ public struct CachedRemoteImage: View {
         self.type = type
         self.width = width
         self.quality = quality
+        shouldProbeLocal = true
         self.contentMode = contentMode
         self.onImageLoaded = onImageLoaded
         self.placeholderAnimationEnabled = placeholderAnimationEnabled
@@ -101,12 +104,13 @@ public struct CachedRemoteImage: View {
             itemID: itemID,
             type: type,
             width: normalizedWidth,
-            quality: quality
+            quality: quality,
+            shouldProbeLocal: shouldProbeLocal
         )
     }
 
     private var requestIdentity: String {
-        "\(itemID)-\(type.rawValue)-\(normalizedWidth)-\(quality)-\(contentMode.identity)"
+        "\(itemID)-\(type.rawValue)-\(normalizedWidth)-\(quality)-\(shouldProbeLocal)-\(contentMode.identity)"
     }
 
     private var normalizedWidth: Int {

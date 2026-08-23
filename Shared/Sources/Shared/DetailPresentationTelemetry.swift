@@ -2,6 +2,7 @@ import Foundation
 
 public actor DetailPresentationTelemetry {
     public static let shared = DetailPresentationTelemetry()
+    private static let staleEntryAge: TimeInterval = 30
 
     private struct Entry {
         let startDate: Date
@@ -13,9 +14,19 @@ public actor DetailPresentationTelemetry {
 
     private var entries: [String: Entry] = [:]
 
-    public func beginNavigation(for itemID: String) {
-        entries[itemID] = Entry(startDate: Date())
+    @discardableResult
+    public func beginNavigation(for itemID: String) -> Bool {
+        let now = Date()
+        entries = entries.filter { now.timeIntervalSince($0.value.startDate) < Self.staleEntryAge }
+        guard entries[itemID] == nil else { return false }
+
+        entries[itemID] = Entry(startDate: now)
         AppLog.ui.notice("Detail navigation started for \(itemID, privacy: .public)")
+        return true
+    }
+
+    public func endNavigation(for itemID: String) {
+        entries[itemID] = nil
     }
 
     public func markDetailVisible(for itemID: String) {

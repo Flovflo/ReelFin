@@ -42,6 +42,12 @@ public actor LocalMediaGatewaySession {
     private var cachedContentType: String?
     private var latestObservedBitrate: Int?
     private var inFlight: [ByteRange: Task<LocalMediaGatewayRangeResponse, Error>] = [:]
+    // Sustained-weak-throughput watch: feeds every remote-window delivery sample into
+    // PlaybackPrefetchEscalationPolicy so the ahead prefetch re-anchors before the
+    // player drains its cushion, instead of waiting for an audible underrun.
+    private let sourceBitrateBps: Int
+    private var streamingEscalationPolicy = PlaybackPrefetchEscalationPolicy()
+    private var streamingEscalationState = PlaybackPrefetchEscalationPolicy.State()
 
     public init(
         remoteURL: URL,
@@ -59,6 +65,7 @@ public actor LocalMediaGatewaySession {
         self.headers = headers
         self.key = key
         self.store = store
+        self.sourceBitrateBps = max(0, prefetchConfiguration?.sourceBitrate ?? 0)
         sessionConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
         sessionConfiguration.timeoutIntervalForRequest = 30
         self.session = URLSession(configuration: sessionConfiguration)
@@ -167,6 +174,7 @@ public actor LocalMediaGatewaySession {
                 await self?.recordStreamingFetch(
                     byteCount: byteCount,
                     elapsedSeconds: elapsedSeconds,
+                    atOffset: offset,
                     totalLength: totalLengthForCache
                 )
             }
@@ -435,12 +443,29 @@ public actor LocalMediaGatewaySession {
     private func recordStreamingFetch(
         byteCount: Int,
         elapsedSeconds: TimeInterval,
+        atOffset offset: Int64,
         totalLength: Int64?
-    ) {
+    ) async {
         cachedSize = totalLength ?? cachedSize
         if elapsedSeconds > 0 {
             latestObservedBitrate = max(latestObservedBitrate ?? 0, Int(Double(byteCount * 8) / elapsedSeconds))
         }
+        guard sourceBitrateBps > 0 else { return }
+        let deliveredBitrateBps = elapsedSeconds > 0
+            ? Int(Double(byteCount * 8) / elapsedSeconds)
+            : 0
+        let (nextState, action) = streamingEscalationPolicy.record(
+            deliveredBitrateBps: deliveredBitrateBps,
+            requiredBitrateBps: sourceBitrateBps,
+            now: ProcessInfo.processInfo.systemUptime
+        )
+        streamingEscalationState = nextState
+        guard case .escalate(let reason) = action else { return }
+        // Anchor just past the delivered window: that is where the read cursor heads next.
+        await prefetcher?.escalate(
+            currentOffset: offset + Int64(max(0, byteCount)),
+            reason: reason
+        )
     }
 
     private func applyHeaders(to request: inout URLRequest) {

@@ -9,6 +9,7 @@ final class ArtworkRequestTests: XCTestCase {
             (.posterGrid, .posterGrid),
             (.posterRow, .posterRow),
             (.landscapeRail, .landscapeRail),
+            (.episodeStill, .landscapeRail),
             (.heroLow, .heroBackdropLow),
             (.heroHigh, .heroBackdropHigh),
             (.logo, .logo),
@@ -44,11 +45,19 @@ final class ArtworkRequestTests: XCTestCase {
     }
 
     func testLandscapeAndHeroRolesFallBackToPrimaryWhenBackdropIsUnavailable() {
-        let item = MediaItem(id: "movie-1", name: "Movie")
+        let item = MediaItem(id: "movie-1", name: "Movie", posterTag: "poster")
 
         XCTAssertEqual(ArtworkRequest.make(for: item, role: .landscapeRail).type, .primary)
         XCTAssertEqual(ArtworkRequest.make(for: item, role: .heroLow).type, .primary)
         XCTAssertEqual(ArtworkRequest.make(for: item, role: .heroHigh).type, .primary)
+    }
+
+    func testTaglessLandscapeAndHeroRolesPreferRemoteBackdropShape() {
+        let item = MediaItem(id: "movie-1", name: "Movie")
+
+        XCTAssertEqual(ArtworkRequest.make(for: item, role: .landscapeRail).type, .backdrop)
+        XCTAssertEqual(ArtworkRequest.make(for: item, role: .heroLow).type, .backdrop)
+        XCTAssertEqual(ArtworkRequest.make(for: item, role: .heroHigh).type, .backdrop)
     }
 
     func testEpisodeArtworkUsesSeriesIdentity() {
@@ -59,9 +68,26 @@ final class ArtworkRequestTests: XCTestCase {
             parentID: "series-1"
         )
 
-        for role in ArtworkRequestRole.allCases where role != .logo {
+        for role in ArtworkRequestRole.allCases where role != .logo && role != .episodeStill {
             XCTAssertEqual(ArtworkRequest.make(for: episode, role: role).itemID, "series-1")
         }
+    }
+
+    func testEpisodeStillUsesTheEpisodePrimaryImage() {
+        let episode = MediaItem(
+            id: "episode-1",
+            name: "Episode",
+            mediaType: .episode,
+            parentID: "series-1"
+        )
+
+        let request = ArtworkRequest.make(for: episode, role: .episodeStill)
+
+        XCTAssertEqual(request.itemID, "episode-1")
+        XCTAssertEqual(request.type, .primary)
+        XCTAssertEqual(request.profile, .landscapeRail)
+        XCTAssertTrue(request.allowsSpeculativePrefetch)
+        XCTAssertTrue(request.shouldProbeLocal)
     }
 
     func testEpisodeLandscapeArtworkUsesParentSeriesBackdropWithoutEpisodeBackdropTag() {
@@ -130,5 +156,28 @@ final class ArtworkRequestTests: XCTestCase {
         XCTAssertTrue(
             ArtworkRequest.make(for: taglessMovie, role: .logo).allowsSpeculativePrefetch
         )
+    }
+
+    func testTaglessTopLevelItemSkipsKnownMissingLocalArtworkButEpisodeKeepsUnknownProbe() {
+        let taglessMovie = MediaItem(id: "tagless", name: "Tagless")
+        let episode = MediaItem(
+            id: "episode",
+            name: "Episode",
+            mediaType: .episode,
+            parentID: "series"
+        )
+
+        XCTAssertFalse(ArtworkRequest.make(for: taglessMovie, role: .heroHigh).shouldProbeLocal)
+        XCTAssertTrue(ArtworkRequest.make(for: episode, role: .landscapeRail).shouldProbeLocal)
+    }
+
+    func testTaglessAvatarStillProbesAndPrefetchesPersonPrimaryArtwork() {
+        let person = MediaItem(id: "person-1", name: "Actor")
+        let request = ArtworkRequest.make(for: person, role: .avatar)
+
+        XCTAssertEqual(request.itemID, "person-1")
+        XCTAssertEqual(request.type, .primary)
+        XCTAssertTrue(request.shouldProbeLocal)
+        XCTAssertTrue(request.allowsSpeculativePrefetch)
     }
 }

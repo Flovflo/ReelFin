@@ -2,6 +2,63 @@
 import XCTest
 
 final class EditorialBrowseVisualSystemTests: XCTestCase {
+    func testCompactHomeHeroUsesAContentFirstHeight() {
+        XCTAssertEqual(
+            HomeEditorialPresentationPolicy.iosHeroHeight(
+                compact: true,
+                accessibilitySize: false
+            ),
+            430
+        )
+        XCTAssertEqual(
+            HomeEditorialPresentationPolicy.iosHeroHeight(
+                compact: true,
+                accessibilitySize: true
+            ),
+            520
+        )
+        XCTAssertEqual(
+            HomeEditorialPresentationPolicy.iosHeroHeight(
+                compact: false,
+                accessibilitySize: false
+            ),
+            600
+        )
+    }
+
+    func testHeroFallbackTitlePreservesReadableCaseAndAllowsThreeLines() throws {
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Components/EditorialMediaIdentityView.swift"
+        )
+
+        XCTAssertTrue(source.contains("Text(displayedFallbackTitle)"))
+        XCTAssertTrue(source.contains("style == .iosHero ? fallbackTitle : fallbackTitle.uppercased()"))
+        XCTAssertTrue(source.contains(".lineLimit(titleLineLimit)"))
+    }
+
+    func testCastAvatarAlwaysAttemptsArtworkAndKeepsItsMonogramAsFallback() throws {
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Detail/DetailView.swift"
+        )
+
+        XCTAssertFalse(source.contains("if person.primaryImageTag != nil"))
+        XCTAssertTrue(source.contains("request: ArtworkRequest.make(for: avatarArtworkItem, role: .avatar)"))
+        XCTAssertTrue(source.contains("showsPlaceholder: false"))
+    }
+
+    func testHomeHeroPrimaryActionNeverWrapsOnCompactPhones() throws {
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Components/HeroCarouselView.swift"
+        )
+
+        XCTAssertTrue(source.contains(
+            "Text(primaryActionTitle(for: item))\n" +
+                "                                .lineLimit(1)\n" +
+                "                                .minimumScaleFactor(0.78)"
+        ))
+        XCTAssertTrue(source.contains(".layoutPriority(1)"))
+    }
+
     func testHomeHeroGlassUsesCompleteControlSurfaces() throws {
         let source = try sourceText(
             at: "ReelFinUI/Sources/ReelFinUI/Components/HeroCarouselView.swift"

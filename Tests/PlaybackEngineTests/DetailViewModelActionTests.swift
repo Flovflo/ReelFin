@@ -851,6 +851,254 @@ final class DetailViewModelActionTests: XCTestCase {
         XCTAssertEqual(warmupRequests.last?.runtimeSeconds, 1_800)
     }
 
+    func testFullyWatchedSeriesFallsBackToLatestSeasonAndEpisodeWhenNextUpIsEmpty() async {
+        let season1 = MediaItem(id: "season-1", name: "Season 1", mediaType: .season, indexNumber: 1)
+        let season2 = MediaItem(id: "season-2", name: "Season 2", mediaType: .season, indexNumber: 2)
+        let season3 = MediaItem(id: "season-3", name: "Season 3", mediaType: .season, indexNumber: 3)
+        let latestEpisode = MediaItem(
+            id: "s3e4",
+            name: "Latest Episode",
+            mediaType: .episode,
+            parentID: "series-fully-watched",
+            indexNumber: 4,
+            parentIndexNumber: 3,
+            isPlayed: true
+        )
+        let apiClient = DetailActionSpyAPIClient(
+            // Jellyfin order is not the navigation contract; the highest season/episode wins.
+            seasonsBySeriesID: ["series-fully-watched": [season1, season3, season2]],
+            episodesBySeasonID: [
+                "season-1": [
+                    MediaItem(
+                        id: "s1e1",
+                        name: "Old Episode",
+                        mediaType: .episode,
+                        parentID: "series-fully-watched",
+                        indexNumber: 1,
+                        parentIndexNumber: 1,
+                        isPlayed: true
+                    )
+                ],
+                "season-2": [
+                    MediaItem(
+                        id: "s2e1",
+                        name: "Older Episode",
+                        mediaType: .episode,
+                        parentID: "series-fully-watched",
+                        indexNumber: 1,
+                        parentIndexNumber: 2,
+                        isPlayed: true
+                    )
+                ],
+                "season-3": [
+                    MediaItem(
+                        id: "s3e2",
+                        name: "Earlier Latest-Season Episode",
+                        mediaType: .episode,
+                        parentID: "series-fully-watched",
+                        indexNumber: 2,
+                        parentIndexNumber: 3,
+                        isPlayed: true
+                    ),
+                    latestEpisode
+                ]
+            ]
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(
+                id: "series-fully-watched",
+                name: "Series",
+                mediaType: .series,
+                isPlayed: true
+            ),
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: MockMetadataRepository()
+            )
+        )
+
+        await viewModel.load()
+
+        let didSelectLatest = await waitForCondition(timeout: 2) {
+            viewModel.selectedSeason?.id == "season-3"
+                && viewModel.nextUpEpisode?.id == "s3e4"
+        }
+
+        XCTAssertTrue(didSelectLatest)
+        XCTAssertEqual(viewModel.playButtonLabel, "Play S3 E4")
+    }
+
+    func testFullyWatchedSeriesSkipsEmptyLatestSeasonWhenSelectingFallbackEpisode() async {
+        let season1 = MediaItem(id: "season-1", name: "Season 1", mediaType: .season, indexNumber: 1)
+        let season2 = MediaItem(id: "season-2", name: "Season 2", mediaType: .season, indexNumber: 2)
+        let season3 = MediaItem(id: "season-3", name: "Season 3", mediaType: .season, indexNumber: 3)
+        let latestEpisode = MediaItem(
+            id: "s2e8",
+            name: "Latest Available Episode",
+            mediaType: .episode,
+            parentID: "series-empty-latest-season",
+            indexNumber: 8,
+            parentIndexNumber: 2,
+            isPlayed: true
+        )
+        let apiClient = DetailActionSpyAPIClient(
+            seasonsBySeriesID: [
+                "series-empty-latest-season": [season1, season3, season2]
+            ],
+            episodesBySeasonID: [
+                "season-1": [
+                    MediaItem(
+                        id: "s1e1",
+                        name: "Old Episode",
+                        mediaType: .episode,
+                        parentID: "series-empty-latest-season",
+                        indexNumber: 1,
+                        parentIndexNumber: 1,
+                        isPlayed: true
+                    )
+                ],
+                "season-2": [latestEpisode],
+                "season-3": []
+            ]
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(
+                id: "series-empty-latest-season",
+                name: "Series",
+                mediaType: .series,
+                isPlayed: true
+            ),
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: MockMetadataRepository()
+            )
+        )
+
+        await viewModel.load()
+
+        let didSelectLatestAvailable = await waitForCondition(timeout: 2) {
+            viewModel.selectedSeason?.id == season2.id
+                && viewModel.nextUpEpisode?.id == latestEpisode.id
+        }
+
+        XCTAssertTrue(didSelectLatestAvailable)
+        XCTAssertEqual(viewModel.playButtonLabel, "Play S2 E8")
+    }
+
+    func testRapidSeasonSelectionKeepsLatestRequestedSeason() async {
+        let season1 = MediaItem(id: "season-1", name: "Season 1", mediaType: .season, indexNumber: 1)
+        let season2 = MediaItem(id: "season-2", name: "Season 2", mediaType: .season, indexNumber: 2)
+        let season1Episode = MediaItem(
+            id: "s1e1",
+            name: "Old Episode",
+            mediaType: .episode,
+            parentID: "series-rapid-season",
+            indexNumber: 1,
+            parentIndexNumber: 1
+        )
+        let season2Episode = MediaItem(
+            id: "s2e1",
+            name: "Latest Episode",
+            mediaType: .episode,
+            parentID: "series-rapid-season",
+            indexNumber: 1,
+            parentIndexNumber: 2
+        )
+        let apiClient = DetailActionSpyAPIClient(
+            episodesBySeasonID: [
+                "season-1": [season1Episode],
+                "season-2": [season2Episode]
+            ],
+            episodeDelayNanosecondsBySeasonID: [
+                "season-1": 250_000_000
+            ]
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(id: "series-rapid-season", name: "Series", mediaType: .series),
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: MockMetadataRepository()
+            )
+        )
+
+        let firstSelection = Task { @MainActor in
+            await viewModel.select(season: season1)
+        }
+        await Task.yield()
+        let latestSelection = Task { @MainActor in
+            await viewModel.select(season: season2)
+        }
+
+        await latestSelection.value
+        await firstSelection.value
+
+        XCTAssertEqual(viewModel.selectedSeason?.id, season2.id)
+        XCTAssertEqual(viewModel.episodes.map(\.id), [season2Episode.id])
+        XCTAssertEqual(viewModel.nextUpEpisode?.id, season2Episode.id)
+    }
+
+    func testSeriesEpisodesRemoveDuplicateIDsAndDuplicateSeasonCoordinates() async {
+        let artworkPrefetcher = ArtworkPrefetcherTestDouble()
+        let season = MediaItem(id: "season-1", name: "Season 1", mediaType: .season, indexNumber: 1)
+        let episode3 = MediaItem(
+            id: "episode-3",
+            name: "Ça rame, ça rame",
+            mediaType: .episode,
+            parentID: "series-duplicates",
+            indexNumber: 3,
+            parentIndexNumber: 1
+        )
+        let duplicateID = episode3
+        let duplicateCoordinate = MediaItem(
+            id: "episode-3-alternate",
+            name: "Ça rame, ça rame",
+            mediaType: .episode,
+            parentID: "series-duplicates",
+            indexNumber: 3,
+            parentIndexNumber: 1
+        )
+        let episode4 = MediaItem(
+            id: "episode-4",
+            name: "Episode 4",
+            mediaType: .episode,
+            parentID: "series-duplicates",
+            indexNumber: 4,
+            parentIndexNumber: 1
+        )
+        let apiClient = DetailActionSpyAPIClient(
+            seasonsBySeriesID: ["series-duplicates": [season]],
+            episodesBySeasonID: [
+                "season-1": [episode3, duplicateID, duplicateCoordinate, episode4]
+            ],
+            nextUpBySeriesID: ["series-duplicates": episode3]
+        )
+        let viewModel = DetailViewModel(
+            item: MediaItem(id: "series-duplicates", name: "Series", mediaType: .series),
+            dependencies: makeDependencies(
+                apiClient: apiClient,
+                repository: MockMetadataRepository(),
+                artworkPrefetcher: artworkPrefetcher
+            )
+        )
+
+        await viewModel.load()
+        let didLoadEpisodes = await waitForCondition(timeout: 2) {
+            viewModel.episodes.contains(where: { $0.id == "episode-4" })
+        }
+
+        XCTAssertTrue(didLoadEpisodes)
+        XCTAssertEqual(viewModel.episodes.map(\.id), ["episode-3", "episode-4"])
+        let didPrefetchEpisodeArtwork = await waitForAsyncCondition(timeout: 2) {
+            await artworkPrefetcher.capturedRequests().count >= 2
+        }
+        let episodeArtworkRequests = await artworkPrefetcher.capturedRequests().filter {
+            $0.profile == .landscapeRail
+        }
+        XCTAssertTrue(didPrefetchEpisodeArtwork)
+        XCTAssertEqual(episodeArtworkRequests.map(\.itemID), ["episode-3", "episode-4"])
+        XCTAssertEqual(episodeArtworkRequests.map(\.type), [.primary, .primary])
+    }
+
     func testSetEpisodeWatchedMarksOnlyTargetEpisodeAndAdvancesNextUp() async {
         let apiClient = DetailActionSpyAPIClient()
         let repository = MockMetadataRepository()
@@ -932,7 +1180,8 @@ final class DetailViewModelActionTests: XCTestCase {
     private func makeDependencies(
         apiClient: DetailActionSpyAPIClient,
         repository: any MetadataRepositoryProtocol,
-        warmupManager: (any PlaybackWarmupManaging)? = nil
+        warmupManager: (any PlaybackWarmupManaging)? = nil,
+        artworkPrefetcher: (any ArtworkPrefetching)? = nil
     ) -> ReelFinDependencies {
         let detailRepository = DefaultMediaDetailRepository(
             apiClient: apiClient,
@@ -949,7 +1198,7 @@ final class DetailViewModelActionTests: XCTestCase {
             repository: repository,
             detailRepository: detailRepository,
             imagePipeline: MockImagePipeline(),
-            artworkPrefetcher: ArtworkPrefetcherTestDouble(),
+            artworkPrefetcher: artworkPrefetcher ?? ArtworkPrefetcherTestDouble(),
             syncEngine: MockSyncEngine(),
             settingsStore: MockSettingsStore(),
             episodeReleaseNotificationManager: notifications,
@@ -983,6 +1232,24 @@ final class DetailViewModelActionTests: XCTestCase {
         }
 
         return condition()
+    }
+
+    private func waitForAsyncCondition(
+        timeout: TimeInterval,
+        pollInterval: UInt64 = 10_000_000,
+        condition: @escaping () async -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if await condition() {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
+
+        return await condition()
     }
 
     private func makeSelection(
@@ -1251,6 +1518,7 @@ private final class PlaybackLaunchEntryEffectSpy {
     private actor DetailActionSpyAPIClient: JellyfinAPIClientProtocol {
     private let seasonsBySeriesID: [String: [MediaItem]]
     private let episodesBySeasonID: [String: [MediaItem]]
+    private let episodeDelayNanosecondsBySeasonID: [String: UInt64]
     private let nextUpBySeriesID: [String: MediaItem]
     private let playbackSourcesByItemID: [String: [MediaSource]]
     private var playbackSourceFetchCountsByItemID: [String: Int] = [:]
@@ -1260,11 +1528,13 @@ private final class PlaybackLaunchEntryEffectSpy {
     init(
         seasonsBySeriesID: [String: [MediaItem]] = [:],
         episodesBySeasonID: [String: [MediaItem]] = [:],
+        episodeDelayNanosecondsBySeasonID: [String: UInt64] = [:],
         nextUpBySeriesID: [String: MediaItem] = [:],
         playbackSourcesByItemID: [String: [MediaSource]] = [:]
     ) {
         self.seasonsBySeriesID = seasonsBySeriesID
         self.episodesBySeasonID = episodesBySeasonID
+        self.episodeDelayNanosecondsBySeasonID = episodeDelayNanosecondsBySeasonID
         self.nextUpBySeriesID = nextUpBySeriesID
         self.playbackSourcesByItemID = playbackSourcesByItemID
     }
@@ -1293,6 +1563,9 @@ private final class PlaybackLaunchEntryEffectSpy {
     }
     func fetchEpisodes(seriesID: String, seasonID: String) async throws -> [MediaItem] {
         _ = seriesID
+        if let delay = episodeDelayNanosecondsBySeasonID[seasonID] {
+            try await Task.sleep(nanoseconds: delay)
+        }
         return episodesBySeasonID[seasonID] ?? []
     }
     func fetchNextUpEpisode(seriesID: String) async throws -> MediaItem? {

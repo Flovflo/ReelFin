@@ -23,6 +23,30 @@ struct LossyArray<Element: Decodable>: Decodable {
 
 private struct AnyCodable: Decodable {}
 
+struct RemoteImagesResponseDTO: Decodable {
+    let images: [RemoteImageDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case images = "Images"
+    }
+}
+
+struct RemoteImageDTO: Decodable {
+    let url: String
+    let type: String?
+    let providerName: String?
+    let width: Int?
+    let height: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case url = "Url"
+        case type = "Type"
+        case providerName = "ProviderName"
+        case width = "Width"
+        case height = "Height"
+    }
+}
+
 struct AuthenticateRequestDTO: Encodable {
     let username: String
     let pw: String

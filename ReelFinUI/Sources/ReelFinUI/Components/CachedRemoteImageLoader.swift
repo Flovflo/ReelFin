@@ -6,13 +6,34 @@ struct CachedRemoteImageDescriptor: Hashable, Sendable {
     let type: JellyfinImageType
     let width: Int
     let quality: Int
+    let shouldProbeLocal: Bool
+
+    init(
+        itemID: String,
+        type: JellyfinImageType,
+        width: Int,
+        quality: Int,
+        shouldProbeLocal: Bool = true
+    ) {
+        self.itemID = itemID
+        self.type = type
+        self.width = width
+        self.quality = quality
+        self.shouldProbeLocal = shouldProbeLocal
+    }
 
     var contentKey: String {
         "\(itemID)-\(type.rawValue)"
     }
 
     func replacing(type: JellyfinImageType) -> CachedRemoteImageDescriptor {
-        CachedRemoteImageDescriptor(itemID: itemID, type: type, width: width, quality: quality)
+        CachedRemoteImageDescriptor(
+            itemID: itemID,
+            type: type,
+            width: width,
+            quality: quality,
+            shouldProbeLocal: shouldProbeLocal
+        )
     }
 }
 
@@ -27,6 +48,7 @@ final class CachedRemoteImageLoader: ObservableObject {
     @Published private(set) var hasFailed = false
 
     private let resolveURL: URLResolver
+    private let resolveRemoteURL: URLResolver
     private let cachedImage: CacheLookup
     private let fetchImage: ImageFetcher
     private let cancelRequest: Canceller
@@ -34,11 +56,13 @@ final class CachedRemoteImageLoader: ObservableObject {
 
     init(
         resolveURL: @escaping URLResolver,
+        resolveRemoteURL: @escaping URLResolver = { _ in nil },
         cachedImage: @escaping CacheLookup,
         fetchImage: @escaping ImageFetcher,
         cancel: @escaping Canceller
     ) {
         self.resolveURL = resolveURL
+        self.resolveRemoteURL = resolveRemoteURL
         self.cachedImage = cachedImage
         self.fetchImage = fetchImage
         cancelRequest = cancel
@@ -55,6 +79,13 @@ final class CachedRemoteImageLoader: ObservableObject {
                     type: descriptor.type,
                     width: descriptor.width,
                     quality: descriptor.quality
+                )
+            },
+            resolveRemoteURL: { descriptor in
+                await apiClient.remoteImageURL(
+                    for: descriptor.itemID,
+                    type: descriptor.type,
+                    width: descriptor.width
                 )
             },
             cachedImage: { url in
@@ -92,66 +123,56 @@ final class CachedRemoteImageLoader: ObservableObject {
             request.finish(token)
         }
 
-        let resolvedURL = await resolveURL(descriptor)
-        guard isActive(token) else { return }
-        guard let url = resolvedURL else {
-            publishFailure(token: token)
-            return
+        let fallbackDescriptor = CachedRemoteImage.fallbackType(for: descriptor.type)
+            .map { descriptor.replacing(type: $0) }
+        var candidates = [(resolver: URLResolver, descriptor: CachedRemoteImageDescriptor, checksCache: Bool)]()
+        if descriptor.shouldProbeLocal {
+            candidates.append((resolveURL, descriptor, true))
+            if let fallbackDescriptor {
+                // Preserve the existing hot fallback path; this URL has not been resolved before,
+                // while the image pipeline itself still checks memory and disk.
+                candidates.append((resolveURL, fallbackDescriptor, false))
+            }
         }
-        cancel(request.attach(url, to: token))
-        attachedURL = url
-
-        if let cached = await cachedImage(url) {
-            guard isActive(token) else { return }
-            publish(cached, token: token, onImageLoaded: onImageLoaded)
-            return
+        candidates.append((resolveRemoteURL, descriptor, true))
+        if let fallbackDescriptor {
+            candidates.append((resolveRemoteURL, fallbackDescriptor, true))
         }
-        guard isActive(token) else { return }
 
-        do {
-            let downloaded = try await fetchImage(url, token.consumerID)
+        var lastFailure: (error: Error, url: URL)?
+        var attemptedURLs = Set<URL>()
+        for candidate in candidates {
+            let resolvedURL = await candidate.resolver(candidate.descriptor)
             guard isActive(token) else { return }
-            publish(downloaded, token: token, onImageLoaded: onImageLoaded)
-        } catch is CancellationError {
-            return
-        } catch {
-            guard isActive(token) else { return }
-            let shouldSuppressLog = CachedRemoteImage.shouldIgnoreImageError(error)
+            guard let url = resolvedURL, attemptedURLs.insert(url).inserted else { continue }
 
-            guard let fallbackType = CachedRemoteImage.fallbackType(for: descriptor.type) else {
-                if !shouldSuppressLog {
-                    log(error: error, url: url, token: token)
-                }
-                publishFailure(token: token)
+            cancel(request.attach(url, to: token))
+            attachedURL = url
+
+            if candidate.checksCache, let cached = await cachedImage(url) {
+                guard isActive(token) else { return }
+                publish(cached, token: token, onImageLoaded: onImageLoaded)
                 return
             }
-            let fallbackDescriptor = descriptor.replacing(type: fallbackType)
-            let resolvedFallbackURL = await resolveURL(fallbackDescriptor)
             guard isActive(token) else { return }
-            guard let fallbackURL = resolvedFallbackURL else {
-                if !shouldSuppressLog {
-                    log(error: error, url: url, token: token)
-                }
-                publishFailure(token: token)
-                return
-            }
-            cancel(request.attach(fallbackURL, to: token))
-            attachedURL = fallbackURL
 
             do {
-                let fallbackImage = try await fetchImage(fallbackURL, token.consumerID)
+                let downloaded = try await fetchImage(url, token.consumerID)
                 guard isActive(token) else { return }
-                publish(fallbackImage, token: token, onImageLoaded: onImageLoaded)
+                publish(downloaded, token: token, onImageLoaded: onImageLoaded)
+                return
             } catch is CancellationError {
                 return
             } catch {
                 guard isActive(token) else { return }
-                if !CachedRemoteImage.shouldIgnoreImageError(error) {
-                    log(error: error, url: fallbackURL, token: token)
-                }
-                publishFailure(token: token)
+                lastFailure = (error, url)
             }
         }
+
+        if let lastFailure, !CachedRemoteImage.shouldIgnoreImageError(lastFailure.error) {
+            log(error: lastFailure.error, url: lastFailure.url, token: token)
+        }
+        publishFailure(token: token)
     }
 
     func invalidate() {

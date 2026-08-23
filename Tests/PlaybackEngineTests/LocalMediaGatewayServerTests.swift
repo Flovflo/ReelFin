@@ -10,6 +10,28 @@ final class LocalMediaGatewayServerTests: XCTestCase {
         try await super.tearDown()
     }
 
+    func testConnectionTaskBoxCancelsTaskAttachedAfterStopRace() async {
+        let registry = LocalCacheConnectionTaskRegistry()
+        let connectionID = ObjectIdentifier(NSObject())
+        let box = registry.register(connectionID)
+
+        registry.cancelAll()
+
+        let task = Task {
+            while !Task.isCancelled {
+                await Task.yield()
+            }
+        }
+        box.attach(task)
+
+        await task.value
+        XCTAssertTrue(task.isCancelled)
+        XCTAssertEqual(registry.count, 1)
+
+        registry.remove(connectionID, matching: box)
+        XCTAssertEqual(registry.count, 0)
+    }
+
     func testRangeMissFetchesRemoteThenSecondRangeHitUsesStore() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

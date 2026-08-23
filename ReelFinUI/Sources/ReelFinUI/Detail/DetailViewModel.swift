@@ -34,9 +34,11 @@ final class DetailViewModel {
     private let dependencies: ReelFinDependencies
     private var preferredEpisode: MediaItem?
     private var activeLoadToken = UUID()
+    private var episodeSelectionToken = UUID()
     private var playbackWarmupRequestToken = UUID()
     private var playbackWarmupRequestItemID: String?
     private var backgroundTasks: [Task<Void, Never>] = []
+    private var episodeArtworkPrefetchTask: Task<Void, Never>?
     private var loadedItemID: String?
 
     private static var isTVOSPlatform: Bool {
@@ -64,6 +66,7 @@ final class DetailViewModel {
     func setDetailItem(_ item: MediaItem, preferredEpisode: MediaItem? = nil) {
         cancelBackgroundTasks()
         activeLoadToken = UUID()
+        episodeSelectionToken = UUID()
         playbackWarmupRequestToken = UUID()
         playbackWarmupRequestItemID = nil
         loadedItemID = nil
@@ -91,6 +94,7 @@ final class DetailViewModel {
         cancelBackgroundTasks()
         loadedItemID = itemID
         activeLoadToken = UUID()
+        episodeSelectionToken = UUID()
         let loadToken = activeLoadToken
 
         errorMessage = nil
@@ -107,12 +111,24 @@ final class DetailViewModel {
     }
 
     func select(season: MediaItem) async {
-        await loadEpisodes(for: season, loadToken: activeLoadToken)
+        let selectionToken = UUID()
+        episodeSelectionToken = selectionToken
+        await loadEpisodes(
+            for: season,
+            loadToken: activeLoadToken,
+            selectionToken: selectionToken
+        )
     }
 
     func selectSeasonIfNeeded(_ season: MediaItem) async {
         guard selectedSeason?.id != season.id || episodes.isEmpty else { return }
-        await loadEpisodes(for: season, loadToken: activeLoadToken)
+        let selectionToken = UUID()
+        episodeSelectionToken = selectionToken
+        await loadEpisodes(
+            for: season,
+            loadToken: activeLoadToken,
+            selectionToken: selectionToken
+        )
     }
 
     func prepareEpisodePlayback(_ episode: MediaItem) {
@@ -372,10 +388,22 @@ final class DetailViewModel {
             advancePhase(to: .content)
             await DetailPresentationTelemetry.shared.markMetadataReady(for: itemID)
 
-            let artworkRequests = refreshedDetail.similar.prefix(4).map {
+            let similarArtworkRequests = refreshedDetail.similar.prefix(4).map {
                 ArtworkRequest.make(for: $0, role: .posterRow)
             }
-            await dependencies.artworkPrefetcher.prefetch(artworkRequests)
+            let castArtworkRequests = refreshedDetail.cast.prefix(8).map { person in
+                ArtworkRequest.make(
+                    for: MediaItem(
+                        id: person.id,
+                        name: person.name,
+                        posterTag: person.primaryImageTag
+                    ),
+                    role: .avatar
+                )
+            }
+            await dependencies.artworkPrefetcher.prefetch(
+                similarArtworkRequests + castArtworkRequests
+            )
         } catch {
             guard isActive(loadToken: loadToken, itemID: itemID) else { return }
             if detail.cast.isEmpty, detail.similar.isEmpty {
@@ -405,11 +433,27 @@ final class DetailViewModel {
 
             let targetSeason = targetEpisode.flatMap {
                 seasonMatching(preferredEpisode: $0, seasons: fetchedSeasons)
-            } ?? fetchedSeasons.first
+            } ?? latestSeason(in: fetchedSeasons)
 
             if let targetSeason {
-                await loadEpisodes(for: targetSeason, loadToken: loadToken)
+                let selectionToken = episodeSelectionToken
+                let candidateSeasons = [targetSeason]
+                    + latestFirstSeasons(fetchedSeasons.filter { $0.id != targetSeason.id })
+
+                for season in candidateSeasons {
+                    await loadEpisodes(
+                        for: season,
+                        loadToken: loadToken,
+                        selectionToken: selectionToken
+                    )
+                    guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+                    guard isCurrentEpisodeSelection(selectionToken) else { return }
+                    guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
+                    if !episodes.isEmpty { break }
+                }
+
                 guard isActive(loadToken: loadToken, itemID: seriesID) else { return }
+                guard isCurrentEpisodeSelection(selectionToken) else { return }
                 guard isCurrentPlaybackWarmupGeneration(playbackRequestToken) else { return }
 
                 if let targetEpisode {
@@ -419,7 +463,8 @@ final class DetailViewModel {
                         nextUpEpisode = targetEpisode
                     }
                 } else {
-                    nextUpEpisode = episodes.first(where: { !$0.isPlayed }) ?? episodes.first
+                    nextUpEpisode = episodes.first(where: { !$0.isPlayed })
+                        ?? latestEpisode(in: episodes)
                 }
             }
 
@@ -448,11 +493,19 @@ final class DetailViewModel {
         }
     }
 
-    private func loadEpisodes(for season: MediaItem, loadToken: UUID) async {
+    private func loadEpisodes(
+        for season: MediaItem,
+        loadToken: UUID,
+        selectionToken: UUID
+    ) async {
         let playbackRequestToken = playbackWarmupRequestToken
         selectedSeason = season
         isLoadingEpisodes = true
-        defer { isLoadingEpisodes = false }
+        defer {
+            if isCurrentEpisodeSelection(selectionToken) {
+                isLoadingEpisodes = false
+            }
+        }
 
         do {
             let fetchedEpisodes = try await dependencies.detailRepository.loadEpisodes(
@@ -460,14 +513,21 @@ final class DetailViewModel {
                 seasonID: season.id
             )
             guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
+            guard isCurrentEpisodeSelection(selectionToken) else { return }
 
-            episodes = fetchedEpisodes
+            let uniqueEpisodes = Self.deduplicatedEpisodes(fetchedEpisodes)
+            let immediateArtworkRequests = uniqueEpisodes.prefix(6).map {
+                ArtworkRequest.make(for: $0, role: .episodeStill)
+            }
+            startEpisodeArtworkPrefetch(immediateArtworkRequests)
+
+            episodes = uniqueEpisodes
 
             if let preferredEpisode,
-               let matchedEpisode = fetchedEpisodes.first(where: { $0.id == preferredEpisode.id }) {
+               let matchedEpisode = uniqueEpisodes.first(where: { $0.id == preferredEpisode.id }) {
                 nextUpEpisode = mergedEpisode(matchedEpisode, preferred: preferredEpisode)
             } else if nextUpEpisode == nil {
-                nextUpEpisode = fetchedEpisodes.first
+                nextUpEpisode = uniqueEpisodes.first
             }
 
             if let nextUpEpisode {
@@ -480,6 +540,30 @@ final class DetailViewModel {
         } catch {
             guard isActive(loadToken: loadToken, itemID: detail.item.id) else { return }
             AppLog.ui.error("Episodes load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private struct EpisodeCoordinate: Hashable {
+        let season: Int
+        let episode: Int
+    }
+
+    /// Jellyfin can expose the same physical episode more than once through mixed-library or
+    /// collection views. Preserve server order, but never render a duplicate identity or S/E slot.
+    private static func deduplicatedEpisodes(_ items: [MediaItem]) -> [MediaItem] {
+        var seenIDs = Set<String>()
+        var seenCoordinates = Set<EpisodeCoordinate>()
+
+        return items.filter { item in
+            guard seenIDs.insert(item.id).inserted else { return false }
+
+            guard let season = item.parentIndexNumber, let episode = item.indexNumber else {
+                return true
+            }
+
+            return seenCoordinates.insert(
+                EpisodeCoordinate(season: season, episode: episode)
+            ).inserted
         }
     }
 
@@ -566,12 +650,31 @@ final class DetailViewModel {
     private func cancelBackgroundTasks() {
         backgroundTasks.forEach { $0.cancel() }
         backgroundTasks.removeAll()
+        episodeArtworkPrefetchTask?.cancel()
+        episodeArtworkPrefetchTask = nil
         playbackWarmupRequestToken = UUID()
         playbackWarmupRequestItemID = nil
     }
 
+    private func startEpisodeArtworkPrefetch(_ requests: [ArtworkRequest]) {
+        episodeArtworkPrefetchTask?.cancel()
+        guard !requests.isEmpty else {
+            episodeArtworkPrefetchTask = nil
+            return
+        }
+
+        let prefetcher = dependencies.artworkPrefetcher
+        episodeArtworkPrefetchTask = Task(priority: .utility) {
+            await prefetcher.prefetch(requests)
+        }
+    }
+
     private func isActive(loadToken: UUID, itemID: String) -> Bool {
         activeLoadToken == loadToken && detail.item.id == itemID
+    }
+
+    private func isCurrentEpisodeSelection(_ selectionToken: UUID) -> Bool {
+        episodeSelectionToken == selectionToken
     }
 
     private func beginPlaybackWarmupRequest(itemID: String) -> UUID {
@@ -606,6 +709,31 @@ final class DetailViewModel {
         }
 
         return seasons.first
+    }
+
+    private func latestSeason(in seasons: [MediaItem]) -> MediaItem? {
+        let numberedSeasons = seasons.filter { $0.indexNumber != nil }
+        return numberedSeasons.max {
+            ($0.indexNumber ?? Int.min) < ($1.indexNumber ?? Int.min)
+        } ?? seasons.last
+    }
+
+    private func latestFirstSeasons(_ seasons: [MediaItem]) -> [MediaItem] {
+        seasons.enumerated().sorted { lhs, rhs in
+            switch (lhs.element.indexNumber, rhs.element.indexNumber) {
+            case let (left?, right?) where left != right:
+                return left > right
+            default:
+                return lhs.offset > rhs.offset
+            }
+        }.map(\.element)
+    }
+
+    private func latestEpisode(in episodes: [MediaItem]) -> MediaItem? {
+        let numberedEpisodes = episodes.filter { $0.indexNumber != nil }
+        return numberedEpisodes.max {
+            ($0.indexNumber ?? Int.min) < ($1.indexNumber ?? Int.min)
+        } ?? episodes.last
     }
 
     private func resolvedPlaybackProgress(for item: MediaItem) async -> PlaybackProgress? {

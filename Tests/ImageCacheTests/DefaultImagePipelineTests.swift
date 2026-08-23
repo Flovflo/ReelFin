@@ -107,7 +107,13 @@ final class DefaultImagePipelineTests: XCTestCase {
         let cache = try LRUDiskCache(directoryURL: cacheDir)
         let session = makeAuthenticatedSession()
         let tokenStore = MockImageTokenStore(storedToken: "header-token")
-        let pipeline = DefaultImagePipeline(diskCache: cache, urlSession: session, tokenStore: tokenStore)
+        let settingsStore = MockImageSettingsStore(serverURL: URL(string: "https://example.com")!)
+        let pipeline = DefaultImagePipeline(
+            diskCache: cache,
+            urlSession: session,
+            tokenStore: tokenStore,
+            settingsStore: settingsStore
+        )
 
         _ = try await pipeline.image(for: URL(string: "https://example.com/Items/item-1/Images/Primary?maxWidth=320")!)
 
@@ -119,13 +125,35 @@ final class DefaultImagePipelineTests: XCTestCase {
         let cache = try LRUDiskCache(directoryURL: cacheDir)
         let session = makeAuthenticatedSession()
         let tokenStore = MockImageTokenStore(storedToken: "prefetch-token")
-        let pipeline = DefaultImagePipeline(diskCache: cache, urlSession: session, tokenStore: tokenStore)
+        let settingsStore = MockImageSettingsStore(serverURL: URL(string: "https://example.com")!)
+        let pipeline = DefaultImagePipeline(
+            diskCache: cache,
+            urlSession: session,
+            tokenStore: tokenStore,
+            settingsStore: settingsStore
+        )
 
         await pipeline.prefetch(
             urls: [URL(string: "https://example.com/Items/item-1/Images/Primary?maxWidth=360")!]
         )
 
         XCTAssertEqual(AuthenticatedImageURLProtocol.lastTokenHeader, "prefetch-token")
+    }
+
+    func testDoesNotLeakJellyfinTokenToRemoteArtworkHost() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = try LRUDiskCache(directoryURL: cacheDir)
+        let session = makeAuthenticatedSession()
+        let pipeline = DefaultImagePipeline(
+            diskCache: cache,
+            urlSession: session,
+            tokenStore: MockImageTokenStore(storedToken: "must-not-leak"),
+            settingsStore: MockImageSettingsStore(serverURL: URL(string: "https://jellyfin.example")!)
+        )
+
+        _ = try await pipeline.image(for: URL(string: "https://image.tmdb.org/t/p/w500/poster.jpg")!)
+
+        XCTAssertNil(AuthenticatedImageURLProtocol.lastTokenHeader)
     }
 
     func testRepeated404UsesSessionNegativeCacheInsteadOfRefetching() async throws {
@@ -280,6 +308,19 @@ private final class MockImageTokenStore: TokenStoreProtocol, @unchecked Sendable
 
     func clearToken() throws {
         storedToken = nil
+    }
+}
+
+private final class MockImageSettingsStore: SettingsStoreProtocol, @unchecked Sendable {
+    var serverConfiguration: ServerConfiguration?
+    var lastSession: UserSession?
+    var episodeReleaseNotificationsEnabled = false
+    var hasCompletedOnboarding = false
+    var completedOnboardingVersion = 0
+    var useCustomPlayerEngine = false
+
+    init(serverURL: URL) {
+        serverConfiguration = ServerConfiguration(serverURL: serverURL)
     }
 }
 

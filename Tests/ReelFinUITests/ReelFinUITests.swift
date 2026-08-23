@@ -249,6 +249,12 @@ final class AppStoreScreenshotTests: XCTestCase {
         let playButton = playbackActionButton(in: app)
         XCTAssertTrue(playButton.exists)
         capture(name: "03-detail")
+
+        // A pushed detail screen intentionally hides the native tab bar. Return to
+        // the root before choosing another section, as a user would on iPhone.
+        let backButton = app.buttons["Back"].firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+        backButton.tap()
         openSection(named: "Settings", in: app)
         XCTAssertTrue(app.staticTexts["Settings"].firstMatch.waitForExistence(timeout: 8))
         capture(name: "04-settings")

@@ -8,7 +8,77 @@ private struct HTTPStatusError: Error {
     let message: String
 }
 
+private final class RemoteArtworkAdmissionController: @unchecked Sendable {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    private let limit: Int
+    private let lock = NSLock()
+    private var activeCount = 0
+    private var waiters = [Waiter]()
+
+    init(limit: Int) {
+        self.limit = max(limit, 1)
+    }
+
+    func acquire(waiterID: UUID) async -> Bool {
+        guard !Task.isCancelled else { return false }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let immediateResult: Bool? = lock.withLock {
+                    guard !Task.isCancelled else { return false }
+                    guard activeCount >= limit else {
+                        activeCount += 1
+                        return true
+                    }
+                    waiters.append(Waiter(id: waiterID, continuation: continuation))
+                    return nil
+                }
+                if let immediateResult {
+                    continuation.resume(returning: immediateResult)
+                }
+            }
+        } onCancel: {
+            self.cancel(waiterID: waiterID)
+        }
+    }
+
+    func release() {
+        let continuation: CheckedContinuation<Bool, Never>? = lock.withLock {
+            if waiters.isEmpty {
+                activeCount = max(activeCount - 1, 0)
+                return nil
+            }
+            return waiters.removeFirst().continuation
+        }
+        continuation?.resume(returning: true)
+    }
+
+    private func cancel(waiterID: UUID) {
+        let continuation: CheckedContinuation<Bool, Never>? = lock.withLock {
+            guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else {
+                return nil
+            }
+            return waiters.remove(at: index).continuation
+        }
+        continuation?.resume(returning: false)
+    }
+}
+
 public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
+    private struct RemoteArtworkKey: Hashable {
+        let itemID: String
+        let type: JellyfinImageType
+    }
+
+    private struct RemoteArtworkCacheEntry {
+        let url: URL?
+        let expiresAt: Date
+    }
+
     private enum ItemFields {
         static let trickplay = ["Trickplay"]
         static let home = [
@@ -54,6 +124,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     private let deviceID: String
     private let clientVersion: String
     private let deduplicator = RequestDeduplicator()
+    private let remoteArtworkAdmission = RemoteArtworkAdmissionController(limit: 3)
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
     private let iso8601 = ISO8601DateFormatter()
@@ -65,6 +136,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
     private var configuration: ServerConfiguration?
     private var activeSession: UserSession?
+    private var remoteArtworkCache = [RemoteArtworkKey: RemoteArtworkCacheEntry]()
 
     public init(
         tokenStore: TokenStoreProtocol = KeychainTokenStore(),
@@ -107,6 +179,9 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
     }
 
     public func configure(server: ServerConfiguration) async throws {
+        if configuration?.serverURL != server.serverURL {
+            remoteArtworkCache.removeAll()
+        }
         configuration = server
         settingsStore.serverConfiguration = server
     }
@@ -132,6 +207,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
         let session = UserSession(userID: response.user.id, username: response.user.name, token: response.accessToken)
         activeSession = session
+        remoteArtworkCache.removeAll()
         settingsStore.lastSession = session
         try tokenStore.saveToken(response.accessToken)
         return session
@@ -139,6 +215,7 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
 
     public func signOut() async {
         activeSession = nil
+        remoteArtworkCache.removeAll()
         settingsStore.lastSession = nil
         try? tokenStore.clearToken()
         await deduplicator.cancelAll()
@@ -731,6 +808,85 @@ public actor JellyfinAPIClient: JellyfinAPIClientProtocol {
             path: imagePath,
             query: queryItems
         )
+    }
+
+    public func remoteImageURL(for itemID: String, type: JellyfinImageType, width: Int?) async -> URL? {
+        let key = RemoteArtworkKey(itemID: itemID, type: type)
+        if let cached = remoteArtworkCache[key], cached.expiresAt > Date() {
+            return cached.url.map { Self.sizedRemoteArtworkURL($0, width: width) }
+        }
+
+        let waiterID = UUID()
+        guard await remoteArtworkAdmission.acquire(waiterID: waiterID) else { return nil }
+        defer { remoteArtworkAdmission.release() }
+
+        // Requests can wait behind visible artwork. Recheck after admission so a request that
+        // another card just resolved uses the actor cache instead of duplicating network work.
+        if let cached = remoteArtworkCache[key], cached.expiresAt > Date() {
+            return cached.url.map { Self.sizedRemoteArtworkURL($0, width: width) }
+        }
+
+        do {
+            let response: RemoteImagesResponseDTO = try await request(
+                path: "Items/\(itemID)/RemoteImages",
+                query: [
+                    URLQueryItem(name: "Type", value: type.rawValue),
+                    URLQueryItem(name: "Limit", value: "1")
+                ],
+                timeout: 8,
+                retryPolicy: RetryPolicy(maxRetries: 1)
+            )
+            let remoteURL = response.images.lazy
+                .compactMap { URL(string: $0.url) }
+                .first(where: Self.isSafeRemoteArtworkURL)
+            remoteArtworkCache[key] = RemoteArtworkCacheEntry(
+                url: remoteURL,
+                expiresAt: Date().addingTimeInterval(remoteURL == nil ? 5 * 60 : 12 * 60 * 60)
+            )
+            return remoteURL.map { Self.sizedRemoteArtworkURL($0, width: width) }
+        } catch {
+            // Transport failures are deliberately not negative-cached so a recovered connection
+            // can repaint the visible card on its next appearance.
+            return nil
+        }
+    }
+
+    nonisolated private static func isSafeRemoteArtworkURL(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && url.host != nil && url.user == nil && url.password == nil
+    }
+
+    nonisolated private static func sizedRemoteArtworkURL(_ url: URL, width: Int?) -> URL {
+        guard
+            url.host?.lowercased() == "image.tmdb.org",
+            let width,
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return url
+        }
+
+        let size: String
+        switch width {
+        case ...342:
+            size = "w342"
+        case ...500:
+            size = "w500"
+        case ...780:
+            size = "w780"
+        case ...1_280:
+            size = "w1280"
+        default:
+            // TMDB's largest bounded backdrop tier avoids downloading a 4K original only to
+            // downsample it on-device. ReelFin's remote poster profiles never reach this branch.
+            size = "w1280"
+        }
+
+        let segments = components.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard segments.count >= 4, segments[0] == "t", segments[1] == "p" else {
+            return url
+        }
+        components.path = "/t/p/\(size)/" + segments.dropFirst(3).joined(separator: "/")
+        components.fragment = nil
+        return components.url ?? url
     }
 
     public func reportPlayback(progress: PlaybackProgressUpdate) async throws {

@@ -1,8 +1,37 @@
 import CoreGraphics
+import Shared
 import XCTest
 @testable import ReelFinUI
 
 final class IOSDetailCarouselLayoutTests: XCTestCase {
+    func testDetailTelemetryCoalescesDuplicateNavigationUntilPresentationEnds() async {
+        let itemID = "telemetry-\(UUID().uuidString)"
+
+        let firstStart = await DetailPresentationTelemetry.shared.beginNavigation(for: itemID)
+        let duplicateStart = await DetailPresentationTelemetry.shared.beginNavigation(for: itemID)
+        await DetailPresentationTelemetry.shared.endNavigation(for: itemID)
+        let reopenedStart = await DetailPresentationTelemetry.shared.beginNavigation(for: itemID)
+        await DetailPresentationTelemetry.shared.endNavigation(for: itemID)
+
+        XCTAssertTrue(firstStart)
+        XCTAssertFalse(duplicateStart)
+        XCTAssertTrue(reopenedStart)
+    }
+
+    func testBrowseSurfacesNeverStartBulkCustomPlayerCacheBeforePlay() throws {
+        let detailSource = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Detail/DetailView.swift"
+        )
+        let homeSource = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Home/HomeView.swift"
+        )
+
+        XCTAssertTrue(detailSource.contains("prewarmer.prewarmResolveOnly(itemID: target.id)"))
+        XCTAssertFalse(detailSource.contains("prewarmer.prewarm(itemID: target.id"))
+        XCTAssertTrue(homeSource.contains("ensureHomeCustomPrewarmer()?.prewarmResolveOnly(itemID: playbackItem.id)"))
+        XCTAssertFalse(homeSource.contains("ensureHomeCustomPrewarmer()?.prewarm(\n"))
+    }
+
     func testReduceTransparencyDetailHeaderSwitchesToFullyOpaqueAtFirstChromeStep() {
         XCTAssertEqual(
             EditorialOpaqueHeaderPolicy.opacity(
@@ -33,6 +62,20 @@ final class IOSDetailCarouselLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("EditorialOpaqueHeaderPolicy.opacity"))
         XCTAssertTrue(source.contains("opaqueStatusBandHeight"))
         XCTAssertFalse(source.contains("safeAreaTop + 64"))
+    }
+
+    func testIOSDetailHidesRootTabBarAlongsideNavigationBar() throws {
+        let source = try sourceText(
+            at: "ReelFinUI/Sources/ReelFinUI/Detail/DetailView.swift"
+        )
+
+        XCTAssertTrue(
+            source.contains(
+                ".navigationBarBackButtonHidden(true)\n"
+                    + "        .toolbar(.hidden, for: .navigationBar)\n"
+                    + "        .toolbar(.hidden, for: .tabBar)"
+            )
+        )
     }
 
     func testCompactLayoutUsesTrueCenteredInset() {

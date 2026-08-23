@@ -216,6 +216,7 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
     private let diskCache: LRUDiskCache
     private let urlSession: URLSession
     private let tokenStore: TokenStoreProtocol
+    private let settingsStore: SettingsStoreProtocol
     private let registry = ImageTaskRegistry()
     private let missingResponses = MissingImageResponseCache()
     private let decodeScheduler = ImageDecodeScheduler()
@@ -225,11 +226,13 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         diskCache: LRUDiskCache? = nil,
         urlSession: URLSession? = nil,
         tokenStore: TokenStoreProtocol = KeychainTokenStore(),
+        settingsStore: SettingsStoreProtocol = DefaultSettingsStore(),
         memoryCapacity: Int = 220
     ) {
         self.diskCache = diskCache ?? Self.makeDiskCache()
         self.urlSession = urlSession ?? Self.makeImageSession()
         self.tokenStore = tokenStore
+        self.settingsStore = settingsStore
         prefetchAdmission = ImagePrefetchAdmissionController(
             limit: Self.maximumConcurrentPrefetches
         )
@@ -375,7 +378,9 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
         request.setValue("image/*", forHTTPHeaderField: "Accept")
-        if let token = try? tokenStore.fetchToken(), !token.isEmpty {
+        if shouldAttachJellyfinToken(to: url),
+           let token = try? tokenStore.fetchToken(),
+           !token.isEmpty {
             request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
         }
 
@@ -394,6 +399,23 @@ public final class DefaultImagePipeline: ImagePipelineProtocol, @unchecked Senda
         }
 
         throw AppError.network("Image request failed (\(httpResponse.statusCode))")
+    }
+
+    private func shouldAttachJellyfinToken(to url: URL) -> Bool {
+        guard let serverURL = settingsStore.serverConfiguration?.serverURL else { return false }
+        return Self.origin(of: url) == Self.origin(of: serverURL)
+    }
+
+    private static func origin(of url: URL) -> String? {
+        guard
+            let scheme = url.scheme?.lowercased(),
+            let host = url.host?.lowercased()
+        else {
+            return nil
+        }
+        let defaultPort = scheme == "https" ? 443 : (scheme == "http" ? 80 : nil)
+        guard let port = url.port ?? defaultPort else { return nil }
+        return "\(scheme)://\(host):\(port)"
     }
 
     public func cachedImage(for url: URL) async -> UIImage? {

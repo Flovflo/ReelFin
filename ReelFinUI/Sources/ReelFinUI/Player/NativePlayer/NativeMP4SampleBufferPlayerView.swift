@@ -68,6 +68,9 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
     private var videoOutput: AVAssetReaderTrackOutput?
     private var audioOutput: AVAssetReaderTrackOutput?
     private var readableURL: AVFoundationReadableMediaURL?
+    // Loaded asset state cached across seeks: track/duration loads dominate the open
+    // cost, and a seek only needs a fresh AVAssetReader over the same asset.
+    private var cachedAsset: NativeMP4LoadedAsset?
     private var diagnosticTimer: Timer?
     private var metrics = NativeMP4SampleBufferMetrics()
     private var pendingPause = false
@@ -180,27 +183,59 @@ final class NativeMP4SampleBufferPlayerController: UIViewController {
         pauseStateGate.reset()
     }
 
+    /// Asset plus everything derived from it that a seek does not invalidate.
+    private struct NativeMP4LoadedAsset {
+        let key: NativeMP4AssetCacheKey
+        let asset: AVURLAsset
+        let tracks: [AVAssetTrack]
+        let duration: CMTime
+        let hdrMetadata: HDRMetadata?
+    }
+
+    private struct NativeMP4AssetCacheKey: Equatable {
+        let url: URL
+        let headers: [String: String]
+    }
+
     private func openAssetAndStart(url: URL, headers: [String: String], startTimeSeconds: Double) async {
         do {
             AppLog.playback.notice("nativeplayer.sampleReader.start — backend=AVAssetReader")
             let readableURL = try AVFoundationReadableMediaURL(originalURL: url, format: .mp4)
             self.readableURL = readableURL
-            let asset = AVURLAsset(url: readableURL.assetURL, options: assetOptions(headers: headers))
-            let tracks = try await asset.load(.tracks)
-            let duration = try await asset.load(.duration)
-            let videoHDRMetadata: HDRMetadata?
-            do {
-                videoHDRMetadata = try await Self.hdrMetadata(from: tracks.first(where: { $0.mediaType == .video }))
-            } catch {
-                videoHDRMetadata = nil
+            let cacheKey = NativeMP4AssetCacheKey(url: url, headers: headers)
+            let loaded: NativeMP4LoadedAsset
+            if let cached = cachedAsset, cached.key == cacheKey {
+                loaded = cached
+                AppLog.playback.notice(
+                    "nativeplayer.sampleReader.asset_reuse — backend=AVAssetReader seekReusesLoadedAsset=true"
+                )
+            } else {
+                let asset = AVURLAsset(url: readableURL.assetURL, options: assetOptions(headers: headers))
+                let tracks = try await asset.load(.tracks)
+                let duration = try await asset.load(.duration)
+                var hdrMetadata: HDRMetadata?
+                do {
+                    hdrMetadata = try await Self.hdrMetadata(from: tracks.first(where: { $0.mediaType == .video }))
+                } catch {
+                    hdrMetadata = nil
+                }
+                loaded = NativeMP4LoadedAsset(
+                    key: cacheKey,
+                    asset: asset,
+                    tracks: tracks,
+                    duration: duration,
+                    hdrMetadata: hdrMetadata
+                )
+                cachedAsset = loaded
             }
-            let reader = try AVAssetReader(asset: asset)
-            applyStartTime(startTimeSeconds, duration: duration, to: reader)
-            try addOutputs(to: reader, tracks: tracks)
+            let reader = try AVAssetReader(asset: loaded.asset)
+            applyStartTime(startTimeSeconds, duration: loaded.duration, to: reader)
+            try addOutputs(to: reader, tracks: loaded.tracks)
             guard reader.startReading() else {
                 throw NativeMP4SampleBufferPlayerError.readerStart(reader.error?.localizedDescription ?? "unknown")
             }
             self.reader = reader
+            let videoHDRMetadata = loaded.hdrMetadata
             updateMetrics { metrics in
                 metrics.state = pendingPause ? "paused" : "playing"
                 metrics.videoDecoderBackend = "AVAssetReader compressed samples"

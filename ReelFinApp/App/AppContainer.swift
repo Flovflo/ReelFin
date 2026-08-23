@@ -47,7 +47,7 @@ final class AppContainer {
             }
         }
 
-        imagePipeline = DefaultImagePipeline()
+        imagePipeline = DefaultImagePipeline(tokenStore: tokenStore, settingsStore: settingsStore)
         artworkPrefetcher = DefaultArtworkPrefetcher(
             urlProvider: apiClient,
             imagePipeline: imagePipeline

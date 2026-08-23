@@ -814,6 +814,47 @@ final class NativePlayerConfigurationTests: XCTestCase {
         ))
     }
 
+    func testNativePlayerBackgroundTapHidesVisibleChromeImmediately() {
+        XCTAssertEqual(
+            NativePlayerChromeVisibilityPolicy.backgroundTapAction(
+                isChromeVisible: true,
+                hasError: false,
+                isPinnedForAutomation: false
+            ),
+            .hide
+        )
+    }
+
+    func testNativePlayerBackgroundTapRevealsHiddenChrome() {
+        XCTAssertEqual(
+            NativePlayerChromeVisibilityPolicy.backgroundTapAction(
+                isChromeVisible: false,
+                hasError: false,
+                isPinnedForAutomation: false
+            ),
+            .reveal
+        )
+    }
+
+    func testNativePlayerBackgroundTapDoesNotDismissErrorOrPinnedChrome() {
+        XCTAssertEqual(
+            NativePlayerChromeVisibilityPolicy.backgroundTapAction(
+                isChromeVisible: true,
+                hasError: true,
+                isPinnedForAutomation: false
+            ),
+            .ignore
+        )
+        XCTAssertEqual(
+            NativePlayerChromeVisibilityPolicy.backgroundTapAction(
+                isChromeVisible: true,
+                hasError: false,
+                isPinnedForAutomation: true
+            ),
+            .ignore
+        )
+    }
+
     func testNativePlayerChromeVisibilityPolicyPinsAutomationChrome() {
         XCTAssertTrue(NativePlayerChromeVisibilityPolicy.shouldShowChrome(
             isUserActive: false,

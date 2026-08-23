@@ -102,6 +102,8 @@ public protocol JellyfinAPIClientProtocol: ArtworkURLProviding {
     func trickplayTileBaseURL(itemID: String, mediaSourceID: String?, width: Int) async -> URL?
 
     func imageURL(for itemID: String, type: JellyfinImageType, width: Int?, quality: Int?) async -> URL?
+    /// Resolves a read-only provider image advertised by Jellyfin when no local artwork exists.
+    func remoteImageURL(for itemID: String, type: JellyfinImageType, width: Int?) async -> URL?
     func reportPlayback(progress: PlaybackProgressUpdate) async throws
     func reportPlaybackStopped(progress: PlaybackProgressUpdate) async throws
     func reportPlayed(itemID: String) async throws
@@ -164,6 +166,10 @@ public extension JellyfinAPIClientProtocol {
             width: request.profile.width,
             quality: request.profile.quality
         )
+    }
+
+    func remoteImageURL(for _: String, type _: JellyfinImageType, width _: Int?) async -> URL? {
+        nil
     }
 
     func fetchNextUpEpisodes(limit _: Int) async throws -> [MediaItem] {

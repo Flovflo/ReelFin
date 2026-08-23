@@ -3562,6 +3562,34 @@ final class PlaybackSessionControllerTrackReloadTests: XCTestCase {
         )
     }
 
+    func testTrackReloadAddsResumeOffsetWhenReloadURLStartsAtBeginning() {
+        let reloadURL = URL(string: "https://example.com/Videos/item/master.m3u8")!
+
+        XCTAssertEqual(
+            PlaybackSessionController.trackReloadPlaybackPosition(
+                currentPlayerTime: 12.5,
+                transcodeStartOffset: 1_119,
+                reloadURL: reloadURL
+            ),
+            1_131.5,
+            accuracy: 0.001
+        )
+    }
+
+    func testTrackReloadKeepsRelativePositionWhenReloadURLCarriesServerStartTime() {
+        let reloadURL = URL(string: "https://example.com/Videos/item/master.m3u8?StartTimeTicks=11190000000")!
+
+        XCTAssertEqual(
+            PlaybackSessionController.trackReloadPlaybackPosition(
+                currentPlayerTime: 12.5,
+                transcodeStartOffset: 1_119,
+                reloadURL: reloadURL
+            ),
+            12.5,
+            accuracy: 0.001
+        )
+    }
+
     func testHLSTimeAdvanceTripsDecodedFrameWatchdogAfterResumeOffset() {
         XCTAssertTrue(
             PlaybackSessionController.decodedFrameWatchdogPlaybackHasStarted(

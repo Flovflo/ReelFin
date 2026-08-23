@@ -126,12 +126,12 @@ struct EditorialMediaIdentityView: View {
     }
 
     private var fallbackTitleView: some View {
-        Text(fallbackTitle.uppercased())
-            .font(.system(size: fallbackFontSize, weight: .black, design: .rounded))
+        Text(displayedFallbackTitle)
+            .font(.system(size: fallbackFontSize, weight: fallbackFontWeight, design: .rounded))
             .tracking(fallbackTracking)
             .foregroundStyle(ReelFinTheme.editorialPrimaryText)
             .multilineTextAlignment(textAlignment)
-            .lineLimit(2)
+            .lineLimit(titleLineLimit)
             .minimumScaleFactor(minimumTitleScale)
             .allowsTightening(true)
             .frame(maxWidth: identityMaxWidth, alignment: contentAlignment)
@@ -145,6 +145,10 @@ struct EditorialMediaIdentityView: View {
 
     private var visibleLogo: UIImage? {
         logoItemID == item.id ? logoImage : nil
+    }
+
+    private var displayedFallbackTitle: String {
+        style == .iosHero ? fallbackTitle : fallbackTitle.uppercased()
     }
 
     private var logoRequest: ArtworkRequest {
@@ -243,7 +247,7 @@ struct EditorialMediaIdentityView: View {
     private var identityHeight: CGFloat {
         switch style {
         case .iosHero:
-            return dynamicTypeSize.isAccessibilitySize ? 106 : 88
+            return dynamicTypeSize.isAccessibilitySize ? 124 : 108
         case .tvHero:
             return 120
         case .landscapeRail:
@@ -254,7 +258,7 @@ struct EditorialMediaIdentityView: View {
     private var fallbackFontSize: CGFloat {
         switch style {
         case .iosHero:
-            return dynamicTypeSize.isAccessibilitySize ? 32 : 44
+            return dynamicTypeSize.isAccessibilitySize ? 34 : 30
         case .tvHero:
             return 68
         case .landscapeRail:
@@ -264,14 +268,25 @@ struct EditorialMediaIdentityView: View {
 
     private var minimumTitleScale: CGFloat {
         switch style {
-        case .iosHero: return 0.62
+        case .iosHero: return 0.72
         case .tvHero: return 0.55
         case .landscapeRail: return 0.78
         }
     }
 
     private var fallbackTracking: CGFloat {
-        fallbackTitle.count <= 8 ? (style == .tvHero ? 6 : 4) : 1.4
+        if style == .iosHero {
+            return fallbackTitle.count <= 8 ? 1.2 : 0.2
+        }
+        return fallbackTitle.count <= 8 ? (style == .tvHero ? 6 : 4) : 1.4
+    }
+
+    private var fallbackFontWeight: Font.Weight {
+        style == .iosHero ? .bold : .black
+    }
+
+    private var titleLineLimit: Int {
+        style == .iosHero ? 3 : 2
     }
 
     private var kickerFontSize: CGFloat {
