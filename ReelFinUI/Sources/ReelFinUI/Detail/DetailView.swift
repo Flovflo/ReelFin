@@ -365,6 +365,10 @@ struct DetailView: View {
         }
 #endif
 #if os(iOS)
+        .overlay {
+            iosPlaybackResumeChoice
+                .zIndex(1)
+        }
         .fullScreenCover(item: $playerPresentation, onDismiss: handlePlayerDismissal) { presentation in
             playerCoverContent(for: presentation)
         }
@@ -418,6 +422,21 @@ struct DetailView: View {
             )
         }
     }
+
+#if os(iOS)
+    @ViewBuilder
+    private var iosPlaybackResumeChoice: some View {
+        if let presentationIntent = playbackLaunchRouter.presentationIntent {
+            PlaybackResumeChoiceView(
+                itemTitle: presentationIntent.item.name,
+                resumePositionTicks: presentationIntent.resumePositionTicks,
+                onSelect: resolvePendingPlaybackLaunch,
+                onCancel: cancelPendingPlaybackLaunch
+            )
+            .transition(.opacity)
+        }
+    }
+#endif
 
 #if os(tvOS)
     @ViewBuilder
@@ -1208,16 +1227,10 @@ struct DetailView: View {
             localProgress: matchingLocalProgress
         )
 
-        let presentsExplicitChoice: Bool
-#if os(tvOS)
-        presentsExplicitChoice = true
-#else
-        presentsExplicitChoice = false
-#endif
         playbackLaunchRouter.begin(
             item: targetItem,
             progress: targetProgress,
-            presentsExplicitChoice: presentsExplicitChoice,
+            presentsExplicitChoice: true,
             effects: playbackLaunchEffects
         )
     }
@@ -1446,7 +1459,6 @@ struct DetailView: View {
         }
     }
 
-#if os(tvOS)
     private func resolvePendingPlaybackLaunch(startPosition: PlaybackStartPosition) {
         let choice: PlaybackLaunchChoice = startPosition == .beginning ? .restart : .resume
         playbackLaunchRouter.resolve(choice: choice, effects: playbackLaunchEffects)
@@ -1455,7 +1467,6 @@ struct DetailView: View {
     private func cancelPendingPlaybackLaunch() {
         playbackLaunchRouter.cancel()
     }
-#endif
 
     static func showsBlockingPlaybackPreparation(
         isLoadingPlayback: Bool,

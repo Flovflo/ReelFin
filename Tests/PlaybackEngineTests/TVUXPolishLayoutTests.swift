@@ -26,19 +26,20 @@ final class TVUXPolishLayoutTests: XCTestCase {
 
     func testCompactResumeChoiceMetrics() {
         let layout = TVPlaybackResumeChoiceLayout.standard
-        XCTAssertEqual(layout.maxWidth, 760)
-        XCTAssertEqual(layout.cornerRadius, 34)
-        XCTAssertEqual(layout.horizontalPadding, 44)
-        XCTAssertEqual(layout.verticalPadding, 34)
-        XCTAssertEqual(layout.buttonHeight, 66)
+        XCTAssertEqual(layout.maxWidth, 520)
+        XCTAssertEqual(layout.cornerRadius, 32)
+        XCTAssertEqual(layout.horizontalPadding, 28)
+        XCTAssertEqual(layout.verticalPadding, 28)
+        XCTAssertEqual(layout.buttonHeight, 62)
         XCTAssertEqual(layout.focusOpacity, 0.20)
-        XCTAssertEqual(layout.buttonSpacing, 16)
-        XCTAssertEqual(layout.questionFontSize, 32)
+        XCTAssertEqual(layout.buttonSpacing, 12)
+        XCTAssertEqual(layout.questionFontSize, 28)
         XCTAssertEqual(layout.buttonHorizontalPadding, 16)
-        XCTAssertEqual(layout.buttonFontSize, 22)
+        XCTAssertEqual(layout.buttonFontSize, 21)
         XCTAssertEqual(layout.buttonTitleLineLimit, 1)
         XCTAssertTrue(layout.buttonTitleAllowsTightening)
         XCTAssertEqual(layout.buttonTitleMinimumScaleFactor, 0.82)
+        XCTAssertTrue(layout.usesVerticalActions)
     }
 
     func testCompleteResumeChoicePolicyTitlesFitAvailableButtonWidth() {

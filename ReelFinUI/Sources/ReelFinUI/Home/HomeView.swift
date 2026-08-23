@@ -1203,6 +1203,10 @@ struct HomeView: View {
         }
 #endif
 #if os(iOS)
+        .overlay {
+            iosHomeResumeChoice
+                .zIndex(100)
+        }
         .fullScreenCover(item: $playerPresentation, onDismiss: handlePlayerDismissal) { presentation in
             homePlayerContent(for: presentation)
         }
@@ -1274,6 +1278,21 @@ struct HomeView: View {
             )
         }
     }
+
+#if os(iOS)
+    @ViewBuilder
+    private var iosHomeResumeChoice: some View {
+        if let presentationIntent = playbackLaunchRouter.presentationIntent {
+            PlaybackResumeChoiceView(
+                itemTitle: presentationIntent.item.name,
+                resumePositionTicks: presentationIntent.resumePositionTicks,
+                onSelect: resolveHomePlaybackLaunch,
+                onCancel: cancelHomePlaybackLaunch
+            )
+            .transition(.opacity)
+        }
+    }
+#endif
 
 #if os(tvOS)
     @ViewBuilder
@@ -2125,16 +2144,10 @@ struct HomeView: View {
 
     @MainActor
     private func launchPlayback(for item: MediaItem) async {
-        let presentsExplicitChoice: Bool
-#if os(tvOS)
-        presentsExplicitChoice = true
-#else
-        presentsExplicitChoice = false
-#endif
         playbackLaunchRouter.begin(
             item: item,
             progress: nil,
-            presentsExplicitChoice: presentsExplicitChoice,
+            presentsExplicitChoice: true,
             effects: homePlaybackLaunchEffects
         )
     }
@@ -2163,7 +2176,6 @@ struct HomeView: View {
         }
     }
 
-#if os(tvOS)
     private func resolveHomePlaybackLaunch(startPosition: PlaybackStartPosition) {
         let choice: PlaybackLaunchChoice = startPosition == .beginning ? .restart : .resume
         playbackLaunchRouter.resolve(choice: choice, effects: homePlaybackLaunchEffects)
@@ -2172,7 +2184,6 @@ struct HomeView: View {
     private func cancelHomePlaybackLaunch() {
         playbackLaunchRouter.cancel()
     }
-#endif
 
     @MainActor
     private func ensureHomeCustomPrewarmer() -> CustomPlayerPrewarmer? {

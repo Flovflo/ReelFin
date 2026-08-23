@@ -30,27 +30,28 @@ struct TVPlaybackResumeChoiceLayout: Equatable, Sendable {
     let buttonTitleAllowsTightening: Bool
     let buttonTitleMinimumScaleFactor: CGFloat
     let buttonIconAndSpacingWidth: CGFloat
+    let usesVerticalActions: Bool
 
     var availableButtonContentWidth: CGFloat {
-        let buttonWidth = (maxWidth - (horizontalPadding * 2) - buttonSpacing) / 2
-        return buttonWidth - (buttonHorizontalPadding * 2)
+        maxWidth - (horizontalPadding * 2) - (buttonHorizontalPadding * 2)
     }
 
     static let standard = TVPlaybackResumeChoiceLayout(
-        maxWidth: 760,
-        cornerRadius: 34,
-        horizontalPadding: 44,
-        verticalPadding: 34,
-        buttonHeight: 66,
+        maxWidth: 520,
+        cornerRadius: 32,
+        horizontalPadding: 28,
+        verticalPadding: 28,
+        buttonHeight: 62,
         focusOpacity: 0.20,
-        buttonSpacing: 16,
-        questionFontSize: 32,
+        buttonSpacing: 12,
+        questionFontSize: 28,
         buttonHorizontalPadding: 16,
-        buttonFontSize: 22,
+        buttonFontSize: 21,
         buttonTitleLineLimit: 1,
         buttonTitleAllowsTightening: true,
         buttonTitleMinimumScaleFactor: 0.82,
-        buttonIconAndSpacingWidth: 36
+        buttonIconAndSpacingWidth: 36,
+        usesVerticalActions: true
     )
 }
 
@@ -271,15 +272,16 @@ struct PlaybackLaunchEntryRouter {
     }
 }
 
-#if os(tvOS)
 struct PlaybackResumeChoiceView: View {
     let itemTitle: String
     let resumePositionTicks: Int64
     let onSelect: (PlaybackStartPosition) -> Void
     let onCancel: () -> Void
 
+#if os(tvOS)
     @FocusState private var focusedChoice: PlaybackLaunchChoice?
     @Namespace private var focusScope
+#endif
 
     var body: some View {
         let layout = TVPlaybackResumeChoiceLayout.standard
@@ -287,8 +289,12 @@ struct PlaybackResumeChoiceView: View {
         ZStack {
             Color.black.opacity(0.76)
                 .ignoresSafeArea()
+#if os(iOS)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onCancel)
+#endif
 
-            VStack(spacing: 26) {
+            VStack(spacing: 22) {
                 VStack(spacing: 8) {
                     Text(itemTitle)
                         .font(.title3.weight(.semibold))
@@ -301,12 +307,11 @@ struct PlaybackResumeChoiceView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                HStack(spacing: layout.buttonSpacing) {
-                    choiceButton(.resume, systemImage: "play.fill", layout: layout)
-                    choiceButton(.restart, systemImage: "arrow.counterclockwise", layout: layout)
-                }
+                choiceStack(layout: layout)
+#if os(tvOS)
                 .focusScope(focusScope)
                 .defaultFocus($focusedChoice, .resume, priority: .userInitiated)
+#endif
             }
             .padding(.horizontal, layout.horizontalPadding)
             .padding(.vertical, layout.verticalPadding)
@@ -318,14 +323,25 @@ struct PlaybackResumeChoiceView: View {
             }
             .shadow(color: .black.opacity(0.42), radius: 42, y: 20)
 
+#if os(tvOS)
             if TVLiveUIAutomationPolicy.isEnabledForCurrentProcess {
                 PlaybackResumeChoiceAccessibilityAnchor(focusedChoice: focusedChoice)
                     .frame(width: 1, height: 1)
             }
+#endif
         }
+#if os(tvOS)
         .onExitCommand(perform: onCancel)
         .onAppear {
             focusedChoice = PlaybackLaunchChoicePolicy.defaultFocusedChoice
+        }
+#endif
+    }
+
+    private func choiceStack(layout: TVPlaybackResumeChoiceLayout) -> some View {
+        VStack(spacing: layout.buttonSpacing) {
+            choiceButton(.resume, systemImage: "play.fill", layout: layout)
+            choiceButton(.restart, systemImage: "arrow.counterclockwise", layout: layout)
         }
     }
 
@@ -349,27 +365,37 @@ struct PlaybackResumeChoiceView: View {
             .allowsTightening(layout.buttonTitleAllowsTightening)
             .minimumScaleFactor(layout.buttonTitleMinimumScaleFactor)
         }
-        .buttonStyle(
-            PlaybackResumeChoiceButton(
-                isFocused: focusedChoice == choice,
-                layout: layout
-            )
-        )
+#if os(tvOS)
+        .buttonStyle(PlaybackResumeChoiceButton(
+            isEmphasized: focusedChoice == choice,
+            layout: layout
+        ))
         .focused($focusedChoice, equals: choice)
         .prefersDefaultFocus(choice == .resume, in: focusScope)
+#else
+        .buttonStyle(PlaybackResumeChoiceButton(
+            isEmphasized: choice == .resume,
+            layout: layout
+        ))
+        .accessibilityIdentifier(
+            choice == .resume
+                ? "playback_resume_choice_continue"
+                : "playback_resume_choice_restart"
+        )
+#endif
     }
 }
 
 private struct PlaybackResumeChoiceButton: ButtonStyle {
-    let isFocused: Bool
+    let isEmphasized: Bool
     let layout: TVPlaybackResumeChoiceLayout
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(.white)
+            .foregroundStyle(isEmphasized ? Color.black.opacity(0.88) : .white)
             .padding(.horizontal, layout.buttonHorizontalPadding)
             .frame(
-                minWidth: 270,
+                minWidth: 240,
                 maxWidth: .infinity,
                 minHeight: layout.buttonHeight,
                 maxHeight: layout.buttonHeight
@@ -378,16 +404,21 @@ private struct PlaybackResumeChoiceButton: ButtonStyle {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(
                         Color.white.opacity(
-                            isFocused ? layout.focusOpacity : (configuration.isPressed ? 0.12 : 0.06)
+                            isEmphasized ? 0.94 : (configuration.isPressed ? 0.16 : 0.08)
                         )
                     )
             }
-            .scaleEffect(isFocused ? 1.025 : (configuration.isPressed ? 0.99 : 1))
-            .animation(.easeOut(duration: 0.16), value: isFocused)
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(.white.opacity(isEmphasized ? 0.32 : 0.10), lineWidth: 1)
+            }
+            .scaleEffect(isEmphasized ? 1.012 : (configuration.isPressed ? 0.99 : 1))
+            .animation(.easeOut(duration: 0.16), value: isEmphasized)
             .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
     }
 }
 
+#if os(tvOS)
 private struct PlaybackResumeChoiceAccessibilityAnchor: UIViewRepresentable {
     let focusedChoice: PlaybackLaunchChoice?
 
