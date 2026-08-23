@@ -512,6 +512,10 @@ struct NativePlayerTVSettingsView: View {
     let onShowPlaybackInfo: () -> Void
     let onShowItemInsight: () -> Void
     let onContinueWatching: () -> Void
+#if os(tvOS)
+    @FocusState private var focusedAction: NativePlayerTVSettingsAction?
+    @Namespace private var focusScope
+#endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -535,15 +539,31 @@ struct NativePlayerTVSettingsView: View {
                     .padding(.horizontal, 18)
                     .frame(height: 64)
                 }
-                .buttonStyle(.glass)
+                .modifier(NativePlayerTVSettingsButtonSurface())
+#if os(tvOS)
+                .focused($focusedAction, equals: action)
+                .prefersDefaultFocus(action == .info, in: focusScope)
+#endif
                 .accessibilityIdentifier(action.accessibilityIdentifier)
             }
+#if os(tvOS)
+            .focusScope(focusScope)
+            .defaultFocus($focusedAction, .info, priority: .userInitiated)
+#endif
         }
         .padding(.horizontal, metrics.horizontalPadding)
         .padding(.vertical, metrics.verticalPadding)
         .frame(width: metrics.panelWidth, alignment: .leading)
         .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
-        .accessibilityIdentifier("native_player_settings_panel")
+#if DEBUG && os(tvOS)
+        .background(alignment: .topLeading) {
+            PlayerAccessibilityMarkerView(identifier: "native_player_settings_panel")
+                .frame(width: 1, height: 1)
+        }
+#endif
+#if os(tvOS)
+        .onAppear { focusedAction = .info }
+#endif
     }
 
     private var metrics: NativePlayerTrackMenuLayout { .current }
@@ -632,6 +652,7 @@ private struct NativePlayerTrackMenuRow: View {
     let status: NativePlayerTrackTransitionState.RowStatus
     let focusedOptionID: FocusState<String?>.Binding
     let onSelect: () -> Void
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         Button(action: onSelect) {
@@ -671,9 +692,14 @@ private struct NativePlayerTrackMenuRow: View {
             .frame(height: metrics.rowHeight)
             .contentShape(RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous))
             .background {
-                RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(rowFillOpacity))
-                    .glassEffect(.clear.interactive(), in: .rect(cornerRadius: rowCornerRadius))
+                if reduceTransparency {
+                    RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
+                        .fill(Color.black.opacity(0.90))
+                } else {
+                    RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
+                        .fill(Color.white.opacity(rowFillOpacity))
+                        .glassEffect(.clear.interactive(), in: .rect(cornerRadius: rowCornerRadius))
+                }
             }
             .overlay {
                 RoundedRectangle(cornerRadius: rowCornerRadius, style: .continuous)
@@ -738,6 +764,24 @@ private struct NativePlayerTrackMenuEmptyRow: View {
     }
 }
 #endif
+
+private struct NativePlayerTVSettingsButtonSurface: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content
+                .buttonStyle(.plain)
+                .background(.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 18))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.18), lineWidth: 1)
+                }
+        } else {
+            content.buttonStyle(.glass)
+        }
+    }
+}
 
 struct NativePlayerTrackMenuLayout {
     let panelWidth: CGFloat
@@ -857,17 +901,7 @@ private extension View {
 #endif
 
     func nativePlayerTrackMenuGlass(cornerRadius: CGFloat) -> some View {
-        let style = NativePlayerTrackMenuVisualStyle.current
-        return self
-        .glassEffect(
-            .regular.tint(.black.opacity(style.panelBlackTintOpacity)),
-            in: .rect(cornerRadius: cornerRadius)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(.white.opacity(0.09), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 6)
+        modifier(NativePlayerTrackMenuGlassModifier(cornerRadius: cornerRadius))
     }
 
 #if !os(tvOS)
@@ -875,6 +909,35 @@ private extension View {
         self
     }
 #endif
+}
+
+private struct NativePlayerTrackMenuGlassModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let style = NativePlayerTrackMenuVisualStyle.current
+        if reduceTransparency {
+            content
+                .background(.black.opacity(0.94), in: RoundedRectangle(cornerRadius: cornerRadius))
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(.white.opacity(0.18), lineWidth: 1)
+                }
+        } else {
+            content
+                .glassEffect(
+                    .regular.tint(.black.opacity(style.panelBlackTintOpacity)),
+                    in: .rect(cornerRadius: cornerRadius)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(.white.opacity(0.09), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 6)
+        }
+    }
 }
 
 /// A sheet that lets the user switch audio language and subtitle tracks

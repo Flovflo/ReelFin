@@ -16,6 +16,9 @@ struct NativePlayerVolumeControl: View {
         }
         .padding(.horizontal, 14)
         .nativePlayerIOSGlassCapsule()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Volume")
+        .accessibilityIdentifier("native_player_volume_control")
     }
 }
 

@@ -147,6 +147,7 @@ struct CustomPlayerView: View {
     var onRequestDismiss: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(SubtitleBackgroundStyle.defaultsKey)
     private var subtitleBackgroundStyle: SubtitleBackgroundStyle = .transparent
     /// Slow-launch escalation: past this delay with still no picture, the overlay stops pretending
@@ -868,6 +869,10 @@ struct CustomPlayerView: View {
         engine.audioTracks.first(where: \.isSelected)?.id
     }
 
+    private var panelTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing))
+    }
+
     private var customPlaybackControls: PlaybackControlsModel {
         let audio = PlaybackControlsModel.customAudioOptions(from: engine.audioTracks)
         let subtitles = [
@@ -910,6 +915,9 @@ struct CustomPlayerView: View {
             guard !Task.isCancelled, trackTransitionState.pendingSelection == selection else { return }
             trackTransitionState.failPendingRequest()
             trackTransitionTimeoutTask = nil
+            AppLog.playback.error(
+                "customplayer.track_selection.timeout — selection=\(String(describing: selection), privacy: .public)"
+            )
         }
     }
 
@@ -995,7 +1003,7 @@ struct CustomPlayerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             .padding(.init(top: 0, leading: 20, bottom: 112, trailing: 20))
-            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+            .transition(panelTransition)
         }
     }
 
@@ -1014,6 +1022,7 @@ struct CustomPlayerView: View {
     }
 
     private func showIOSTrackPicker(_ mode: PlaybackTrackMenuKind) {
+        trackTransitionState.clearFailure()
         activeIOSPanel = .tracks(mode)
         revealIOSChrome()
     }
@@ -1137,16 +1146,16 @@ struct CustomPlayerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             .padding(.init(top: 0, leading: 0, bottom: 164, trailing: 86))
-            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+            .transition(panelTransition)
         }
     }
 
     private var tvRemoteInputLayer: some View {
         NativePlayerRemoteInputLayer(
             isEnabled: !isChromeVisible,
+            focus: $isRemoteInputFocused,
             onCommand: tvCommandDispatcher.dispatch
         )
-        .focused($isRemoteInputFocused)
         .onAppear(perform: updateTVRemoteInputFocus)
         .onChange(of: isChromeVisible) { _, _ in updateTVRemoteInputFocus() }
         .ignoresSafeArea()
@@ -1156,7 +1165,8 @@ struct CustomPlayerView: View {
         NativePlayerTVCommandDispatcher(
             onSelect: { isChromeVisible ? hideTVChrome() : revealTVChrome() },
             onPlayPause: toggleTVPlayPause,
-            onMove: handleTVRemoteMove
+            onMove: handleTVRemoteMove,
+            onOpenSettings: showTVSettingsPanel
         )
     }
 
@@ -1202,6 +1212,7 @@ struct CustomPlayerView: View {
     }
 
     private func showTVTrackPicker(_ mode: PlaybackTrackMenuKind) {
+        trackTransitionState.clearFailure()
         preferredTVChromeFocus = mode == .audio ? .audio : .subtitles
         activeTVPanel = .tracks(mode)
         revealTVChrome()

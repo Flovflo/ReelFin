@@ -105,19 +105,23 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
         var selectCount = 0
         var playPauseCount = 0
         var moves: [NativePlayerRemoteMoveDirection] = []
+        var settingsCount = 0
         let dispatcher = NativePlayerTVCommandDispatcher(
             onSelect: { selectCount += 1 },
             onPlayPause: { playPauseCount += 1 },
-            onMove: { moves.append($0) }
+            onMove: { moves.append($0) },
+            onOpenSettings: { settingsCount += 1 }
         )
 
         dispatcher.dispatch(.select)
         dispatcher.dispatch(.playPause)
         dispatcher.dispatch(.move(.left))
+        dispatcher.dispatch(.openSettings)
 
         XCTAssertEqual(selectCount, 1)
         XCTAssertEqual(playPauseCount, 1)
         XCTAssertEqual(moves, [.left])
+        XCTAssertEqual(settingsCount, 1)
     }
 
     func testTVFocusRestoresExactOriginatingActionAfterPanelDismissal() {
@@ -125,6 +129,20 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.subtitles), .subtitles)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.video), .video)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.settings), .settings)
+    }
+
+    func testTimelineDownUsesDedicatedSettingsRoute() {
+        XCTAssertEqual(NativePlayerTVTimelineNavigation.command(for: .down), .openSettings)
+        XCTAssertEqual(NativePlayerTVTimelineNavigation.command(for: .up), .move(.up))
+        XCTAssertEqual(NativePlayerTVTimelineNavigation.command(for: .left), .move(.left))
+        XCTAssertEqual(NativePlayerTVTimelineNavigation.command(for: .right), .move(.right))
+    }
+
+    func testHiddenChromeDownUsesDedicatedSettingsRouteWithoutRevealStep() {
+        XCTAssertEqual(NativePlayerTVHiddenChromeNavigation.command(for: .down), .openSettings)
+        XCTAssertEqual(NativePlayerTVHiddenChromeNavigation.command(for: .up), .move(.up))
+        XCTAssertEqual(NativePlayerTVHiddenChromeNavigation.command(for: .left), .move(.left))
+        XCTAssertEqual(NativePlayerTVHiddenChromeNavigation.command(for: .right), .move(.right))
     }
 
     func testExplicitChromeSuppressionIsTVOSOnly() {

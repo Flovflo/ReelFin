@@ -182,6 +182,21 @@ enum NativePlayerTVTransportCommand: Equatable {
     case select
     case playPause
     case move(NativePlayerRemoteMoveDirection)
+    case openSettings
+}
+
+enum NativePlayerTVTimelineNavigation {
+    static func command(for direction: NativePlayerRemoteMoveDirection) -> NativePlayerTVTransportCommand {
+        direction == .down ? .openSettings : .move(direction)
+    }
+}
+
+/// The hidden full-screen responder follows the same Down convention as the focused timeline:
+/// opening Settings is the action itself, not a two-step "reveal, then press Down again" flow.
+enum NativePlayerTVHiddenChromeNavigation {
+    static func command(for direction: NativePlayerRemoteMoveDirection) -> NativePlayerTVTransportCommand {
+        direction == .down ? .openSettings : .move(direction)
+    }
 }
 
 /// The sole imperative command router used by both the hidden transport surface and focused
@@ -190,6 +205,19 @@ struct NativePlayerTVCommandDispatcher {
     let onSelect: () -> Void
     let onPlayPause: () -> Void
     let onMove: (NativePlayerRemoteMoveDirection) -> Void
+    let onOpenSettings: () -> Void
+
+    init(
+        onSelect: @escaping () -> Void,
+        onPlayPause: @escaping () -> Void,
+        onMove: @escaping (NativePlayerRemoteMoveDirection) -> Void,
+        onOpenSettings: @escaping () -> Void = {}
+    ) {
+        self.onSelect = onSelect
+        self.onPlayPause = onPlayPause
+        self.onMove = onMove
+        self.onOpenSettings = onOpenSettings
+    }
 
     func dispatch(_ command: NativePlayerTVTransportCommand) {
         switch command {
@@ -199,6 +227,8 @@ struct NativePlayerTVCommandDispatcher {
             onPlayPause()
         case let .move(direction):
             onMove(direction)
+        case .openSettings:
+            onOpenSettings()
         }
     }
 }

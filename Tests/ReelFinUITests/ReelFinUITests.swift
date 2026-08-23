@@ -261,24 +261,71 @@ final class AppStoreScreenshotTests: XCTestCase {
     }
 
     func testCapturePlayerScreenshot() throws {
+        XCUIDevice.shared.orientation = .landscapeRight
+        addTeardownBlock {
+            XCUIDevice.shared.orientation = .portrait
+        }
+
         let app = XCUIApplication()
-        app.launchArguments += ["-reelfin-mock-mode", "-reelfin-screenshot-mode"]
+        app.launchArguments += [
+            "-reelfin-mock-mode",
+            "-reelfin-screenshot-mode",
+            "-reelfin-player-chrome-reference"
+        ]
         app.launch()
 
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
-
-        let firstPoster = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media_card_button_")).firstMatch
-        XCTAssertTrue(firstPoster.waitForExistence(timeout: 12))
-
-        firstPoster.tap()
-        let playButton = playbackActionButton(in: app)
-        XCTAssertTrue(playButton.exists)
-
-        playButton.tap()
-        let playerScreen = app.otherElements["native_player_screen"].firstMatch
-        XCTAssertTrue(playerScreen.waitForExistence(timeout: 12))
-        sleep(2)
+        XCTAssertTrue(app.otherElements["native_player_chrome_reference"].waitForExistence(timeout: 8))
+        let playPauseControl = app.descendants(matching: .any)["native_player_play_pause_button"].firstMatch
+        XCTAssertTrue(
+            playPauseControl.waitForExistence(timeout: 3),
+            "The screenshot must prove that the custom ReelFin chrome is visible, not capture a bare black frame."
+        )
+        let state = app.descendants(matching: .any)["native_player_chrome_reference_state"].firstMatch
+        XCTAssertTrue(state.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_close_button"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_airplay_button"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_volume_control"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_seek_backward_10"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_seek_forward_10"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_audio_button"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_subtitles_button"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_video_button"].firstMatch.exists)
         capture(name: "player-native")
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(waitForValue(containing: "chrome=hidden", on: state, timeout: 3))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        XCTAssertTrue(waitForValue(containing: "chrome=visible", on: state, timeout: 3))
+
+        playPauseControl.tap()
+        XCTAssertTrue(waitForValue(containing: "paused=false", on: state, timeout: 3))
+
+        app.descendants(matching: .any)["native_player_seek_forward_10"].firstMatch.tap()
+        XCTAssertTrue(waitForValue(containing: "time=455", on: state, timeout: 3))
+
+        app.descendants(matching: .any)["native_player_audio_button"].firstMatch.tap()
+        let englishAudio = app.buttons.matching(identifier: "native_player_track_option")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Anglais"))
+            .firstMatch
+        XCTAssertTrue(englishAudio.waitForExistence(timeout: 3))
+        englishAudio.tap()
+        XCTAssertTrue(waitForValue(containing: "audio=audio-en", on: state, timeout: 3))
+
+        app.descendants(matching: .any)["native_player_subtitles_button"].firstMatch.tap()
+        let englishSubtitles = app.buttons.matching(identifier: "native_player_track_option")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Anglais"))
+            .firstMatch
+        XCTAssertTrue(englishSubtitles.waitForExistence(timeout: 3))
+        englishSubtitles.tap()
+        XCTAssertTrue(waitForValue(containing: "subtitle=subtitle-en", on: state, timeout: 3))
+
+        app.descendants(matching: .any)["native_player_close_button"].firstMatch.tap()
+        let reopen = app.buttons["Rouvrir le lecteur"].firstMatch
+        XCTAssertTrue(reopen.waitForExistence(timeout: 3))
+        reopen.tap()
+        app.descendants(matching: .any)["native_player_video_button"].firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native_player_video_panel"].firstMatch.waitForExistence(timeout: 3))
     }
 
     func testMockDetailShowsIOSCarouselChrome() throws {
@@ -409,6 +456,12 @@ final class AppStoreScreenshotTests: XCTestCase {
         }
 
         return element.exists && element.isHittable
+    }
+
+    private func waitForValue(containing text: String, on element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(format: "value CONTAINS %@", text)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     private func capture(name: String, file: StaticString = #filePath, line: UInt = #line) {

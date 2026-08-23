@@ -3,6 +3,7 @@ import SwiftUI
 #if os(tvOS)
 struct NativePlayerRemoteInputLayer: View {
     let isEnabled: Bool
+    let focus: FocusState<Bool>.Binding
     let onCommand: (NativePlayerTVTransportCommand) -> Void
 
     var body: some View {
@@ -14,11 +15,12 @@ struct NativePlayerRemoteInputLayer: View {
         }
             .buttonStyle(.plain)
             .disabled(!isEnabled)
+            .focused(focus)
             .focusEffectDisabled(true)
             .hoverEffectDisabled(true)
             .onMoveCommand { direction in
                 guard let direction = remoteDirection(from: direction) else { return }
-                onCommand(.move(direction))
+                onCommand(NativePlayerTVHiddenChromeNavigation.command(for: direction))
             }
             .allowsHitTesting(isEnabled)
             .accessibilityHidden(true)

@@ -217,6 +217,7 @@ struct NativePlayerTransportOverlayView: View {
     let onTVCommand: (NativePlayerTVTransportCommand) -> Void
 #if os(tvOS)
     @Environment(\.resetFocus) private var resetFocus
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var chromeFocusNamespace
     @FocusState private var focusedControl: NativePlayerTVChromeFocus?
 #endif
@@ -253,6 +254,20 @@ struct NativePlayerTransportOverlayView: View {
             )
             .frame(height: layout.gradientHeight)
             .allowsHitTesting(false)
+
+            VStack(spacing: 5) {
+                Text("Balayez vers le bas pour les infos")
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                Image(systemName: "chevron.compact.down")
+                    .font(.system(size: 30, weight: .bold))
+            }
+            .foregroundStyle(.white.opacity(0.82))
+            .shadow(color: .black.opacity(0.42), radius: 5, y: 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.top, 52)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Balayez vers le bas pour ouvrir les informations")
 
             VStack(alignment: .leading, spacing: 10) {
                 headerRow(layout: layout)
@@ -363,33 +378,11 @@ struct NativePlayerTransportOverlayView: View {
                                 )
                                 .frame(width: layout.circleDiameter, height: layout.circleDiameter)
                                 .contentShape(Circle())
-                                .background {
-                                    Circle()
-                                        .fill(
-                                            Color.white.opacity(
-                                                focusedControl == .action(action)
-                                                    ? glassStyle.focusedFillOpacity
-                                                    : glassStyle.opaqueFillOpacity
-                                            )
-                                        )
-                                }
-                                .glassEffect(.regular.interactive(glassStyle.isInteractive), in: .circle)
-                                .overlay {
-                                    Circle()
-                                        .stroke(
-                                            Color.white.opacity(
-                                                focusedControl == .action(action)
-                                                    ? glassStyle.focusedStrokeOpacity
-                                                    : glassStyle.unfocusedStrokeOpacity
-                                            ),
-                                            lineWidth: 1
-                                        )
-                                }
-                                .shadow(
-                                    color: .white.opacity(
-                                        focusedControl == .action(action) ? glassStyle.focusedGlowOpacity : 0
-                                    ),
-                                    radius: focusedControl == .action(action) ? 10 : 0
+                                .modifier(
+                                    NativePlayerTVChromeCircleSurface(
+                                        isFocused: focusedControl == .action(action),
+                                        style: glassStyle
+                                    )
                                 )
                         }
                         .buttonStyle(.plain)
@@ -397,9 +390,9 @@ struct NativePlayerTransportOverlayView: View {
                         .hoverEffectDisabled(true)
                         .focused($focusedControl, equals: .action(action))
                         .scaleEffect(
-                            focusedControl == .action(action) ? glassStyle.focusedScale : 1
+                            reduceMotion ? 1 : (focusedControl == .action(action) ? glassStyle.focusedScale : 1)
                         )
-                        .animation(.easeOut(duration: 0.16), value: focusedControl)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: focusedControl)
                         .prefersDefaultFocus(
                             effectivePreferredFocus == .action(action),
                             in: chromeFocusNamespace
@@ -454,6 +447,46 @@ struct NativePlayerTransportOverlayView: View {
     }
 
 }
+
+#if os(tvOS)
+private struct NativePlayerTVChromeCircleSurface: ViewModifier {
+    let isFocused: Bool
+    let style: NativePlayerTVChromeGlassStyle
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content
+                .background(
+                    Color.black.opacity(isFocused ? 0.90 : 0.78),
+                    in: Circle()
+                )
+                .overlay {
+                    Circle().stroke(.white.opacity(isFocused ? 0.38 : 0.20), lineWidth: 1)
+                }
+        } else {
+            content
+                .background {
+                    Circle().fill(
+                        Color.white.opacity(isFocused ? style.focusedFillOpacity : style.opaqueFillOpacity)
+                    )
+                }
+                .glassEffect(.regular.interactive(style.isInteractive), in: .circle)
+                .overlay {
+                    Circle().stroke(
+                        Color.white.opacity(isFocused ? style.focusedStrokeOpacity : style.unfocusedStrokeOpacity),
+                        lineWidth: 1
+                    )
+                }
+                .shadow(
+                    color: .white.opacity(isFocused ? style.focusedGlowOpacity : 0),
+                    radius: isFocused ? 10 : 0
+                )
+        }
+    }
+}
+#endif
 
 private extension NativePlayerTVChromeAction {
     var accessibilityName: String {

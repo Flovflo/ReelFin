@@ -23,15 +23,33 @@ struct ReelFinTVApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ReelFinRootView(dependencies: dependencies)
+            rootContent
+        }
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-reelfin-tv-player-chrome-reference") {
+            ReelFinTVPlayerChromeReferenceView()
                 .preferredColorScheme(.dark)
-                .onChange(of: scenePhase) { _, newValue in
-                    if newValue == .active {
-                        Task {
-                            await dependencies.syncEngine.sync(reason: .appForeground)
-                        }
+        } else {
+            productionContent
+        }
+#else
+        productionContent
+#endif
+    }
+
+    private var productionContent: some View {
+        ReelFinRootView(dependencies: dependencies)
+            .preferredColorScheme(.dark)
+            .onChange(of: scenePhase) { _, newValue in
+                if newValue == .active {
+                    Task {
+                        await dependencies.syncEngine.sync(reason: .appForeground)
                     }
                 }
-        }
+            }
     }
 }

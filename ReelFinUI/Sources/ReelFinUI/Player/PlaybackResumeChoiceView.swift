@@ -277,6 +277,7 @@ struct PlaybackResumeChoiceView: View {
     let resumePositionTicks: Int64
     let onSelect: (PlaybackStartPosition) -> Void
     let onCancel: () -> Void
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
 #if os(tvOS)
     @FocusState private var focusedChoice: PlaybackLaunchChoice?
@@ -316,7 +317,12 @@ struct PlaybackResumeChoiceView: View {
             .padding(.horizontal, layout.horizontalPadding)
             .padding(.vertical, layout.verticalPadding)
             .frame(maxWidth: layout.maxWidth)
-            .glassEffect(.regular, in: .rect(cornerRadius: layout.cornerRadius))
+            .modifier(
+                PlaybackResumeChoiceSurface(
+                    cornerRadius: layout.cornerRadius,
+                    reduceTransparency: reduceTransparency
+                )
+            )
             .overlay {
                 RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
@@ -389,6 +395,7 @@ struct PlaybackResumeChoiceView: View {
 private struct PlaybackResumeChoiceButton: ButtonStyle {
     let isEmphasized: Bool
     let layout: TVPlaybackResumeChoiceLayout
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -412,9 +419,23 @@ private struct PlaybackResumeChoiceButton: ButtonStyle {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(.white.opacity(isEmphasized ? 0.32 : 0.10), lineWidth: 1)
             }
-            .scaleEffect(isEmphasized ? 1.012 : (configuration.isPressed ? 0.99 : 1))
-            .animation(.easeOut(duration: 0.16), value: isEmphasized)
-            .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
+            .scaleEffect(reduceMotion ? 1 : (isEmphasized ? 1.012 : (configuration.isPressed ? 0.99 : 1)))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isEmphasized)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
+    }
+}
+
+private struct PlaybackResumeChoiceSurface: ViewModifier {
+    let cornerRadius: CGFloat
+    let reduceTransparency: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(.black.opacity(0.94), in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        }
     }
 }
 

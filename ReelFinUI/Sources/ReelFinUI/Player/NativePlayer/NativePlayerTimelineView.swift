@@ -183,12 +183,15 @@ struct NativePlayerTimelineView: View {
             case let .seekRelative(seconds):
                 onSeekRelative(seconds)
             case let .moveFocus(direction):
-                onCommand(.move(direction))
-                focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
-                    from: .timeline,
-                    direction: direction,
-                    availableActions: availableActions
-                )
+                let command = NativePlayerTVTimelineNavigation.command(for: direction)
+                onCommand(command)
+                if command != .openSettings {
+                    focus.wrappedValue = NativePlayerTVChromeFocusGraph.destination(
+                        from: .timeline,
+                        direction: direction,
+                        availableActions: availableActions
+                    )
+                }
             }
         }
         isCircularScrubbing = circularScrubCoordinator.isActive

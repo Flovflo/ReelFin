@@ -530,3 +530,10 @@ git commit -m "test: validate liquid glass player redesign"
 ```
 
 Do not add `.artifacts` screenshots to git.
+
+## Completion Record — 2026-08-23
+
+- Tasks 1–6 completed and committed on `main` in focused commits.
+- Task 7 completed with XcodeGen, explicit iOS/tvOS 26.5 builds, 1,117 iOS playback-engine tests (9 external skips, 0 failures), 27 image-cache tests (0 failures), 18 tvOS tests (0 failures), a passing deterministic iOS interaction/capture test, and a passing hermetic tvOS hidden-chrome Down → Settings → focused Info → Info-panel journey using production components.
+- The final inspected captures are `.artifacts/player-reference-validation-ios-final/E5431C02-EC4B-4786-966E-2480A09A1A0F.png` and `.artifacts/player-reference-validation-tvos-final/CA945A34-E772-4D29-AFA9-35B3C41F2534.png`; artifacts remain untracked.
+- The live probe was attempted but its two explicit external Jellyfin fixture IDs were not visible in the simulator account, so no fresh live-server result is claimed.

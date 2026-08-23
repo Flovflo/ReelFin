@@ -278,10 +278,7 @@ struct NativePlayerAVKitMenuView: View {
         .padding(.horizontal, layout.horizontalInset)
         .padding(.vertical, layout.verticalInset)
         .frame(width: layout.width)
-        .glassEffect(
-            .regular.tint(.black.opacity(0.08)),
-            in: .rect(cornerRadius: layout.cornerRadius)
-        )
+        .modifier(NativePlayerAVKitMenuSurface(cornerRadius: layout.cornerRadius))
         .overlay {
             RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous)
                 .stroke(.white.opacity(0.14), lineWidth: 1)
@@ -725,6 +722,23 @@ struct NativePlayerAVKitMenuView: View {
               row == preferredFocusedRow,
               availableRowIDs.contains(row) else { return }
         focusedRow = row
+    }
+}
+
+private struct NativePlayerAVKitMenuSurface: ViewModifier {
+    let cornerRadius: CGFloat
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(.black.opacity(0.94), in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            content.glassEffect(
+                .regular.tint(.black.opacity(0.08)),
+                in: .rect(cornerRadius: cornerRadius)
+            )
+        }
     }
 }
 

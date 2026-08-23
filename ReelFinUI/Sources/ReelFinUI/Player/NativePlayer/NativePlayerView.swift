@@ -17,6 +17,7 @@ struct NativePlayerView: View {
     let onPlaybackTime: (Double) -> Void
     let onSkipSuggestion: (PlaybackSkipSuggestion) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var liveDiagnostics: [String] = []
     @State private var isPaused = false
     @State private var playbackTime: Double = 0
@@ -60,6 +61,9 @@ struct NativePlayerView: View {
         // Parsed once per publication; every consumer below reads typed fields
         // instead of re-scanning the raw diagnostic rows.
         let diagnosticsModel = NativePlayerDiagnosticsModel(baseRows: diagnostics, liveRows: liveDiagnostics)
+        let renderedPlaybackControls = diagnosticsModel.isPacketDemuxedContainer
+            ? playbackControls
+            : PlaybackControlsModel(audioOptions: [], subtitleOptions: [])
         return ZStack(alignment: .topLeading) {
             if let playbackURL, routeViolation == nil {
                 Group {
@@ -76,7 +80,8 @@ struct NativePlayerView: View {
                             sourceBitrateBps: sourceBitrateBps,
                             isPaused: $isPaused,
                             onDiagnostics: handleDiagnostics,
-                            onPlaybackTime: handlePlaybackTime
+                            onPlaybackTime: handlePlaybackTime,
+                            onTrackSelectionApplied: handleAppliedTrackSelection
                         )
                     } else {
                         NativeMP4SampleBufferPlayerView(
@@ -104,9 +109,9 @@ struct NativePlayerView: View {
 #if os(tvOS)
             NativePlayerRemoteInputLayer(
                 isEnabled: !shouldShowChrome,
+                focus: $remoteInputFocused,
                 onCommand: tvCommandDispatcher.dispatch
             )
-            .focused($remoteInputFocused)
             .onAppear(perform: updateRemoteInputFocus)
             .onChange(of: shouldShowChrome) { _, _ in updateRemoteInputFocus() }
             .ignoresSafeArea()
@@ -120,7 +125,7 @@ struct NativePlayerView: View {
             if shouldShowChrome {
                 NativePlayerTransportOverlayView(
                     item: item,
-                    capabilities: .nativeSampleBuffer(controls: playbackControls),
+                    capabilities: .nativeSampleBuffer(controls: renderedPlaybackControls),
                     isPaused: $isPaused,
                     isCircularScrubbing: circularScrubActiveBinding,
                     showsDiagnostics: $showsDiagnostics,
@@ -137,7 +142,7 @@ struct NativePlayerView: View {
                     onToggleChrome: hideChrome,
                     onDismiss: { dismiss() },
                     isInteractionEnabled: activeTrackMenu == nil && activeInformationPanel == nil,
-                    availableActions: NativePlayerTVChromeAvailability.actions(for: playbackControls),
+                    availableActions: NativePlayerTVChromeAvailability.actions(for: renderedPlaybackControls),
                     preferredFocus: playerChromePreferredFocus,
                     focusRequestToken: playerChromeFocusRequestToken,
                     onTVCommand: dispatchTVCommand
@@ -149,7 +154,7 @@ struct NativePlayerView: View {
 #if os(tvOS)
                     NativePlayerAVKitMenuView(
                         mode: activeTrackMenu,
-                        controls: playbackControls,
+                        controls: renderedPlaybackControls,
                         subtitleStyle: subtitleBackgroundStyle,
                         lastEnabledSubtitleID: subtitleSelectionMemory.lastEnabledID,
                         transitionState: trackTransitionState,
@@ -160,7 +165,7 @@ struct NativePlayerView: View {
 #else
                     NativePlayerTrackSelectionMenuView(
                         mode: activeTrackMenu,
-                        controls: playbackControls,
+                        controls: renderedPlaybackControls,
                         transitionState: trackTransitionState,
                         onSelect: handleTrackMenuSelection
                     )
@@ -169,7 +174,7 @@ struct NativePlayerView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(trackMenuPadding)
-                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+                .transition(panelTransition)
             }
             if shouldShowChrome, let activeInformationPanel {
                 Group {
@@ -198,7 +203,7 @@ struct NativePlayerView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(trackMenuPadding)
-                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+                .transition(panelTransition)
             }
             if activeTrackMenu == nil,
                activeInformationPanel == nil,
@@ -232,19 +237,7 @@ struct NativePlayerView: View {
             lastDeepEvidenceLogDate = nil
             lastDeepEvidencePlaybackTime = nil
             accessibilityEvidence.reset()
-            subtitleSelectionMemory.confirm(trackID: transportState.selectedSubtitleTrackID)
-            trackTransitionState.confirm(
-                audioID: transportState.selectedAudioTrackID,
-                subtitleID: transportState.selectedSubtitleTrackID
-            )
             revealChrome()
-        }
-        .onChange(of: transportState.selectedAudioTrackID) { _, _ in
-            confirmTrackTransition()
-        }
-        .onChange(of: transportState.selectedSubtitleTrackID) { _, trackID in
-            subtitleSelectionMemory.confirm(trackID: trackID)
-            confirmTrackTransition()
         }
         .task(id: transportState.activeSkipSuggestion) {
 #if os(tvOS)
@@ -285,10 +278,7 @@ struct NativePlayerView: View {
             seekDisplayHoldUntil = nil
             liveDiagnostics = []
             accessibilityEvidence.reset()
-            trackTransitionState = NativePlayerTrackTransitionState(
-                confirmedAudioID: transportState.selectedAudioTrackID,
-                confirmedSubtitleID: transportState.selectedSubtitleTrackID
-            )
+            trackTransitionState = NativePlayerTrackTransitionState()
             revealChrome()
         }
         .onChange(of: isPaused) { _, _ in
@@ -427,8 +417,8 @@ struct NativePlayerView: View {
         PlaybackControlsModel.make(
             audioTracks: transportState.availableAudioTracks,
             subtitleTracks: transportState.availableSubtitleTracks,
-            selectedAudioID: transportState.selectedAudioTrackID,
-            selectedSubtitleID: transportState.selectedSubtitleTrackID,
+            selectedAudioID: trackTransitionState.confirmedAudioID,
+            selectedSubtitleID: trackTransitionState.confirmedSubtitleID,
             skipSuggestion: transportState.activeSkipSuggestion
         )
     }
@@ -734,15 +724,19 @@ struct NativePlayerView: View {
             guard !Task.isCancelled, trackTransitionState.pendingSelection == selection else { return }
             trackTransitionState.failPendingRequest()
             trackTransitionTimeoutTask = nil
+            AppLog.playback.error(
+                "nativeplayer.track_selection.timeout — selection=\(String(describing: selection), privacy: .public)"
+            )
             revealChrome()
         }
     }
 
-    private func confirmTrackTransition() {
+    private func handleAppliedTrackSelection(audioID: String?, subtitleID: String?) {
+        subtitleSelectionMemory.confirm(trackID: subtitleID)
         let hadPendingSelection = trackTransitionState.pendingSelection != nil
         trackTransitionState.confirm(
-            audioID: transportState.selectedAudioTrackID,
-            subtitleID: transportState.selectedSubtitleTrackID
+            audioID: audioID,
+            subtitleID: subtitleID
         )
         guard hadPendingSelection, trackTransitionState.pendingSelection == nil else { return }
 
@@ -809,6 +803,10 @@ struct NativePlayerView: View {
             return hdrLine.replacingOccurrences(of: "hdr=", with: "").uppercased()
         }
         return "Originale"
+    }
+
+    private var panelTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing))
     }
 
     private func shouldHoldSeekDisplay(for reportedSeconds: Double, now: Date) -> Bool {
@@ -969,7 +967,8 @@ struct NativePlayerView: View {
         NativePlayerTVCommandDispatcher(
             onSelect: { shouldShowChrome ? hideChrome() : revealChrome() },
             onPlayPause: togglePlayPause,
-            onMove: handleRemoteMove
+            onMove: handleRemoteMove,
+            onOpenSettings: showSettingsPanel
         )
     }
 

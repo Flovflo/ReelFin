@@ -18,6 +18,7 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
     @Binding var isPaused: Bool
     let onDiagnostics: ([String]) -> Void
     let onPlaybackTime: (Double) -> Void
+    let onTrackSelectionApplied: (String?, String?) -> Void
 
     func makeUIViewController(context: Context) -> NativeMatroskaSampleBufferPlayerController {
         let controller = NativeMatroskaSampleBufferPlayerController()
@@ -33,7 +34,8 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
             sourceBitrateBps: sourceBitrateBps,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
-            onPlaybackTime: onPlaybackTime
+            onPlaybackTime: onPlaybackTime,
+            onTrackSelectionApplied: onTrackSelectionApplied
         )
         return controller
     }
@@ -51,7 +53,8 @@ struct NativeMatroskaSampleBufferPlayerView: UIViewControllerRepresentable {
             sourceBitrateBps: sourceBitrateBps,
             isPaused: isPaused,
             onDiagnostics: onDiagnostics,
-            onPlaybackTime: onPlaybackTime
+            onPlaybackTime: onPlaybackTime,
+            onTrackSelectionApplied: onTrackSelectionApplied
         )
     }
 
@@ -95,6 +98,22 @@ struct NativeMatroskaForwardSeekState {
         }
         videoDecodeStarted = true
         return false
+    }
+}
+
+struct NativePlayerAppliedTrackSelection: Equatable {
+    let audioID: String?
+    let subtitleID: String?
+
+    static func rendererAcknowledgement(
+        audioTrackID: Int?,
+        isAudioDecoderReady: Bool,
+        subtitleTrackID: Int?
+    ) -> Self {
+        Self(
+            audioID: isAudioDecoderReady ? audioTrackID.map(String.init) : nil,
+            subtitleID: subtitleTrackID.map(String.init)
+        )
     }
 }
 
@@ -202,6 +221,7 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
     private var baseDiagnostics: [String] = []
     private var onDiagnostics: (([String]) -> Void)?
     private var onPlaybackTime: ((Double) -> Void)?
+    private var onTrackSelectionApplied: ((String?, String?) -> Void)?
     private var playbackTask: Task<Void, Never>?
     private var retirementTask: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
@@ -325,11 +345,13 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
         sourceBitrateBps: Int? = nil,
         isPaused: Bool,
         onDiagnostics: @escaping ([String]) -> Void,
-        onPlaybackTime: @escaping (Double) -> Void
+        onPlaybackTime: @escaping (Double) -> Void,
+        onTrackSelectionApplied: @escaping (String?, String?) -> Void = { _, _ in }
     ) {
         self.baseDiagnostics = baseDiagnostics
         self.onDiagnostics = onDiagnostics
         self.onPlaybackTime = onPlaybackTime
+        self.onTrackSelectionApplied = onTrackSelectionApplied
         currentSourceBitrateBps = sourceBitrateBps
         pendingPause = isPaused
         isTornDown = false
@@ -773,6 +795,16 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             try Task.checkCancellation()
             guard ownsCallbacks(from: generation) else { return false }
             markReaderActive(generation)
+            let appliedSelection = NativePlayerAppliedTrackSelection.rendererAcknowledgement(
+                audioTrackID: audioTrack?.trackId,
+                isAudioDecoderReady: audioDecoder != nil,
+                subtitleTrackID: subtitleTrack?.trackId
+            )
+            publishAppliedTrackSelection(
+                audioID: appliedSelection.audioID,
+                subtitleID: appliedSelection.subtitleID,
+                generation: generation
+            )
             resetPlaybackReadiness(hasAudio: audioDecoder != nil)
 
             updateMetrics {
@@ -809,6 +841,21 @@ final class NativeMatroskaSampleBufferPlayerController: UIViewController {
             }
         }
         return completedWithOwnedCallbacks
+    }
+
+    private func publishAppliedTrackSelection(
+        audioID: String?,
+        subtitleID: String?,
+        generation: Int
+    ) {
+        guard ownsCallbacks(from: generation) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  !self.isTornDown,
+                  self.ownsCallbacks(from: generation) else { return }
+            self.recordCallbackDelivery()
+            self.onTrackSelectionApplied?(audioID, subtitleID)
+        }
     }
 
     private func setActiveByteSource(_ source: any MediaByteSource, generation: Int) {

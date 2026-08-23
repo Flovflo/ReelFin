@@ -591,7 +591,14 @@ public final class CustomPlaybackEngine {
               let option = audioOptionsByID[id]
         else { return }
         item.select(option, in: group)
-        hasSelectedAudibleMediaOption = item.currentMediaSelection.selectedMediaOption(in: group) != nil
+        let selectedOption = item.currentMediaSelection.selectedMediaOption(in: group)
+        hasSelectedAudibleMediaOption = selectedOption != nil
+        guard selectedOption === option else {
+            AppLog.playback.error(
+                "customplayer.audio_selection.not_applied — requested=\(id, privacy: .public)"
+            )
+            return
+        }
         audioTracks = audioTracks.map { track in
             CustomPlaybackAudioTrack(id: track.id, title: track.title, isSelected: track.id == id)
         }

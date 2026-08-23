@@ -53,6 +53,9 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(regular.minimumHitTarget, 44)
         XCTAssertGreaterThanOrEqual(compact.minimumHitTarget, 44)
+        XCTAssertGreaterThanOrEqual(NativePlayerIOSIconButton.Size.compact.frame, 44)
+        XCTAssertEqual(compact.primaryTransportDiameter, 78)
+        XCTAssertEqual(regular.primaryTransportDiameter, 86)
         XCTAssertGreaterThan(regular.primaryTransportDiameter, regular.transportDiameter)
         XCTAssertLessThanOrEqual(compact.horizontalPadding, regular.horizontalPadding)
         XCTAssertGreaterThan(compact.timelineHeight, 0)
@@ -71,6 +74,25 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         state.confirm(audioID: "eng", subtitleID: nil)
         XCTAssertNil(state.pendingSelection)
         XCTAssertEqual(state.status(for: .audio("eng")), .selected)
+    }
+
+    func testRendererAcknowledgementRequiresConfiguredAudioDecoder() {
+        XCTAssertEqual(
+            NativePlayerAppliedTrackSelection.rendererAcknowledgement(
+                audioTrackID: 2,
+                isAudioDecoderReady: true,
+                subtitleTrackID: 4
+            ),
+            NativePlayerAppliedTrackSelection(audioID: "2", subtitleID: "4")
+        )
+        XCTAssertEqual(
+            NativePlayerAppliedTrackSelection.rendererAcknowledgement(
+                audioTrackID: 2,
+                isAudioDecoderReady: false,
+                subtitleTrackID: nil
+            ),
+            NativePlayerAppliedTrackSelection(audioID: nil, subtitleID: nil)
+        )
     }
 
     func testLatestTrackRequestWinsAndFailureRestoresConfirmedSelection() {

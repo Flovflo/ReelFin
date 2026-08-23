@@ -28,7 +28,7 @@ struct NativePlayerIOSIconButton: View {
 
         var frame: CGFloat {
             switch self {
-            case .compact: 28
+            case .compact: 44
             case .large: 48
             case .transport: 62
             case .primaryTransport: 86
@@ -54,6 +54,7 @@ struct NativePlayerIOSIconButton: View {
 
     let systemName: String
     let size: Size
+    var diameter: CGFloat? = nil
     var accessibilityLabel: String?
     var accessibilityIdentifier: String?
     let action: () -> Void
@@ -63,7 +64,7 @@ struct NativePlayerIOSIconButton: View {
             Image(systemName: systemName)
                 .font(.system(size: size.symbol, weight: .medium))
                 .foregroundStyle(.white)
-                .frame(width: size.frame, height: size.frame)
+                .frame(width: diameter ?? size.frame, height: diameter ?? size.frame)
                 .modifier(NativePlayerIOSIconChrome(size: size))
         }
         .buttonStyle(NativePlayerIOSButtonStyle())
@@ -107,11 +108,13 @@ private struct NativePlayerIOSIconChrome: ViewModifier {
 }
 
 struct NativePlayerIOSButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .scaleEffect(reduceMotion ? 1 : (configuration.isPressed ? 0.96 : 1))
             .opacity(configuration.isPressed ? 0.82 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

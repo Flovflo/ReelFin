@@ -55,12 +55,27 @@ struct NativePlayerIOSTransportOverlayView: View {
             )
 
             ZStack {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .black.opacity(0.16), location: 0.35),
+                            .init(color: .black.opacity(0.64), location: 1)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: max(170, min(280, proxy.size.height * 0.46)))
+                }
+                .allowsHitTesting(false)
+
                 topControls(layout: layout)
                     .padding(.top, proxy.safeAreaInsets.top + layout.topPadding)
                     .padding(.horizontal, layout.horizontalPadding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                centerTransportControls(spacing: layout.transportSpacing)
+                centerTransportControls(layout: layout)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
                 NativePlayerIOSBottomChrome(
@@ -121,12 +136,13 @@ struct NativePlayerIOSTransportOverlayView: View {
         }
     }
 
-    private func centerTransportControls(spacing: CGFloat) -> some View {
-        GlassEffectContainer(spacing: spacing) {
-            HStack(spacing: spacing) {
+    private func centerTransportControls(layout: NativePlayerIOSChromeLayout) -> some View {
+        GlassEffectContainer(spacing: layout.transportSpacing) {
+            HStack(spacing: layout.transportSpacing) {
                 NativePlayerIOSIconButton(
                     systemName: "gobackward.10",
                     size: .transport,
+                    diameter: layout.transportDiameter,
                     accessibilityLabel: "Reculer de 10 secondes",
                     accessibilityIdentifier: "native_player_seek_backward_10"
                 ) {
@@ -137,6 +153,7 @@ struct NativePlayerIOSTransportOverlayView: View {
                 NativePlayerIOSIconButton(
                     systemName: isPaused ? "play.fill" : "pause.fill",
                     size: .primaryTransport,
+                    diameter: layout.primaryTransportDiameter,
                     accessibilityLabel: isPaused ? "Lire" : "Pause",
                     accessibilityIdentifier: "native_player_play_pause_button"
                 ) {
@@ -147,6 +164,7 @@ struct NativePlayerIOSTransportOverlayView: View {
                 NativePlayerIOSIconButton(
                     systemName: "goforward.10",
                     size: .transport,
+                    diameter: layout.transportDiameter,
                     accessibilityLabel: "Avancer de 10 secondes",
                     accessibilityIdentifier: "native_player_seek_forward_10"
                 ) {

@@ -46,7 +46,17 @@ struct ReelFinApp: App {
     }
 
     private var rootContent: some View {
-        ReelFinRootView(dependencies: dependencies)
+        Group {
+#if DEBUG && os(iOS)
+            if ProcessInfo.processInfo.arguments.contains("-reelfin-player-chrome-reference") {
+                ReelFinPlayerChromeReferenceView()
+            } else {
+                ReelFinRootView(dependencies: dependencies)
+            }
+#else
+            ReelFinRootView(dependencies: dependencies)
+#endif
+        }
             .preferredColorScheme(.dark)
             .onAppear {
                 appDelegate.configure(dependencies: dependencies)
