@@ -96,7 +96,7 @@ enum NativePlayerTVChromeControlShape: Equatable {
     case capsule
 }
 
-enum NativePlayerTVChromeUtilityAction: CaseIterable, Equatable, Hashable {
+enum NativePlayerTVSettingsAction: CaseIterable, Equatable, Hashable {
     case info
     case insight
     case continueWatching
@@ -116,8 +116,6 @@ enum NativePlayerTVChromeUtilityAction: CaseIterable, Equatable, Hashable {
         case .continueWatching: return .continueWatching
         }
     }
-
-    var controlShape: NativePlayerTVChromeControlShape { .capsule }
 
     var accessibilityIdentifier: String {
         switch self {
@@ -140,14 +138,11 @@ struct NativePlayerTVChromeLayout: Equatable {
     let timelineHeight: CGFloat
     let referenceSize: CGSize
     let timelineY: CGFloat
-    let utilityRowY: CGFloat
     let circleDiameter: CGFloat
     let circleSpacing: CGFloat
     let titleSize: CGFloat
     let eyebrowSize: CGFloat
     let iconSize: CGFloat
-    let utilityHeight: CGFloat
-    let utilitySpacing: CGFloat
     let titleMinimumScaleFactor: CGFloat
     let maximumTitleWidthRatio: CGFloat
 
@@ -159,14 +154,11 @@ struct NativePlayerTVChromeLayout: Equatable {
         timelineHeight: 7,
         referenceSize: CGSize(width: 1_920, height: 1_080),
         timelineY: 900,
-        utilityRowY: 985,
-        circleDiameter: 70,
+        circleDiameter: 64,
         circleSpacing: 24,
         titleSize: 54,
         eyebrowSize: 25,
         iconSize: 28,
-        utilityHeight: 64,
-        utilitySpacing: 24,
         titleMinimumScaleFactor: 0.58,
         maximumTitleWidthRatio: 0.68
     )
@@ -215,9 +207,7 @@ struct NativePlayerTransportOverlayView: View {
     let onInteraction: () -> Void
     let onShowTrackPicker: (PlaybackTrackMenuKind) -> Void
     let onShowVideoPanel: () -> Void
-    let onShowPlaybackInfo: () -> Void
-    let onShowItemInsight: () -> Void
-    let onContinueWatching: () -> Void
+    let onShowSettingsPanel: () -> Void
     let onToggleChrome: () -> Void
     let onDismiss: () -> Void
     let isInteractionEnabled: Bool
@@ -283,7 +273,6 @@ struct NativePlayerTransportOverlayView: View {
                         onTVCommand(command)
                     }
                 )
-                utilityBar(layout: layout)
             }
             .focusScope(chromeFocusNamespace)
             .defaultFocus($focusedControl, effectivePreferredFocus)
@@ -362,7 +351,7 @@ struct NativePlayerTransportOverlayView: View {
                             } else if action == .video {
                                 onShowVideoPanel()
                             } else {
-                                onShowPlaybackInfo()
+                                onShowSettingsPanel()
                             }
                         } label: {
                             Image(systemName: action.systemName)
@@ -426,86 +415,6 @@ struct NativePlayerTransportOverlayView: View {
             .focusSection()
         }
         .frame(minHeight: 112, alignment: .bottom)
-    }
-
-    private func utilityBar(layout: NativePlayerTVChromeLayout) -> some View {
-        let glassStyle = NativePlayerTVChromeGlassStyle.standard
-        return GlassEffectContainer(spacing: 12) {
-            HStack(spacing: layout.utilitySpacing) {
-                ForEach(NativePlayerTVChromeUtilityAction.allCases, id: \.self) { action in
-                    Button {
-                        guard isInteractionEnabled else { return }
-                        onInteraction()
-                        perform(action)
-                    } label: {
-                        Text(action.title)
-                            .font(.system(size: 23, weight: .semibold, design: .rounded))
-                            .foregroundStyle(
-                                focusedControl == .utility(action)
-                                    ? Color.black.opacity(0.82)
-                                    : Color.white.opacity(0.96)
-                            )
-                            .padding(.horizontal, action == .continueWatching ? 30 : 24)
-                            .frame(height: layout.utilityHeight)
-                            .contentShape(Capsule())
-                            .background {
-                                Capsule()
-                                    .fill(
-                                        Color.white.opacity(
-                                            focusedControl == .utility(action)
-                                                ? glassStyle.focusedFillOpacity
-                                                : glassStyle.opaqueFillOpacity
-                                        )
-                                    )
-                            }
-                            .glassEffect(.regular.interactive(glassStyle.isInteractive), in: .capsule)
-                            .overlay {
-                                Capsule()
-                                    .stroke(
-                                        Color.white.opacity(
-                                            focusedControl == .utility(action)
-                                                ? glassStyle.focusedStrokeOpacity
-                                                : glassStyle.unfocusedStrokeOpacity
-                                        ),
-                                        lineWidth: 1
-                                    )
-                            }
-                            .shadow(
-                                color: .white.opacity(
-                                    focusedControl == .utility(action) ? glassStyle.focusedGlowOpacity : 0
-                                ),
-                                radius: focusedControl == .utility(action) ? 10 : 0
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .focusEffectDisabled(true)
-                    .hoverEffectDisabled(true)
-                    .focused($focusedControl, equals: .utility(action))
-                    .scaleEffect(
-                        focusedControl == .utility(action) ? glassStyle.focusedScale : 1
-                    )
-                    .animation(.easeOut(duration: 0.16), value: focusedControl)
-                    .prefersDefaultFocus(
-                        effectivePreferredFocus == .utility(action),
-                        in: chromeFocusNamespace
-                    )
-                    .onMoveCommand { direction in
-                        moveChromeFocus(from: .utility(action), direction: direction)
-                    }
-                    .accessibilityIdentifier(action.accessibilityIdentifier)
-                }
-            }
-        }
-        .focusSection()
-    }
-
-    private func perform(_ action: NativePlayerTVChromeUtilityAction) {
-        switch action.destination {
-        case .playbackInfoPanel: onShowPlaybackInfo()
-        case .itemInsightPanel: onShowItemInsight()
-        case .continueWatching: onContinueWatching()
-        case .trackMenu, .videoPanel, .settingsPanel: break
-        }
     }
 
     private var effectivePreferredFocus: NativePlayerTVChromeFocus {

@@ -508,6 +508,63 @@ struct NativePlayerVideoInformationView: View {
     private var metrics: NativePlayerTrackMenuLayout { .current }
 }
 
+struct NativePlayerTVSettingsView: View {
+    let onShowPlaybackInfo: () -> Void
+    let onShowItemInsight: () -> Void
+    let onContinueWatching: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Réglages")
+                .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.66))
+
+            ForEach(NativePlayerTVSettingsAction.allCases, id: \.self) { action in
+                Button {
+                    perform(action)
+                } label: {
+                    HStack(spacing: 16) {
+                        Image(systemName: systemName(for: action))
+                            .frame(width: 32)
+                        Text(action.title)
+                        Spacer(minLength: 24)
+                        Image(systemName: action == .continueWatching ? "play.fill" : "chevron.right")
+                            .foregroundStyle(.white.opacity(0.58))
+                    }
+                    .font(.system(size: metrics.rowTitleSize, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 18)
+                    .frame(height: 64)
+                }
+                .buttonStyle(.glass)
+                .accessibilityIdentifier(action.accessibilityIdentifier)
+            }
+        }
+        .padding(.horizontal, metrics.horizontalPadding)
+        .padding(.vertical, metrics.verticalPadding)
+        .frame(width: metrics.panelWidth, alignment: .leading)
+        .nativePlayerTrackMenuGlass(cornerRadius: metrics.cornerRadius)
+        .accessibilityIdentifier("native_player_settings_panel")
+    }
+
+    private var metrics: NativePlayerTrackMenuLayout { .current }
+
+    private func perform(_ action: NativePlayerTVSettingsAction) {
+        switch action {
+        case .info: onShowPlaybackInfo()
+        case .insight: onShowItemInsight()
+        case .continueWatching: onContinueWatching()
+        }
+    }
+
+    private func systemName(for action: NativePlayerTVSettingsAction) -> String {
+        switch action {
+        case .info: "info.circle"
+        case .insight: "text.justify.left"
+        case .continueWatching: "play.fill"
+        }
+    }
+}
+
 /// Honest Jellyfin metadata for the tvOS Détails action.
 /// supplied by Jellyfin; it does not imply people recognition or scene analysis.
 struct NativePlayerItemInsightView: View {

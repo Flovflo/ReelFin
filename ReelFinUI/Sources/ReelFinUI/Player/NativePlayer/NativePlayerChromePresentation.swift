@@ -209,9 +209,6 @@ enum NativePlayerTVChromeFocus: Hashable {
     case audio
     case subtitles
     case settings
-    case info
-    case insight
-    case continueWatching
 
     static func action(_ action: NativePlayerTVChromeAction) -> Self {
         switch action {
@@ -222,14 +219,6 @@ enum NativePlayerTVChromeFocus: Hashable {
         }
     }
 
-    static func utility(_ action: NativePlayerTVChromeUtilityAction) -> Self {
-        switch action {
-        case .info: return .info
-        case .insight: return .insight
-        case .continueWatching: return .continueWatching
-        }
-    }
-
     var accessibilityIdentifier: String {
         switch self {
         case .timeline: return "native_player_timeline_scrubber"
@@ -237,9 +226,6 @@ enum NativePlayerTVChromeFocus: Hashable {
         case .subtitles: return NativePlayerTVChromeAction.subtitles.accessibilityIdentifier
         case .video: return NativePlayerTVChromeAction.video.accessibilityIdentifier
         case .settings: return NativePlayerTVChromeAction.settings.accessibilityIdentifier
-        case .info: return NativePlayerTVChromeUtilityAction.info.accessibilityIdentifier
-        case .insight: return NativePlayerTVChromeUtilityAction.insight.accessibilityIdentifier
-        case .continueWatching: return NativePlayerTVChromeUtilityAction.continueWatching.accessibilityIdentifier
         }
     }
 }
@@ -282,30 +268,12 @@ enum NativePlayerTVChromeFocusGraph {
             case .up:
                 return availableActions.first.map(NativePlayerTVChromeFocus.action)
             case .down:
-                return .info
+                return nil
             case .left, .right:
                 return nil
             }
         }
 
-        if let utility = current.utilityAction,
-           let index = NativePlayerTVChromeUtilityAction.allCases.firstIndex(of: utility) {
-            switch direction {
-            case .left:
-                let target = max(NativePlayerTVChromeUtilityAction.allCases.startIndex, index - 1)
-                return .utility(NativePlayerTVChromeUtilityAction.allCases[target])
-            case .right:
-                let target = min(
-                    NativePlayerTVChromeUtilityAction.allCases.index(before: NativePlayerTVChromeUtilityAction.allCases.endIndex),
-                    index + 1
-                )
-                return .utility(NativePlayerTVChromeUtilityAction.allCases[target])
-            case .up:
-                return .timeline
-            case .down:
-                return nil
-            }
-        }
         return nil
     }
 
@@ -329,16 +297,7 @@ private extension NativePlayerTVChromeFocus {
         case .subtitles: return .subtitles
         case .audio: return .audio
         case .settings: return .settings
-        case .timeline, .info, .insight, .continueWatching: return nil
-        }
-    }
-
-    var utilityAction: NativePlayerTVChromeUtilityAction? {
-        switch self {
-        case .info: return .info
-        case .insight: return .insight
-        case .continueWatching: return .continueWatching
-        case .timeline, .subtitles, .audio, .video, .settings: return nil
+        case .timeline: return nil
         }
     }
 }

@@ -260,9 +260,8 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(layout.gradientHeight / layout.referenceSize.height, 1.0 / 3.0, accuracy: 0.01)
         XCTAssertEqual(layout.horizontalPadding / layout.referenceSize.width, 1.0 / 24.0, accuracy: 0.002)
         XCTAssertEqual(layout.bottomPadding / layout.referenceSize.height, 50.0 / 1_080.0, accuracy: 0.005)
-        XCTAssertEqual(layout.circleDiameter / layout.referenceSize.height, 70.0 / 1_080.0, accuracy: 0.002)
+        XCTAssertEqual(layout.circleDiameter / layout.referenceSize.height, 64.0 / 1_080.0, accuracy: 0.002)
         XCTAssertEqual(layout.timelineY / layout.referenceSize.height, 900.0 / 1_080.0, accuracy: 0.015)
-        XCTAssertEqual(layout.utilityRowY / layout.referenceSize.height, 985.0 / 1_080.0, accuracy: 0.015)
         XCTAssertGreaterThanOrEqual(layout.titleMinimumScaleFactor, 0.55)
         XCTAssertLessThanOrEqual(layout.maximumTitleWidthRatio, 0.70)
         XCTAssertLessThanOrEqual(layout.timelineHeight, 8)
@@ -272,8 +271,7 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         let layout = NativePlayerTVChromeLayout.standard
         let style = NativePlayerTVChromeGlassStyle.standard
 
-        XCTAssertEqual(layout.circleDiameter, 70)
-        XCTAssertEqual(layout.utilityHeight, 64)
+        XCTAssertEqual(layout.circleDiameter, 64)
         XCTAssertEqual(layout.iconSize, 28)
         XCTAssertEqual(style.variant, .regular)
         XCTAssertTrue(style.isInteractive)
@@ -284,29 +282,26 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(style.focusedScale, 1)
     }
 
-    func testTVChromeUtilityPillsAreFunctionalAndReferenceOrdered() {
+    func testTVSettingsPanelActionsAreFunctionalAndReferenceOrdered() {
         XCTAssertEqual(
-            NativePlayerTVChromeUtilityAction.allCases,
+            NativePlayerTVSettingsAction.allCases,
             [.info, .insight, .continueWatching]
         )
         XCTAssertEqual(
-            NativePlayerTVChromeUtilityAction.allCases.map(\.title),
+            NativePlayerTVSettingsAction.allCases.map(\.title),
             ["Info", "Détails", "Continuer"]
         )
-        XCTAssertEqual(NativePlayerTVChromeUtilityAction.info.destination, .playbackInfoPanel)
-        XCTAssertEqual(NativePlayerTVChromeUtilityAction.insight.destination, .itemInsightPanel)
-        XCTAssertEqual(NativePlayerTVChromeUtilityAction.continueWatching.destination, .continueWatching)
-        XCTAssertTrue(NativePlayerTVChromeUtilityAction.allCases.allSatisfy { $0.controlShape == .capsule })
-        XCTAssertTrue(NativePlayerTVChromeUtilityAction.allCases.allSatisfy { !$0.accessibilityIdentifier.isEmpty })
+        XCTAssertEqual(NativePlayerTVSettingsAction.info.destination, .playbackInfoPanel)
+        XCTAssertEqual(NativePlayerTVSettingsAction.insight.destination, .itemInsightPanel)
+        XCTAssertEqual(NativePlayerTVSettingsAction.continueWatching.destination, .continueWatching)
+        XCTAssertTrue(NativePlayerTVSettingsAction.allCases.allSatisfy { !$0.accessibilityIdentifier.isEmpty })
     }
 
-    func testTVChromeFocusCoversEveryCircularAndUtilityAction() {
+    func testTVChromeFocusCoversEveryCircularAction() {
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.subtitles), .subtitles)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.audio), .audio)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.video), .video)
-        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.info), .info)
-        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.insight), .insight)
-        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.continueWatching), .continueWatching)
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.settings), .settings)
     }
 
     func testAVKitSubtitleRootMatchesReferenceHierarchy() {
@@ -806,7 +801,7 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         }
     }
 
-    func testTVChromeTimelineFocusConnectsAvailableActionRowAndInfo() {
+    func testTVChromeTimelineFocusConnectsOnlyToAvailableActionRow() {
         XCTAssertEqual(
             NativePlayerTVChromeFocusGraph.destination(
                 from: .timeline,
@@ -823,51 +818,13 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
             ),
             .video
         )
-        XCTAssertEqual(
+        XCTAssertNil(
             NativePlayerTVChromeFocusGraph.destination(
                 from: .timeline,
                 direction: .down,
                 availableActions: [.video]
-            ),
-            .info
-        )
-    }
-
-    func testTVChromeUtilityFocusMovesHorizontallyAndUpToTimeline() {
-        XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(from: .info, direction: .left, availableActions: [.video]),
-            .info
-        )
-        XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(from: .info, direction: .right, availableActions: [.video]),
-            .insight
-        )
-        XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(from: .insight, direction: .left, availableActions: [.video]),
-            .info
-        )
-        XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(from: .insight, direction: .right, availableActions: [.video]),
-            .continueWatching
-        )
-        XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(
-                from: .continueWatching,
-                direction: .right,
-                availableActions: [.video]
-            ),
-            .continueWatching
-        )
-        for action in NativePlayerTVChromeUtilityAction.allCases {
-            XCTAssertEqual(
-                NativePlayerTVChromeFocusGraph.destination(
-                    from: .utility(action),
-                    direction: .up,
-                    availableActions: [.video]
-                ),
-                .timeline
             )
-        }
+        )
     }
 
     func testCurrentTimeLabelTracksPlayheadWithoutCollidingWithEdges() {

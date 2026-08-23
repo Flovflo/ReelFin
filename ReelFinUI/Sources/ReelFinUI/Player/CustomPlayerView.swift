@@ -961,9 +961,7 @@ struct CustomPlayerView: View {
                 onInteraction: revealIOSChrome,
                 onShowTrackPicker: showIOSTrackPicker,
                 onShowVideoPanel: showIOSVideoPanel,
-                onShowPlaybackInfo: {},
-                onShowItemInsight: {},
-                onContinueWatching: {},
+                onShowSettingsPanel: {},
                 onToggleChrome: hideIOSChrome,
                 onDismiss: requestDismissal,
                 isInteractionEnabled: activeIOSPanel == nil,
@@ -1086,9 +1084,7 @@ struct CustomPlayerView: View {
                 onInteraction: revealTVChrome,
                 onShowTrackPicker: showTVTrackPicker,
                 onShowVideoPanel: showTVVideoPanel,
-                onShowPlaybackInfo: showTVPlaybackInfo,
-                onShowItemInsight: showTVItemInsight,
-                onContinueWatching: continueTVWatching,
+                onShowSettingsPanel: showTVSettingsPanel,
                 onToggleChrome: hideTVChrome,
                 onDismiss: requestDismissal,
                 isInteractionEnabled: activeTVPanel == nil,
@@ -1103,6 +1099,12 @@ struct CustomPlayerView: View {
         if isChromeVisible, let activeTVPanel {
             Group {
                 switch activeTVPanel {
+                case .settings:
+                    NativePlayerTVSettingsView(
+                        onShowPlaybackInfo: showTVPlaybackInfo,
+                        onShowItemInsight: showTVItemInsight,
+                        onContinueWatching: continueTVWatching
+                    )
                 case let .tracks(mode):
                     NativePlayerAVKitMenuView(
                         mode: mode,
@@ -1212,23 +1214,29 @@ struct CustomPlayerView: View {
     }
 
     private func showTVPlaybackInfo() {
-        preferredTVChromeFocus = .info
+        preferredTVChromeFocus = .settings
         activeTVPanel = .playbackInfo
         revealTVChrome()
     }
 
     private func showTVItemInsight() {
-        preferredTVChromeFocus = .insight
+        preferredTVChromeFocus = .settings
         activeTVPanel = .insight
         revealTVChrome()
     }
 
     private func continueTVWatching() {
-        preferredTVChromeFocus = .continueWatching
+        preferredTVChromeFocus = .settings
         if NativePlayerTVContinueWatchingPolicy.shouldResume(isPaused: engine.transportState == .paused) {
             engine.play()
         }
         hideTVChrome()
+    }
+
+    private func showTVSettingsPanel() {
+        preferredTVChromeFocus = .settings
+        activeTVPanel = .settings
+        revealTVChrome()
     }
 
     private func handleTVAVKitMenuSelection(_ selection: PlaybackControlSelection) {
@@ -1337,6 +1345,7 @@ private enum CustomPlayerIOSPanel: Equatable {
 
 #if os(tvOS)
 private enum CustomPlayerTVPanel: Equatable {
+    case settings
     case tracks(PlaybackTrackMenuKind)
     case video
     case playbackInfo

@@ -133,9 +133,7 @@ struct NativePlayerView: View {
                     onInteraction: revealChrome,
                     onShowTrackPicker: showTrackPicker,
                     onShowVideoPanel: showVideoPanel,
-                    onShowPlaybackInfo: showPlaybackInfo,
-                    onShowItemInsight: showItemInsight,
-                    onContinueWatching: continueWatching,
+                    onShowSettingsPanel: showSettingsPanel,
                     onToggleChrome: hideChrome,
                     onDismiss: { dismiss() },
                     isInteractionEnabled: activeTrackMenu == nil && activeInformationPanel == nil,
@@ -176,6 +174,12 @@ struct NativePlayerView: View {
             if shouldShowChrome, let activeInformationPanel {
                 Group {
                     switch activeInformationPanel {
+                    case .settings:
+                        NativePlayerTVSettingsView(
+                            onShowPlaybackInfo: showPlaybackInfo,
+                            onShowItemInsight: showItemInsight,
+                            onContinueWatching: continueWatching
+                        )
                     case .video:
                         NativePlayerVideoInformationView(
                             qualityLabel: videoQualityLabel,
@@ -655,7 +659,7 @@ struct NativePlayerView: View {
     private func showPlaybackInfo() {
         revealChrome()
 #if os(tvOS)
-        preferredChromeFocus = .info
+        preferredChromeFocus = .settings
 #endif
         activeTrackMenu = nil
         activeInformationPanel = .playbackInfo
@@ -664,7 +668,7 @@ struct NativePlayerView: View {
     private func showItemInsight() {
         revealChrome()
 #if os(tvOS)
-        preferredChromeFocus = .insight
+        preferredChromeFocus = .settings
 #endif
         activeTrackMenu = nil
         activeInformationPanel = .insight
@@ -672,13 +676,24 @@ struct NativePlayerView: View {
 
     private func continueWatching() {
 #if os(tvOS)
-        preferredChromeFocus = .continueWatching
+        preferredChromeFocus = .settings
         continueWatchingTransition.beginContinueWatching(isPaused: isPaused)
 #endif
         if NativePlayerTVContinueWatchingPolicy.shouldResume(isPaused: isPaused) {
             isPaused = false
         }
         hideChrome()
+    }
+
+    private func showSettingsPanel() {
+        revealChrome()
+#if os(tvOS)
+        preferredChromeFocus = .settings
+        activeTrackMenu = nil
+        activeInformationPanel = .settings
+#else
+        showPlaybackInfo()
+#endif
     }
 
     private func scheduleAccessibilityEvidenceExpiryIfNeeded() {
@@ -984,6 +999,7 @@ struct NativePlayerView: View {
 }
 
 private enum NativePlayerInformationPanel: Equatable {
+    case settings
     case video
     case playbackInfo
     case insight

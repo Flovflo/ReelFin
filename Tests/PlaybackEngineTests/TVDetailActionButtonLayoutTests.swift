@@ -91,13 +91,14 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
     }
 
     func testPlayerChromeActionsHaveNoDeadVideoDestination() {
-        XCTAssertEqual(NativePlayerTVChromeAction.allCases, [.subtitles, .audio, .video])
+        XCTAssertEqual(NativePlayerTVChromeAction.allCases, [.video, .subtitles, .audio, .settings])
         XCTAssertEqual(NativePlayerTVChromeAction.audio.destination, .trackMenu(.audio))
         XCTAssertEqual(NativePlayerTVChromeAction.subtitles.destination, .trackMenu(.subtitles))
         XCTAssertEqual(NativePlayerTVChromeAction.video.destination, .videoPanel)
-        XCTAssertEqual(NativePlayerTVChromeUtilityAction.info.destination, .playbackInfoPanel)
-        XCTAssertEqual(NativePlayerTVChromeUtilityAction.insight.destination, .itemInsightPanel)
-        XCTAssertEqual(NativePlayerTVChromeUtilityAction.continueWatching.destination, .continueWatching)
+        XCTAssertEqual(NativePlayerTVChromeAction.settings.destination, .settingsPanel)
+        XCTAssertEqual(NativePlayerTVSettingsAction.info.destination, .playbackInfoPanel)
+        XCTAssertEqual(NativePlayerTVSettingsAction.insight.destination, .itemInsightPanel)
+        XCTAssertEqual(NativePlayerTVSettingsAction.continueWatching.destination, .continueWatching)
     }
 
     func testTVCommandDispatcherInvokesExactlyOneProductionCallbackPerCommand() {
@@ -123,9 +124,7 @@ final class TVDetailActionButtonLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.audio), .audio)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.subtitles), .subtitles)
         XCTAssertEqual(NativePlayerTVChromeFocus.action(.video), .video)
-        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.info), .info)
-        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.insight), .insight)
-        XCTAssertEqual(NativePlayerTVChromeFocus.utility(.continueWatching), .continueWatching)
+        XCTAssertEqual(NativePlayerTVChromeFocus.action(.settings), .settings)
     }
 
     func testExplicitChromeSuppressionIsTVOSOnly() {
