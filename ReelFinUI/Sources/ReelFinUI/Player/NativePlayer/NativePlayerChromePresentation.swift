@@ -205,18 +205,20 @@ struct NativePlayerTVCommandDispatcher {
 
 enum NativePlayerTVChromeFocus: Hashable {
     case timeline
+    case video
     case audio
     case subtitles
-    case video
+    case settings
     case info
     case insight
     case continueWatching
 
     static func action(_ action: NativePlayerTVChromeAction) -> Self {
         switch action {
+        case .video: return .video
         case .audio: return .audio
         case .subtitles: return .subtitles
-        case .video: return .video
+        case .settings: return .settings
         }
     }
 
@@ -234,6 +236,7 @@ enum NativePlayerTVChromeFocus: Hashable {
         case .audio: return NativePlayerTVChromeAction.audio.accessibilityIdentifier
         case .subtitles: return NativePlayerTVChromeAction.subtitles.accessibilityIdentifier
         case .video: return NativePlayerTVChromeAction.video.accessibilityIdentifier
+        case .settings: return NativePlayerTVChromeAction.settings.accessibilityIdentifier
         case .info: return NativePlayerTVChromeUtilityAction.info.accessibilityIdentifier
         case .insight: return NativePlayerTVChromeUtilityAction.insight.accessibilityIdentifier
         case .continueWatching: return NativePlayerTVChromeUtilityAction.continueWatching.accessibilityIdentifier
@@ -322,9 +325,10 @@ enum NativePlayerTVChromeFocusGraph {
 private extension NativePlayerTVChromeFocus {
     var chromeAction: NativePlayerTVChromeAction? {
         switch self {
+        case .video: return .video
         case .subtitles: return .subtitles
         case .audio: return .audio
-        case .video: return .video
+        case .settings: return .settings
         case .timeline, .info, .insight, .continueWatching: return nil
         }
     }
@@ -334,7 +338,7 @@ private extension NativePlayerTVChromeFocus {
         case .info: return .info
         case .insight: return .insight
         case .continueWatching: return .continueWatching
-        case .timeline, .subtitles, .audio, .video: return nil
+        case .timeline, .subtitles, .audio, .video, .settings: return nil
         }
     }
 }

@@ -22,9 +22,24 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertGreaterThan(tv.fontSize, ios.fontSize)
     }
 
-    func testIOSSubtitleControlUsesSystemBottomChromeWithoutFloatingDuplicate() {
-        XCTAssertFalse(CustomPlayerIOSSubtitleControlPolicy.showsFloatingPicker)
-        XCTAssertTrue(CustomPlayerIOSSubtitleControlPolicy.usesSystemBottomControl)
+    func testCustomPlayerIOSOwnsOneCustomChromeWithoutAVKitDuplicate() {
+        XCTAssertTrue(CustomPlayerIOSChromePolicy.showsReelFinChrome)
+        XCTAssertFalse(CustomPlayerIOSChromePolicy.showsAVKitPlaybackControls)
+    }
+
+    func testIOSChromeOmitsUnavailablePlaceholderActions() {
+        let capabilities = NativePlayerChromeCapabilities(
+            supportsPictureInPicture: false,
+            supportsAirPlay: true,
+            supportsSystemVolume: true,
+            supportsShare: false,
+            supportsVideoInformation: true,
+            hasAudioChoices: true,
+            hasSubtitleChoices: true
+        )
+
+        XCTAssertEqual(capabilities.iOSTopActions, [.airPlay])
+        XCTAssertEqual(capabilities.iOSBottomActions, [.videoInformation, .audio, .subtitles])
     }
 
     func testPlaybackEvidenceRequiresTwoAdvancingObservationsAndResetsAtSessionBoundaries() {
@@ -174,11 +189,11 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
     func testTVChromeExposesReferenceOrderedCircularPlaybackActions() {
         XCTAssertEqual(
             NativePlayerTVChromeAction.allCases,
-            [.subtitles, .audio, .video]
+            [.video, .subtitles, .audio, .settings]
         )
         XCTAssertEqual(
             NativePlayerTVChromeAction.allCases.map(\.title),
-            ["Sous-titres", "Audio", "Vidéo"]
+            ["Vidéo", "Sous-titres", "Audio", "Réglages"]
         )
         XCTAssertTrue(NativePlayerTVChromeAction.allCases.allSatisfy { $0.controlShape == .circle })
         XCTAssertTrue(NativePlayerTVChromeAction.allCases.allSatisfy { !$0.accessibilityIdentifier.isEmpty })
@@ -189,6 +204,8 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(NativePlayerTVChromeAction.subtitles.trackMenuKind, .subtitles)
         XCTAssertNil(NativePlayerTVChromeAction.video.trackMenuKind)
         XCTAssertEqual(NativePlayerTVChromeAction.video.destination, .videoPanel)
+        XCTAssertNil(NativePlayerTVChromeAction.settings.trackMenuKind)
+        XCTAssertEqual(NativePlayerTVChromeAction.settings.destination, .settingsPanel)
     }
 
     func testTVChromeMatchesReferenceNormalizedGeometry() {
@@ -694,28 +711,32 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
                 audioOptions: [audioOne],
                 subtitleOptions: [disabledOnly]
             )),
-            [.video]
+            [.video, .settings]
         )
         XCTAssertEqual(
             NativePlayerTVChromeAvailability.actions(for: PlaybackControlsModel(
                 audioOptions: [audioOne, audioTwo],
                 subtitleOptions: [disabledOnly, subtitle]
             )),
-            [.subtitles, .audio, .video]
+            [.video, .subtitles, .audio, .settings]
         )
         XCTAssertEqual(
             NativePlayerTVChromeAvailability.actions(for: PlaybackControlsModel(
                 subtitleOptions: [subtitle]
             )),
-            [.subtitles, .video]
+            [.video, .subtitles, .settings]
         )
     }
 
     func testTVChromeCircularFocusMovesHorizontallyAndDownToTimeline() {
-        let actions: [NativePlayerTVChromeAction] = [.subtitles, .audio, .video]
+        let actions = NativePlayerTVChromeAction.allCases
 
         XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(from: .subtitles, direction: .left, availableActions: actions),
+            NativePlayerTVChromeFocusGraph.destination(from: .video, direction: .left, availableActions: actions),
+            .video
+        )
+        XCTAssertEqual(
+            NativePlayerTVChromeFocusGraph.destination(from: .video, direction: .right, availableActions: actions),
             .subtitles
         )
         XCTAssertEqual(
@@ -723,16 +744,12 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
             .audio
         )
         XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(from: .audio, direction: .left, availableActions: actions),
-            .subtitles
-        )
-        XCTAssertEqual(
             NativePlayerTVChromeFocusGraph.destination(from: .audio, direction: .right, availableActions: actions),
-            .video
+            .settings
         )
         XCTAssertEqual(
-            NativePlayerTVChromeFocusGraph.destination(from: .video, direction: .right, availableActions: actions),
-            .video
+            NativePlayerTVChromeFocusGraph.destination(from: .settings, direction: .right, availableActions: actions),
+            .settings
         )
         for action in actions {
             XCTAssertEqual(

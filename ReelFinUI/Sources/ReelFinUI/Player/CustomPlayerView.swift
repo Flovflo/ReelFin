@@ -85,9 +85,9 @@ enum CustomPlayerSubtitlePresentationPolicy {
     }
 }
 
-enum CustomPlayerIOSSubtitleControlPolicy {
-    static let showsFloatingPicker = false
-    static let usesSystemBottomControl = true
+enum CustomPlayerIOSChromePolicy {
+    static let showsReelFinChrome = true
+    static let showsAVKitPlaybackControls = false
 }
 
 enum CustomPlayerTVRemoteRouting {
@@ -1142,7 +1142,7 @@ private struct CustomPlayerSurface: UIViewControllerRepresentable {
 #if os(tvOS)
         controller.showsPlaybackControls = CustomPlayerTVRemoteRouting.showsInlineAVKitControls
 #else
-        controller.showsPlaybackControls = CustomPlayerIOSSubtitleControlPolicy.usesSystemBottomControl
+        controller.showsPlaybackControls = CustomPlayerIOSChromePolicy.showsAVKitPlaybackControls
 #endif
         controller.allowsPictureInPicturePlayback = true
 #if os(iOS)

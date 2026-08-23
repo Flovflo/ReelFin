@@ -3,29 +3,34 @@ import Shared
 import SwiftUI
 
 enum NativePlayerTVChromeAction: CaseIterable, Equatable, Hashable {
+    case video
     case subtitles
     case audio
-    case video
+    case settings
 
     var title: String {
         switch self {
+        case .video:
+            return "Vidéo"
         case .audio:
             return "Audio"
         case .subtitles:
             return "Sous-titres"
-        case .video:
-            return "Vidéo"
+        case .settings:
+            return "Réglages"
         }
     }
 
     var systemName: String {
         switch self {
+        case .video:
+            return "play.rectangle.on.rectangle"
         case .audio:
             return "waveform"
         case .subtitles:
             return "captions.bubble"
-        case .video:
-            return "display"
+        case .settings:
+            return "slider.horizontal.3"
         }
     }
 
@@ -35,13 +40,22 @@ enum NativePlayerTVChromeAction: CaseIterable, Equatable, Hashable {
             return .audio
         case .subtitles:
             return .subtitles
-        case .video:
+        case .video, .settings:
             return nil
         }
     }
 
     var destination: NativePlayerTVChromeDestination {
-        trackMenuKind.map(NativePlayerTVChromeDestination.trackMenu) ?? .videoPanel
+        switch self {
+        case .audio:
+            return .trackMenu(.audio)
+        case .subtitles:
+            return .trackMenu(.subtitles)
+        case .video:
+            return .videoPanel
+        case .settings:
+            return .settingsPanel
+        }
     }
 
     var controlShape: NativePlayerTVChromeControlShape { .circle }
@@ -61,6 +75,8 @@ enum NativePlayerTVChromeAvailability {
                 return controls.audioOptions.count > 1
             case .video:
                 return true
+            case .settings:
+                return true
             }
         }
     }
@@ -69,6 +85,7 @@ enum NativePlayerTVChromeAvailability {
 enum NativePlayerTVChromeDestination: Equatable {
     case trackMenu(PlaybackTrackMenuKind)
     case videoPanel
+    case settingsPanel
     case playbackInfoPanel
     case itemInsightPanel
     case continueWatching
@@ -338,8 +355,10 @@ struct NativePlayerTransportOverlayView: View {
                             onInteraction()
                             if let trackMenuKind = action.trackMenuKind {
                                 onShowTrackPicker(trackMenuKind)
-                            } else {
+                            } else if action == .video {
                                 onShowVideoPanel()
+                            } else {
+                                onShowPlaybackInfo()
                             }
                         } label: {
                             Image(systemName: action.systemName)
@@ -481,7 +500,7 @@ struct NativePlayerTransportOverlayView: View {
         case .playbackInfoPanel: onShowPlaybackInfo()
         case .itemInsightPanel: onShowItemInsight()
         case .continueWatching: onContinueWatching()
-        case .trackMenu, .videoPanel: break
+        case .trackMenu, .videoPanel, .settingsPanel: break
         }
     }
 
@@ -532,6 +551,8 @@ private extension NativePlayerTVChromeAction {
             return "subtitles"
         case .video:
             return "video"
+        case .settings:
+            return "settings"
         }
     }
 }
