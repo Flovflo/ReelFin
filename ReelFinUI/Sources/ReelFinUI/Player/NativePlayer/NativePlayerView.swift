@@ -29,6 +29,8 @@ struct NativePlayerView: View {
     @State private var committedSeekDirection: NativePlayerSeekDirection = .forward
     @State private var seekDisplayHoldUntil: Date?
     @State private var activeTrackMenu: PlaybackTrackMenuKind?
+    @State private var trackTransitionState = NativePlayerTrackTransitionState()
+    @State private var trackTransitionTimeoutTask: Task<Void, Never>?
     @State private var subtitleSelectionMemory = NativePlayerSubtitleSelectionMemory()
     @State private var activeInformationPanel: NativePlayerInformationPanel?
     @State private var showsDiagnostics = false
@@ -151,6 +153,7 @@ struct NativePlayerView: View {
                         controls: playbackControls,
                         subtitleStyle: subtitleBackgroundStyle,
                         lastEnabledSubtitleID: subtitleSelectionMemory.lastEnabledID,
+                        transitionState: trackTransitionState,
                         onSelect: handleAVKitMenuSelection,
                         onSelectStyle: { subtitleBackgroundStyle = $0 },
                         onDismiss: dismissActivePanel
@@ -159,6 +162,7 @@ struct NativePlayerView: View {
                     NativePlayerTrackSelectionMenuView(
                         mode: activeTrackMenu,
                         controls: playbackControls,
+                        transitionState: trackTransitionState,
                         onSelect: handleTrackMenuSelection
                     )
                     .id(activeTrackMenu)
@@ -224,10 +228,18 @@ struct NativePlayerView: View {
             lastDeepEvidencePlaybackTime = nil
             accessibilityEvidence.reset()
             subtitleSelectionMemory.confirm(trackID: transportState.selectedSubtitleTrackID)
+            trackTransitionState.confirm(
+                audioID: transportState.selectedAudioTrackID,
+                subtitleID: transportState.selectedSubtitleTrackID
+            )
             revealChrome()
+        }
+        .onChange(of: transportState.selectedAudioTrackID) { _, _ in
+            confirmTrackTransition()
         }
         .onChange(of: transportState.selectedSubtitleTrackID) { _, trackID in
             subtitleSelectionMemory.confirm(trackID: trackID)
+            confirmTrackTransition()
         }
         .task(id: transportState.activeSkipSuggestion) {
 #if os(tvOS)
@@ -261,11 +273,17 @@ struct NativePlayerView: View {
             seekGeneration = 0
             seekRequest = nil
             pendingSeekTask?.cancel()
+            trackTransitionTimeoutTask?.cancel()
             pendingSeekTask = nil
+            trackTransitionTimeoutTask = nil
             pendingSeekTarget = nil
             seekDisplayHoldUntil = nil
             liveDiagnostics = []
             accessibilityEvidence.reset()
+            trackTransitionState = NativePlayerTrackTransitionState(
+                confirmedAudioID: transportState.selectedAudioTrackID,
+                confirmedSubtitleID: transportState.selectedSubtitleTrackID
+            )
             revealChrome()
         }
         .onChange(of: isPaused) { _, _ in
@@ -293,8 +311,10 @@ struct NativePlayerView: View {
             chromeAutoHideTask?.cancel()
             chromeAutoHideTask = nil
             pendingSeekTask?.cancel()
+            trackTransitionTimeoutTask?.cancel()
             accessibilityEvidenceExpiryTask?.cancel()
             pendingSeekTask = nil
+            trackTransitionTimeoutTask = nil
             pendingSeekTarget = nil
             activeTrackMenu = nil
             activeInformationPanel = nil
@@ -610,6 +630,7 @@ struct NativePlayerView: View {
 
     private func showTrackPicker(_ mode: PlaybackTrackMenuKind) {
         revealChrome()
+        trackTransitionState.clearFailure()
         guard !playbackControls.options(for: mode).isEmpty else {
             activeTrackMenu = nil
             return
@@ -673,21 +694,52 @@ struct NativePlayerView: View {
     }
 
     private func handleTrackMenuSelection(_ selection: PlaybackControlSelection) {
+        requestTrackTransition(selection)
+    }
+
+#if os(tvOS)
+    private func handleAVKitMenuSelection(_ selection: PlaybackControlSelection) {
+        requestTrackTransition(selection)
+    }
+#endif
+
+    private func requestTrackTransition(_ selection: PlaybackControlSelection) {
+        if trackTransitionState.status(for: selection) == .selected {
+            dismissActivePanel()
+            return
+        }
+        trackTransitionTimeoutTask?.cancel()
+        trackTransitionState.request(selection)
+        onSelectTrack(selection)
+        revealChrome()
+
+        trackTransitionTimeoutTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard !Task.isCancelled, trackTransitionState.pendingSelection == selection else { return }
+            trackTransitionState.failPendingRequest()
+            trackTransitionTimeoutTask = nil
+            revealChrome()
+        }
+    }
+
+    private func confirmTrackTransition() {
+        let hadPendingSelection = trackTransitionState.pendingSelection != nil
+        trackTransitionState.confirm(
+            audioID: transportState.selectedAudioTrackID,
+            subtitleID: transportState.selectedSubtitleTrackID
+        )
+        guard hadPendingSelection, trackTransitionState.pendingSelection == nil else { return }
+
+        trackTransitionTimeoutTask?.cancel()
+        trackTransitionTimeoutTask = nil
         activeTrackMenu = nil
 #if os(tvOS)
         chromeFocusRequestToken = NativePlayerTVRemoteControlPolicy.nextFocusReturnToken(
             after: chromeFocusRequestToken
         )
 #endif
-        onSelectTrack(selection)
         revealChrome()
     }
-
-#if os(tvOS)
-    private func handleAVKitMenuSelection(_ selection: PlaybackControlSelection) {
-        onSelectTrack(selection)
-    }
-#endif
 
     private func dismissActivePanel() {
         activeTrackMenu = nil

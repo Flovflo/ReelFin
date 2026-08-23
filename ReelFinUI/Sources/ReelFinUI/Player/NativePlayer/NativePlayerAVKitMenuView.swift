@@ -215,6 +215,7 @@ struct NativePlayerAVKitMenuView: View {
     let controls: PlaybackControlsModel
     let subtitleStyle: SubtitleBackgroundStyle
     let lastEnabledSubtitleID: String?
+    let transitionState: NativePlayerTrackTransitionState
     let onSelect: (PlaybackControlSelection) -> Void
     let onSelectStyle: (SubtitleBackgroundStyle) -> Void
     let onDismiss: () -> Void
@@ -229,6 +230,7 @@ struct NativePlayerAVKitMenuView: View {
         controls: PlaybackControlsModel,
         subtitleStyle: SubtitleBackgroundStyle,
         lastEnabledSubtitleID: String?,
+        transitionState: NativePlayerTrackTransitionState = .init(),
         onSelect: @escaping (PlaybackControlSelection) -> Void,
         onSelectStyle: @escaping (SubtitleBackgroundStyle) -> Void,
         onDismiss: @escaping () -> Void
@@ -237,6 +239,7 @@ struct NativePlayerAVKitMenuView: View {
         self.controls = controls
         self.subtitleStyle = subtitleStyle
         self.lastEnabledSubtitleID = lastEnabledSubtitleID
+        self.transitionState = transitionState
         self.onSelect = onSelect
         self.onSelectStyle = onSelectStyle
         self.onDismiss = onDismiss
@@ -249,9 +252,20 @@ struct NativePlayerAVKitMenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text(title)
-                .font(.system(size: layout.headerSize, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.62))
+            HStack(spacing: 14) {
+                Text(title)
+                    .font(.system(size: layout.headerSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+
+                Spacer(minLength: 0)
+
+                if let transitionStatusText {
+                    Text(transitionStatusText)
+                        .font(.system(size: layout.secondarySize, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(1)
+                }
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: layout.rowSpacing) {
@@ -308,10 +322,12 @@ struct NativePlayerAVKitMenuView: View {
         case .audio:
             ForEach(realAudioOptions) { option in
                 let rowID = NativePlayerAVKitMenuRowID.audio(option.id)
+                let status = transitionState.status(for: .audio(option.id))
                 NativePlayerAVKitChoiceRow(
                     title: presentation(for: option).title,
                     detail: presentation(for: option).details,
-                    isSelected: option.isSelected,
+                    isSelected: status == .selected,
+                    isPending: status == .pending,
                     isFocused: focusedRow == rowID,
                     layout: layout
                 ) {
@@ -329,8 +345,8 @@ struct NativePlayerAVKitMenuView: View {
                     await requestFocus(on: rowID)
                 }
                 .accessibilityLabel(option.accessibilityLabel)
-                .accessibilityValue(option.isSelected ? "selected" : "not_selected")
-                .accessibilityAddTraits(option.isSelected ? .isSelected : [])
+                .accessibilityValue(status.accessibilityValue)
+                .accessibilityAddTraits(status == .selected ? .isSelected : [])
             }
 
         case .subtitlesRoot:
@@ -338,12 +354,12 @@ struct NativePlayerAVKitMenuView: View {
                 rootChoiceRow(
                     id: .subtitleOn,
                     title: "On",
-                    isSelected: selectedSubtitleID != nil
+                    status: subtitleOnStatus
                 )
                 rootChoiceRow(
                     id: .subtitleOff,
                     title: "Off",
-                    isSelected: selectedSubtitleID == nil
+                    status: transitionState.status(for: .subtitle(nil))
                 )
 
                 Divider()
@@ -365,10 +381,12 @@ struct NativePlayerAVKitMenuView: View {
         case .subtitleLanguages:
             ForEach(realSubtitleOptions) { option in
                 let rowID = NativePlayerAVKitMenuRowID.subtitleTrack(option.id)
+                let status = transitionState.status(for: .subtitle(option.trackID))
                 NativePlayerAVKitChoiceRow(
                     title: presentation(for: option).title,
                     detail: presentation(for: option).details,
-                    isSelected: option.trackID == preferredSubtitleID,
+                    isSelected: status == .selected,
+                    isPending: status == .pending,
                     isFocused: focusedRow == rowID,
                     layout: layout
                 ) {
@@ -386,8 +404,8 @@ struct NativePlayerAVKitMenuView: View {
                     await requestFocus(on: rowID)
                 }
                 .accessibilityLabel(option.accessibilityLabel)
-                .accessibilityValue(option.trackID == preferredSubtitleID ? "selected" : "not_selected")
-                .accessibilityAddTraits(option.trackID == preferredSubtitleID ? .isSelected : [])
+                .accessibilityValue(status.accessibilityValue)
+                .accessibilityAddTraits(status == .selected ? .isSelected : [])
             }
 
         case .subtitleStyles:
@@ -397,6 +415,7 @@ struct NativePlayerAVKitMenuView: View {
                     title: style.displayName,
                     detail: nil,
                     isSelected: style == subtitleStyle,
+                    isPending: false,
                     isFocused: focusedRow == rowID,
                     layout: layout
                 ) {
@@ -423,12 +442,13 @@ struct NativePlayerAVKitMenuView: View {
     private func rootChoiceRow(
         id: NativePlayerAVKitMenuRowID,
         title: String,
-        isSelected: Bool
+        status: NativePlayerTrackTransitionState.RowStatus
     ) -> some View {
         NativePlayerAVKitChoiceRow(
             title: title,
             detail: nil,
-            isSelected: isSelected,
+            isSelected: status == .selected,
+            isPending: status == .pending,
             isFocused: focusedRow == id,
             layout: layout
         ) {
@@ -443,8 +463,8 @@ struct NativePlayerAVKitMenuView: View {
             await requestFocus(on: id)
         }
         .accessibilityLabel(title)
-        .accessibilityValue(isSelected ? "selected" : "not_selected")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityValue(status.accessibilityValue)
+        .accessibilityAddTraits(status == .selected ? .isSelected : [])
     }
 
     private func navigationRow(
@@ -474,11 +494,7 @@ struct NativePlayerAVKitMenuView: View {
     private func perform(_ action: NativePlayerAVKitMenuAction) {
         switch action {
         case let .selectAudio(trackID):
-            NativePlayerAVKitMenuRouteCoordinator.selectAndDismiss(
-                .audio(trackID),
-                onSelect: onSelect,
-                onDismiss: onDismiss
-            )
+            NativePlayerAVKitMenuDispatch.dispatch(.audio(trackID), to: onSelect)
 
         case .enableSubtitles:
             guard let trackID = NativePlayerSubtitleMenuPolicy.enabledTrackID(
@@ -520,6 +536,18 @@ struct NativePlayerAVKitMenuView: View {
 
     private var selectedSubtitleID: String? {
         realSubtitleOptions.first(where: \.isSelected)?.trackID
+    }
+
+    private var subtitleOnStatus: NativePlayerTrackTransitionState.RowStatus {
+        if case let .subtitle(trackID)? = transitionState.pendingSelection, trackID != nil {
+            return .pending
+        }
+        return transitionState.confirmedSubtitleID == nil ? .idle : .selected
+    }
+
+    private var transitionStatusText: String? {
+        if transitionState.pendingSelection != nil { return "Changement…" }
+        return transitionState.failureMessage
     }
 
     private var preferredSubtitleID: String? {
@@ -704,6 +732,7 @@ private struct NativePlayerAVKitChoiceRow: View {
     let title: String
     let detail: String?
     let isSelected: Bool
+    let isPending: Bool
     let isFocused: Bool
     let layout: NativePlayerAVKitMenuLayout
     let action: () -> Void
@@ -711,10 +740,18 @@ private struct NativePlayerAVKitChoiceRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 18) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(isSelected ? .white.opacity(0.96) : .clear)
-                    .frame(width: 34)
+                Group {
+                    if isPending {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.white.opacity(0.96))
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(isSelected ? .white.opacity(0.96) : .clear)
+                    }
+                }
+                .frame(width: 34)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)

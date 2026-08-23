@@ -42,6 +42,33 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(capabilities.iOSBottomActions, [.videoInformation, .audio, .subtitles])
     }
 
+    func testTrackTransitionStaysPendingUntilEngineConfirmation() {
+        var state = NativePlayerTrackTransitionState()
+
+        state.request(.audio("eng"))
+        XCTAssertEqual(state.pendingSelection, .audio("eng"))
+        XCTAssertEqual(state.status(for: .audio("eng")), .pending)
+
+        state.confirm(audioID: "fra", subtitleID: nil)
+        XCTAssertEqual(state.status(for: .audio("eng")), .pending)
+
+        state.confirm(audioID: "eng", subtitleID: nil)
+        XCTAssertNil(state.pendingSelection)
+        XCTAssertEqual(state.status(for: .audio("eng")), .selected)
+    }
+
+    func testLatestTrackRequestWinsAndFailureRestoresConfirmedSelection() {
+        var state = NativePlayerTrackTransitionState(confirmedAudioID: "fra")
+
+        state.request(.audio("eng"))
+        state.request(.audio("deu"))
+        state.failPendingRequest()
+
+        XCTAssertNil(state.pendingSelection)
+        XCTAssertEqual(state.status(for: .audio("fra")), .selected)
+        XCTAssertEqual(state.failureMessage, "Impossible de changer la piste")
+    }
+
     func testPlaybackEvidenceRequiresTwoAdvancingObservationsAndResetsAtSessionBoundaries() {
         var evidence = PlayerAccessibilityEvidenceState()
 

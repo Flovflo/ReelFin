@@ -2,7 +2,7 @@ import Shared
 import SwiftUI
 import PlaybackEngine
 
-enum PlaybackControlSelection {
+enum PlaybackControlSelection: Equatable {
     case audio(String)
     case subtitle(String?)
 }
@@ -307,6 +307,7 @@ struct PlaybackTrackMenuOptionPresentation: Equatable {
 struct NativePlayerTrackSelectionMenuView: View {
     let mode: PlaybackTrackMenuKind
     let controls: PlaybackControlsModel
+    var transitionState: NativePlayerTrackTransitionState = .init()
     let onSelect: (PlaybackControlSelection) -> Void
 #if os(tvOS)
     @AppStorage(SubtitleBackgroundStyle.defaultsKey)
@@ -325,16 +326,28 @@ struct NativePlayerTrackSelectionMenuView: View {
             lastEnabledSubtitleID: controls.subtitleOptions.first(where: {
                 $0.trackID != nil && $0.isSelected
             })?.trackID,
+            transitionState: transitionState,
             onSelect: onSelect,
             onSelectStyle: { subtitleStyle = $0 },
             onDismiss: {}
         )
 #else
         VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
-            Text(primaryTitle)
-                .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.82))
-                .padding(.horizontal, metrics.horizontalPadding)
+            HStack(spacing: 10) {
+                Text(primaryTitle)
+                    .font(.system(size: metrics.titleSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.82))
+
+                Spacer(minLength: 0)
+
+                if let transitionStatusText {
+                    Text(transitionStatusText)
+                        .font(.system(size: metrics.badgeSize, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, metrics.horizontalPadding)
 
             ScrollView {
                 if mode == .audio {
@@ -373,7 +386,12 @@ struct NativePlayerTrackSelectionMenuView: View {
                 NativePlayerTrackMenuEmptyRow(title: "Aucune piste audio")
             } else {
                 ForEach(controls.audioOptions) { option in
-                    NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
+                    let selection = PlaybackControlSelection.audio(option.trackID ?? "")
+                    NativePlayerTrackMenuRow(
+                        option: option,
+                        status: transitionState.status(for: selection),
+                        focusedOptionID: $focusedOptionID
+                    ) {
                         guard let trackID = option.trackID else { return }
                         onSelect(.audio(trackID))
                     }
@@ -389,7 +407,12 @@ struct NativePlayerTrackSelectionMenuView: View {
                 NativePlayerTrackMenuEmptyRow(title: "Aucun sous-titre")
             } else {
                 ForEach(controls.subtitleOptions) { option in
-                    NativePlayerTrackMenuRow(option: option, focusedOptionID: $focusedOptionID) {
+                    let selection = PlaybackControlSelection.subtitle(option.trackID)
+                    NativePlayerTrackMenuRow(
+                        option: option,
+                        status: transitionState.status(for: selection),
+                        focusedOptionID: $focusedOptionID
+                    ) {
                         onSelect(.subtitle(option.trackID))
                     }
                     .nativePlayerPrefersDefaultTrackFocus(option.id == defaultOptionID, in: focusNamespace)
@@ -428,6 +451,11 @@ struct NativePlayerTrackSelectionMenuView: View {
     private var focusedOptionTitle: String? {
         guard let focusedOptionID else { return nil }
         return controls.options(for: mode).first(where: { $0.id == focusedOptionID })?.accessibilityLabel
+    }
+
+    private var transitionStatusText: String? {
+        if transitionState.pendingSelection != nil { return "Changement…" }
+        return transitionState.failureMessage
     }
 #endif
 }
@@ -544,6 +572,7 @@ struct NativePlayerItemInsightView: View {
 #if !os(tvOS)
 private struct NativePlayerTrackMenuRow: View {
     let option: PlaybackTrackOption
+    let status: NativePlayerTrackTransitionState.RowStatus
     let focusedOptionID: FocusState<String?>.Binding
     let onSelect: () -> Void
 
@@ -568,10 +597,18 @@ private struct NativePlayerTrackMenuRow: View {
 
                 Spacer(minLength: 0)
 
-                Image(systemName: "checkmark")
-                    .font(.system(size: metrics.checkSize, weight: .semibold, design: .rounded))
-                    .foregroundStyle(option.isSelected ? foreground.opacity(0.92) : .clear)
-                    .frame(width: metrics.checkColumnWidth)
+                Group {
+                    if status == .pending {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(foreground.opacity(0.92))
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: metrics.checkSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(status == .selected ? foreground.opacity(0.92) : .clear)
+                    }
+                }
+                .frame(width: metrics.checkColumnWidth)
             }
             .padding(.horizontal, metrics.rowHorizontalPadding)
             .frame(height: metrics.rowHeight)
@@ -592,8 +629,8 @@ private struct NativePlayerTrackMenuRow: View {
         .padding(.horizontal, metrics.rowOuterPadding)
         .accessibilityIdentifier("native_player_track_option")
         .accessibilityLabel(option.accessibilityLabel)
-        .accessibilityValue(option.isSelected ? "selected" : "not_selected")
-        .accessibilityAddTraits(option.isSelected ? .isSelected : [])
+        .accessibilityValue(status.accessibilityValue)
+        .accessibilityAddTraits(status == .selected ? .isSelected : [])
     }
 
     private var isFocused: Bool {
@@ -606,13 +643,13 @@ private struct NativePlayerTrackMenuRow: View {
 
     private var rowFillOpacity: Double {
         if isFocused { return style.focusedFillOpacity }
-        if option.isSelected { return style.selectedFillOpacity }
+        if status == .selected { return style.selectedFillOpacity }
         return style.restingFillOpacity
     }
 
     private var rowStrokeOpacity: Double {
         if isFocused { return style.focusedStrokeOpacity }
-        if option.isSelected { return style.selectedStrokeOpacity }
+        if status == .selected { return style.selectedStrokeOpacity }
         return style.restingStrokeOpacity
     }
 
