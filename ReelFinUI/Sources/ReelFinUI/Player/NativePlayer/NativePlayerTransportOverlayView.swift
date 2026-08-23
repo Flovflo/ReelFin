@@ -248,6 +248,7 @@ struct NativePlayerTransportOverlayView: View {
             onShowVideoPanel: onShowVideoPanel,
             onDismiss: onDismiss
         )
+        .allowsHitTesting(isInteractionEnabled)
 #else
         let layout = NativePlayerTVChromeLayout.standard
         ZStack(alignment: .bottom) {

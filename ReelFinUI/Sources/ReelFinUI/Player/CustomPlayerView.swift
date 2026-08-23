@@ -88,6 +88,14 @@ enum CustomPlayerSubtitlePresentationPolicy {
 enum CustomPlayerIOSChromePolicy {
     static let showsReelFinChrome = true
     static let showsAVKitPlaybackControls = false
+
+    static func backgroundTapAction(isVisible: Bool) -> NativePlayerChromeVisibilityPolicy.BackgroundTapAction {
+        NativePlayerChromeVisibilityPolicy.backgroundTapAction(
+            isChromeVisible: isVisible,
+            hasError: false,
+            isPinnedForAutomation: false
+        )
+    }
 }
 
 enum CustomPlayerTVRemoteRouting {
@@ -145,7 +153,14 @@ struct CustomPlayerView: View {
     /// ("Lancement…") and says the server is slow, with Retry/Quit — never an endless bare spinner.
     @State private var launchIsSlow = false
     @State private var subtitleSelectionMemory = NativePlayerSubtitleSelectionMemory()
+    @State private var trackTransitionState = NativePlayerTrackTransitionState()
+    @State private var trackTransitionTimeoutTask: Task<Void, Never>?
     private let slowLaunchThresholdSeconds: UInt64 = 15
+#if os(iOS)
+    @State private var isIOSChromeVisible = true
+    @State private var activeIOSPanel: CustomPlayerIOSPanel?
+    @State private var iosChromeAutoHideTask: Task<Void, Never>?
+#endif
 #if os(tvOS)
     @FocusState private var isSkipActionFocused: Bool
     @FocusState private var isRemoteInputFocused: Bool
@@ -181,7 +196,10 @@ struct CustomPlayerView: View {
                 .ignoresSafeArea()
             launchOverlay
             if !isLaunching, engine.bufferingState.phase != .failed {
-#if os(tvOS)
+#if os(iOS)
+                iosBackgroundInputLayer
+                iosPlayerChrome
+#else
                 tvRemoteInputLayer
                 tvPlayerChrome
 #endif
@@ -277,6 +295,15 @@ struct CustomPlayerView: View {
             isSkipActionFocused = true
         }
 #endif
+#if os(iOS)
+        .onChange(of: engine.transportState) { _, transportState in
+            if transportState == .paused {
+                revealIOSChrome()
+            } else {
+                scheduleIOSChromeAutoHide()
+            }
+        }
+#endif
         .onAppear {
             // The one log line that separates "the player never presented" (screen stuck on the
             // detail while the engine plays unseen) from "the player is up but the picture froze".
@@ -290,14 +317,24 @@ struct CustomPlayerView: View {
                 observedAt: ProcessInfo.processInfo.systemUptime
             )
             revealTVChrome()
+#else
+            revealIOSChrome()
 #endif
             subtitleSelectionMemory.confirm(trackID: engine.subtitles.activeTrackID)
+            trackTransitionState.confirm(
+                audioID: selectedCustomAudioTrackID,
+                subtitleID: engine.subtitles.activeTrackID
+            )
 #if os(iOS)
             OrientationManager.shared.lockLandscapeForPlayerPresentation()
 #endif
         }
         .onChange(of: engine.subtitles.activeTrackID) { _, trackID in
             subtitleSelectionMemory.confirm(trackID: trackID)
+            confirmCustomTrackTransition()
+        }
+        .onChange(of: engine.audioTracks) { _, _ in
+            confirmCustomTrackTransition()
         }
         .onDisappear {
             AppLog.ui.notice("customplayer.view.disappeared")
@@ -305,6 +342,8 @@ struct CustomPlayerView: View {
             if !engine.isPictureInPictureActive {
                 engine.stop()
             }
+            trackTransitionTimeoutTask?.cancel()
+            trackTransitionTimeoutTask = nil
 #if os(tvOS)
             pendingTVSeekTask?.cancel()
             chromeAutoHideTask?.cancel()
@@ -313,6 +352,8 @@ struct CustomPlayerView: View {
             accessibilityEvidence.reset()
 #endif
 #if os(iOS)
+            iosChromeAutoHideTask?.cancel()
+            iosChromeAutoHideTask = nil
             // A compatible MKV replaces this view with `PlayerView` inside the SAME full-screen
             // cover. Restoring portrait here races after the native view's landscape request and
             // leaves the movie letterboxed in a portrait screen.
@@ -807,6 +848,225 @@ struct CustomPlayerView: View {
         }
     }
 
+    private var transportPausedBinding: Binding<Bool> {
+        Binding(
+            get: { engine.transportState == .paused },
+            set: { shouldPause in
+                guard shouldPause != (engine.transportState == .paused) else { return }
+                shouldPause ? engine.pause() : engine.play()
+            }
+        )
+    }
+
+    private var customDurationSeconds: Double? {
+        if let observed = engine.observedDurationSeconds { return observed }
+        guard let ticks = (launchContext?.item ?? engine.currentMediaItem)?.runtimeTicks, ticks > 0 else { return nil }
+        return Double(ticks) / 10_000_000
+    }
+
+    private var selectedCustomAudioTrackID: String? {
+        engine.audioTracks.first(where: \.isSelected)?.id
+    }
+
+    private var customPlaybackControls: PlaybackControlsModel {
+        let audio = PlaybackControlsModel.customAudioOptions(from: engine.audioTracks)
+        let subtitles = [
+            PlaybackTrackOption(
+                trackID: nil,
+                title: "Désactivés",
+                badge: nil,
+                iconName: "captions.bubble",
+                isSelected: engine.subtitles.activeTrackID == nil
+            )
+        ] + engine.subtitles.availableTracks.map { track in
+            PlaybackTrackOption(
+                trackID: track.id,
+                title: track.label,
+                badge: nil,
+                iconName: "captions.bubble",
+                isSelected: engine.subtitles.activeTrackID == track.id
+            )
+        }
+        return PlaybackControlsModel(audioOptions: audio, subtitleOptions: subtitles)
+    }
+
+    private func requestCustomTrackTransition(_ selection: PlaybackControlSelection) {
+        if trackTransitionState.status(for: selection) == .selected {
+            dismissCustomTrackPanel()
+            return
+        }
+
+        trackTransitionTimeoutTask?.cancel()
+        trackTransitionState.request(selection)
+        switch selection {
+        case let .audio(trackID):
+            engine.selectAudioTrack(id: trackID)
+        case let .subtitle(trackID):
+            engine.subtitles.select(trackID: trackID)
+        }
+
+        trackTransitionTimeoutTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard !Task.isCancelled, trackTransitionState.pendingSelection == selection else { return }
+            trackTransitionState.failPendingRequest()
+            trackTransitionTimeoutTask = nil
+        }
+    }
+
+    private func confirmCustomTrackTransition() {
+        let hadPendingSelection = trackTransitionState.pendingSelection != nil
+        trackTransitionState.confirm(
+            audioID: selectedCustomAudioTrackID,
+            subtitleID: engine.subtitles.activeTrackID
+        )
+        guard hadPendingSelection, trackTransitionState.pendingSelection == nil else { return }
+
+        trackTransitionTimeoutTask?.cancel()
+        trackTransitionTimeoutTask = nil
+        dismissCustomTrackPanel()
+    }
+
+    private func dismissCustomTrackPanel() {
+#if os(iOS)
+        activeIOSPanel = nil
+        revealIOSChrome()
+#else
+        dismissTVPanel()
+#endif
+    }
+
+#if os(iOS)
+    private var iosBackgroundInputLayer: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture(perform: handleIOSBackgroundTap)
+            .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var iosPlayerChrome: some View {
+        if isIOSChromeVisible, let item = launchContext?.item ?? engine.currentMediaItem {
+            NativePlayerTransportOverlayView(
+                item: item,
+                capabilities: .customAVPlayer(controls: customPlaybackControls),
+                isPaused: transportPausedBinding,
+                isCircularScrubbing: .constant(false),
+                showsDiagnostics: .constant(false),
+                circularScrubCancelRequestToken: 0,
+                playbackTime: engine.lastObservedSeconds,
+                durationSeconds: customDurationSeconds,
+                isBuffering: engine.bufferingState.phase == .buffering,
+                onSeekRelative: seekIOSRelative,
+                onSeekAbsolute: seekIOSAbsolute,
+                onInteraction: revealIOSChrome,
+                onShowTrackPicker: showIOSTrackPicker,
+                onShowVideoPanel: showIOSVideoPanel,
+                onShowPlaybackInfo: {},
+                onShowItemInsight: {},
+                onContinueWatching: {},
+                onToggleChrome: hideIOSChrome,
+                onDismiss: requestDismissal,
+                isInteractionEnabled: activeIOSPanel == nil,
+                availableActions: [],
+                preferredFocus: .timeline,
+                focusRequestToken: 0,
+                onTVCommand: { _ in }
+            )
+            .transition(.opacity)
+        }
+
+        if isIOSChromeVisible, let activeIOSPanel {
+            Group {
+                switch activeIOSPanel {
+                case let .tracks(mode):
+                    NativePlayerTrackSelectionMenuView(
+                        mode: mode,
+                        controls: customPlaybackControls,
+                        transitionState: trackTransitionState,
+                        onSelect: requestCustomTrackTransition
+                    )
+                    .id(mode)
+                case .video:
+                    NativePlayerVideoInformationView(
+                        qualityLabel: engine.sourceQualityLabel ?? "Originale",
+                        routeLabel: engine.hasLocalCacheReservoir
+                            ? "Lecture directe optimisée"
+                            : "Lecture directe"
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            .padding(.init(top: 0, leading: 20, bottom: 112, trailing: 20))
+            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+        }
+    }
+
+    private func seekIOSRelative(_ delta: Double) {
+        seekIOSAbsolute(engine.lastObservedSeconds + delta)
+    }
+
+    private func seekIOSAbsolute(_ seconds: Double) {
+        let target = NativePlayerRemoteControlPolicy.clampedSeekTarget(
+            from: seconds,
+            delta: 0,
+            durationSeconds: customDurationSeconds
+        )
+        engine.seek(toSeconds: target)
+        revealIOSChrome()
+    }
+
+    private func showIOSTrackPicker(_ mode: PlaybackTrackMenuKind) {
+        activeIOSPanel = .tracks(mode)
+        revealIOSChrome()
+    }
+
+    private func showIOSVideoPanel() {
+        activeIOSPanel = .video
+        revealIOSChrome()
+    }
+
+    private func handleIOSBackgroundTap() {
+        if activeIOSPanel != nil {
+            activeIOSPanel = nil
+            revealIOSChrome()
+            return
+        }
+
+        switch CustomPlayerIOSChromePolicy.backgroundTapAction(isVisible: isIOSChromeVisible) {
+        case .hide:
+            hideIOSChrome()
+        case .reveal:
+            revealIOSChrome()
+        case .ignore:
+            break
+        }
+    }
+
+    private func revealIOSChrome() {
+        isIOSChromeVisible = true
+        scheduleIOSChromeAutoHide()
+    }
+
+    private func hideIOSChrome() {
+        iosChromeAutoHideTask?.cancel()
+        iosChromeAutoHideTask = nil
+        activeIOSPanel = nil
+        isIOSChromeVisible = false
+    }
+
+    private func scheduleIOSChromeAutoHide() {
+        iosChromeAutoHideTask?.cancel()
+        guard engine.transportState != .paused, activeIOSPanel == nil else { return }
+        iosChromeAutoHideTask = Task { @MainActor in
+            try? await Task.sleep(
+                nanoseconds: UInt64(NativePlayerChromeVisibilityPolicy.autoHideDelaySeconds * 1_000_000_000)
+            )
+            guard !Task.isCancelled, activeIOSPanel == nil, engine.transportState != .paused else { return }
+            hideIOSChrome()
+        }
+    }
+#endif
+
 #if os(tvOS)
     @ViewBuilder
     private var tvPlayerChrome: some View {
@@ -849,6 +1109,7 @@ struct CustomPlayerView: View {
                         controls: customPlaybackControls,
                         subtitleStyle: subtitleBackgroundStyle,
                         lastEnabledSubtitleID: subtitleSelectionMemory.lastEnabledID,
+                        transitionState: trackTransitionState,
                         onSelect: handleTVAVKitMenuSelection,
                         onSelectStyle: { subtitleBackgroundStyle = $0 },
                         onDismiss: dismissTVPanel
@@ -889,50 +1150,12 @@ struct CustomPlayerView: View {
         .ignoresSafeArea()
     }
 
-    private var transportPausedBinding: Binding<Bool> {
-        Binding(
-            get: { engine.transportState == .paused },
-            set: { shouldPause in
-                guard shouldPause != (engine.transportState == .paused) else { return }
-                shouldPause ? engine.pause() : engine.play()
-            }
-        )
-    }
-
     private var tvCommandDispatcher: NativePlayerTVCommandDispatcher {
         NativePlayerTVCommandDispatcher(
             onSelect: { isChromeVisible ? hideTVChrome() : revealTVChrome() },
             onPlayPause: toggleTVPlayPause,
             onMove: handleTVRemoteMove
         )
-    }
-
-    private var customDurationSeconds: Double? {
-        if let observed = engine.observedDurationSeconds { return observed }
-        guard let ticks = (launchContext?.item ?? engine.currentMediaItem)?.runtimeTicks, ticks > 0 else { return nil }
-        return Double(ticks) / 10_000_000
-    }
-
-    private var customPlaybackControls: PlaybackControlsModel {
-        let audio = PlaybackControlsModel.customAudioOptions(from: engine.audioTracks)
-        let subtitles = [
-            PlaybackTrackOption(
-                trackID: nil,
-                title: "Désactivés",
-                badge: nil,
-                iconName: "captions.bubble",
-                isSelected: engine.subtitles.activeTrackID == nil
-            )
-        ] + engine.subtitles.availableTracks.map { track in
-            PlaybackTrackOption(
-                trackID: track.id,
-                title: track.label,
-                badge: nil,
-                iconName: "captions.bubble",
-                isSelected: engine.subtitles.activeTrackID == track.id
-            )
-        }
-        return PlaybackControlsModel(audioOptions: audio, subtitleOptions: subtitles)
     }
 
     private func toggleTVPlayPause() {
@@ -1009,12 +1232,7 @@ struct CustomPlayerView: View {
     }
 
     private func handleTVAVKitMenuSelection(_ selection: PlaybackControlSelection) {
-        switch selection {
-        case let .audio(trackID):
-            engine.selectAudioTrack(id: trackID)
-        case let .subtitle(trackID):
-            engine.subtitles.select(trackID: trackID)
-        }
+        requestCustomTrackTransition(selection)
     }
 
     private func handleTVMenu() {
@@ -1109,6 +1327,13 @@ struct CustomPlayerView: View {
     }
 #endif
 }
+
+#if os(iOS)
+private enum CustomPlayerIOSPanel: Equatable {
+    case tracks(PlaybackTrackMenuKind)
+    case video
+}
+#endif
 
 #if os(tvOS)
 private enum CustomPlayerTVPanel: Equatable {

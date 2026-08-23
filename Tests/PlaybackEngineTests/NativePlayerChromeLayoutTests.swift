@@ -27,6 +27,11 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertFalse(CustomPlayerIOSChromePolicy.showsAVKitPlaybackControls)
     }
 
+    func testCustomPlayerIOSBackgroundTapTogglesItsSingleChrome() {
+        XCTAssertEqual(CustomPlayerIOSChromePolicy.backgroundTapAction(isVisible: true), .hide)
+        XCTAssertEqual(CustomPlayerIOSChromePolicy.backgroundTapAction(isVisible: false), .reveal)
+    }
+
     func testIOSChromeOmitsUnavailablePlaceholderActions() {
         let capabilities = NativePlayerChromeCapabilities(
             supportsPictureInPicture: false,
