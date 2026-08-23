@@ -202,6 +202,7 @@ struct NativePlayerTVChromeGlassStyle: Equatable {
 
 struct NativePlayerTransportOverlayView: View {
     let item: MediaItem
+    let capabilities: NativePlayerChromeCapabilities
     @Binding var isPaused: Bool
     @Binding var isCircularScrubbing: Bool
     @Binding var showsDiagnostics: Bool
@@ -235,6 +236,7 @@ struct NativePlayerTransportOverlayView: View {
 #if os(iOS)
         NativePlayerIOSTransportOverlayView(
             item: item,
+            capabilities: capabilities,
             isPaused: $isPaused,
             playbackTime: playbackTime,
             durationSeconds: durationSeconds,
@@ -243,6 +245,7 @@ struct NativePlayerTransportOverlayView: View {
             onSeekAbsolute: onSeekAbsolute,
             onInteraction: onInteraction,
             onShowTrackPicker: onShowTrackPicker,
+            onShowVideoPanel: onShowVideoPanel,
             onDismiss: onDismiss
         )
 #else

@@ -5,6 +5,7 @@ struct NativePlayerIOSTimelineView: View {
     let presentation: NativePlayerChromePresentation
     let playbackTime: Double
     let durationSeconds: Double?
+    var height: CGFloat = 46
     let onSeekAbsolute: (Double) -> Void
     @State private var scrubValue: Double?
 
@@ -28,7 +29,7 @@ struct NativePlayerIOSTimelineView: View {
         .font(.system(size: 16, weight: .semibold, design: .rounded).monospacedDigit())
         .foregroundStyle(.white.opacity(0.66))
         .padding(.horizontal, 14)
-        .frame(height: 46)
+        .frame(height: height)
         .nativePlayerIOSGlassCapsule()
     }
 

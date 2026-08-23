@@ -42,6 +42,17 @@ final class NativePlayerChromeLayoutTests: XCTestCase {
         XCTAssertEqual(capabilities.iOSBottomActions, [.videoInformation, .audio, .subtitles])
     }
 
+    func testIOSChromeReferenceMetricsRemainUsableOnCompactLandscape() {
+        let regular = NativePlayerIOSChromeLayout.metrics(width: 932, height: 430)
+        let compact = NativePlayerIOSChromeLayout.metrics(width: 667, height: 375)
+
+        XCTAssertGreaterThanOrEqual(regular.minimumHitTarget, 44)
+        XCTAssertGreaterThanOrEqual(compact.minimumHitTarget, 44)
+        XCTAssertGreaterThan(regular.primaryTransportDiameter, regular.transportDiameter)
+        XCTAssertLessThanOrEqual(compact.horizontalPadding, regular.horizontalPadding)
+        XCTAssertGreaterThan(compact.timelineHeight, 0)
+    }
+
     func testTrackTransitionStaysPendingUntilEngineConfirmation() {
         var state = NativePlayerTrackTransitionState()
 

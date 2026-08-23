@@ -120,6 +120,7 @@ struct NativePlayerView: View {
             if shouldShowChrome {
                 NativePlayerTransportOverlayView(
                     item: item,
+                    capabilities: .nativeSampleBuffer(controls: playbackControls),
                     isPaused: $isPaused,
                     isCircularScrubbing: circularScrubActiveBinding,
                     showsDiagnostics: $showsDiagnostics,

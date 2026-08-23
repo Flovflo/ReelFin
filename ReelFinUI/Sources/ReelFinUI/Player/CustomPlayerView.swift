@@ -813,6 +813,7 @@ struct CustomPlayerView: View {
         if isChromeVisible, let item = launchContext?.item ?? engine.currentMediaItem {
             NativePlayerTransportOverlayView(
                 item: item,
+                capabilities: .customAVPlayer(controls: customPlaybackControls),
                 isPaused: transportPausedBinding,
                 isCircularScrubbing: $isCircularScrubbing,
                 showsDiagnostics: .constant(false),

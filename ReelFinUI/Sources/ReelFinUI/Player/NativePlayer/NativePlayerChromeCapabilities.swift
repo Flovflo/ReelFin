@@ -1,12 +1,12 @@
 import Shared
 
-enum NativePlayerIOSTopAction: CaseIterable, Equatable {
+enum NativePlayerIOSTopAction: CaseIterable, Equatable, Hashable {
     case pictureInPicture
     case airPlay
     case share
 }
 
-enum NativePlayerIOSBottomAction: CaseIterable, Equatable {
+enum NativePlayerIOSBottomAction: CaseIterable, Equatable, Hashable {
     case videoInformation
     case audio
     case subtitles

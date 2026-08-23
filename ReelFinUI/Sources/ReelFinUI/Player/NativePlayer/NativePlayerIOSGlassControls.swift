@@ -8,12 +8,14 @@ struct NativePlayerIOSGlassGroup<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: spacing) {
-            content
+        GlassEffectContainer(spacing: spacing) {
+            HStack(spacing: spacing) {
+                content
+            }
+            .padding(.horizontal, horizontalPadding)
+            .frame(height: height)
+            .nativePlayerIOSGlassCapsule()
         }
-        .padding(.horizontal, horizontalPadding)
-        .frame(height: height)
-        .nativePlayerIOSGlassCapsule()
     }
 }
 
@@ -73,6 +75,7 @@ struct NativePlayerIOSIconButton: View {
 
 private struct NativePlayerIOSIconChrome: ViewModifier {
     let size: NativePlayerIOSIconButton.Size
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -81,17 +84,24 @@ private struct NativePlayerIOSIconChrome: ViewModifier {
             content
                 .contentShape(Rectangle())
         case .large, .transport, .primaryTransport:
-            content
-                .contentShape(Circle())
-                .background {
-                    Circle()
-                        .fill(.white.opacity(size.backgroundOpacity))
-                        .glassEffect(.clear.interactive(), in: .circle)
-                }
-                .overlay {
-                    Circle()
-                        .stroke(.white.opacity(0.10), lineWidth: 1)
-                }
+            if reduceTransparency {
+                content
+                    .contentShape(Circle())
+                    .background(.black.opacity(0.72), in: Circle())
+                    .overlay {
+                        Circle().stroke(.white.opacity(0.18), lineWidth: 1)
+                    }
+            } else {
+                content
+                    .contentShape(Circle())
+                    .background {
+                        Circle().fill(.white.opacity(size.backgroundOpacity))
+                    }
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .overlay {
+                        Circle().stroke(.white.opacity(0.12), lineWidth: 1)
+                    }
+            }
         }
     }
 }
@@ -107,16 +117,32 @@ struct NativePlayerIOSButtonStyle: ButtonStyle {
 
 extension View {
     func nativePlayerIOSGlassCapsule() -> some View {
-        background {
-            Capsule(style: .continuous)
-                .fill(.white.opacity(0.028))
-                .glassEffect(.clear.interactive(), in: .capsule)
+        modifier(NativePlayerIOSGlassCapsuleModifier())
+    }
+}
+
+private struct NativePlayerIOSGlassCapsuleModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content
+                .background(.black.opacity(0.74), in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous).stroke(.white.opacity(0.18), lineWidth: 1)
+                }
+        } else {
+            content
+                .background {
+                    Capsule(style: .continuous).fill(.white.opacity(0.025))
+                }
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .overlay {
+                    Capsule(style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
         }
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
     }
 }
 #endif
